@@ -45,8 +45,8 @@ pub fn merge_pdfs<P: AsRef<Path>>(inputs: &[P], output: P) -> Result<usize, PdfE
     for doc in &mut docs {
         documents_pages.extend(
             doc.get_pages()
-                .into_iter()
-                .map(|(_, object_id)| (object_id, doc.get_object(object_id).unwrap().to_owned())),
+                .into_values()
+                .map(|object_id| (object_id, doc.get_object(object_id).unwrap().to_owned())),
         );
         documents_objects.extend(doc.objects.clone());
     }
