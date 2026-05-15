@@ -1,6 +1,6 @@
 {
   "name": "slab",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -14,7 +14,8 @@
   "license": "MIT",
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "pdfjs-dist": "^5.7.284"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

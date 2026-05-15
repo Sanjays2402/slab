@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
   import PagesPanel from "$lib/panels/PagesPanel.svelte";
@@ -15,6 +16,7 @@
   };
 
   const features: Feature[] = [
+    { id: "reader", label: "Reader", icon: "▥", ready: true },
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
     { id: "pages", label: "Pages", icon: "▦", ready: true },
@@ -27,7 +29,7 @@
     { id: "sign", label: "Sign", icon: "✍", ready: false },
   ];
 
-  let active = $state("merge");
+  let active = $state("reader");
 </script>
 
 <aside class="sidebar">
@@ -54,12 +56,14 @@
   </nav>
 
   <div class="footer">
-    <span class="version">v0.1.0</span>
+    <span class="version">v0.2.0</span>
   </div>
 </aside>
 
 <main class="content">
-  {#if active === "merge"}
+  {#if active === "reader"}
+    <ReaderPanel />
+  {:else if active === "merge"}
     <MergePanel />
   {:else if active === "split"}
     <SplitPanel />
@@ -171,7 +175,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    overflow-y: hidden;
     padding: 28px 36px 36px;
+    min-height: 0;
   }
 </style>
