@@ -3,7 +3,17 @@
 // Each operation lives in its own submodule so the surface stays small and
 // each feature can be tested in isolation.
 
+pub mod compress;
+pub mod encrypt;
+pub mod extract;
+pub mod info;
 pub mod merge;
+pub mod pages;
+pub mod split;
+pub mod watermark;
+
+#[cfg(test)]
+pub mod test_fixtures;
 
 use std::io;
 use thiserror::Error;

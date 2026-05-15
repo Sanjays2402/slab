@@ -60,13 +60,13 @@ pub fn merge_pdfs<P: AsRef<Path>>(inputs: &[P], output: P) -> Result<usize, PdfE
     let mut pages_object: Option<(ObjectId, Object)> = None;
 
     for (object_id, object) in documents_objects.iter() {
-        match object.type_name().unwrap_or("") {
-            "Catalog" => {
+        match object.type_name().unwrap_or(b"") {
+            b"Catalog" => {
                 if catalog_object.is_none() {
                     catalog_object = Some((*object_id, object.clone()));
                 }
             }
-            "Pages" => {
+            b"Pages" => {
                 if let Ok(dictionary) = object.as_dict() {
                     let mut dictionary = dictionary.clone();
                     if let Some((_, ref existing)) = pages_object {
@@ -84,7 +84,7 @@ pub fn merge_pdfs<P: AsRef<Path>>(inputs: &[P], output: P) -> Result<usize, PdfE
                     ));
                 }
             }
-            "Page" | "Outlines" | "Outline" => {} // handled separately or skipped
+            b"Page" | b"Outlines" | b"Outline" => {} // handled separately or skipped
             _ => {
                 document.objects.insert(*object_id, object.clone());
             }

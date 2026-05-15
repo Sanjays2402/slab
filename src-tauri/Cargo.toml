@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "0.0.1"
+version = "0.1.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -25,7 +25,7 @@ thiserror = "1"
 anyhow = "1"
 
 # PDF manipulation: pure-Rust, no native deps
-lopdf = "0.34"
+lopdf = "0.40"
 
 # Async runtime for long-running ops (compress, OCR later)
 tokio = { version = "1", features = ["full"] }

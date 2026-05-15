@@ -3,8 +3,16 @@
 
 mod pdf;
 
-use pdf::{merge::merge_pdfs, PdfError};
-use serde::Serialize;
+use pdf::compress::{compress as do_compress, CompressReport};
+use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
+use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
+use pdf::info::{info as do_info, PdfInfo};
+use pdf::merge::merge_pdfs;
+use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
+use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
+use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
+use pdf::PdfError;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Result returned from any Slab command. JSON-friendly for the Svelte side.
@@ -48,13 +56,149 @@ fn slab_merge(inputs: Vec<PathBuf>, output: PathBuf) -> CmdResult<PathBuf> {
     merge_pdfs(&inputs, output).map(|_| out).into()
 }
 
+#[derive(Deserialize)]
+pub struct PageRangeDto {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[tauri::command]
+fn slab_split_ranges(
+    input: PathBuf,
+    ranges: Vec<PageRangeDto>,
+    out_dir: PathBuf,
+) -> CmdResult<Vec<PathBuf>> {
+    let parsed: Result<Vec<PageRange>, PdfError> = ranges
+        .iter()
+        .map(|r| PageRange::new(r.start, r.end))
+        .collect();
+    match parsed {
+        Ok(rs) => split_by_ranges(&input, &rs, &out_dir).into(),
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_split_every(input: PathBuf, chunk_size: u32, out_dir: PathBuf) -> CmdResult<Vec<PathBuf>> {
+    split_every(&input, chunk_size, &out_dir).into()
+}
+
+#[tauri::command]
+fn slab_page_count(input: PathBuf) -> CmdResult<u32> {
+    do_page_count(&input).into()
+}
+
+#[tauri::command]
+fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
+    match Rotation::from_int(degrees) {
+        Ok(rot) => rotate_pages(&input, &pages, rot, &output).into(),
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_delete_pages(input: PathBuf, pages: Vec<u32>, output: PathBuf) -> CmdResult<u32> {
+    delete_pages(&input, &pages, &output).into()
+}
+
+#[tauri::command]
+fn slab_reorder_pages(input: PathBuf, order: Vec<u32>, output: PathBuf) -> CmdResult<()> {
+    reorder_pages(&input, &order, &output).into()
+}
+
+#[tauri::command]
+fn slab_extract_text(input: PathBuf) -> CmdResult<Vec<String>> {
+    do_extract_text(&input).into()
+}
+
+#[tauri::command]
+fn slab_extract_text_save(input: PathBuf, output: PathBuf) -> CmdResult<PathBuf> {
+    match extract_text_concat(&input) {
+        Ok(text) => match std::fs::write(&output, text) {
+            Ok(()) => CmdResult::Ok { value: output },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_info(input: PathBuf) -> CmdResult<PdfInfo> {
+    do_info(&input).into()
+}
+
+#[tauri::command]
+fn slab_compress(input: PathBuf, output: PathBuf) -> CmdResult<CompressReport> {
+    do_compress(&input, &output).into()
+}
+
+#[tauri::command]
+fn slab_encrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
+    do_encrypt(&input, &output, &password).into()
+}
+
+#[tauri::command]
+fn slab_decrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
+    do_decrypt(&input, &output, &password).into()
+}
+
+#[derive(Deserialize)]
+pub struct WatermarkDto {
+    pub text: String,
+    pub opacity: f32,
+    pub font_size: f32,
+    pub rotation_deg: f32,
+    pub gray: f32,
+}
+
+#[tauri::command]
+fn slab_watermark(
+    input: PathBuf,
+    output: PathBuf,
+    opts: WatermarkDto,
+    pages: Vec<u32>,
+) -> CmdResult<u32> {
+    let opts = WatermarkOpts {
+        text: &opts.text,
+        opacity: opts.opacity,
+        font_size: opts.font_size,
+        rotation_deg: opts.rotation_deg,
+        gray: opts.gray,
+    };
+    do_watermark(&input, &output, opts, &pages).into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![app_info, slab_merge])
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            slab_merge,
+            slab_split_ranges,
+            slab_split_every,
+            slab_page_count,
+            slab_rotate,
+            slab_delete_pages,
+            slab_reorder_pages,
+            slab_extract_text,
+            slab_extract_text_save,
+            slab_info,
+            slab_compress,
+            slab_encrypt,
+            slab_decrypt,
+            slab_watermark,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
 }
