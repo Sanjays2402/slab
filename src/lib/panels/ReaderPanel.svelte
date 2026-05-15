@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { readFile } from "@tauri-apps/plugin-fs";
-  import { basename } from "$lib/types";
+  import { basename, formatBytes } from "$lib/types";
+  import { recordRecent, listRecent, formatRelTime, type RecentFile } from "$lib/recent";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -16,7 +17,23 @@
     pageCount: number;
   };
 
+  type DocMeta = {
+    title?: string;
+    author?: string;
+    subject?: string;
+    keywords?: string;
+    creator?: string;
+    producer?: string;
+    creationDate?: string;
+    modDate?: string;
+    pdfVersion?: string;
+    pageSize?: string;     // e.g. "612 × 792 pt (Letter)"
+    fileSize?: number;     // bytes (if known)
+    encrypted?: boolean;
+  };
+
   let doc = $state<Doc | null>(null);
+  let docMeta = $state<DocMeta | null>(null);
   let loading = $state(false);
   let loadError = $state<string | null>(null);
 
@@ -29,6 +46,8 @@
   let findCaseSensitive = $state(false);
   let findWholeWord = $state(false);
   let thumbsOpen = $state(true);
+  let infoOpen = $state(false);
+  let recents = $state<RecentFile[]>(listRecent());
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -77,7 +96,7 @@
     loadError = null;
     try {
       const bytes = await readFile(path);
-      await loadBytes(path, new Uint8Array(bytes));
+      await loadBytes(path, new Uint8Array(bytes), bytes.byteLength);
     } catch (e: any) {
       loadError = e?.message || String(e);
       tearDownDoc();
@@ -86,7 +105,7 @@
     }
   }
 
-  async function loadBytes(path: string, data: Uint8Array) {
+  async function loadBytes(path: string, data: Uint8Array, fileSize?: number) {
     loading = true;
     loadError = null;
     try {
@@ -104,6 +123,13 @@
       currentPage = 1;
       thumbsAbortController = new AbortController();
       void renderThumbsBatch(thumbsAbortController.signal);
+
+      // Capture metadata for the info panel
+      void extractMeta(pdf, fileSize ?? data.byteLength);
+
+      // Record into recent files
+      recordRecent({ path, name: basename(path), pageCount: pdf.numPages });
+      recents = listRecent();
     } catch (e: any) {
       loadError = e?.message || String(e);
       tearDownDoc();
@@ -111,6 +137,78 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function extractMeta(pdf: any, fileSize: number) {
+    try {
+      const { info, metadata } = await pdf.getMetadata();
+      // First page determines size for display purposes.
+      let pageSize: string | undefined;
+      try {
+        const first = await pdf.getPage(1);
+        const vp = first.getViewport({ scale: 1 });
+        const w = Math.round(vp.width);
+        const h = Math.round(vp.height);
+        pageSize = `${w} × ${h} pt${describePageSize(w, h)}`;
+      } catch { /* ignore */ }
+
+      const xmpTitle = metadata?.get?.("dc:title");
+      const xmpAuthor = metadata?.get?.("dc:creator");
+
+      docMeta = {
+        title: info?.Title || xmpTitle || undefined,
+        author: info?.Author || xmpAuthor || undefined,
+        subject: info?.Subject || undefined,
+        keywords: info?.Keywords || undefined,
+        creator: info?.Creator || undefined,
+        producer: info?.Producer || undefined,
+        creationDate: formatPdfDate(info?.CreationDate),
+        modDate: formatPdfDate(info?.ModDate),
+        pdfVersion: info?.PDFFormatVersion || undefined,
+        pageSize,
+        fileSize,
+        encrypted: !!info?.IsAcroFormPresent ? undefined : undefined, // placeholder
+      };
+    } catch {
+      docMeta = { fileSize };
+    }
+  }
+
+  function describePageSize(w: number, h: number): string {
+    const near = (a: number, b: number) => Math.abs(a - b) <= 4;
+    const sizes: [string, number, number][] = [
+      ["Letter", 612, 792],
+      ["Legal", 612, 1008],
+      ["Tabloid", 792, 1224],
+      ["A3", 842, 1191],
+      ["A4", 595, 842],
+      ["A5", 420, 595],
+      ["A6", 298, 420],
+    ];
+    for (const [name, pw, ph] of sizes) {
+      if ((near(w, pw) && near(h, ph)) || (near(w, ph) && near(h, pw))) {
+        const orientation = w > h ? " landscape" : "";
+        return ` (${name}${orientation})`;
+      }
+    }
+    return "";
+  }
+
+  // PDF dates look like "D:YYYYMMDDHHmmSS±HH'mm'"
+  function formatPdfDate(s: string | undefined): string | undefined {
+    if (!s) return undefined;
+    const m = s.match(/^D:(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?/);
+    if (!m) return s;
+    const [, y, mo = "01", d = "01", hh = "00", mm = "00"] = m;
+    const dt = new Date(Date.UTC(+y, +mo - 1, +d, +hh, +mm));
+    if (isNaN(dt.getTime())) return s;
+    return dt.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
   function tearDownDoc() {
@@ -125,6 +223,7 @@
       try { pdfDocument.destroy(); } catch { /* ignore */ }
     }
     pdfDocument = null;
+    docMeta = null;
   }
 
   function buildViewer() {
@@ -179,6 +278,26 @@
     const v = pdfViewer.currentScaleValue;
     if (typeof v === "string") zoomLabel = v;
   }
+
+  // When the viewer container resizes (info / thumbs sidebar toggled, window
+  // resize, etc.) re-apply the current fit-* zoom so the page rescales.
+  function rescaleOnResize() {
+    if (!pdfViewer) return;
+    const v = pdfViewer.currentScaleValue;
+    if (v === "page-width" || v === "page-fit" || v === "auto") {
+      try {
+        pdfViewer.currentScaleValue = v;
+      } catch { /* ignore */ }
+    }
+  }
+
+  $effect(() => {
+    // Trigger rescale when either sidebar toggles.
+    // (Read state inside the effect so Svelte tracks the deps.)
+    void thumbsOpen;
+    void infoOpen;
+    queueMicrotask(() => rescaleOnResize());
+  });
 
   // ---------- Navigation / Zoom ----------
   function jumpTo(n: number) {
@@ -320,11 +439,35 @@
 
   onMount(() => {
     window.addEventListener("keydown", onKey);
+    window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
+    window.removeEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
     tearDownDoc();
   });
+
+  function onOpenRecentEvent(e: CustomEvent<RecentFile>) {
+    const file = e.detail;
+    if (!file) return;
+    if (isInTauri()) {
+      void loadPath(file.path);
+    } else {
+      // Browser dev fallback — try to refetch from /static for the demo path,
+      // otherwise tell the user we can't reopen from disk without Tauri.
+      void (async () => {
+        try {
+          const resp = await fetch(file.path);
+          if (resp.ok) {
+            const buf = await resp.arrayBuffer();
+            await loadBytes(file.path, new Uint8Array(buf), buf.byteLength);
+            return;
+          }
+        } catch { /* ignore */ }
+        loadError = `Reopening "${file.name}" needs the desktop app. Use Open to pick it again.`;
+      })();
+    }
+  }
 
   function attachThumb(el: HTMLCanvasElement, n: number) {
     thumbCanvases.set(n, el);
@@ -367,10 +510,28 @@
     <button class="dropzone" onclick={pickFile} disabled={loading}>
       <span class="dz-icon">+</span>
       <span class="dz-title">{loading ? "Loading…" : "Open a PDF"}</span>
-      <span class="dz-hint">Single click, anywhere on your machine.</span>
+      <span class="dz-hint">Single click, anywhere on your machine. <span class="dz-kbd">⌘K</span> to jump anywhere.</span>
     </button>
     {#if loadError}
       <div class="status err">✕ {loadError}</div>
+    {/if}
+    {#if recents.length > 0}
+      <div class="recent-block">
+        <div class="recent-head">
+          <span class="recent-label">Recent</span>
+        </div>
+        <div class="recent-list">
+          {#each recents as r (r.path)}
+            <button class="recent-row" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
+              <span class="recent-icon">▥</span>
+              <span class="recent-name">{r.name}</span>
+              <span class="recent-meta">
+                {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
+              </span>
+            </button>
+          {/each}
+        </div>
+      </div>
     {/if}
   </section>
 {/if}
@@ -420,6 +581,7 @@
 
     <div class="tb-group right">
       <button class="tb-btn" class:active={findOpen} disabled={!doc} onclick={toggleFind} title="Find (⌘F)">🔍 Find</button>
+      <button class="tb-btn" class:active={infoOpen} disabled={!doc} onclick={() => (infoOpen = !infoOpen)} title="Document info">ⓘ Info</button>
     </div>
   </div>
 
@@ -453,7 +615,7 @@
     </div>
   {/if}
 
-  <div class="viewer-grid" class:no-thumbs={!thumbsOpen}>
+  <div class="viewer-grid" class:no-thumbs={!thumbsOpen} class:with-info={infoOpen}>
     {#if thumbsOpen && doc}
       <aside class="thumbs">
         {#each Array.from({ length: doc.pageCount }, (_, i) => i + 1) as n (n)}
@@ -473,6 +635,72 @@
     <div class="pdfjs-container" bind:this={containerEl}>
       <div class="pdfViewer" bind:this={viewerEl}></div>
     </div>
+
+    {#if infoOpen && doc}
+      <aside class="info-sidebar">
+        <div class="info-head">
+          <span class="info-title-label">Document info</span>
+          <button class="info-close" onclick={() => (infoOpen = false)} title="Close">×</button>
+        </div>
+        <dl class="info-grid">
+          <dt>File</dt>
+          <dd class="info-mono">{basename(doc.path)}</dd>
+
+          {#if docMeta?.title}
+            <dt>Title</dt>
+            <dd>{docMeta.title}</dd>
+          {/if}
+          {#if docMeta?.author}
+            <dt>Author</dt>
+            <dd>{docMeta.author}</dd>
+          {/if}
+          {#if docMeta?.subject}
+            <dt>Subject</dt>
+            <dd>{docMeta.subject}</dd>
+          {/if}
+          {#if docMeta?.keywords}
+            <dt>Keywords</dt>
+            <dd>{docMeta.keywords}</dd>
+          {/if}
+
+          <dt>Pages</dt>
+          <dd>{doc.pageCount}</dd>
+
+          {#if docMeta?.pageSize}
+            <dt>Page size</dt>
+            <dd>{docMeta.pageSize}</dd>
+          {/if}
+          {#if docMeta?.fileSize !== undefined}
+            <dt>File size</dt>
+            <dd>{formatBytes(docMeta.fileSize)}</dd>
+          {/if}
+          {#if docMeta?.pdfVersion}
+            <dt>PDF version</dt>
+            <dd>{docMeta.pdfVersion}</dd>
+          {/if}
+
+          {#if docMeta?.creator}
+            <dt>Creator</dt>
+            <dd>{docMeta.creator}</dd>
+          {/if}
+          {#if docMeta?.producer}
+            <dt>Producer</dt>
+            <dd>{docMeta.producer}</dd>
+          {/if}
+          {#if docMeta?.creationDate}
+            <dt>Created</dt>
+            <dd>{docMeta.creationDate}</dd>
+          {/if}
+          {#if docMeta?.modDate}
+            <dt>Modified</dt>
+            <dd>{docMeta.modDate}</dd>
+          {/if}
+        </dl>
+        <div class="info-foot">
+          <span class="info-foot-hint">Read straight from the PDF metadata. Stays on your machine.</span>
+        </div>
+      </aside>
+    {/if}
   </div>
 </div>
 
@@ -608,6 +836,12 @@
   .viewer-grid.no-thumbs {
     grid-template-columns: 1fr;
   }
+  .viewer-grid.with-info {
+    grid-template-columns: 150px 1fr 280px;
+  }
+  .viewer-grid.with-info.no-thumbs {
+    grid-template-columns: 1fr 280px;
+  }
 
   .thumbs {
     overflow-y: auto;
@@ -669,5 +903,138 @@
   }
   :global(.pdfjs-container .pdfViewer .textLayer .highlight.selected) {
     background: rgba(245, 158, 11, 0.75);
+  }
+
+  /* ---- Recent files block (empty state) ---- */
+  .dz-kbd {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 5px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-2);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+  }
+  .recent-block {
+    margin-top: 18px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .recent-head {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .recent-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    letter-spacing: 0.6px;
+  }
+  .recent-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .recent-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-2);
+    text-align: left;
+    cursor: pointer;
+  }
+  .recent-row:last-child { border-bottom: none; }
+  .recent-row:hover { background: var(--bg-3); color: var(--text); }
+  .recent-icon {
+    color: var(--accent);
+    width: 18px;
+    text-align: center;
+  }
+  .recent-name {
+    flex: 1;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-meta {
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  /* ---- Info sidebar ---- */
+  .info-sidebar {
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .info-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .info-title-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    letter-spacing: 0.6px;
+  }
+  .info-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .info-close:hover { color: var(--text); background: var(--bg-3); }
+  .info-grid {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 6px 10px;
+    padding: 12px;
+    margin: 0;
+    flex: 1;
+  }
+  .info-grid dt {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    letter-spacing: 0.5px;
+    padding-top: 2px;
+  }
+  .info-grid dd {
+    font-size: 12px;
+    color: var(--text);
+    margin: 0;
+    word-break: break-word;
+  }
+  .info-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+  }
+  .info-foot {
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+  }
+  .info-foot-hint {
+    font-size: 10px;
+    color: var(--text-3);
+    line-height: 1.4;
   }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
@@ -7,6 +8,8 @@
   import ExtractPanel from "$lib/panels/ExtractPanel.svelte";
   import EncryptPanel from "$lib/panels/EncryptPanel.svelte";
   import WatermarkPanel from "$lib/panels/WatermarkPanel.svelte";
+  import CommandPalette from "$lib/CommandPalette.svelte";
+  import type { RecentFile } from "$lib/recent";
 
   type Feature = {
     id: string;
@@ -30,6 +33,31 @@
   ];
 
   let active = $state("reader");
+  let paletteOpen = $state(false);
+
+  // Pending recent-file open request — Reader panel reads this and reacts.
+  // We keep it on window so the ReaderPanel can subscribe without prop drilling.
+  function requestOpenRecent(file: RecentFile) {
+    active = "reader";
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent("slab:open-recent", { detail: file }));
+    });
+  }
+
+  function onGlobalKey(e: KeyboardEvent) {
+    const isMod = e.metaKey || e.ctrlKey;
+    if (isMod && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      paletteOpen = !paletteOpen;
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener("keydown", onGlobalKey);
+  });
+  onDestroy(() => {
+    window.removeEventListener("keydown", onGlobalKey);
+  });
 </script>
 
 <aside class="sidebar">
@@ -55,8 +83,14 @@
     {/each}
   </nav>
 
+  <button class="palette-trigger" onclick={() => (paletteOpen = true)} title="Command palette">
+    <span class="pt-icon">⌘</span>
+    <span class="pt-label">Jump to anything</span>
+    <span class="pt-kbd">⌘K</span>
+  </button>
+
   <div class="footer">
-    <span class="version">v0.2.0</span>
+    <span class="version">v0.3.0</span>
   </div>
 </aside>
 
@@ -79,6 +113,21 @@
     <WatermarkPanel />
   {/if}
 </main>
+
+<CommandPalette
+  bind:open={paletteOpen}
+  panels={features}
+  activePanel={active}
+  onClose={() => (paletteOpen = false)}
+  onSelectPanel={(id) => {
+    active = id;
+    paletteOpen = false;
+  }}
+  onOpenRecent={(file) => {
+    paletteOpen = false;
+    requestOpenRecent(file);
+  }}
+/>
 
 <style>
   .sidebar {
@@ -161,6 +210,38 @@
     background: var(--bg);
     padding: 2px 5px;
     border-radius: 4px;
+    letter-spacing: 0.5px;
+  }
+
+  .palette-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 7px 10px;
+    font-size: 12px;
+    margin: 10px 0 8px;
+  }
+  .palette-trigger:hover {
+    color: var(--text);
+    background: var(--bg-3);
+  }
+  .pt-icon {
+    color: var(--accent);
+  }
+  .pt-label {
+    flex: 1;
+    text-align: left;
+  }
+  .pt-kbd {
+    font-size: 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
     letter-spacing: 0.5px;
   }
 
