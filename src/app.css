@@ -129,3 +129,200 @@ input[type="text"]:focus {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-strong);
 }
+
+/* shared panel primitives */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.content-header h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+.subtitle {
+  margin: 4px 0 24px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 60px;
+  background: var(--bg-2);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  transition: background 0.15s, border-color 0.15s;
+}
+.dropzone:hover {
+  background: var(--bg-3);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.dz-icon {
+  font-size: 32px;
+  color: var(--accent);
+  line-height: 1;
+}
+.dz-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dz-hint {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.file-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.file-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.file-meta {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.tabs {
+  display: inline-flex;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 3px;
+  gap: 2px;
+  align-self: flex-start;
+}
+.tabs > button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-2);
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.tabs > button.tab-active {
+  background: var(--bg-3);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.seg {
+  display: inline-flex;
+  gap: 6px;
+}
+.seg > button {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.seg > button.tab-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+.field-hint {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.field input[type="text"],
+.field input[type="number"],
+.field input[type="password"] {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  outline: none;
+  width: 100%;
+}
+.field input:focus {
+  border-color: var(--accent);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+.row input {
+  flex: 1;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.status {
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+.status.ok {
+  background: rgba(94, 226, 165, 0.08);
+  border-color: rgba(94, 226, 165, 0.3);
+  color: var(--success);
+}
+.status.err {
+  background: rgba(255, 90, 90, 0.08);
+  border-color: rgba(255, 90, 90, 0.3);
+  color: var(--danger);
+}
+
+.output-list {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.output-list summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.output-list ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+.output-list li {
+  margin: 2px 0;
+}
