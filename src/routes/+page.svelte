@@ -12,6 +12,11 @@
   import MetadataPanel from "$lib/panels/MetadataPanel.svelte";
   import PageNumbersPanel from "$lib/panels/PageNumbersPanel.svelte";
   import SignPanel from "$lib/panels/SignPanel.svelte";
+  import CropPanel from "$lib/panels/CropPanel.svelte";
+  import InsertPanel from "$lib/panels/InsertPanel.svelte";
+  import HeaderFooterPanel from "$lib/panels/HeaderFooterPanel.svelte";
+  import RedactPanel from "$lib/panels/RedactPanel.svelte";
+  import NupPanel from "$lib/panels/NupPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { RecentFile } from "$lib/recent";
 
@@ -35,6 +40,11 @@
     { id: "metadata", label: "Metadata", icon: "ⓘ", ready: true },
     { id: "numbers", label: "Numbers", icon: "№", ready: true },
     { id: "sign", label: "Sign", icon: "✍", ready: true },
+    { id: "crop", label: "Crop", icon: "⊟", ready: true },
+    { id: "insert", label: "Insert", icon: "＋", ready: true },
+    { id: "headerfooter", label: "Header/Footer", icon: "≡", ready: true },
+    { id: "redact", label: "Redact", icon: "▮", ready: true },
+    { id: "nup", label: "N-up", icon: "▦", ready: true },
     { id: "ocr", label: "OCR", icon: "✦", ready: false },
   ];
 
@@ -96,7 +106,7 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.5.0</span>
+    <span class="version">v0.6.0</span>
   </div>
 </aside>
 
@@ -125,6 +135,16 @@
     <PageNumbersPanel />
   {:else if active === "sign"}
     <SignPanel />
+  {:else if active === "crop"}
+    <CropPanel />
+  {:else if active === "insert"}
+    <InsertPanel />
+  {:else if active === "headerfooter"}
+    <HeaderFooterPanel />
+  {:else if active === "redact"}
+    <RedactPanel />
+  {:else if active === "nup"}
+    <NupPanel />
   {/if}
 </main>
 

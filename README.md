@@ -5,7 +5,7 @@
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Rust tests](https://img.shields.io/badge/rust%20tests-31%20passing-brightgreen.svg)](src-tauri)
+[![Rust tests](https://img.shields.io/badge/rust%20tests-42%20passing-brightgreen.svg)](src-tauri)
 
 Every other PDF tool wants you to upload your taxes, your contracts, your medical records to a server you've never heard of, then watch a 30‑second ad, then pay $9.99 to remove the watermark. Slab does the opposite: **everything runs locally on your machine.** No accounts. No uploads. No subscriptions. No nonsense.
 
@@ -13,7 +13,7 @@ Every other PDF tool wants you to upload your taxes, your contracts, your medica
 
 ## What it does
 
-Eleven full tools in v0.5.0 "Slab Studio" — a real Adobe‑Acrobat‑replacing toolkit, built one feature at a time and shipped honestly:
+Eleven full tools in v0.5.0 "Slab Studio" plus **five new tools in v0.6.0 "Slab Forge"** — sixteen tools, a real Adobe‑Acrobat‑replacing toolkit, built one feature at a time and shipped honestly:
 
 | Tool | What it does | Status |
 | --- | --- | --- |
@@ -26,12 +26,17 @@ Eleven full tools in v0.5.0 "Slab Studio" — a real Adobe‑Acrobat‑replacing
 | **Encrypt / Decrypt** | Password‑protect any PDF (RC4‑40) | ✅ shipping |
 | **Watermark** | Text, any angle, opacity, gray, live preview | ✅ shipping |
 | **Convert** | PDF ↔ PNG/JPG/WebP (both directions) | ✅ shipping |
-| **Metadata** | View, edit, or strip every identifying field | ✅ **NEW in v0.5.0** |
-| **Page Numbers** | Templates, 6 positions, custom start, skip cover | ✅ **NEW in v0.5.0** |
-| **Sign & Stamp** | Drop signature / logo / approval image on any page | ✅ **NEW in v0.5.0** |
+| **Metadata** | View, edit, or strip every identifying field | ✅ shipping |
+| **Page Numbers** | Templates, 6 positions, custom start, skip cover | ✅ shipping |
+| **Sign & Stamp** | Drop signature / logo / approval image on any page | ✅ shipping |
+| **Crop** | Trim margins with percentage edges, optional MediaBox resize | ✅ **NEW in v0.6.0** |
+| **Insert Pages** | Splice blank pages (A4/Letter/Legal) or another PDF at any index | ✅ **NEW in v0.6.0** |
+| **Headers & Footers** | Templated text bands with `{n}/{total}/{date}/{filename}` | ✅ **NEW in v0.6.0** |
+| **Redact** | Paint solid black rectangles over sensitive regions | ✅ **NEW in v0.6.0** |
+| **N‑up** | Compose 2/4/6/9 pages onto a single sheet for printing | ✅ **NEW in v0.6.0** |
 | **OCR** | Make scans searchable (Tesseract) | 🗺️ next |
 
-**31 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front-end. AES encryption and OCR queued for v0.6.0.
+**42 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. OCR queued for v0.7.0.
 
 ## Why Slab?
 

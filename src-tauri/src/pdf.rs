@@ -4,13 +4,18 @@
 // each feature can be tested in isolation.
 
 pub mod compress;
+pub mod crop;
 pub mod encrypt;
 pub mod extract;
+pub mod header_footer;
 pub mod info;
+pub mod insert;
 pub mod merge;
 pub mod metadata;
+pub mod nup;
 pub mod page_numbers;
 pub mod pages;
+pub mod redact;
 pub mod split;
 pub mod watermark;
 
