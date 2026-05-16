@@ -4,7 +4,7 @@
   import { readFile } from "@tauri-apps/plugin-fs";
   import { basename, formatBytes } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
-  import { recordRecent, listRecent, formatRelTime, type RecentFile } from "$lib/recent";
+  import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -144,6 +144,8 @@
       // Record into recent files
       recordRecent({ path, name: basename(path), pageCount: pdf.numPages });
       recents = listRecent();
+      // Render a small thumbnail of page 1 for the recents grid
+      void renderRecentThumb(pdf, path);
     } catch (e: any) {
       loadError = e?.message || String(e);
       tearDownDoc();
@@ -209,6 +211,31 @@
       outline = [];
     } finally {
       outlineLoading = false;
+    }
+  }
+
+  // Render a 240px-wide JPEG thumbnail of page 1 and persist it. Best-effort —
+  // any failure is silently ignored (no thumb just means the recents row shows
+  // the placeholder icon).
+  async function renderRecentThumb(pdf: any, path: string) {
+    try {
+      const page = await pdf.getPage(1);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetW = 240;
+      const scale = targetW / baseViewport.width;
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+      setRecentThumb(path, dataUrl);
+      // Force the recents grid to re-read so the new thumb shows on next load
+      recents = listRecent();
+    } catch {
+      /* ignore — thumbnail is best-effort */
     }
   }
 
@@ -607,14 +634,23 @@
         <div class="recent-head">
           <span class="recent-label">Recent</span>
         </div>
-        <div class="recent-list">
+        <div class="recent-grid">
           {#each recents as r (r.path)}
-            <button class="recent-row" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
-              <span class="recent-icon">▥</span>
-              <span class="recent-name">{r.name}</span>
-              <span class="recent-meta">
-                {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
-              </span>
+            {@const thumb = getRecentThumb(r.path)}
+            <button class="recent-card" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
+              <div class="recent-thumb">
+                {#if thumb}
+                  <img src={thumb} alt="" loading="lazy" />
+                {:else}
+                  <span class="recent-thumb-placeholder">PDF</span>
+                {/if}
+              </div>
+              <div class="recent-card-body">
+                <span class="recent-card-name">{r.name}</span>
+                <span class="recent-card-meta">
+                  {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
+                </span>
+              </div>
             </button>
           {/each}
         </div>
@@ -1041,6 +1077,75 @@
   .recent-list {
     display: flex;
     flex-direction: column;
+  }
+  .recent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+    padding: 16px;
+  }
+  .recent-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 0;
+    color: var(--text-2);
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color 120ms, transform 120ms, box-shadow 120ms;
+  }
+  .recent-card:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px -10px var(--accent);
+  }
+  .recent-thumb {
+    position: relative;
+    aspect-ratio: 8.5 / 11;
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .recent-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .recent-thumb-placeholder {
+    color: var(--text-3);
+    font-size: 22px;
+    letter-spacing: 2px;
+    font-weight: 700;
+  }
+  .recent-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px 12px;
+    min-width: 0;
+  }
+  .recent-card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-card-meta {
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .recent-row {
     display: flex;
