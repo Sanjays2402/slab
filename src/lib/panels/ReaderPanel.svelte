@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { readFile } from "@tauri-apps/plugin-fs";
+  import { invoke } from "@tauri-apps/api/core";
   import { basename, formatBytes } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
-  import { recordRecent, listRecent, formatRelTime, type RecentFile } from "$lib/recent";
+  import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
+  import OutlineEditor from "$lib/OutlineEditor.svelte";
+  import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -62,6 +65,13 @@
   };
   let outline = $state<OutlineNode[]>([]);
   let outlineLoading = $state(false);
+  let outlineEditorOpen = $state(false);
+  let annotMode = $state<AnnotMode>("off");
+  let ocrRunning = $state(false);
+  let ocrStatus = $state<string>("");
+  let cheatsheetOpen = $state(false);
+  let invert = $state(false);
+  let dropActive = $state(false);
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -100,6 +110,70 @@
         await loadBytes(f.name, new Uint8Array(buf));
       };
       input.click();
+    }
+  }
+
+  // ---------- OCR ----------
+  async function runOcr() {
+    if (!doc || ocrRunning) return;
+    const inputName = basename(doc.path).replace(/\.pdf$/i, "");
+    const defaultName = `${inputName}-ocr.pdf`;
+    const out = await saveDialog({
+      title: "Save OCR'd PDF",
+      defaultPath: defaultName,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!out) return;
+    ocrRunning = true;
+    ocrStatus = "Running OCR (this can take a while)…";
+    try {
+      const report = await invoke<{ pages: number; lang: string; dpi: number }>(
+        "slab_ocr",
+        {
+          input: doc.path,
+          output: out,
+          opts: { lang: "eng", dpi: 300 },
+        }
+      );
+      ocrStatus = `✓ OCR'd ${report.pages} page${report.pages === 1 ? "" : "s"}`;
+      // Load the new file in the reader.
+      await loadPath(out);
+      // Clear status after a moment.
+      setTimeout(() => (ocrStatus = ""), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ocrStatus = `✗ OCR failed: ${msg}`;
+      setTimeout(() => (ocrStatus = ""), 6000);
+    } finally {
+      ocrRunning = false;
+    }
+  }
+
+  // ---------- Export annotations to Markdown ----------
+  async function exportAnnotsToMd() {
+    if (!doc) return;
+    const inputName = basename(doc.path).replace(/\.pdf$/i, "");
+    const out = await saveDialog({
+      title: "Export annotations as Markdown",
+      defaultPath: `${inputName}-annotations.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!out) return;
+    ocrStatus = "Exporting annotations…";
+    try {
+      const count = await invoke<number>("slab_export_annotations_md", {
+        input: doc.path,
+        output: out,
+        label: basename(doc.path),
+      });
+      ocrStatus = count === 0
+        ? "✓ Exported (no annotations found)"
+        : `✓ Exported ${count} annotation${count === 1 ? "" : "s"}`;
+      setTimeout(() => (ocrStatus = ""), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ocrStatus = `✗ Export failed: ${msg}`;
+      setTimeout(() => (ocrStatus = ""), 6000);
     }
   }
 
@@ -144,6 +218,8 @@
       // Record into recent files
       recordRecent({ path, name: basename(path), pageCount: pdf.numPages });
       recents = listRecent();
+      // Render a small thumbnail of page 1 for the recents grid
+      void renderRecentThumb(pdf, path);
     } catch (e: any) {
       loadError = e?.message || String(e);
       tearDownDoc();
@@ -209,6 +285,31 @@
       outline = [];
     } finally {
       outlineLoading = false;
+    }
+  }
+
+  // Render a 240px-wide JPEG thumbnail of page 1 and persist it. Best-effort —
+  // any failure is silently ignored (no thumb just means the recents row shows
+  // the placeholder icon).
+  async function renderRecentThumb(pdf: any, path: string) {
+    try {
+      const page = await pdf.getPage(1);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetW = 240;
+      const scale = targetW / baseViewport.width;
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+      setRecentThumb(path, dataUrl);
+      // Force the recents grid to re-read so the new thumb shows on next load
+      recents = listRecent();
+    } catch {
+      /* ignore — thumbnail is best-effort */
     }
   }
 
@@ -486,6 +587,11 @@
       zoomOut();
     } else if (e.key === "Escape" && findOpen) {
       toggleFind();
+    } else if (e.key === "Escape" && cheatsheetOpen) {
+      cheatsheetOpen = false;
+    } else if (e.key === "?" && !(e.target as HTMLElement)?.matches("input,textarea")) {
+      e.preventDefault();
+      cheatsheetOpen = !cheatsheetOpen;
     } else if (!findOpen && (e.target as HTMLElement)?.tagName !== "INPUT") {
       if (e.key === "ArrowRight" || e.key === "PageDown") {
         e.preventDefault();
@@ -500,10 +606,47 @@
   onMount(() => {
     window.addEventListener("keydown", onKey);
     window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+
+    // Native drag-and-drop on the whole viewer.
+    const onDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types?.includes("Files")) {
+        e.preventDefault();
+        dropActive = true;
+      }
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (e.target === document.body || (e as any).relatedTarget === null) {
+        dropActive = false;
+      }
+    };
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      dropActive = false;
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith(".pdf")) {
+        ocrStatus = `✗ Not a PDF: ${file.name}`;
+        setTimeout(() => (ocrStatus = ""), 3000);
+        return;
+      }
+      const buf = await file.arrayBuffer();
+      await loadBytes(file.name, new Uint8Array(buf), file.size);
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    // Store handlers so onDestroy can remove them.
+    (onMount as any)._slabDnd = { onDragOver, onDragLeave, onDrop };
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    const dnd = (onMount as any)._slabDnd;
+    if (dnd) {
+      window.removeEventListener("dragover", dnd.onDragOver);
+      window.removeEventListener("dragleave", dnd.onDragLeave);
+      window.removeEventListener("drop", dnd.onDrop);
+    }
     tearDownDoc();
   });
 
@@ -607,14 +750,23 @@
         <div class="recent-head">
           <span class="recent-label">Recent</span>
         </div>
-        <div class="recent-list">
+        <div class="recent-grid">
           {#each recents as r (r.path)}
-            <button class="recent-row" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
-              <span class="recent-icon">▥</span>
-              <span class="recent-name">{r.name}</span>
-              <span class="recent-meta">
-                {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
-              </span>
+            {@const thumb = getRecentThumb(r.path)}
+            <button class="recent-card" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
+              <div class="recent-thumb">
+                {#if thumb}
+                  <img src={thumb} alt="" loading="lazy" />
+                {:else}
+                  <span class="recent-thumb-placeholder">PDF</span>
+                {/if}
+              </div>
+              <div class="recent-card-body">
+                <span class="recent-card-name">{r.name}</span>
+                <span class="recent-card-meta">
+                  {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
+                </span>
+              </div>
             </button>
           {/each}
         </div>
@@ -631,7 +783,7 @@
 
     <div class="tb-group">
       <button class="tb-btn icon" class:active={thumbsOpen} onclick={() => (thumbsOpen = !thumbsOpen)} title="Toggle thumbnails">▦</button>
-      <button class="tb-btn icon" class:active={outlineOpen} disabled={!doc || outline.length === 0} onclick={() => (outlineOpen = !outlineOpen)} title={outline.length === 0 ? "No outline in this PDF" : "Toggle outline"}>☰</button>
+      <button class="tb-btn icon" class:active={outlineOpen} disabled={!doc} onclick={() => (outlineOpen = !outlineOpen)} title={outline.length === 0 ? "No outline in this PDF — open to add one" : "Toggle outline"}>☰</button>
     </div>
 
     <div class="tb-group">
@@ -667,9 +819,47 @@
       >Fit page</button>
     </div>
 
+    <div class="tb-group">
+      <button
+        class="tb-btn"
+        class:active={annotMode === "highlight"}
+        disabled={!doc}
+        onclick={() => (annotMode = annotMode === "highlight" ? "off" : "highlight")}
+        title="Highlight text (select to highlight)"
+      >🖍 Highlight</button>
+      <button
+        class="tb-btn"
+        class:active={annotMode === "note"}
+        disabled={!doc}
+        onclick={() => (annotMode = annotMode === "note" ? "off" : "note")}
+        title="Add sticky note (click on page)"
+      >📝 Note</button>
+      <button
+        class="tb-btn"
+        class:active={ocrRunning}
+        disabled={!doc || ocrRunning}
+        onclick={runOcr}
+        title="Make scanned PDF searchable (Tesseract)"
+      >{ocrRunning ? "⏳ OCR…" : "👁 OCR"}</button>
+      <button
+        class="tb-btn"
+        disabled={!doc}
+        onclick={exportAnnotsToMd}
+        title="Export highlights and notes to Markdown"
+      >📤 Export</button>
+    </div>
+
     <div class="tb-group right">
+      <button
+        class="tb-btn"
+        class:active={invert}
+        disabled={!doc}
+        onclick={() => (invert = !invert)}
+        title="Toggle dark mode invert (whites→darks)"
+      >🌙 Invert</button>
       <button class="tb-btn" class:active={findOpen} disabled={!doc} onclick={toggleFind} title="Find (⌘F)">🔍 Find</button>
       <button class="tb-btn" class:active={infoOpen} disabled={!doc} onclick={() => (infoOpen = !infoOpen)} title="Document info">ⓘ Info</button>
+      <button class="tb-btn" onclick={() => (cheatsheetOpen = true)} title="Keyboard shortcuts (?)">?</button>
     </div>
   </div>
 
@@ -708,12 +898,16 @@
       <aside class="outline-sidebar">
         <div class="outline-head">
           <span class="outline-title-label">Outline</span>
+          <button class="outline-edit" onclick={() => (outlineEditorOpen = true)} title="Edit outline">✎</button>
           <button class="outline-close" onclick={() => (outlineOpen = false)} title="Close">×</button>
         </div>
         {#if outlineLoading}
           <div class="outline-empty">Loading…</div>
         {:else if outline.length === 0}
-          <div class="outline-empty">No outline in this PDF.</div>
+          <div class="outline-empty">
+            <p>No outline in this PDF.</p>
+            <button class="outline-add-btn" onclick={() => (outlineEditorOpen = true)}>+ Create outline</button>
+          </div>
         {:else}
           <nav class="outline-tree">
             {@render outlineList(outline, 0)}
@@ -736,7 +930,7 @@
       </aside>
     {/if}
 
-    <div class="pdfjs-container" bind:this={containerEl}>
+    <div class="pdfjs-container" class:invert bind:this={containerEl}>
       <div class="pdfViewer" bind:this={viewerEl}></div>
     </div>
 
@@ -805,8 +999,73 @@
         </div>
       </aside>
     {/if}
+
+    {#if annotMode !== "off" && doc}
+      <aside class="annot-sidebar">
+        <AnnotateLayer
+          path={doc.path}
+          viewer={pdfViewer}
+          viewerEl={containerEl ?? null}
+          mode={annotMode}
+          onsaved={(p) => { annotMode = "off"; loadPath(p); }}
+          onmodechange={(m) => (annotMode = m)}
+        />
+      </aside>
+    {/if}
+
+    {#if ocrStatus}
+      <div class="ocr-toast" class:err={ocrStatus.startsWith("✗")}>{ocrStatus}</div>
+    {/if}
+
+    {#if dropActive}
+      <div class="drop-overlay">
+        <div class="drop-inner">
+          <div class="drop-icon">📄</div>
+          <div class="drop-text">Drop PDF to open</div>
+        </div>
+      </div>
+    {/if}
+
+    {#if cheatsheetOpen}
+      <button class="cheatsheet-backdrop" aria-label="Close shortcuts"
+        onclick={() => (cheatsheetOpen = false)}></button>
+      <div class="cheatsheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+        <header>
+          <h3>Keyboard shortcuts</h3>
+          <button class="cs-close" onclick={() => (cheatsheetOpen = false)} title="Close (Esc)">✕</button>
+        </header>
+        <div class="cs-grid">
+          <div class="cs-row"><kbd>⌘F</kbd><span>Find in document</span></div>
+          <div class="cs-row"><kbd>⌘+</kbd><kbd>⌘-</kbd><span>Zoom in / out</span></div>
+          <div class="cs-row"><kbd>→</kbd><kbd>PgDn</kbd><span>Next page</span></div>
+          <div class="cs-row"><kbd>←</kbd><kbd>PgUp</kbd><span>Previous page</span></div>
+          <div class="cs-row"><kbd>Esc</kbd><span>Close find / cheatsheet</span></div>
+          <div class="cs-row"><kbd>?</kbd><span>Toggle this cheatsheet</span></div>
+          <div class="cs-row"><kbd>Drag</kbd><span>Drop any PDF on the window to open</span></div>
+          <div class="cs-row"><kbd>🖍</kbd><span>Highlight (select text first)</span></div>
+          <div class="cs-row"><kbd>📝</kbd><span>Sticky note (click on page)</span></div>
+          <div class="cs-row"><kbd>👁</kbd><span>OCR scanned PDF (Tesseract)</span></div>
+          <div class="cs-row"><kbd>🌙</kbd><span>Invert colors (dark-mode reading)</span></div>
+          <div class="cs-row"><kbd>📤</kbd><span>Export annotations as Markdown</span></div>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
+
+{#if outlineEditorOpen && doc}
+  <OutlineEditor
+    path={doc.path}
+    pageCount={doc.pageCount}
+    onclose={() => (outlineEditorOpen = false)}
+    onsaved={(savedPath) => {
+      outlineEditorOpen = false;
+      // Reload from the saved path so the in-app outline reflects the edit
+      // (whether the user overwrote the original or used Save As).
+      void loadPath(savedPath);
+    }}
+  />
+{/if}
 
 <style>
   .reader-header { margin-bottom: 12px; flex-shrink: 0; }
@@ -936,6 +1195,7 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    position: relative;
   }
   .viewer-grid.no-thumbs {
     grid-template-columns: 1fr;
@@ -1042,6 +1302,75 @@
     display: flex;
     flex-direction: column;
   }
+  .recent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+    padding: 16px;
+  }
+  .recent-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 0;
+    color: var(--text-2);
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    transition: border-color 120ms, transform 120ms, box-shadow 120ms;
+  }
+  .recent-card:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px -10px var(--accent);
+  }
+  .recent-thumb {
+    position: relative;
+    aspect-ratio: 8.5 / 11;
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .recent-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .recent-thumb-placeholder {
+    color: var(--text-3);
+    font-size: 22px;
+    letter-spacing: 2px;
+    font-weight: 700;
+  }
+  .recent-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px 12px;
+    min-width: 0;
+  }
+  .recent-card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-card-meta {
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .recent-row {
     display: flex;
     align-items: center;
@@ -1109,6 +1438,29 @@
     cursor: pointer;
     border-radius: 4px;
   }
+  .outline-edit {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin-left: auto;
+  }
+  .outline-edit:hover { color: var(--text); background: var(--bg-2); }
+  .outline-add-btn {
+    margin-top: 8px;
+    background: var(--bg-2, #1a1a1a);
+    color: var(--text, #eee);
+    border: 1px solid var(--border, #2a2a2a);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .outline-add-btn:hover { background: var(--bg-1, #222); }
   .outline-close:hover { color: var(--text); background: var(--bg-2); }
   .outline-empty {
     color: var(--text-3);
@@ -1173,6 +1525,141 @@
     min-width: 0;
   }
   .outline-label:hover { color: var(--text); }
+
+  /* ---- Annotation sidebar ---- */
+  .annot-sidebar {
+    position: absolute;
+    top: 56px;
+    right: 12px;
+    z-index: 30;
+    /* The AnnotateLayer component carries its own background + border. */
+  }
+
+  /* ---- OCR toast ---- */
+  .ocr-toast {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--bg-elev, #1c1c20);
+    color: var(--fg, #fff);
+    border: 1px solid var(--border, #2a2a30);
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    max-width: 80%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ocr-toast.err {
+    border-color: #c14545;
+    color: #ffb3b3;
+  }
+
+  /* ---- Invert (dark-mode reading) ---- */
+  .pdfjs-container.invert :global(.page),
+  .pdfjs-container.invert :global(canvas) {
+    filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.95);
+  }
+
+  /* ---- Drag-and-drop overlay ---- */
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 122, 255, 0.08);
+    border: 3px dashed #007aff;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+  }
+  .drop-inner {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    padding: 24px 40px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+  .drop-icon { font-size: 48px; line-height: 1; margin-bottom: 8px; }
+  .drop-text { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+
+  /* ---- Cheatsheet modal ---- */
+  .cheatsheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    border: 0;
+    padding: 0;
+    cursor: default;
+  }
+  .cheatsheet {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 101;
+    width: min(480px, 90vw);
+    background: var(--bg-elev, #1c1c20);
+    color: var(--fg, #fff);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    padding: 20px 24px;
+  }
+  .cheatsheet header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .cheatsheet h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .cs-close {
+    background: transparent;
+    color: var(--fg-mute, #888);
+    border: 0;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .cs-close:hover { background: var(--bg-hover, #2a2a30); color: var(--fg, #fff); }
+  .cs-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .cs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cs-row kbd {
+    background: var(--bg, #0e0e10);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    min-width: 28px;
+    text-align: center;
+  }
+  .cs-row span { color: var(--fg-mute, #aaa); margin-left: 4px; }
 
   /* ---- Info sidebar ---- */
   .info-sidebar {

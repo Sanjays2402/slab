@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "0.7.0"
+version = "0.8.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -40,6 +40,9 @@ regex = "1"
 
 # Async runtime for long-running ops (compress, OCR later)
 tokio = { version = "1", features = ["full"] }
+
+# Temp directories for OCR rasterization pipeline
+tempfile = "3"
 
 [dev-dependencies]
 tempfile = "3"

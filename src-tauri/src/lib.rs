@@ -3,6 +3,10 @@
 
 pub mod pdf;
 
+use pdf::annot_export::{
+    extract as do_extract_annots, to_markdown as do_annots_to_md, ExtractedAnnotation,
+};
+use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
@@ -19,6 +23,10 @@ use pdf::metadata::{
     write_metadata as do_write_metadata, Metadata,
 };
 use pdf::nup::{nup as do_nup, NupOpts};
+use pdf::ocr::{ocr as do_ocr, OcrOpts, OcrReport};
+use pdf::outline::{
+    read_outline as do_read_outline, write_outline as do_write_outline, OutlineNode,
+};
 use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
@@ -256,6 +264,56 @@ fn slab_auto_redact(input: PathBuf, output: PathBuf, opts: AutoRedactOpts) -> Cm
     do_auto_redact(&input, &output, opts).into()
 }
 
+#[tauri::command]
+fn slab_read_outline(input: PathBuf) -> CmdResult<Vec<OutlineNode>> {
+    do_read_outline(&input).into()
+}
+
+#[tauri::command]
+fn slab_write_outline(input: PathBuf, output: PathBuf, nodes: Vec<OutlineNode>) -> CmdResult<u32> {
+    do_write_outline(&input, &output, &nodes).into()
+}
+
+#[tauri::command]
+fn slab_append_annotations(
+    input: PathBuf,
+    output: PathBuf,
+    annotations: Vec<Annotation>,
+) -> CmdResult<u32> {
+    do_append_annotations(&input, &output, &annotations).into()
+}
+
+#[tauri::command]
+fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrReport> {
+    do_ocr(&input, &output, &opts).into()
+}
+
+#[tauri::command]
+fn slab_export_annotations_md(
+    input: PathBuf,
+    output: PathBuf,
+    label: Option<String>,
+) -> CmdResult<u32> {
+    let result: Result<u32, PdfError> = (|| {
+        let annots: Vec<ExtractedAnnotation> = do_extract_annots(&input)?;
+        let label = label.unwrap_or_else(|| {
+            input
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("document.pdf")
+                .to_string()
+        });
+        let md = do_annots_to_md(&label, &annots);
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| PdfError::Other(format!("create output dir: {e}")))?;
+        }
+        std::fs::write(&output, md).map_err(|e| PdfError::Other(format!("write markdown: {e}")))?;
+        Ok(annots.len() as u32)
+    })();
+    result.into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -291,6 +349,11 @@ pub fn run() {
             slab_grayscale,
             slab_page_labels,
             slab_auto_redact,
+            slab_read_outline,
+            slab_write_outline,
+            slab_append_annotations,
+            slab_ocr,
+            slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

@@ -3,6 +3,8 @@
 // Each operation lives in its own submodule so the surface stays small and
 // each feature can be tested in isolation.
 
+pub mod annot_export;
+pub mod annotations;
 pub mod auto_redact;
 pub mod compress;
 pub mod crop;
@@ -16,6 +18,8 @@ pub mod md2pdf;
 pub mod merge;
 pub mod metadata;
 pub mod nup;
+pub mod ocr;
+pub mod outline;
 pub mod page_labels;
 pub mod page_numbers;
 pub mod pages;

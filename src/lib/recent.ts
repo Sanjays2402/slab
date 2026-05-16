@@ -1,9 +1,15 @@
 // Persistent "recent files" store backed by localStorage.
 // Slab never reads file contents from here — we only remember paths/names
 // so the user can one-click reopen something they had open before.
+//
+// Thumbnails live in a SEPARATE storage key (`slab.recent.thumbs.v1`) so a
+// quota crash on the thumb store doesn't kill the file list. If the thumb
+// store can't take more, the oldest thumb is dropped first.
 
 const KEY = "slab.recent.v1";
+const THUMB_KEY = "slab.recent.thumbs.v1";
 const LIMIT = 8;
+const THUMB_LIMIT = 8;
 
 export type RecentFile = {
   path: string;        // absolute path on disk (or bare filename when run in browser dev)
@@ -11,6 +17,8 @@ export type RecentFile = {
   openedAt: number;    // unix ms
   pageCount?: number;  // optional cached page count
 };
+
+type ThumbStore = Record<string, string>; // path -> data URL (JPEG)
 
 type Listener = (files: RecentFile[]) => void;
 const listeners = new Set<Listener>();
@@ -41,6 +49,42 @@ function write(files: RecentFile[]) {
   for (const l of listeners) l(files);
 }
 
+function readThumbs(): ThumbStore {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(THUMB_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeThumbs(thumbs: ThumbStore) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(THUMB_KEY, JSON.stringify(thumbs));
+  } catch {
+    // Quota crash. Drop half the thumbs (oldest first) and retry once.
+    // We use the recents list to determine order.
+    const order = read().map((r) => r.path);
+    const keep: ThumbStore = {};
+    // Keep only the first 4 entries that have thumbs.
+    let kept = 0;
+    for (const p of order) {
+      if (kept >= 4) break;
+      if (thumbs[p]) { keep[p] = thumbs[p]; kept++; }
+    }
+    try {
+      localStorage.setItem(THUMB_KEY, JSON.stringify(keep));
+    } catch {
+      // Still failing — give up and clear thumbs entirely.
+      try { localStorage.removeItem(THUMB_KEY); } catch { /* ignore */ }
+    }
+  }
+}
+
 export function listRecent(): RecentFile[] {
   return read();
 }
@@ -54,6 +98,26 @@ export function recordRecent(file: Omit<RecentFile, "openedAt"> & { openedAt?: n
 
 export function clearRecent() {
   write([]);
+  try { localStorage.removeItem(THUMB_KEY); } catch { /* ignore */ }
+}
+
+export function setRecentThumb(path: string, dataUrl: string) {
+  const thumbs = readThumbs();
+  thumbs[path] = dataUrl;
+  // Prune to THUMB_LIMIT — keep the ones referenced by current recents,
+  // newest first.
+  const order = read().map((r) => r.path);
+  const pruned: ThumbStore = {};
+  let count = 0;
+  for (const p of order) {
+    if (count >= THUMB_LIMIT) break;
+    if (thumbs[p]) { pruned[p] = thumbs[p]; count++; }
+  }
+  writeThumbs(pruned);
+}
+
+export function getRecentThumb(path: string): string | undefined {
+  return readThumbs()[path];
 }
 
 export function subscribeRecent(fn: Listener): () => void {
