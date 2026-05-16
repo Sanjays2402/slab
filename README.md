@@ -115,7 +115,24 @@ Drop a signature scan, company logo, or `APPROVED` stamp onto any page. Position
 
 ## Install
 
-Pre‑built installers ship with each [release](https://github.com/Sanjays2402/slab/releases): `.dmg` (macOS Apple Silicon + Intel), `.msi` (Windows), `.deb` + `.AppImage` (Linux).
+Pre‑built installers ship with each [release](https://github.com/Sanjays2402/slab/releases): `.dmg` (macOS Apple Silicon + Intel), `.msi` + `.exe` (Windows), `.deb` + `.AppImage` + `.rpm` (Linux).
+
+### First launch on macOS
+
+Slab's macOS builds are currently **ad‑hoc signed** (we don't have a $99/year Apple Developer ID yet). The app and its signature are inspectable, but Gatekeeper doesn't trust the signer, so you'll see a security warning on the first launch only:
+
+1. Open the DMG and drag **Slab** to **Applications**.
+2. In Finder, **right‑click** (or Control‑click) **Slab.app** → **Open**.
+3. Click **Open** in the dialog that appears.
+4. That's it — every subsequent launch is a normal double‑click.
+
+To verify the signature integrity yourself:
+
+```bash
+codesign -dvv /Applications/Slab.app
+```
+
+If you'd like to help fund a Developer ID certificate (so this prompt goes away for everyone), see [SIGNING.md](SIGNING.md). The CI is already wired to switch to full Developer ID signing + notarization the moment six GitHub secrets are configured.
 
 ### Build from source
 
