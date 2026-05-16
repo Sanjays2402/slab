@@ -5,7 +5,8 @@
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Rust tests](https://img.shields.io/badge/rust%20tests-42%20passing-brightgreen.svg)](src-tauri)
+[![Rust tests](https://img.shields.io/badge/rust%20tests-56%20passing-brightgreen.svg)](src-tauri)
+[![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
 
 Every other PDF tool wants you to upload your taxes, your contracts, your medical records to a server you've never heard of, then watch a 30‑second ad, then pay $9.99 to remove the watermark. Slab does the opposite: **everything runs locally on your machine.** No accounts. No uploads. No subscriptions. No nonsense.
 
@@ -13,7 +14,7 @@ Every other PDF tool wants you to upload your taxes, your contracts, your medica
 
 ## What it does
 
-Eleven full tools in v0.5.0 "Slab Studio" plus **five new tools in v0.6.0 "Slab Forge"** — sixteen tools, a real Adobe‑Acrobat‑replacing toolkit, built one feature at a time and shipped honestly:
+**Twenty‑one tools shipping in v0.7.0 "Slab Workshop"** — a real Adobe‑Acrobat‑replacing toolkit, built one feature at a time and shipped honestly:
 
 | Tool | What it does | Status |
 | --- | --- | --- |
@@ -29,14 +30,19 @@ Eleven full tools in v0.5.0 "Slab Studio" plus **five new tools in v0.6.0 "Slab 
 | **Metadata** | View, edit, or strip every identifying field | ✅ shipping |
 | **Page Numbers** | Templates, 6 positions, custom start, skip cover | ✅ shipping |
 | **Sign & Stamp** | Drop signature / logo / approval image on any page | ✅ shipping |
-| **Crop** | Trim margins with percentage edges, optional MediaBox resize | ✅ **NEW in v0.6.0** |
-| **Insert Pages** | Splice blank pages (A4/Letter/Legal) or another PDF at any index | ✅ **NEW in v0.6.0** |
-| **Headers & Footers** | Templated text bands with `{n}/{total}/{date}/{filename}` | ✅ **NEW in v0.6.0** |
-| **Redact** | Paint solid black rectangles over sensitive regions | ✅ **NEW in v0.6.0** |
-| **N‑up** | Compose 2/4/6/9 pages onto a single sheet for printing | ✅ **NEW in v0.6.0** |
+| **Crop** | Trim margins with percentage edges, optional MediaBox resize | ✅ shipping |
+| **Insert Pages** | Splice blank pages (A4/Letter/Legal) or another PDF at any index | ✅ shipping |
+| **Headers & Footers** | Templated text bands with `{n}/{total}/{date}/{filename}` | ✅ shipping |
+| **Redact** | Paint solid black rectangles over sensitive regions | ✅ shipping |
+| **N‑up** | Compose 2/4/6/9 pages onto a single sheet for printing | ✅ shipping |
+| **Markdown → PDF** | Convert Markdown into a clean, tiny PDF — no font embedding | ✅ **NEW in v0.7.0** |
+| **Grayscale** | RGB/CMYK → gray inside content streams, vector‑true, BT.601 luminance | ✅ **NEW in v0.7.0** |
+| **Page Labels** | Roman, arabic, alpha, prefix labels per range — sets `/PageLabels` | ✅ **NEW in v0.7.0** |
+| **Auto‑Redact** | Find & cover emails / SSNs / phones / cards / custom regex | ✅ **NEW in v0.7.0** |
+| **Standalone CLI** | A separate `slab` binary — every op from the terminal | ✅ **NEW in v0.7.0** |
 | **OCR** | Make scans searchable (Tesseract) | 🗺️ next |
 
-**42 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. OCR queued for v0.7.0.
+**56 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. OCR queued for v0.8.0 "Compass."
 
 ## Why Slab?
 
@@ -113,6 +119,61 @@ Drop a signature scan, company logo, or `APPROVED` stamp onto any page. Position
 
 ![Sign & Stamp](docs/screenshots/12-sign.png)
 
+### Crop — *new in v0.6.0*
+Trim margins by percentage from each edge. Optionally rewrite the MediaBox so downstream tools see the new size, not just a clipped view.
+
+![Crop](docs/screenshots/18-crop.png)
+
+### Insert Pages — *new in v0.6.0*
+Splice blank A4/Letter/Legal pages or pages from another PDF at any 1‑indexed position. Insert before or after, in bulk.
+
+![Insert](docs/screenshots/19-insert.png)
+
+### Headers & Footers — *new in v0.6.0*
+Stamp templated text bands across every page. `{n}`, `{total}`, `{date}`, `{filename}` tokens, six anchor positions, custom font size + opacity.
+
+![Header / Footer](docs/screenshots/20-headerfooter.png)
+
+### Redact — *new in v0.6.0*
+Paint solid black rectangles over sensitive regions. Page‑by‑page, drag to draw, burned into the content stream — no scrubbing reveals the original.
+
+![Redact](docs/screenshots/21-redact.png)
+
+### N‑up — *new in v0.6.0*
+Compose 2, 4, 6, or 9 pages onto a single sheet for printing — landscape or portrait, configurable spacing, exact reproductions of each source page.
+
+![N-up](docs/screenshots/17-nup.png)
+
+### Markdown → PDF — *new in v0.7.0*
+Write or paste Markdown, click Convert, get a clean PDF. Headings, **bold**, *italic*, `code`, lists, blockquotes, code blocks, horizontal rules — all rendered with standard Helvetica. No font embedding means tiny output files (~1 KB per page).
+
+![Markdown → PDF](docs/screenshots/13-markdown.png)
+
+### Grayscale — *new in v0.7.0*
+Convert RGB and CMYK fills and strokes to gray inside PDF content streams. Vector‑true — no rasterization — using ITU‑R BT.601 luminance. Range‑selectable. Embedded raster images are unchanged in this pass.
+
+![Grayscale](docs/screenshots/14-grayscale.png)
+
+### Page Labels — *new in v0.7.0*
+Control how PDF readers display page numbers: roman numerals for front matter, arabic for the body, custom prefixes for chapters. Multiple ranges in one shot, live preview of exactly what each style produces. Sets the catalog's `/PageLabels` number tree per the PDF spec.
+
+![Page Labels](docs/screenshots/15-labels.png)
+
+### Auto‑Redact — *new in v0.7.0*
+Find and cover sensitive content automatically. Built‑in presets for **emails**, **US SSNs**, **phone numbers**, and **credit cards**. Add your own regex patterns. Adjustable bar color. Line‑level bounding boxes drawn over each match.
+
+![Auto-Redact](docs/screenshots/16-autoredact.png)
+
+### Standalone CLI — *new in v0.7.0*
+A separate `slab` binary ships in every bundle alongside the GUI. All 21 ops available from the terminal — no Tauri runtime, no IPC, direct library calls.
+
+```bash
+slab md2pdf input.md output.pdf --page-size Letter
+slab grayscale input.pdf output.pdf
+slab autoredact input.pdf output.pdf --preset email,ssn
+slab info report.pdf
+```
+
 ## Install
 
 Pre‑built installers ship with each [release](https://github.com/Sanjays2402/slab/releases): `.dmg` (macOS Apple Silicon + Intel), `.msi` + `.exe` (Windows), `.deb` + `.AppImage` + `.rpm` (Linux).
@@ -149,7 +210,7 @@ pnpm tauri build        # produce an installer / app bundle for your platform
 ## Tests
 
 ```bash
-cd src-tauri && cargo test          # 31 tests
+cd src-tauri && cargo test          # 56 tests
 cargo clippy --all-targets -- -D warnings
 cd .. && pnpm exec svelte-check     # type-check the UI
 ```
@@ -158,7 +219,7 @@ cd .. && pnpm exec svelte-check     # type-check the UI
 
 - **Shell:** [Tauri 2](https://tauri.app) — system webview, ~10 MB binaries, native menus.
 - **UI:** [SvelteKit](https://svelte.dev) + Svelte 5 runes + TypeScript.
-- **PDF core:** [`lopdf`](https://crates.io/crates/lopdf) (pure Rust) for manipulation, [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) for rendering in the Reader, [`pdf-lib`](https://pdf-lib.js.org) for client‑side composition (stamps, image embedding), [`pdfium-render`](https://crates.io/crates/pdfium-render) + [`tesseract-rs`](https://crates.io/crates/tesseract-rs) queued for OCR.
+- **PDF core:** [`lopdf`](https://crates.io/crates/lopdf) (pure Rust) for manipulation, [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) for rendering in the Reader, [`pdf-lib`](https://pdf-lib.js.org) for client‑side composition (stamps, image embedding), [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) for the Markdown → PDF tool, [`pdfium-render`](https://crates.io/crates/pdfium-render) + [`tesseract-rs`](https://crates.io/crates/tesseract-rs) queued for OCR.
 - **License:** GPL‑3.0 — free as in freedom. Fork it, ship it, just don't close‑source it.
 
 ## A small promise
