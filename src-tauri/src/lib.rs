@@ -3,6 +3,7 @@
 
 pub mod pdf;
 
+use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
@@ -269,6 +270,15 @@ fn slab_write_outline(input: PathBuf, output: PathBuf, nodes: Vec<OutlineNode>) 
     do_write_outline(&input, &output, &nodes).into()
 }
 
+#[tauri::command]
+fn slab_append_annotations(
+    input: PathBuf,
+    output: PathBuf,
+    annotations: Vec<Annotation>,
+) -> CmdResult<u32> {
+    do_append_annotations(&input, &output, &annotations).into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -306,6 +316,7 @@ pub fn run() {
             slab_auto_redact,
             slab_read_outline,
             slab_write_outline,
+            slab_append_annotations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

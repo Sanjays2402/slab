@@ -6,6 +6,7 @@
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
+  import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -64,6 +65,7 @@
   let outline = $state<OutlineNode[]>([]);
   let outlineLoading = $state(false);
   let outlineEditorOpen = $state(false);
+  let annotMode = $state<AnnotMode>("off");
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -705,6 +707,23 @@
       >Fit page</button>
     </div>
 
+    <div class="tb-group">
+      <button
+        class="tb-btn"
+        class:active={annotMode === "highlight"}
+        disabled={!doc}
+        onclick={() => (annotMode = annotMode === "highlight" ? "off" : "highlight")}
+        title="Highlight text (select to highlight)"
+      >🖍 Highlight</button>
+      <button
+        class="tb-btn"
+        class:active={annotMode === "note"}
+        disabled={!doc}
+        onclick={() => (annotMode = annotMode === "note" ? "off" : "note")}
+        title="Add sticky note (click on page)"
+      >📝 Note</button>
+    </div>
+
     <div class="tb-group right">
       <button class="tb-btn" class:active={findOpen} disabled={!doc} onclick={toggleFind} title="Find (⌘F)">🔍 Find</button>
       <button class="tb-btn" class:active={infoOpen} disabled={!doc} onclick={() => (infoOpen = !infoOpen)} title="Document info">ⓘ Info</button>
@@ -845,6 +864,19 @@
         <div class="info-foot">
           <span class="info-foot-hint">Read straight from the PDF metadata. Stays on your machine.</span>
         </div>
+      </aside>
+    {/if}
+
+    {#if annotMode !== "off" && doc}
+      <aside class="annot-sidebar">
+        <AnnotateLayer
+          path={doc.path}
+          viewer={pdfViewer}
+          viewerEl={containerEl ?? null}
+          mode={annotMode}
+          onsaved={(p) => { annotMode = "off"; loadPath(p); }}
+          onmodechange={(m) => (annotMode = m)}
+        />
       </aside>
     {/if}
   </div>
@@ -992,6 +1024,7 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    position: relative;
   }
   .viewer-grid.no-thumbs {
     grid-template-columns: 1fr;
@@ -1321,6 +1354,15 @@
     min-width: 0;
   }
   .outline-label:hover { color: var(--text); }
+
+  /* ---- Annotation sidebar ---- */
+  .annot-sidebar {
+    position: absolute;
+    top: 56px;
+    right: 12px;
+    z-index: 30;
+    /* The AnnotateLayer component carries its own background + border. */
+  }
 
   /* ---- Info sidebar ---- */
   .info-sidebar {

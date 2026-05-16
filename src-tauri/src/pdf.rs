@@ -3,6 +3,7 @@
 // Each operation lives in its own submodule so the surface stays small and
 // each feature can be tested in isolation.
 
+pub mod annotations;
 pub mod auto_redact;
 pub mod compress;
 pub mod crop;
