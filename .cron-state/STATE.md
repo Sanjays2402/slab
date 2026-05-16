@@ -72,3 +72,8 @@ None.
 - Push freely to `origin/feature/v0.8.1-polyglot` — CI only triggers on `main`.
 - **NEVER** push to or merge into `main`, **NEVER** open PRs unless `PR_READY: true`.
 - Skill discipline: clippy prefers `&Path` over `&PathBuf`; rustfmt expands single-statement `if x { y; }` to braces.
+- **Push gotcha:** plain `git push` errors with "could not read Username". Use:
+  ```
+  GH_TOKEN=$(gh auth token) git -c credential.helper='!f() { test "$1" = get && echo "username=x-access-token" && echo "password=$GH_TOKEN"; }; f' push origin feature/v0.8.1-polyglot
+  ```
+- **Commit author:** use `git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='Cake (cron)' commit …` so commits are properly attributed and don't leak any other identity.
