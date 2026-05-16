@@ -69,6 +69,9 @@
   let annotMode = $state<AnnotMode>("off");
   let ocrRunning = $state(false);
   let ocrStatus = $state<string>("");
+  let cheatsheetOpen = $state(false);
+  let invert = $state(false);
+  let dropActive = $state(false);
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -556,6 +559,11 @@
       zoomOut();
     } else if (e.key === "Escape" && findOpen) {
       toggleFind();
+    } else if (e.key === "Escape" && cheatsheetOpen) {
+      cheatsheetOpen = false;
+    } else if (e.key === "?" && !(e.target as HTMLElement)?.matches("input,textarea")) {
+      e.preventDefault();
+      cheatsheetOpen = !cheatsheetOpen;
     } else if (!findOpen && (e.target as HTMLElement)?.tagName !== "INPUT") {
       if (e.key === "ArrowRight" || e.key === "PageDown") {
         e.preventDefault();
@@ -570,10 +578,47 @@
   onMount(() => {
     window.addEventListener("keydown", onKey);
     window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+
+    // Native drag-and-drop on the whole viewer.
+    const onDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types?.includes("Files")) {
+        e.preventDefault();
+        dropActive = true;
+      }
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (e.target === document.body || (e as any).relatedTarget === null) {
+        dropActive = false;
+      }
+    };
+    const onDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      dropActive = false;
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith(".pdf")) {
+        ocrStatus = `✗ Not a PDF: ${file.name}`;
+        setTimeout(() => (ocrStatus = ""), 3000);
+        return;
+      }
+      const buf = await file.arrayBuffer();
+      await loadBytes(file.name, new Uint8Array(buf), file.size);
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    // Store handlers so onDestroy can remove them.
+    (onMount as any)._slabDnd = { onDragOver, onDragLeave, onDrop };
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    const dnd = (onMount as any)._slabDnd;
+    if (dnd) {
+      window.removeEventListener("dragover", dnd.onDragOver);
+      window.removeEventListener("dragleave", dnd.onDragLeave);
+      window.removeEventListener("drop", dnd.onDrop);
+    }
     tearDownDoc();
   });
 
@@ -771,8 +816,16 @@
     </div>
 
     <div class="tb-group right">
+      <button
+        class="tb-btn"
+        class:active={invert}
+        disabled={!doc}
+        onclick={() => (invert = !invert)}
+        title="Toggle dark mode invert (whites→darks)"
+      >🌙 Invert</button>
       <button class="tb-btn" class:active={findOpen} disabled={!doc} onclick={toggleFind} title="Find (⌘F)">🔍 Find</button>
       <button class="tb-btn" class:active={infoOpen} disabled={!doc} onclick={() => (infoOpen = !infoOpen)} title="Document info">ⓘ Info</button>
+      <button class="tb-btn" onclick={() => (cheatsheetOpen = true)} title="Keyboard shortcuts (?)">?</button>
     </div>
   </div>
 
@@ -843,7 +896,7 @@
       </aside>
     {/if}
 
-    <div class="pdfjs-container" bind:this={containerEl}>
+    <div class="pdfjs-container" class:invert bind:this={containerEl}>
       <div class="pdfViewer" bind:this={viewerEl}></div>
     </div>
 
@@ -928,6 +981,39 @@
 
     {#if ocrStatus}
       <div class="ocr-toast" class:err={ocrStatus.startsWith("✗")}>{ocrStatus}</div>
+    {/if}
+
+    {#if dropActive}
+      <div class="drop-overlay">
+        <div class="drop-inner">
+          <div class="drop-icon">📄</div>
+          <div class="drop-text">Drop PDF to open</div>
+        </div>
+      </div>
+    {/if}
+
+    {#if cheatsheetOpen}
+      <button class="cheatsheet-backdrop" aria-label="Close shortcuts"
+        onclick={() => (cheatsheetOpen = false)}></button>
+      <div class="cheatsheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+        <header>
+          <h3>Keyboard shortcuts</h3>
+          <button class="cs-close" onclick={() => (cheatsheetOpen = false)} title="Close (Esc)">✕</button>
+        </header>
+        <div class="cs-grid">
+          <div class="cs-row"><kbd>⌘F</kbd><span>Find in document</span></div>
+          <div class="cs-row"><kbd>⌘+</kbd><kbd>⌘-</kbd><span>Zoom in / out</span></div>
+          <div class="cs-row"><kbd>→</kbd><kbd>PgDn</kbd><span>Next page</span></div>
+          <div class="cs-row"><kbd>←</kbd><kbd>PgUp</kbd><span>Previous page</span></div>
+          <div class="cs-row"><kbd>Esc</kbd><span>Close find / cheatsheet</span></div>
+          <div class="cs-row"><kbd>?</kbd><span>Toggle this cheatsheet</span></div>
+          <div class="cs-row"><kbd>Drag</kbd><span>Drop any PDF on the window to open</span></div>
+          <div class="cs-row"><kbd>🖍</kbd><span>Highlight (select text first)</span></div>
+          <div class="cs-row"><kbd>📝</kbd><span>Sticky note (click on page)</span></div>
+          <div class="cs-row"><kbd>👁</kbd><span>OCR scanned PDF (Tesseract)</span></div>
+          <div class="cs-row"><kbd>🌙</kbd><span>Invert colors (dark-mode reading)</span></div>
+        </div>
+      </div>
     {/if}
   </div>
 </div>
@@ -1439,6 +1525,106 @@
     border-color: #c14545;
     color: #ffb3b3;
   }
+
+  /* ---- Invert (dark-mode reading) ---- */
+  .pdfjs-container.invert :global(.page),
+  .pdfjs-container.invert :global(canvas) {
+    filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.95);
+  }
+
+  /* ---- Drag-and-drop overlay ---- */
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 122, 255, 0.08);
+    border: 3px dashed #007aff;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+  }
+  .drop-inner {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    padding: 24px 40px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+  .drop-icon { font-size: 48px; line-height: 1; margin-bottom: 8px; }
+  .drop-text { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+
+  /* ---- Cheatsheet modal ---- */
+  .cheatsheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    border: 0;
+    padding: 0;
+    cursor: default;
+  }
+  .cheatsheet {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 101;
+    width: min(480px, 90vw);
+    background: var(--bg-elev, #1c1c20);
+    color: var(--fg, #fff);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    padding: 20px 24px;
+  }
+  .cheatsheet header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .cheatsheet h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .cs-close {
+    background: transparent;
+    color: var(--fg-mute, #888);
+    border: 0;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .cs-close:hover { background: var(--bg-hover, #2a2a30); color: var(--fg, #fff); }
+  .cs-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .cs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cs-row kbd {
+    background: var(--bg, #0e0e10);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    min-width: 28px;
+    text-align: center;
+  }
+  .cs-row span { color: var(--fg-mute, #aaa); margin-left: 4px; }
 
   /* ---- Info sidebar ---- */
   .info-sidebar {
