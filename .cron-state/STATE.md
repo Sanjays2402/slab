@@ -9,7 +9,7 @@
 **PR_READY:** false
 **BRANCH:** `feature/v0.8.1-polyglot`
 **BASE:** `main` @ `04876a8` (v0.8.0 release merge)
-**LAST COMMIT:** `ee44958` — chore(cron): initialize autonomous feature development for v0.8.1 Polyglot
+**LAST COMMIT:** `708531d` — feat(polyglot): scaffold module + register in pdf.rs
 
 ## GOAL
 Ship **v0.8.1 "Polyglot"** — a `markitdown` bridge that lets Slab accept .docx / .xlsx / .pptx / .html / .epub / .csv / .json / .xml / images / audio as input and convert to PDF via the existing `md2pdf` engine.
@@ -33,7 +33,7 @@ Research note: `.cron-state/research-markitdown.md`.
 
 ## SUB-TASKS (from plan)
 - [x] Bootstrap: branch, research note, STATE.md, plan, session log
-- [ ] **Task 1**: Scaffold `pdf::polyglot` module + register in `pdf.rs`
+- [x] **Task 1**: Scaffold `pdf::polyglot` module + register in `pdf.rs` (commit `708531d`)
 - [ ] Task 2: Implement extension allow-list (`supported_extension`)
 - [ ] Task 3: Implement `require_markitdown()` preflight
 - [ ] Task 4: Wire `polyglot_to_pdf` to subprocess + md2pdf
@@ -50,19 +50,22 @@ Research note: `.cron-state/research-markitdown.md`.
 - [ ] Task 15: Flip STATE.md to `STATUS: DONE` / `PR_READY: true`
 
 ## NEXT UP
-**Task 1: Scaffold `pdf::polyglot` module + register in `pdf.rs`.**
-- Create `src-tauri/src/pdf/polyglot.rs` with the stub from the plan.
-- Add `pub mod polyglot;` to `src-tauri/src/pdf.rs` between `page_numbers` and `pages` (keep alphabetical).
-- Run `cd src-tauri && cargo build --lib` → expect clean compile.
-- Commit: `feat(polyglot): scaffold module + register in pdf.rs`.
+**Task 2: Implement extension allow-list `supported_extension(input: &Path) -> Option<&'static str>`.**
+- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 2.
+- Pure function — case-insensitive ext match, returns canonical kind name.
+- Supported kinds (locked): docx, xlsx, pptx, html, htm→html, epub, csv, json, xml, txt, md, markdown→md, png, jpg, jpeg→jpg, gif, bmp, tiff, tif→tiff, webp, heic, mp3, wav, m4a, flac, ogg, opus.
+- PDF explicitly rejected (returns None) — decision #4 in STATE.
+- TDD: write failing tests first, run, implement, re-run, commit.
+- Quality gates: fmt + clippy + test --lib must pass before commit.
+- Commit message: `feat(polyglot): extension allow-list with case-insensitive dispatch`.
 
-Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 1.
+Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 2 (line 85 onwards).
 
 ## BLOCKERS
 None.
 
 ## NOTES FROM PRIOR SESSIONS
-- (none yet — this is the bootstrap run)
+- 2026-05-16 16:43 (Cake/cron): Task 1 done. Scaffold compiled clean, clippy clean, 81 tests pass. Pushed `708531d`. No surprises. The patch tool warned about a "sibling subagent" having modified `pdf.rs` — false alarm, that was the earlier bootstrap session's edit; confirmed file state by reading before commit.
 
 ## QUICK REFERENCE
 - Quality gates (must all pass before commit):
