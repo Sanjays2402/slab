@@ -20,6 +20,7 @@ use pdf::metadata::{
     write_metadata as do_write_metadata, Metadata,
 };
 use pdf::nup::{nup as do_nup, NupOpts};
+use pdf::ocr::{ocr as do_ocr, OcrOpts, OcrReport};
 use pdf::outline::{
     read_outline as do_read_outline, write_outline as do_write_outline, OutlineNode,
 };
@@ -279,6 +280,11 @@ fn slab_append_annotations(
     do_append_annotations(&input, &output, &annotations).into()
 }
 
+#[tauri::command]
+fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrReport> {
+    do_ocr(&input, &output, &opts).into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -317,6 +323,7 @@ pub fn run() {
             slab_read_outline,
             slab_write_outline,
             slab_append_annotations,
+            slab_ocr,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

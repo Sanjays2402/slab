@@ -17,6 +17,7 @@ pub mod md2pdf;
 pub mod merge;
 pub mod metadata;
 pub mod nup;
+pub mod ocr;
 pub mod outline;
 pub mod page_labels;
 pub mod page_numbers;

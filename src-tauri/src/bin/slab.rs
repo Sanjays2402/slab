@@ -24,6 +24,8 @@ use slab_lib::pdf::info::info;
 use slab_lib::pdf::md2pdf::{render as md2pdf_render, Md2PdfOpts};
 use slab_lib::pdf::merge::merge_pdfs;
 use slab_lib::pdf::metadata::{read_metadata, strip_metadata};
+use slab_lib::pdf::ocr::{ocr, OcrOpts};
+use slab_lib::pdf::outline::{read_outline, write_outline, OutlineNode};
 use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
 use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
 use slab_lib::pdf::PdfError;
@@ -64,6 +66,8 @@ fn main() -> ExitCode {
         "auto-redact" => cmd_auto_redact(rest),
         "read-metadata" => cmd_read_metadata(rest),
         "strip-metadata" => cmd_strip_metadata(rest),
+        "ocr" => cmd_ocr(rest),
+        "outline" => cmd_outline(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
         ))),
@@ -117,6 +121,12 @@ Commands:
   auto-redact <file> -o <out> [--presets email,ssn,phone,cc] [--patterns 'regex' ...]
   read-metadata <file>
   strip-metadata <file> -o <out>
+  ocr <file> -o <out> [--lang eng] [--dpi 300]
+                                     Rasterize + run Tesseract → searchable PDF.
+                                     Requires `pdftoppm` and `tesseract` on PATH.
+  outline read <file>                Print outline as JSON
+  outline write <file> -o <out> --json <outline.json>
+                                     Replace the /Outlines tree from JSON
 
   help, --help                       This help
   version, --version                 Print version
@@ -434,6 +444,57 @@ fn cmd_strip_metadata(args: &[String]) -> Result<(), CliError> {
     strip_metadata(&input, &output)?;
     println!("✓ stripped → {}", output.display());
     Ok(())
+}
+
+fn cmd_ocr(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let lang = find_flag(args, "--lang").unwrap_or("eng").to_string();
+    let dpi: u32 = find_flag(args, "--dpi")
+        .map(|s| s.parse().unwrap_or(300))
+        .unwrap_or(300);
+    let report = ocr(&input, &output, &OcrOpts { lang, dpi })?;
+    println!(
+        "✓ OCR'd {} page(s) [{} @ {} DPI] → {}",
+        report.pages,
+        report.lang,
+        report.dpi,
+        output.display()
+    );
+    Ok(())
+}
+
+fn cmd_outline(args: &[String]) -> Result<(), CliError> {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    let rest = if args.is_empty() { &[][..] } else { &args[1..] };
+    match sub {
+        "read" => {
+            let input = require_arg(rest, 0, "<file>")?;
+            let tree = read_outline(&input)?;
+            let json = serde_json::to_string_pretty(&tree)
+                .map_err(|e| CliError::Op(PdfError::Other(format!("json: {e}"))))?;
+            println!("{json}");
+            Ok(())
+        }
+        "write" => {
+            let input = require_arg(rest, 0, "<file>")?;
+            let output = output_path(rest)?;
+            let json_path = find_flag(rest, "--json").ok_or_else(|| {
+                CliError::Usage("outline write needs --json <outline.json>".into())
+            })?;
+            let json = std::fs::read_to_string(json_path)
+                .map_err(|e| CliError::Op(PdfError::Other(format!("read json: {e}"))))?;
+            let nodes: Vec<OutlineNode> = serde_json::from_str(&json)
+                .map_err(|e| CliError::Op(PdfError::Other(format!("parse json: {e}"))))?;
+            write_outline(&input, &output, &nodes)?;
+            println!("✓ outline written → {}", output.display());
+            Ok(())
+        }
+        _ => Err(CliError::Usage(
+            "outline subcommand: `read <file>` or `write <file> -o <out> --json <outline.json>`"
+                .into(),
+        )),
+    }
 }
 
 // Suppress unused warnings on Path.

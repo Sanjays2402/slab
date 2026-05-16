@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { readFile } from "@tauri-apps/plugin-fs";
+  import { invoke } from "@tauri-apps/api/core";
   import { basename, formatBytes } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
@@ -66,6 +67,8 @@
   let outlineLoading = $state(false);
   let outlineEditorOpen = $state(false);
   let annotMode = $state<AnnotMode>("off");
+  let ocrRunning = $state(false);
+  let ocrStatus = $state<string>("");
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -104,6 +107,42 @@
         await loadBytes(f.name, new Uint8Array(buf));
       };
       input.click();
+    }
+  }
+
+  // ---------- OCR ----------
+  async function runOcr() {
+    if (!doc || ocrRunning) return;
+    const inputName = basename(doc.path).replace(/\.pdf$/i, "");
+    const defaultName = `${inputName}-ocr.pdf`;
+    const out = await saveDialog({
+      title: "Save OCR'd PDF",
+      defaultPath: defaultName,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!out) return;
+    ocrRunning = true;
+    ocrStatus = "Running OCR (this can take a while)…";
+    try {
+      const report = await invoke<{ pages: number; lang: string; dpi: number }>(
+        "slab_ocr",
+        {
+          input: doc.path,
+          output: out,
+          opts: { lang: "eng", dpi: 300 },
+        }
+      );
+      ocrStatus = `✓ OCR'd ${report.pages} page${report.pages === 1 ? "" : "s"}`;
+      // Load the new file in the reader.
+      await loadPath(out);
+      // Clear status after a moment.
+      setTimeout(() => (ocrStatus = ""), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ocrStatus = `✗ OCR failed: ${msg}`;
+      setTimeout(() => (ocrStatus = ""), 6000);
+    } finally {
+      ocrRunning = false;
     }
   }
 
@@ -722,6 +761,13 @@
         onclick={() => (annotMode = annotMode === "note" ? "off" : "note")}
         title="Add sticky note (click on page)"
       >📝 Note</button>
+      <button
+        class="tb-btn"
+        class:active={ocrRunning}
+        disabled={!doc || ocrRunning}
+        onclick={runOcr}
+        title="Make scanned PDF searchable (Tesseract)"
+      >{ocrRunning ? "⏳ OCR…" : "👁 OCR"}</button>
     </div>
 
     <div class="tb-group right">
@@ -878,6 +924,10 @@
           onmodechange={(m) => (annotMode = m)}
         />
       </aside>
+    {/if}
+
+    {#if ocrStatus}
+      <div class="ocr-toast" class:err={ocrStatus.startsWith("✗")}>{ocrStatus}</div>
     {/if}
   </div>
 </div>
@@ -1362,6 +1412,32 @@
     right: 12px;
     z-index: 30;
     /* The AnnotateLayer component carries its own background + border. */
+  }
+
+  /* ---- OCR toast ---- */
+  .ocr-toast {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--bg-elev, #1c1c20);
+    color: var(--fg, #fff);
+    border: 1px solid var(--border, #2a2a30);
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    max-width: 80%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ocr-toast.err {
+    border-color: #c14545;
+    color: #ffb3b3;
   }
 
   /* ---- Info sidebar ---- */
