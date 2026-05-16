@@ -9,7 +9,7 @@
 **PR_READY:** false
 **BRANCH:** `feature/v0.8.1-polyglot`
 **BASE:** `main` @ `04876a8` (v0.8.0 release merge)
-**LAST COMMIT:** (initial bootstrap — see git log)
+**LAST COMMIT:** `ee44958` — chore(cron): initialize autonomous feature development for v0.8.1 Polyglot
 
 ## GOAL
 Ship **v0.8.1 "Polyglot"** — a `markitdown` bridge that lets Slab accept .docx / .xlsx / .pptx / .html / .epub / .csv / .json / .xml / images / audio as input and convert to PDF via the existing `md2pdf` engine.
