@@ -15,6 +15,7 @@
 //
 // Run `slab help` for the full list.
 
+use slab_lib::pdf::annot_export::{extract as extract_annots, to_markdown as annots_to_md};
 use slab_lib::pdf::auto_redact::{auto_redact, AutoRedactOpts};
 use slab_lib::pdf::compress::compress;
 use slab_lib::pdf::encrypt::{decrypt, encrypt};
@@ -68,6 +69,7 @@ fn main() -> ExitCode {
         "strip-metadata" => cmd_strip_metadata(rest),
         "ocr" => cmd_ocr(rest),
         "outline" => cmd_outline(rest),
+        "export-annots" => cmd_export_annots(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
         ))),
@@ -127,6 +129,7 @@ Commands:
   outline read <file>                Print outline as JSON
   outline write <file> -o <out> --json <outline.json>
                                      Replace the /Outlines tree from JSON
+  export-annots <file> -o <out.md>   Extract highlights & notes as Markdown
 
   help, --help                       This help
   version, --version                 Print version
@@ -500,3 +503,27 @@ fn cmd_outline(args: &[String]) -> Result<(), CliError> {
 // Suppress unused warnings on Path.
 #[allow(dead_code)]
 fn _force_path_use(_p: &Path) {}
+
+fn cmd_export_annots(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let annots = extract_annots(&input)?;
+    let label = input
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("document.pdf")
+        .to_string();
+    let md = annots_to_md(&label, &annots);
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| CliError::Op(PdfError::Other(format!("create output dir: {e}"))))?;
+    }
+    std::fs::write(&output, md)
+        .map_err(|e| CliError::Op(PdfError::Other(format!("write markdown: {e}"))))?;
+    println!(
+        "✓ {} annotation(s) exported → {}",
+        annots.len(),
+        output.display()
+    );
+    Ok(())
+}

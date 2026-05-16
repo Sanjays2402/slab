@@ -149,6 +149,34 @@
     }
   }
 
+  // ---------- Export annotations to Markdown ----------
+  async function exportAnnotsToMd() {
+    if (!doc) return;
+    const inputName = basename(doc.path).replace(/\.pdf$/i, "");
+    const out = await saveDialog({
+      title: "Export annotations as Markdown",
+      defaultPath: `${inputName}-annotations.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!out) return;
+    ocrStatus = "Exporting annotations…";
+    try {
+      const count = await invoke<number>("slab_export_annotations_md", {
+        input: doc.path,
+        output: out,
+        label: basename(doc.path),
+      });
+      ocrStatus = count === 0
+        ? "✓ Exported (no annotations found)"
+        : `✓ Exported ${count} annotation${count === 1 ? "" : "s"}`;
+      setTimeout(() => (ocrStatus = ""), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ocrStatus = `✗ Export failed: ${msg}`;
+      setTimeout(() => (ocrStatus = ""), 6000);
+    }
+  }
+
   async function loadPath(path: string) {
     loading = true;
     loadError = null;
@@ -813,6 +841,12 @@
         onclick={runOcr}
         title="Make scanned PDF searchable (Tesseract)"
       >{ocrRunning ? "⏳ OCR…" : "👁 OCR"}</button>
+      <button
+        class="tb-btn"
+        disabled={!doc}
+        onclick={exportAnnotsToMd}
+        title="Export highlights and notes to Markdown"
+      >📤 Export</button>
     </div>
 
     <div class="tb-group right">
@@ -1012,6 +1046,7 @@
           <div class="cs-row"><kbd>📝</kbd><span>Sticky note (click on page)</span></div>
           <div class="cs-row"><kbd>👁</kbd><span>OCR scanned PDF (Tesseract)</span></div>
           <div class="cs-row"><kbd>🌙</kbd><span>Invert colors (dark-mode reading)</span></div>
+          <div class="cs-row"><kbd>📤</kbd><span>Export annotations as Markdown</span></div>
         </div>
       </div>
     {/if}

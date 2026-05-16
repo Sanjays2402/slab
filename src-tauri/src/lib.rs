@@ -3,6 +3,9 @@
 
 pub mod pdf;
 
+use pdf::annot_export::{
+    extract as do_extract_annots, to_markdown as do_annots_to_md, ExtractedAnnotation,
+};
 use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
@@ -285,6 +288,32 @@ fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrRepo
     do_ocr(&input, &output, &opts).into()
 }
 
+#[tauri::command]
+fn slab_export_annotations_md(
+    input: PathBuf,
+    output: PathBuf,
+    label: Option<String>,
+) -> CmdResult<u32> {
+    let result: Result<u32, PdfError> = (|| {
+        let annots: Vec<ExtractedAnnotation> = do_extract_annots(&input)?;
+        let label = label.unwrap_or_else(|| {
+            input
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("document.pdf")
+                .to_string()
+        });
+        let md = do_annots_to_md(&label, &annots);
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| PdfError::Other(format!("create output dir: {e}")))?;
+        }
+        std::fs::write(&output, md).map_err(|e| PdfError::Other(format!("write markdown: {e}")))?;
+        Ok(annots.len() as u32)
+    })();
+    result.into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -324,6 +353,7 @@ pub fn run() {
             slab_write_outline,
             slab_append_annotations,
             slab_ocr,
+            slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
