@@ -87,7 +87,7 @@
     <button class="dropzone" onclick={pickInput}>
       <span class="dz-icon">+</span>
       <span class="dz-title">Choose a PDF</span>
-      <span class="dz-hint">Native text only — scanned PDFs need OCR (coming soon).</span>
+      <span class="dz-hint">Native text first — scanned PDFs? Use 👁 OCR in the Reader panel.</span>
     </button>
   {:else}
     <div class="file-card">

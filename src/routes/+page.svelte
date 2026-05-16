@@ -53,7 +53,7 @@
     { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
     { id: "grayscale", label: "Grayscale", icon: "◐", ready: true },
     { id: "labels", label: "Page Labels", icon: "ⅰ", ready: true },
-    { id: "ocr", label: "OCR", icon: "✦", ready: false },
+    { id: "ocr", label: "OCR", icon: "👁", ready: true },
   ];
 
   let active = $state("reader");
@@ -114,7 +114,7 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.7.0</span>
+    <span class="version">v0.8.0</span>
   </div>
 </aside>
 
