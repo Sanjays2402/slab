@@ -8,6 +8,10 @@
   import ExtractPanel from "$lib/panels/ExtractPanel.svelte";
   import EncryptPanel from "$lib/panels/EncryptPanel.svelte";
   import WatermarkPanel from "$lib/panels/WatermarkPanel.svelte";
+  import ConvertPanel from "$lib/panels/ConvertPanel.svelte";
+  import MetadataPanel from "$lib/panels/MetadataPanel.svelte";
+  import PageNumbersPanel from "$lib/panels/PageNumbersPanel.svelte";
+  import SignPanel from "$lib/panels/SignPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { RecentFile } from "$lib/recent";
 
@@ -27,9 +31,11 @@
     { id: "extract", label: "Extract", icon: "❡", ready: true },
     { id: "encrypt", label: "Encrypt", icon: "▣", ready: true },
     { id: "watermark", label: "Watermark", icon: "○", ready: true },
+    { id: "convert", label: "Convert", icon: "↔", ready: true },
+    { id: "metadata", label: "Metadata", icon: "ⓘ", ready: true },
+    { id: "numbers", label: "Numbers", icon: "№", ready: true },
+    { id: "sign", label: "Sign", icon: "✍", ready: true },
     { id: "ocr", label: "OCR", icon: "✦", ready: false },
-    { id: "convert", label: "Convert", icon: "↔", ready: false },
-    { id: "sign", label: "Sign", icon: "✍", ready: false },
   ];
 
   let active = $state("reader");
@@ -90,7 +96,7 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.3.0</span>
+    <span class="version">v0.5.0</span>
   </div>
 </aside>
 
@@ -111,6 +117,14 @@
     <EncryptPanel />
   {:else if active === "watermark"}
     <WatermarkPanel />
+  {:else if active === "convert"}
+    <ConvertPanel />
+  {:else if active === "metadata"}
+    <MetadataPanel />
+  {:else if active === "numbers"}
+    <PageNumbersPanel />
+  {:else if active === "sign"}
+    <SignPanel />
   {/if}
 </main>
 

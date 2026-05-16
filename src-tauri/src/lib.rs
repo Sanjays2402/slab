@@ -8,6 +8,11 @@ use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
 use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::merge::merge_pdfs;
+use pdf::metadata::{
+    read_metadata as do_read_metadata, strip_metadata as do_strip_metadata,
+    write_metadata as do_write_metadata, Metadata,
+};
+use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
@@ -176,6 +181,26 @@ fn slab_watermark(
     do_watermark(&input, &output, opts, &pages).into()
 }
 
+#[tauri::command]
+fn slab_read_metadata(input: PathBuf) -> CmdResult<Metadata> {
+    do_read_metadata(&input).into()
+}
+
+#[tauri::command]
+fn slab_write_metadata(input: PathBuf, output: PathBuf, meta: Metadata) -> CmdResult<()> {
+    do_write_metadata(&input, &output, &meta).into()
+}
+
+#[tauri::command]
+fn slab_strip_metadata(input: PathBuf, output: PathBuf) -> CmdResult<()> {
+    do_strip_metadata(&input, &output).into()
+}
+
+#[tauri::command]
+fn slab_page_numbers(input: PathBuf, output: PathBuf, opts: PageNumbersOpts) -> CmdResult<u32> {
+    do_page_numbers(&input, &output, &opts).into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -198,6 +223,10 @@ pub fn run() {
             slab_encrypt,
             slab_decrypt,
             slab_watermark,
+            slab_read_metadata,
+            slab_write_metadata,
+            slab_strip_metadata,
+            slab_page_numbers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

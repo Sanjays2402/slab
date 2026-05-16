@@ -8,6 +8,8 @@ pub mod encrypt;
 pub mod extract;
 pub mod info;
 pub mod merge;
+pub mod metadata;
+pub mod page_numbers;
 pub mod pages;
 pub mod split;
 pub mod watermark;

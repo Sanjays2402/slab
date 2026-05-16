@@ -3,6 +3,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { readFile } from "@tauri-apps/plugin-fs";
   import { basename, formatBytes } from "$lib/types";
+  import { isInTauri } from "$lib/tauri";
   import { recordRecent, listRecent, formatRelTime, type RecentFile } from "$lib/recent";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
@@ -47,7 +48,20 @@
   let findWholeWord = $state(false);
   let thumbsOpen = $state(true);
   let infoOpen = $state(false);
+  let outlineOpen = $state(false);
   let recents = $state<RecentFile[]>(listRecent());
+
+  // Outline tree (TOC) — populated after a PDF loads. Each node may have nested
+  // children; `dest` is the pdf.js destination reference, resolved on click to
+  // a 1-indexed page number.
+  type OutlineNode = {
+    title: string;
+    dest: unknown;
+    items: OutlineNode[];
+    expanded: boolean;
+  };
+  let outline = $state<OutlineNode[]>([]);
+  let outlineLoading = $state(false);
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -64,9 +78,7 @@
   let thumbsAbortController: AbortController | null = null;
 
   // ---------- File loading ----------
-  function isInTauri(): boolean {
-    return typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
-  }
+  // isInTauri is imported from $lib/tauri
 
   async function pickFile() {
     if (isInTauri()) {
@@ -126,6 +138,8 @@
 
       // Capture metadata for the info panel
       void extractMeta(pdf, fileSize ?? data.byteLength);
+      // Capture outline / TOC for the outline sidebar
+      void extractOutline(pdf);
 
       // Record into recent files
       recordRecent({ path, name: basename(path), pageCount: pdf.numPages });
@@ -172,6 +186,50 @@
     } catch {
       docMeta = { fileSize };
     }
+  }
+
+  async function extractOutline(pdf: any) {
+    outlineLoading = true;
+    outline = [];
+    try {
+      const raw = await pdf.getOutline();
+      if (!raw || raw.length === 0) {
+        outline = [];
+        return;
+      }
+      const walk = (items: any[], depth: number): OutlineNode[] =>
+        items.map((it) => ({
+          title: (it?.title || "").trim() || "(untitled)",
+          dest: it?.dest,
+          items: it?.items?.length ? walk(it.items, depth + 1) : [],
+          expanded: depth < 1, // only top level expanded by default
+        }));
+      outline = walk(raw, 0);
+    } catch {
+      outline = [];
+    } finally {
+      outlineLoading = false;
+    }
+  }
+
+  async function jumpToOutline(node: OutlineNode) {
+    if (!pdfDocument || !node.dest) return;
+    try {
+      let dest = node.dest;
+      if (typeof dest === "string") {
+        dest = await pdfDocument.getDestination(dest);
+      }
+      if (!Array.isArray(dest)) return;
+      const ref = dest[0];
+      const pageIndex = await pdfDocument.getPageIndex(ref);
+      jumpTo(pageIndex + 1);
+    } catch {
+      // Ignore — broken dest, no-op.
+    }
+  }
+
+  function toggleOutlineNode(node: OutlineNode) {
+    node.expanded = !node.expanded;
   }
 
   function describePageSize(w: number, h: number): string {
@@ -223,6 +281,7 @@
       try { pdfDocument.destroy(); } catch { /* ignore */ }
     }
     pdfDocument = null;
+    outline = [];
     docMeta = null;
   }
 
@@ -296,6 +355,7 @@
     // (Read state inside the effect so Svelte tracks the deps.)
     void thumbsOpen;
     void infoOpen;
+    void outlineOpen;
     queueMicrotask(() => rescaleOnResize());
   });
 
@@ -494,6 +554,33 @@
   });
 </script>
 
+{#snippet outlineList(nodes: OutlineNode[], depth: number)}
+  <ul class="outline-list" class:nested={depth > 0}>
+    {#each nodes as node, i (node.title + i + depth)}
+      <li class="outline-item">
+        <div class="outline-row" style="padding-left: {depth * 12}px">
+          {#if node.items.length > 0}
+            <button
+              class="outline-twist"
+              class:open={node.expanded}
+              onclick={() => toggleOutlineNode(node)}
+              aria-label={node.expanded ? "Collapse" : "Expand"}
+            >▸</button>
+          {:else}
+            <span class="outline-twist spacer" aria-hidden="true"></span>
+          {/if}
+          <button class="outline-label" onclick={() => jumpToOutline(node)} title={node.title}>
+            {node.title}
+          </button>
+        </div>
+        {#if node.expanded && node.items.length > 0}
+          {@render outlineList(node.items, depth + 1)}
+        {/if}
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
 <header class="content-header reader-header">
   <h1>Reader</h1>
   <p class="subtitle">
@@ -543,7 +630,8 @@
     </div>
 
     <div class="tb-group">
-      <button class="tb-btn icon" onclick={() => (thumbsOpen = !thumbsOpen)} title="Toggle thumbnails">▦</button>
+      <button class="tb-btn icon" class:active={thumbsOpen} onclick={() => (thumbsOpen = !thumbsOpen)} title="Toggle thumbnails">▦</button>
+      <button class="tb-btn icon" class:active={outlineOpen} disabled={!doc || outline.length === 0} onclick={() => (outlineOpen = !outlineOpen)} title={outline.length === 0 ? "No outline in this PDF" : "Toggle outline"}>☰</button>
     </div>
 
     <div class="tb-group">
@@ -615,8 +703,24 @@
     </div>
   {/if}
 
-  <div class="viewer-grid" class:no-thumbs={!thumbsOpen} class:with-info={infoOpen}>
-    {#if thumbsOpen && doc}
+  <div class="viewer-grid" class:no-thumbs={!thumbsOpen && !outlineOpen} class:with-info={infoOpen}>
+    {#if outlineOpen && doc}
+      <aside class="outline-sidebar">
+        <div class="outline-head">
+          <span class="outline-title-label">Outline</span>
+          <button class="outline-close" onclick={() => (outlineOpen = false)} title="Close">×</button>
+        </div>
+        {#if outlineLoading}
+          <div class="outline-empty">Loading…</div>
+        {:else if outline.length === 0}
+          <div class="outline-empty">No outline in this PDF.</div>
+        {:else}
+          <nav class="outline-tree">
+            {@render outlineList(outline, 0)}
+          </nav>
+        {/if}
+      </aside>
+    {:else if thumbsOpen && doc}
       <aside class="thumbs">
         {#each Array.from({ length: doc.pageCount }, (_, i) => i + 1) as n (n)}
           <button
@@ -970,6 +1074,105 @@
     color: var(--text-3);
     white-space: nowrap;
   }
+
+  /* ---- Outline sidebar ---- */
+  .outline-sidebar {
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .outline-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .outline-title-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--text-3);
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .outline-close {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-3);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 6px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .outline-close:hover { color: var(--text); background: var(--bg-2); }
+  .outline-empty {
+    color: var(--text-3);
+    font-size: 12px;
+    padding: 14px 12px;
+    font-style: italic;
+  }
+  .outline-tree {
+    overflow-y: auto;
+    padding: 6px 6px 14px;
+    flex: 1;
+  }
+  .outline-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .outline-list.nested {
+    margin: 0;
+  }
+  .outline-item { margin: 0; }
+  .outline-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 6px;
+  }
+  .outline-row:hover { background: var(--bg-2); }
+  .outline-twist {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    font-size: 9px;
+    width: 18px;
+    height: 24px;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 120ms ease;
+    flex-shrink: 0;
+  }
+  .outline-twist.open {
+    transform: rotate(90deg);
+    color: var(--text-2);
+  }
+  .outline-twist.spacer {
+    pointer-events: none;
+    cursor: default;
+  }
+  .outline-label {
+    flex: 1;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-2);
+    font-size: 12.5px;
+    padding: 4px 8px 4px 2px;
+    border-radius: 4px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .outline-label:hover { color: var(--text); }
 
   /* ---- Info sidebar ---- */
   .info-sidebar {
