@@ -1,21 +1,25 @@
 // Slab — fast, free, offline PDF tool.
 // All operations run locally; nothing is ever uploaded.
 
-mod pdf;
+pub mod pdf;
 
+use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
 use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
 use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
+use pdf::grayscale::{grayscale as do_grayscale, GrayscaleOpts};
 use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::insert::{insert as do_insert, InsertOpts};
+use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
 use pdf::metadata::{
     read_metadata as do_read_metadata, strip_metadata as do_strip_metadata,
     write_metadata as do_write_metadata, Metadata,
 };
 use pdf::nup::{nup as do_nup, NupOpts};
+use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
 use pdf::redact::{redact as do_redact, RedactOpts};
@@ -231,6 +235,27 @@ fn slab_nup(input: PathBuf, output: PathBuf, opts: NupOpts) -> CmdResult<u32> {
     do_nup(&input, &output, opts).into()
 }
 
+#[tauri::command]
+fn slab_md2pdf(output: PathBuf, opts: Md2PdfOpts) -> CmdResult<u32> {
+    let md = opts.markdown.clone();
+    do_md2pdf(&md, &output, opts).into()
+}
+
+#[tauri::command]
+fn slab_grayscale(input: PathBuf, output: PathBuf, opts: GrayscaleOpts) -> CmdResult<u32> {
+    do_grayscale(&input, &output, opts).into()
+}
+
+#[tauri::command]
+fn slab_page_labels(input: PathBuf, output: PathBuf, opts: PageLabelsOpts) -> CmdResult<u32> {
+    do_page_labels(&input, &output, opts).into()
+}
+
+#[tauri::command]
+fn slab_auto_redact(input: PathBuf, output: PathBuf, opts: AutoRedactOpts) -> CmdResult<u32> {
+    do_auto_redact(&input, &output, opts).into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -262,6 +287,10 @@ pub fn run() {
             slab_header_footer,
             slab_redact,
             slab_nup,
+            slab_md2pdf,
+            slab_grayscale,
+            slab_page_labels,
+            slab_auto_redact,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "0.6.0"
+version = "0.7.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -10,6 +10,10 @@ repository = "https://github.com/Sanjays2402/slab"
 [lib]
 name = "slab_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "slab"
+path = "src/bin/slab.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -26,6 +30,12 @@ anyhow = "1"
 
 # PDF manipulation: pure-Rust, no native deps
 lopdf = "0.40"
+
+# Markdown parser for md2pdf
+pulldown-cmark = { version = "0.12", default-features = false }
+
+# Regex engine for auto-redact
+regex = "1"
 
 # Async runtime for long-running ops (compress, OCR later)
 tokio = { version = "1", features = ["full"] }

@@ -17,6 +17,10 @@
   import HeaderFooterPanel from "$lib/panels/HeaderFooterPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
   import NupPanel from "$lib/panels/NupPanel.svelte";
+  import MarkdownPanel from "$lib/panels/MarkdownPanel.svelte";
+  import GrayscalePanel from "$lib/panels/GrayscalePanel.svelte";
+  import PageLabelsPanel from "$lib/panels/PageLabelsPanel.svelte";
+  import AutoRedactPanel from "$lib/panels/AutoRedactPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { RecentFile } from "$lib/recent";
 
@@ -44,7 +48,11 @@
     { id: "insert", label: "Insert", icon: "＋", ready: true },
     { id: "headerfooter", label: "Header/Footer", icon: "≡", ready: true },
     { id: "redact", label: "Redact", icon: "▮", ready: true },
+    { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
     { id: "nup", label: "N-up", icon: "▦", ready: true },
+    { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
+    { id: "grayscale", label: "Grayscale", icon: "◐", ready: true },
+    { id: "labels", label: "Page Labels", icon: "ⅰ", ready: true },
     { id: "ocr", label: "OCR", icon: "✦", ready: false },
   ];
 
@@ -106,7 +114,7 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.6.0</span>
+    <span class="version">v0.7.0</span>
   </div>
 </aside>
 
@@ -143,8 +151,16 @@
     <HeaderFooterPanel />
   {:else if active === "redact"}
     <RedactPanel />
+  {:else if active === "autoredact"}
+    <AutoRedactPanel />
   {:else if active === "nup"}
     <NupPanel />
+  {:else if active === "markdown"}
+    <MarkdownPanel />
+  {:else if active === "grayscale"}
+    <GrayscalePanel />
+  {:else if active === "labels"}
+    <PageLabelsPanel />
   {/if}
 </main>
 

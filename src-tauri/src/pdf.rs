@@ -3,16 +3,20 @@
 // Each operation lives in its own submodule so the surface stays small and
 // each feature can be tested in isolation.
 
+pub mod auto_redact;
 pub mod compress;
 pub mod crop;
 pub mod encrypt;
 pub mod extract;
+pub mod grayscale;
 pub mod header_footer;
 pub mod info;
 pub mod insert;
+pub mod md2pdf;
 pub mod merge;
 pub mod metadata;
 pub mod nup;
+pub mod page_labels;
 pub mod page_numbers;
 pub mod pages;
 pub mod redact;
