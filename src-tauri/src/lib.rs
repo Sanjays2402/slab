@@ -19,6 +19,9 @@ use pdf::metadata::{
     write_metadata as do_write_metadata, Metadata,
 };
 use pdf::nup::{nup as do_nup, NupOpts};
+use pdf::outline::{
+    read_outline as do_read_outline, write_outline as do_write_outline, OutlineNode,
+};
 use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
@@ -256,6 +259,16 @@ fn slab_auto_redact(input: PathBuf, output: PathBuf, opts: AutoRedactOpts) -> Cm
     do_auto_redact(&input, &output, opts).into()
 }
 
+#[tauri::command]
+fn slab_read_outline(input: PathBuf) -> CmdResult<Vec<OutlineNode>> {
+    do_read_outline(&input).into()
+}
+
+#[tauri::command]
+fn slab_write_outline(input: PathBuf, output: PathBuf, nodes: Vec<OutlineNode>) -> CmdResult<u32> {
+    do_write_outline(&input, &output, &nodes).into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -291,6 +304,8 @@ pub fn run() {
             slab_grayscale,
             slab_page_labels,
             slab_auto_redact,
+            slab_read_outline,
+            slab_write_outline,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

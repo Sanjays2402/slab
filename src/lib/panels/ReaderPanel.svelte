@@ -5,6 +5,7 @@
   import { basename, formatBytes } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
+  import OutlineEditor from "$lib/OutlineEditor.svelte";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -62,6 +63,7 @@
   };
   let outline = $state<OutlineNode[]>([]);
   let outlineLoading = $state(false);
+  let outlineEditorOpen = $state(false);
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -667,7 +669,7 @@
 
     <div class="tb-group">
       <button class="tb-btn icon" class:active={thumbsOpen} onclick={() => (thumbsOpen = !thumbsOpen)} title="Toggle thumbnails">▦</button>
-      <button class="tb-btn icon" class:active={outlineOpen} disabled={!doc || outline.length === 0} onclick={() => (outlineOpen = !outlineOpen)} title={outline.length === 0 ? "No outline in this PDF" : "Toggle outline"}>☰</button>
+      <button class="tb-btn icon" class:active={outlineOpen} disabled={!doc} onclick={() => (outlineOpen = !outlineOpen)} title={outline.length === 0 ? "No outline in this PDF — open to add one" : "Toggle outline"}>☰</button>
     </div>
 
     <div class="tb-group">
@@ -744,12 +746,16 @@
       <aside class="outline-sidebar">
         <div class="outline-head">
           <span class="outline-title-label">Outline</span>
+          <button class="outline-edit" onclick={() => (outlineEditorOpen = true)} title="Edit outline">✎</button>
           <button class="outline-close" onclick={() => (outlineOpen = false)} title="Close">×</button>
         </div>
         {#if outlineLoading}
           <div class="outline-empty">Loading…</div>
         {:else if outline.length === 0}
-          <div class="outline-empty">No outline in this PDF.</div>
+          <div class="outline-empty">
+            <p>No outline in this PDF.</p>
+            <button class="outline-add-btn" onclick={() => (outlineEditorOpen = true)}>+ Create outline</button>
+          </div>
         {:else}
           <nav class="outline-tree">
             {@render outlineList(outline, 0)}
@@ -843,6 +849,20 @@
     {/if}
   </div>
 </div>
+
+{#if outlineEditorOpen && doc}
+  <OutlineEditor
+    path={doc.path}
+    pageCount={doc.pageCount}
+    onclose={() => (outlineEditorOpen = false)}
+    onsaved={(savedPath) => {
+      outlineEditorOpen = false;
+      // Reload from the saved path so the in-app outline reflects the edit
+      // (whether the user overwrote the original or used Save As).
+      void loadPath(savedPath);
+    }}
+  />
+{/if}
 
 <style>
   .reader-header { margin-bottom: 12px; flex-shrink: 0; }
@@ -1214,6 +1234,29 @@
     cursor: pointer;
     border-radius: 4px;
   }
+  .outline-edit {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin-left: auto;
+  }
+  .outline-edit:hover { color: var(--text); background: var(--bg-2); }
+  .outline-add-btn {
+    margin-top: 8px;
+    background: var(--bg-2, #1a1a1a);
+    color: var(--text, #eee);
+    border: 1px solid var(--border, #2a2a2a);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .outline-add-btn:hover { background: var(--bg-1, #222); }
   .outline-close:hover { color: var(--text); background: var(--bg-2); }
   .outline-empty {
     color: var(--text-3);
