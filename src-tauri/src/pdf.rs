@@ -9,6 +9,7 @@ pub mod auto_redact;
 pub mod compress;
 pub mod crop;
 pub mod duplicate;
+pub mod edit_text;
 pub mod encrypt;
 pub mod extract;
 pub mod flatten;

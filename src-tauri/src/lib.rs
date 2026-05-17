@@ -33,6 +33,9 @@ use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
 use pdf::duplicate::duplicate_pages;
+use pdf::edit_text::{
+    find_text_spans as do_find_text_spans, replace_text_span as do_replace_text_span, PageSpans,
+};
 use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
 use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
 use pdf::flatten::{flatten as do_flatten, FlattenOpts, FlattenReport};
@@ -185,6 +188,21 @@ fn slab_reorder_pages(input: PathBuf, order: Vec<u32>, output: PathBuf) -> CmdRe
 #[tauri::command]
 fn slab_pages_build(input: PathBuf, opts: PagesBuildOpts, output: PathBuf) -> CmdResult<u32> {
     do_pages_build(&input, &opts, &output).into()
+}
+
+#[tauri::command]
+fn slab_find_text_spans(input: PathBuf) -> CmdResult<Vec<PageSpans>> {
+    do_find_text_spans(&input).into()
+}
+
+#[tauri::command]
+fn slab_replace_text_span(
+    input: PathBuf,
+    output: PathBuf,
+    span_id: String,
+    new_text: String,
+) -> CmdResult<()> {
+    do_replace_text_span(&input, &output, &span_id, &new_text).into()
 }
 
 #[tauri::command]
@@ -883,6 +901,8 @@ pub fn run() {
             slab_duplicate_pages,
             slab_reorder_pages,
             slab_pages_build,
+            slab_find_text_spans,
+            slab_replace_text_span,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,
