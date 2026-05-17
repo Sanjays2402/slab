@@ -20,6 +20,7 @@ use slab_lib::pdf::auto_redact::{auto_redact, AutoRedactOpts};
 use slab_lib::pdf::compress::compress;
 use slab_lib::pdf::encrypt::{decrypt, encrypt};
 use slab_lib::pdf::extract::{extract_text, extract_text_concat};
+use slab_lib::pdf::flatten::{flatten as do_flatten, FlattenOpts};
 use slab_lib::pdf::grayscale::{grayscale, GrayscaleOpts};
 use slab_lib::pdf::info::info;
 use slab_lib::pdf::md2pdf::{render as md2pdf_render, Md2PdfOpts};
@@ -71,6 +72,7 @@ fn main() -> ExitCode {
         "ocr" => cmd_ocr(rest),
         "outline" => cmd_outline(rest),
         "polyglot" => cmd_polyglot(rest),
+        "flatten" => cmd_flatten(rest),
         "export-annots" => cmd_export_annots(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
@@ -136,6 +138,10 @@ Commands:
                                      json/xml/img/audio → PDF. Requires
                                      `markitdown` on PATH
                                      (`pipx install 'markitdown[all]'`).
+  flatten <file> -o <out> [--no-widgets]
+                                     Bake annotations into the page content
+                                     stream and remove /AcroForm. The result
+                                     is a static PDF with no editable fields.
   export-annots <file> -o <out.md>   Extract highlights & notes as Markdown
 
   help, --help                       This help
@@ -394,6 +400,28 @@ fn cmd_polyglot(args: &[String]) -> Result<(), CliError> {
         report.source_kind,
         report.markdown_bytes,
         report.pages,
+        output.display()
+    );
+    Ok(())
+}
+
+fn cmd_flatten(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let include_widgets = !args.iter().any(|a| a == "--no-widgets");
+    let opts = FlattenOpts { include_widgets };
+    let report = do_flatten(&input, &output, opts)?;
+    println!(
+        "✓ flattened {}/{} annotation(s) ({} dropped) across {} page(s){} → {}",
+        report.annotations_flattened,
+        report.annotations_in,
+        report.annotations_dropped,
+        report.pages_with_annotations,
+        if report.had_acroform {
+            ", AcroForm removed"
+        } else {
+            ""
+        },
         output.display()
     );
     Ok(())

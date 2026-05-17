@@ -12,6 +12,7 @@ use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
 use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
 use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
+use pdf::flatten::{flatten as do_flatten, FlattenOpts, FlattenReport};
 use pdf::grayscale::{grayscale as do_grayscale, GrayscaleOpts};
 use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
@@ -295,6 +296,11 @@ fn slab_polyglot(input: PathBuf, output: PathBuf, opts: PolyglotOpts) -> CmdResu
 }
 
 #[tauri::command]
+fn slab_flatten(input: PathBuf, output: PathBuf, opts: FlattenOpts) -> CmdResult<FlattenReport> {
+    do_flatten(&input, &output, opts).into()
+}
+
+#[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
     output: PathBuf,
@@ -360,6 +366,7 @@ pub fn run() {
             slab_append_annotations,
             slab_ocr,
             slab_polyglot,
+            slab_flatten,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
