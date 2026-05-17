@@ -4,10 +4,14 @@
 pub mod ai;
 pub mod pdf;
 
+use ai::chat::{
+    beacon_chat_from_path as do_beacon_chat, BeaconChatReply, DEFAULT_MAX_CONTEXT_CHARS,
+};
 use ai::config::{
     load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
     SlabConfig,
 };
+use ai::{ChatMessage, ChatRole};
 
 use pdf::annot_export::{
     extract as do_extract_annots, to_markdown as do_annots_to_md, ExtractedAnnotation,
@@ -398,6 +402,73 @@ fn slab_beacon_provider_kinds() -> CmdResult<Vec<String>> {
     CmdResult::Ok { value: kinds }
 }
 
+/// DTO for prior chat turns. Mirrors `ChatMessage` but uses lowercase
+/// `role` strings so the Svelte side can stay agnostic of Rust enums.
+#[derive(Deserialize)]
+pub struct ChatTurnDto {
+    pub role: String,
+    pub content: String,
+}
+
+fn parse_role(s: &str) -> Option<ChatRole> {
+    match s {
+        "system" => Some(ChatRole::System),
+        "user" => Some(ChatRole::User),
+        "assistant" => Some(ChatRole::Assistant),
+        _ => None,
+    }
+}
+
+/// Beacon chat — Q&A against an opened PDF. The front-end hands us the
+/// PDF path, the new question, and the prior conversation history.
+/// We extract the PDF text, build a context-rich prompt, call the
+/// configured provider (Ollama or OpenAI-compatible), and return the
+/// assistant's reply along with cited page numbers.
+///
+/// `max_context_chars` is optional — defaults to ~30K. Front-end can
+/// pass a smaller value for tiny local models or larger for hosted ones.
+#[tauri::command]
+async fn slab_beacon_chat(
+    pdf_path: PathBuf,
+    question: String,
+    history: Vec<ChatTurnDto>,
+    max_context_chars: Option<u32>,
+) -> CmdResult<BeaconChatReply> {
+    // Load the user's saved config so we honour the provider they picked
+    // in the settings panel.
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let history_msgs: Vec<ChatMessage> = history
+        .into_iter()
+        .filter_map(|t| {
+            parse_role(&t.role).map(|role| ChatMessage {
+                role,
+                content: t.content,
+            })
+        })
+        .collect();
+    let budget = max_context_chars
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_MAX_CONTEXT_CHARS);
+    do_beacon_chat(provider, &pdf_path, &question, &history_msgs, budget)
+        .await
+        .into()
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -471,6 +542,7 @@ pub fn run() {
             slab_beacon_config_write,
             slab_beacon_provider_test,
             slab_beacon_provider_kinds,
+            slab_beacon_chat,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())

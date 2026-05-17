@@ -14,6 +14,7 @@
 // returns a fully-buffered `ChatResponse` so we can unit-test it
 // against `mockito` without futures plumbing.
 
+pub mod chat;
 pub mod config;
 pub mod ollama;
 pub mod openai_compat;
