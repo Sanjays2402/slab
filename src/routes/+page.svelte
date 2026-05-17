@@ -3,7 +3,8 @@
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
-  import PagesPanel from "$lib/panels/PagesPanel.svelte";
+  import PagesVisualPanel from "$lib/panels/PagesVisualPanel.svelte";
+  import PagesListPanel from "$lib/panels/PagesListPanel.svelte";
   import CompressPanel from "$lib/panels/CompressPanel.svelte";
   import ExtractPanel from "$lib/panels/ExtractPanel.svelte";
   import EncryptPanel from "$lib/panels/EncryptPanel.svelte";
@@ -45,6 +46,7 @@
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
     { id: "pages", label: "Pages", icon: "▦", ready: true },
+    { id: "pages-list", label: "Pages (list)", icon: "≣", ready: true },
     { id: "compress", label: "Compress", icon: "▼", ready: true },
     { id: "extract", label: "Extract", icon: "❡", ready: true },
     { id: "encrypt", label: "Encrypt", icon: "▣", ready: true },
@@ -144,7 +146,9 @@
   {:else if active === "split"}
     <SplitPanel />
   {:else if active === "pages"}
-    <PagesPanel />
+    <PagesVisualPanel />
+  {:else if active === "pages-list"}
+    <PagesListPanel />
   {:else if active === "compress"}
     <CompressPanel />
   {:else if active === "extract"}
