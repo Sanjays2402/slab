@@ -67,6 +67,7 @@ use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
+use pdf::scan_audit::{audit as do_scan_audit, ScanAuditReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
 use pdf::split_pattern::{
     find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
@@ -369,6 +370,11 @@ fn slab_append_annotations(
 #[tauri::command]
 fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrReport> {
     do_ocr(&input, &output, &opts).into()
+}
+
+#[tauri::command]
+fn slab_scan_audit(input: PathBuf) -> CmdResult<ScanAuditReport> {
+    do_scan_audit(&input).into()
 }
 
 #[tauri::command]
@@ -1069,6 +1075,7 @@ pub fn run() {
             slab_write_outline,
             slab_append_annotations,
             slab_ocr,
+            slab_scan_audit,
             slab_polyglot,
             slab_flatten,
             slab_sanitize,
