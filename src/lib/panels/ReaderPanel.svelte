@@ -12,6 +12,8 @@
   import DecryptModal from "$lib/components/DecryptModal.svelte";
   import BeaconSelectionBubble from "$lib/components/BeaconSelectionBubble.svelte";
   import { slabScanAudit, nonEmptyPages, type ScanAuditReport } from "$lib/lens";
+  import { analyzeSlides, type SlideReport } from "$lib/slides";
+  import PresenterOverlay from "$lib/components/PresenterOverlay.svelte";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -99,6 +101,12 @@
   let scanReport = $state<ScanAuditReport | null>(null);
   let scanAuditing = $state(false);
   let scanBannerDismissed = $state(false);
+  // Slide-deck audit (v0.15.0 Theater Slice 4): runs in the background
+  // after open; if it concludes the doc looks like a slide deck we
+  // surface a one-click "Present" banner.
+  let slideReport = $state<SlideReport | null>(null);
+  let slideBannerDismissed = $state(false);
+  let presenting = $state(false);
   let cheatsheetOpen = $state(false);
   let invert = $state(false);
   let dropActive = $state(false);
@@ -263,6 +271,33 @@
     }
   }
 
+  /// Slide-deck audit (v0.15.0 Theater Slice 4): silently probe the doc.
+  /// If the heuristic says it's a deck we surface a Present banner.
+  async function runSlideAudit(path: string) {
+    slideReport = null;
+    slideBannerDismissed = false;
+    if (!isInTauri()) return;
+    try {
+      const r = await analyzeSlides(path);
+      slideReport = r;
+    } catch {
+      slideReport = null;
+    }
+  }
+
+  function dismissSlideBanner() {
+    slideBannerDismissed = true;
+  }
+
+  function startPresenting() {
+    if (!doc) return;
+    presenting = true;
+  }
+
+  function stopPresenting() {
+    presenting = false;
+  }
+
   function dismissScanBanner() {
     scanBannerDismissed = true;
   }
@@ -393,6 +428,8 @@
       // real file-system PDFs (skip data: URLs etc — `path` is a real path
       // by contract here).
       void runScanAudit(path);
+      // Slide-deck audit (Theater Slice 4) — same fire-and-forget pattern.
+      void runSlideAudit(path);
     } catch (e: any) {
       // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
       // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
@@ -1261,6 +1298,29 @@
       </div>
     {/if}
 
+    {#if slideReport && slideReport.is_slides && !slideBannerDismissed && !presenting}
+      <div class="slide-banner" role="status">
+        <div class="slide-banner-icon" aria-hidden="true">▷</div>
+        <div class="slide-banner-text">
+          <strong>This looks like a slide deck.</strong>
+          <span class="slide-banner-sub">
+            {slideReport.page_count} slides · {slideReport.dominant_label}
+            {#if slideReport.pages_with_notes > 0}
+              · {slideReport.pages_with_notes} page{slideReport.pages_with_notes === 1 ? "" : "s"} with notes
+            {/if}
+          </span>
+        </div>
+        <div class="slide-banner-actions">
+          <button class="sb-primary" onclick={startPresenting}>
+            ▷ Present
+          </button>
+          <button class="sb-dismiss" onclick={dismissSlideBanner} title="Dismiss">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    {/if}
+
     <!-- Beacon selection bubble: floats above any text selection inside the
          PDF viewer. Mounted at the panel level so absolute positioning works
          relative to the page, not constrained by the viewer's overflow. -->
@@ -1301,6 +1361,15 @@
     {/if}
   </div>
 </div>
+
+{#if presenting && doc && slideReport}
+  <PresenterOverlay
+    inputPath={doc.path}
+    pages={slideReport.pages}
+    startPage={currentPage}
+    onClose={stopPresenting}
+  />
+{/if}
 
 {#if outlineEditorOpen && doc}
   <OutlineEditor
@@ -1908,6 +1977,87 @@
     color: #e8ecf5;
     background: #232a3a;
     border-color: #2c3447;
+  }
+
+  /* ---- Slide-deck banner (Theater Slice 4) ---- */
+  .slide-banner {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #1c2e22, #15211a);
+    color: #e8ecf5;
+    border: 1px solid #2c5a3f;
+    font-size: 13px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+    max-width: min(720px, 90%);
+    animation: scan-banner-in 220ms ease-out;
+  }
+  .slide-banner-icon {
+    font-size: 18px;
+    line-height: 1;
+    flex: 0 0 auto;
+    color: #4ade80;
+  }
+  .slide-banner-text {
+    flex: 1 1 auto;
+    line-height: 1.4;
+    white-space: normal;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .slide-banner-text strong {
+    font-weight: 600;
+  }
+  .slide-banner-sub {
+    font-size: 11px;
+    color: #99a3b5;
+  }
+  .slide-banner-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  .slide-banner-actions button {
+    border: 1px solid #2c5a3f;
+    background: #1a3424;
+    color: #e8ecf5;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .slide-banner-actions button:hover:not(:disabled) {
+    background: #234630;
+    border-color: #3a7a55;
+  }
+  .slide-banner-actions button.sb-primary {
+    background: #3a8c5a;
+    border-color: #3a8c5a;
+    color: #fff;
+  }
+  .slide-banner-actions button.sb-primary:hover:not(:disabled) {
+    background: #4aa370;
+    border-color: #4aa370;
+  }
+  .slide-banner-actions button.sb-dismiss {
+    background: transparent;
+    border-color: transparent;
+    color: #99a3b5;
+  }
+  .slide-banner-actions button.sb-dismiss:hover {
+    color: #e8ecf5;
+    background: #1a3424;
+    border-color: #2c5a3f;
   }
 
   /* ---- Invert (dark-mode reading) ---- */
