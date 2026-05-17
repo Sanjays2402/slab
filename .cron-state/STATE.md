@@ -5,7 +5,126 @@
 
 ---
 
-## STATUS: 🚀 v1.2.0 "Glass II" Slices 2 + 3 (first half) shipped (3 commits)
+## STATUS: 🚀 v1.2.0 "Glass II" Slices 3-2nd-half + 4 + 6 shipped (5 commits this tick)
+
+**Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
+**v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
+**Active branch**: `feature/v1.2.0-glass-ii` (10 commits ahead of main as of this tick)
+**Branch HEAD**: `e4478db` — `a11y: honour prefers-reduced-motion and prefers-contrast (Slice 6)`
+
+**Quality gates green on branch HEAD:**
+- pnpm exec svelte-check → 0 errors / 23 warnings (down from 28)
+- cargo fmt --check ✓
+- cargo clippy --all-targets -D warnings ✓
+- cargo test --lib → 468 passed
+
+**Glass II completion ledger:**
+- ✅ Slice 1 — pure Vim state machine + keymap
+- ✅ Slice 1.5 — VimController + VimIndicator + Settings/Palette toggles
+- ✅ Slice 2 — Reader Vim adapter + panel wiring
+- ✅ Slice 3 first half — Library Vim adapter
+- ✅ Slice 3 second half — Beacon Vim adapter (this tick)
+- ✅ Slice 4 — a11y audit script + focus-visible ring + aria-current (this tick)
+- ✅ Slice 4 pass 2 — input-label fixes across 15 panels (this tick)
+- ✅ Slice 6 — prefers-reduced-motion + prefers-contrast (this tick)
+- ⏳ Slice 5 — i18n scaffolding (NEXT TICK)
+- ⏳ Slice 7 — version bump + release notes + tag + release
+
+**Next tick — MODE C — Slice 5 (i18n) + maybe release prep**:
+- Lay down `src/lib/i18n.ts` with a minimal `t(key, vars?)` function
+- Extract ~15 most-visible English strings into `src/lib/i18n/en.json`
+- Wire `<html lang>` updates + LTR/RTL data attribute
+- Skeleton for one additional locale (es.json or fr.json) just to prove the mechanism
+- If time: version bump + release notes draft
+
+---
+
+## TICK 2026-05-17 ~16:25 PT — v1.2.0 Glass II Slice 3-2nd-half + 4 + 6 (5 commits)
+
+Three slices shipped in one off-hours tick: Beacon Vim adapter
+(closing out the Vim trilogy), the a11y audit + global focus ring +
+input labels (Slice 4 in two passes), and the reduced-motion +
+high-contrast CSS (Slice 6).
+
+### Slice 3 second half — Beacon Vim adapter (`72a9156`)
+
+**New module**: `src/lib/vim/beacon-adapter.ts` (118 lines).
+Five window CustomEvents: scroll (j/k/half-page/full-page with count
+prefixes), scroll-edge (gg/G), focus-input (i / a), blur-input (Esc),
+reset-chat (dd). Gated on `registerBeaconNav()` so non-Beacon views
+are silent no-ops.
+
+**BeaconChatPanel wiring**: onMount listeners + onDestroy cleanup +
+5 handlers. Scroll step sizes match Reader/Library tactile feel
+(line=80px, half=max(120, h*0.5), full=max(200, h-40)).
+
+**+page.svelte**: `<VimController panel="beacon">` wrapper +
+`onBeaconVimAction` dispatch.
+
+### Slice 4 pass 1 — a11y audit + focus rings + aria-current (`0d23aa3`)
+
+**New script**: `scripts/audit-a11y.mjs` (~7 KB). Plain Node,
+zero deps. Three heuristic checks across all 51 .svelte files:
+1. Icon-only buttons missing aria-label/title.
+2. inputs/selects/textareas missing labels (handles `aria-label`,
+   `aria-labelledby`, `<label for>`, `<label>…</label>` wraps,
+   mustache content).
+3. `<img>` tags missing alt=.
+
+Flags: `--json`, `--strict` (exit 1 on issues). Added scripts to
+`package.json`: `a11y:audit` + `a11y:audit:strict`.
+
+Audit baseline: 0 icon-button, 40 input-label, 0 img-alt. Pass 1
+also added the **global focus-visible ring** in `src/app.css` (using
+`--accent` so it auto-themes) + `<nav aria-label="Primary">` and
+`aria-current={active === f.id ? "page" : undefined}` on the
+sidebar items.
+
+### Slice 4 pass 2 — input-label fixes across 15 panels (`631d235`)
+
+Resolved all 40 input-label issues. Touched 15 files (RedactPanel,
+PageLabelsPanel, NupPanel, GrayscalePanel, MarkdownPanel,
+AutoRedactPanel, BeaconChatPanel textareas, BeaconSearchPanel,
+ConvertPanel, EditTextPanel, LibraryPanel, ReaderPanel, SignPanel,
+OutlineEditor, CommandPalette). Strategy: aria-label for inputs
+with adjacent visible labels, `id` + `for=` for `<label>`-wrapped
+patterns. Index-aware labels for repeated rows. Audit is now CLEAN.
+
+### Slice 6 — prefers-reduced-motion + prefers-contrast (`e4478db`)
+
+Two new global blocks in `src/app.css`:
+
+- **prefers-reduced-motion**: `*, *::before, *::after` with
+  `animation-duration: 0.001ms !important` + matching transition +
+  `scroll-behavior: auto`. !important because many transitions
+  live in component `<style>` blocks with higher specificity.
+- **prefers-contrast: more**: Stronger `--border` and `--muted`
+  via `color-mix()`, focus ring outline-width 2px → 3px, control
+  borders 1px → 2px. We deliberately do NOT override `--accent`.
+
+### Commits this tick
+
+- `72a9156` — feat(vim): Beacon adapter + panel wiring (Slice 3 — second half)
+- `0d23aa3` — a11y: audit script + global focus-visible ring + aria-current on nav (Slice 4)
+- `631d235` — a11y: associate labels with every flagged input (Slice 4 — pass 2)
+- `e4478db` — a11y: honour prefers-reduced-motion and prefers-contrast (Slice 6)
+
+### Velocity
+
+| Tick | Slices ships                          | Commits | Cumulative |
+|------|---------------------------------------|---------|------------|
+| 1    | Slice 1 + 1.5                         | 2       | 2          |
+| 2    | Slice 2 + 3 first half                | 3       | 5          |
+| 3    | Slice 3-2nd + 4 (×2) + 6 (TODAY)      | 4       | 9          |
+
+**Remaining**: Slice 5 (i18n) + Slice 7 (release). At current
+velocity, Glass II ships in 1-2 more ticks.
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🚀 v1.2.0 "Glass II" Slices 2 + 3 (first half) shipped (3 commits)
 
 **Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
 **v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
