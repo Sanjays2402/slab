@@ -5,21 +5,25 @@
 
 ---
 
-## STATUS: ✅ v1.1.0 "Cabinet" DONE on `feature/v1.1.0-cabinet` — READY FOR MODE A MERGE
+## STATUS: 🚀 v1.1.0 "Cabinet" MERGED + TAGGED + PUSHED — CI running
 
-**Branch**: `feature/v1.1.0-cabinet` (pushed to origin, 14 commits ahead of main)
+**Main HEAD**: `4c13e1d` — `Merge v1.1.0 "Cabinet" 🗄 — Multi-window detach for 11 panels`
+**Tag**: `v1.1.0` (pushed)
+**CI**: run `26003858536` (in_progress, started 21:57 UTC)
 
-**HEAD**: `7de26bb` — `docs(release): v1.1.0 "Cabinet" release notes`
-
-**Quality gates green** on branch HEAD:
+**Quality gates green on `main` HEAD before tag push:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
 - `cargo test --lib` ✓ (468 passed)
 - `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
 
-**Next tick**: MODE A — merge `feature/v1.1.0-cabinet` into `main` with
-`--no-ff`, tag `v1.1.0`, push tag + main, kick CI. Then MODE B in the
-subsequent tick once CI is green.
+**RELEASE_PENDING**: v1.1.0 — merge SHA `4c13e1d`, tag `v1.1.0`, CI run `26003858536`
+
+**Next tick**: MODE B — poll CI run `26003858536`. If success:
+- `gh run download 26003858536 -R Sanjays2402/slab -D /tmp/slab-v1.1.0-release/`
+- Curate 6 assets into `assets/v1.1.0/` (mac arm64 dmg, mac x64 dmg renamed `_x64_macos.dmg`, linux deb + AppImage, windows msi + setup.exe).
+- `gh release create v1.1.0 --title 'v1.1.0 — Cabinet 🗄' --notes-file docs/releases/v1.1.0.md assets/v1.1.0/*` (AppImage in `background=true` or as follow-up `gh release upload` to dodge 60s timeout).
+- Clear RELEASE_PENDING.
 
 ---
 
@@ -209,7 +213,7 @@ Glass on 2026-05-17 — 14 versions in 36 hours).
 ### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
-### v1.1.0 "Cabinet" — DONE on feature branch (3 ticks, 16 commits) — awaiting MODE A merge 🗄
+### v1.1.0 "Cabinet" — TAGGED 2026-05-17, CI run `26003858536` running 🗄
 
 ### v1.2.0 "Glass II" (later)
 - Vim bindings, a11y, i18n
@@ -304,3 +308,5 @@ back to 2026-05-16.)
 - 2026-05-17 13:06 (Cake/cron): MODE B FINALIZE — CI green at 13:04 PT, downloaded all artifacts, curated 6, created v1.0.0 release with all assets (AppImage uploaded separately to dodge 60s timeout). Then used writing-plans skill to author v1.1.0 "Cabinet" plan (~44 KB, 8 slices, ~20 tasks).
 - 2026-05-17 13:30 (Cake/cron): v1.1.0 Cabinet Slices 1+2 shipped end-to-end in 6 commits. Backend WindowRegistry + 3 Tauri commands + capability glob; frontend DetachedShell component + URL-driven detached-mode branch in `+page.svelte`. 4 quality gates green (463 cargo tests, 0 svelte-check errors). Branch pushed.
 - 2026-05-17 13:55 (Cake/cron): v1.1.0 Cabinet Slices 3+4 shipped in 3 commits. Slice 3: `src/lib/windows.ts` typed wrapper + detach `⤢` button on active sidebar item (only renders for the 11 DETACHABLE_PANELS, only inside Tauri). Slice 4: persistence to `~/.slab/windows.json` (atomic temp+rename) + autosave on Destroyed/Moved/Resized + launch restore via new `setup` hook + `MAX_DETACHED_WINDOWS=6` cap. 5 new persistence tests (`ENV_LOCK` mutex to serialise env mutation). 4 quality gates green (468 cargo tests). Branch pushed. **Cabinet 50% done in 2 ticks** — Slices 5+6 next, then release in tick 4.
+- 2026-05-17 14:30 (Cake/cron): v1.1.0 Cabinet Slices 5+6+7+8 in ONE tick → 7 commits. All 11 panels wired into detached-mode branch + Command Palette entries (Slice 5); 12 library-mutation commands now emit `slab://library-changed` + new `slab_request_open_in_main` command + LibraryPanel cross-window refetch (Slice 6); sidebar Windows menu + toast confirmations (Slice 7); version bump 1.0.0→1.1.0 lockstep + ~7.4KB release notes (Slice 8). **Cabinet DONE in 3 ticks, 16 commits.**
+- 2026-05-17 14:57 (Cake/cron): MODE A — merged `feature/v1.1.0-cabinet` into `main` with `--no-ff` (merge SHA `4c13e1d`, 16 files, +2013/-125). All 4 quality gates green on merged main. Tagged `v1.1.0` with annotated msg. Pushed main + tag (`74a1be6..4c13e1d`, new tag `v1.1.0`). CI run `26003858536` in_progress. RELEASE_PENDING set. Next tick = MODE B finalize.
