@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "a11y:audit": "node scripts/audit-a11y.mjs",
+    "a11y:audit:strict": "node scripts/audit-a11y.mjs --strict",
     "tauri": "tauri"
   },
   "license": "MIT",

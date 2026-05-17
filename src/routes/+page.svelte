@@ -549,7 +549,7 @@
     <span class="brand-tag">local · offline · free</span>
   </div>
 
-  <nav>
+  <nav aria-label="Primary">
     {#each features as f (f.id)}
       <div class="nav-row" class:active={active === f.id}>
         <button
@@ -557,6 +557,7 @@
           class:active={active === f.id}
           class:locked={!f.ready}
           disabled={!f.ready}
+          aria-current={active === f.id ? "page" : undefined}
           onclick={() => (active = f.id)}
         >
           <span class="nav-icon">{f.icon}</span>

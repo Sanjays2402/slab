@@ -187,6 +187,42 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* =====================================================================
+ * Accessibility — v1.2.0 "Glass II" Slice 4.
+ *
+ * Every interactive element gets a visible focus ring when reached via
+ * keyboard navigation (Tab / Shift-Tab / arrow keys). Mouse clicks do
+ * NOT trigger the ring — :focus-visible only fires on keyboard focus.
+ *
+ * The ring uses --accent (the user's chosen palette colour) so it works
+ * across light/dark/high-contrast themes without per-theme overrides.
+ * ===================================================================== */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Active sidebar item — strengthen the visual cue for screen-reader
+ * users who also see, and for keyboard users navigating with Tab. */
+[aria-current="page"] {
+  position: relative;
+}
+
+/* sr-only — visually hidden text for screen readers. Used by labels
+ * that exist for a11y but would clutter the visual design. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 input[type="text"] {
   font-family: inherit;
   font-size: inherit;
