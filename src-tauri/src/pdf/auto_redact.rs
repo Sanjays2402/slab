@@ -36,10 +36,14 @@ pub struct AutoRedactOpts {
     pub gray: f32,
 }
 
-const PRESET_EMAIL: &str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}";
-const PRESET_SSN: &str = r"\b\d{3}-\d{2}-\d{4}\b";
-const PRESET_PHONE: &str = r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b";
-const PRESET_CC: &str = r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b";
+// Public so the Beacon PII detector (`ai::pii`) can reuse the same patterns
+// for the discover-then-redact two-step flow. Keep these in sync — Slab
+// guarantees that "PII found by the Beacon panel" and "what auto-redact's
+// preset will black out" cover the same matches.
+pub const PRESET_EMAIL: &str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}";
+pub const PRESET_SSN: &str = r"\b\d{3}-\d{2}-\d{4}\b";
+pub const PRESET_PHONE: &str = r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b";
+pub const PRESET_CC: &str = r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b";
 
 pub fn auto_redact(input: &Path, output: &Path, opts: AutoRedactOpts) -> Result<u32, PdfError> {
     // Compile all patterns up front so we fail fast on bad input.

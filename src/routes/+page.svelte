@@ -24,6 +24,9 @@
   import FlattenPanel from "$lib/panels/FlattenPanel.svelte";
   import SanitizePanel from "$lib/panels/SanitizePanel.svelte";
   import RepairPanel from "$lib/panels/RepairPanel.svelte";
+  import BeaconChatPanel from "$lib/panels/BeaconChatPanel.svelte";
+  import BeaconSearchPanel from "$lib/panels/BeaconSearchPanel.svelte";
+  import BeaconPiiPanel from "$lib/panels/BeaconPiiPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { RecentFile } from "$lib/recent";
 
@@ -36,6 +39,9 @@
 
   const features: Feature[] = [
     { id: "reader", label: "Reader", icon: "▥", ready: true },
+    { id: "beacon", label: "Beacon AI", icon: "✦", ready: true },
+    { id: "search", label: "Beacon Search", icon: "⌕", ready: true },
+    { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
     { id: "pages", label: "Pages", icon: "▦", ready: true },
@@ -127,6 +133,12 @@
 <main class="content">
   {#if active === "reader"}
     <ReaderPanel />
+  {:else if active === "beacon"}
+    <BeaconChatPanel />
+  {:else if active === "search"}
+    <BeaconSearchPanel />
+  {:else if active === "pii"}
+    <BeaconPiiPanel />
   {:else if active === "merge"}
     <MergePanel />
   {:else if active === "split"}

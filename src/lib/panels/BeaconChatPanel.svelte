@@ -1,0 +1,615 @@
+<script lang="ts">
+  // Beacon chat panel — Q&A against the currently picked PDF.
+  //
+  // Architecture:
+  // - User picks a PDF (or it's pre-filled via the global `slab:open-recent`
+  //   event the Reader panel uses).
+  // - User types a question, hits Enter or Send.
+  // - We invoke `slab_beacon_chat` with the conversation history.
+  // - The reply lands as an assistant turn; cited pages are rendered as
+  //   `[pN]` chips below the message — clicking one fires a custom event
+  //   that the Reader panel can listen for (`slab:beacon-goto-page`).
+  // - "New chat" clears history; "Change PDF" picks a new one (also clears).
+  //
+  // No streaming for v0.10.0 — single-shot buffered responses. Streaming
+  // arrives in v0.10.1 once the Tauri event channel is wired.
+
+  import { invoke } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
+  import { onMount, tick } from "svelte";
+  import { basename, idle, type CmdResult, type Status } from "$lib/types";
+
+  type ChatTurn = {
+    role: "user" | "assistant";
+    content: string;
+    pagesCited?: number[];
+    model?: string;
+    /** ms since epoch — for the human-readable timestamp tooltip. */
+    ts: number;
+  };
+
+  type BeaconChatReply = {
+    content: string;
+    model: string;
+    pages_cited: number[];
+    context_chars_used: number;
+    context_chars_total: number;
+    pages_total: number;
+    pages_used: number;
+  };
+
+  type BeaconSummary = {
+    content: string;
+    model: string;
+    length: SummaryLength;
+    pages_used: number;
+    pages_total: number;
+  };
+
+  type SummaryLength = "tldr" | "short" | "long";
+
+  let pdfPath = $state<string | null>(null);
+  let pdfPages = $state<number | null>(null);
+  let question = $state("");
+  let history = $state<ChatTurn[]>([]);
+  let status = $state<Status>(idle);
+  let lastStats = $state<{
+    chars_used: number;
+    chars_total: number;
+    pages_used: number;
+    pages_total: number;
+  } | null>(null);
+
+  let scrollContainer: HTMLDivElement | null = null;
+  let inputEl: HTMLTextAreaElement | null = null;
+
+  // Subscribe to the same recent-file channel the Reader uses, so opening a
+  // PDF from the command palette can also pre-fill Beacon.
+  function onOpenRecent(e: Event) {
+    const detail = (e as CustomEvent).detail as { path: string } | undefined;
+    if (!detail?.path) return;
+    setPdf(detail.path);
+  }
+
+  onMount(() => {
+    window.addEventListener("slab:open-recent", onOpenRecent);
+    return () => window.removeEventListener("slab:open-recent", onOpenRecent);
+  });
+
+  async function setPdf(p: string) {
+    pdfPath = p;
+    history = [];
+    status = idle;
+    pdfPages = null;
+    lastStats = null;
+    // Best-effort page count for the header; failures are silent.
+    try {
+      const res = await invoke<CmdResult<number>>("slab_page_count", {
+        input: p,
+      });
+      if (res.kind === "ok") pdfPages = res.value;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function pickPdf() {
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (typeof picked !== "string") return;
+    await setPdf(picked);
+  }
+
+  function resetChat() {
+    history = [];
+    status = idle;
+    lastStats = null;
+    question = "";
+  }
+
+  async function send() {
+    const q = question.trim();
+    if (!pdfPath) {
+      status = { kind: "err", msg: "Pick a PDF first." };
+      return;
+    }
+    if (!q) return;
+    if (status.kind === "working") return;
+
+    // Push user turn immediately for snappy UX.
+    history = [
+      ...history,
+      { role: "user", content: q, ts: Date.now() },
+    ];
+    question = "";
+    status = { kind: "working", msg: "Beacon is reading the PDF…" };
+    await scrollToBottom();
+
+    // Build the wire-format history. Skip the just-pushed user turn since
+    // the backend treats `question` separately.
+    const wireHistory = history.slice(0, -1).map((t) => ({
+      role: t.role,
+      content: t.content,
+    }));
+
+    try {
+      const res = await invoke<CmdResult<BeaconChatReply>>("slab_beacon_chat", {
+        pdfPath,
+        question: q,
+        history: wireHistory,
+        maxContextChars: null,
+      });
+      if (res.kind === "ok") {
+        const r = res.value;
+        history = [
+          ...history,
+          {
+            role: "assistant",
+            content: r.content,
+            pagesCited: r.pages_cited,
+            model: r.model,
+            ts: Date.now(),
+          },
+        ];
+        lastStats = {
+          chars_used: r.context_chars_used,
+          chars_total: r.context_chars_total,
+          pages_used: r.pages_used,
+          pages_total: r.pages_total,
+        };
+        status = idle;
+      } else {
+        status = { kind: "err", msg: friendlyError(res.message) };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+    } finally {
+      await scrollToBottom();
+      inputEl?.focus();
+    }
+  }
+
+  /** Map raw provider errors → friendly hints. */
+  function friendlyError(msg: string): string {
+    const m = msg.toLowerCase();
+    if (m.includes("provider unavailable")) {
+      if (m.includes("missing api key")) return msg;
+      return (
+        msg +
+        "  ·  Hint: start Ollama (`ollama serve`) or switch provider in Settings."
+      );
+    }
+    return msg;
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    // Enter sends, Shift+Enter newlines, Cmd/Ctrl+Enter sends too.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  }
+
+  async function scrollToBottom() {
+    await tick();
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+  }
+
+  function jumpToPage(p: number) {
+    if (!pdfPath) return;
+    window.dispatchEvent(
+      new CustomEvent("slab:beacon-goto-page", {
+        detail: { path: pdfPath, page: p },
+      }),
+    );
+  }
+
+  function fmtPct(used: number, total: number): string {
+    if (total === 0) return "0%";
+    return `${Math.round((used / total) * 100)}%`;
+  }
+
+  /** Run a summary call and push the result as an assistant turn. */
+  async function summarize(length: SummaryLength) {
+    if (!pdfPath) {
+      status = { kind: "err", msg: "Pick a PDF first." };
+      return;
+    }
+    if (status.kind === "working") return;
+    const label =
+      length === "tldr" ? "TL;DR" : length === "short" ? "Summary" : "Detailed summary";
+    history = [
+      ...history,
+      { role: "user", content: `▶ ${label} of this PDF`, ts: Date.now() },
+    ];
+    status = { kind: "working", msg: `Beacon is reading the PDF…` };
+    await scrollToBottom();
+    try {
+      const res = await invoke<CmdResult<BeaconSummary>>("slab_beacon_summary", {
+        pdfPath,
+        length,
+        maxContextChars: null,
+      });
+      if (res.kind === "ok") {
+        const r = res.value;
+        history = [
+          ...history,
+          {
+            role: "assistant",
+            content: r.content,
+            model: r.model,
+            ts: Date.now(),
+          },
+        ];
+        lastStats = {
+          chars_used: 0,
+          chars_total: 0,
+          pages_used: r.pages_used,
+          pages_total: r.pages_total,
+        };
+        status = idle;
+      } else {
+        status = { kind: "err", msg: friendlyError(res.message) };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+    } finally {
+      await scrollToBottom();
+    }
+  }
+
+  // Sample prompts — the empty-state nudges users toward useful things.
+  const samplePrompts: string[] = [
+    "Summarize this PDF in 3 bullets.",
+    "What are the main conclusions?",
+    "Who is the intended audience?",
+    "Are there any dates, names, or numbers I should know about?",
+  ];
+</script>
+
+<header class="content-header">
+  <h1>Beacon <span class="beta-tag">beta · v0.10.0</span></h1>
+  <p class="subtitle">
+    Chat with your PDF locally. Beacon runs on Ollama by default —
+    your document never leaves the machine.
+  </p>
+</header>
+
+<section class="beacon">
+  {#if !pdfPath}
+    <button class="dropzone" onclick={pickPdf}>
+      <span class="dz-icon">✨</span>
+      <span class="dz-title">Pick a PDF to chat with</span>
+      <span class="dz-hint">
+        Beacon reads the full text, lets you ask questions, and cites
+        the pages it pulled the answer from.
+      </span>
+    </button>
+  {:else}
+    <div class="file-card">
+      <div>
+        <div class="file-name">{basename(pdfPath)}</div>
+        <div class="file-meta">
+          {pdfPages !== null ? `${pdfPages} pages` : "loading…"}
+          {#if lastStats}
+            · last answer used pages 1–{lastStats.pages_used} of
+            {lastStats.pages_total}
+            {#if lastStats.chars_total > 0}
+              ({fmtPct(lastStats.chars_used, lastStats.chars_total)} of text)
+            {/if}
+          {/if}
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="ghost" onclick={resetChat} disabled={history.length === 0}>
+          New chat
+        </button>
+        <button class="ghost" onclick={pickPdf}>Change PDF</button>
+      </div>
+    </div>
+
+    <div class="quick-actions">
+      <span class="qa-label">Quick:</span>
+      <button
+        class="qa-chip"
+        onclick={() => summarize("tldr")}
+        disabled={status.kind === "working"}
+        title="One-sentence summary"
+      >
+        ✦ TL;DR
+      </button>
+      <button
+        class="qa-chip"
+        onclick={() => summarize("short")}
+        disabled={status.kind === "working"}
+        title="Paragraph summary"
+      >
+        ✦ Summarize
+      </button>
+      <button
+        class="qa-chip"
+        onclick={() => summarize("long")}
+        disabled={status.kind === "working"}
+        title="5-bullet detailed summary"
+      >
+        ✦ Detailed
+      </button>
+    </div>
+
+    <div class="chat-scroll" bind:this={scrollContainer}>
+      {#if history.length === 0}
+        <div class="empty">
+          <div class="empty-title">Ask Beacon anything about this PDF.</div>
+          <div class="empty-sample-grid">
+            {#each samplePrompts as p (p)}
+              <button class="sample" onclick={() => (question = p)}>
+                {p}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {:else}
+        {#each history as turn, i (i)}
+          <div class="turn" class:user={turn.role === "user"} class:assistant={turn.role === "assistant"}>
+            <div class="turn-role">
+              {turn.role === "user" ? "You" : "Beacon"}
+              {#if turn.role === "assistant" && turn.model}
+                <span class="turn-model">· {turn.model}</span>
+              {/if}
+            </div>
+            <div class="turn-body">{turn.content}</div>
+            {#if turn.role === "assistant" && turn.pagesCited && turn.pagesCited.length > 0}
+              <div class="cites">
+                <span class="cites-label">Pages cited:</span>
+                {#each turn.pagesCited as p (p)}
+                  <button class="cite-chip" onclick={() => jumpToPage(p)} title="Jump to page {p}">
+                    p{p}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+
+      {#if status.kind === "working"}
+        <div class="turn assistant working">
+          <div class="turn-role">Beacon</div>
+          <div class="turn-body italic">{status.msg}</div>
+        </div>
+      {/if}
+    </div>
+
+    {#if status.kind === "err"}
+      <div class="status err">✕ {status.msg}</div>
+    {/if}
+
+    <div class="composer">
+      <textarea
+        bind:this={inputEl}
+        bind:value={question}
+        onkeydown={onKeydown}
+        rows="2"
+        placeholder="Ask about this PDF… (Enter to send, Shift+Enter for newline)"
+        disabled={status.kind === "working"}
+      ></textarea>
+      <button
+        class="primary"
+        onclick={send}
+        disabled={status.kind === "working" || question.trim().length === 0}
+      >
+        {status.kind === "working" ? "…" : "Send"}
+      </button>
+    </div>
+  {/if}
+</section>
+
+<style>
+  .beacon {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    flex: 1;
+  }
+  .beta-tag {
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-left: 8px;
+    font-weight: 500;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    vertical-align: middle;
+  }
+
+  .card-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .quick-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .qa-label {
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+  }
+  .qa-chip {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 4px 11px;
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 80ms ease;
+  }
+  .qa-chip:hover:not(:disabled) {
+    background: var(--bg-3);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .qa-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .chat-scroll {
+    flex: 1;
+    min-height: 200px;
+    overflow-y: auto;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .empty {
+    color: var(--text-3);
+    text-align: center;
+    padding: 20px 0;
+  }
+  .empty-title {
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .empty-sample-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    max-width: 540px;
+    margin: 0 auto;
+  }
+  .sample {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 9px 12px;
+    text-align: left;
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 80ms ease;
+  }
+  .sample:hover {
+    background: var(--bg-3);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  .turn {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .turn-role {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .turn-model {
+    color: var(--text-3);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    font-size: 10px;
+    margin-left: 2px;
+  }
+  .turn-body {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .turn.user .turn-body {
+    background: var(--bg-3);
+    border-left: 2px solid var(--accent);
+    padding: 8px 12px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+  .turn.working .turn-body {
+    color: var(--text-3);
+  }
+  .italic {
+    font-style: italic;
+  }
+
+  .cites {
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .cites-label {
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .cite-chip {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: all 80ms ease;
+  }
+  .cite-chip:hover {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  .composer {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .composer textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 44px;
+    max-height: 240px;
+    background: var(--bg-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .composer textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .composer .primary {
+    align-self: stretch;
+    padding: 0 18px;
+  }
+</style>

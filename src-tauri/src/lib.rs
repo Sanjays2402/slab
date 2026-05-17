@@ -1,7 +1,29 @@
 // Slab — fast, free, offline PDF tool.
 // All operations run locally; nothing is ever uploaded.
 
+pub mod ai;
 pub mod pdf;
+
+use ai::chat::{
+    beacon_chat_from_path as do_beacon_chat, BeaconChatReply, DEFAULT_MAX_CONTEXT_CHARS,
+};
+use ai::config::{
+    load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
+    SlabConfig,
+};
+use ai::embedding_index::{
+    default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
+    IndexReport, IndexStats, SearchHit,
+};
+use ai::pii::{
+    find_pii as do_find_pii, CustomPattern as PiiCustomPattern, PiiError, PiiHit, PiiKind, PiiOpts,
+    PiiSummary,
+};
+use ai::selection_action::{
+    run_selection_action as do_selection_action, SelectionAction, SelectionActionReply,
+};
+use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
+use ai::{ChatMessage, ChatRole};
 
 use pdf::annot_export::{
     extract as do_extract_annots, to_markdown as do_annots_to_md, ExtractedAnnotation,
@@ -312,6 +334,475 @@ fn slab_repair(input: PathBuf, output: PathBuf) -> CmdResult<RepairReport> {
     do_repair(&input, &output).into()
 }
 
+// ---------- Beacon (AI) commands ----------
+
+/// Helper: turn an `AiError` into a `CmdResult` so the Tauri shell
+/// surfaces a user-readable string instead of a panic.
+impl<T: Serialize> From<Result<T, ai::AiError>> for CmdResult<T> {
+    fn from(r: Result<T, ai::AiError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Read `~/.slab/config.toml`. If the file is missing, returns the
+/// default config (local Ollama). Lets the settings panel populate
+/// without a flicker.
+#[tauri::command]
+fn slab_beacon_config_read() -> CmdResult<SlabConfig> {
+    do_load_beacon_config().into()
+}
+
+/// Persist `~/.slab/config.toml`. Caller hands the full `SlabConfig`
+/// back — the Svelte side keeps the source of truth in component
+/// state and writes the whole thing on every Save click.
+#[tauri::command]
+fn slab_beacon_config_write(config: SlabConfig) -> CmdResult<()> {
+    do_save_beacon_config(&config).into()
+}
+
+/// Smoke-test the configured provider. Currently issues a trivial chat
+/// call ("Reply with the single word READY"). Returns the model name
+/// on success so the UI can show "Connected to llama3.2:3b ✓".
+///
+/// The settings panel uses this to give users a "Test connection"
+/// button before they hit Save.
+#[tauri::command]
+async fn slab_beacon_provider_test(config: BeaconConfig) -> CmdResult<String> {
+    use ai::{ChatMessage, ChatOpts, ChatRole};
+    let provider = match ai::config::make_provider(&config) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let msgs = vec![ChatMessage {
+        role: ChatRole::User,
+        content: "Reply with the single word READY".into(),
+    }];
+    let opts = ChatOpts {
+        max_tokens: Some(8),
+        temperature: Some(0.0),
+        ..Default::default()
+    };
+    match provider.chat(&msgs, &opts).await {
+        Ok(resp) => CmdResult::Ok { value: resp.model },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Enumerate available provider kinds for the settings dropdown. Stays
+/// in lockstep with the `ProviderKind` enum without hand-syncing on
+/// the Svelte side.
+#[tauri::command]
+fn slab_beacon_provider_kinds() -> CmdResult<Vec<String>> {
+    let kinds = [ProviderKind::Ollama, ProviderKind::Openai]
+        .iter()
+        .map(|k| match k {
+            ProviderKind::Ollama => "ollama".to_string(),
+            ProviderKind::Openai => "openai".to_string(),
+        })
+        .collect();
+    CmdResult::Ok { value: kinds }
+}
+
+/// DTO for prior chat turns. Mirrors `ChatMessage` but uses lowercase
+/// `role` strings so the Svelte side can stay agnostic of Rust enums.
+#[derive(Deserialize)]
+pub struct ChatTurnDto {
+    pub role: String,
+    pub content: String,
+}
+
+fn parse_role(s: &str) -> Option<ChatRole> {
+    match s {
+        "system" => Some(ChatRole::System),
+        "user" => Some(ChatRole::User),
+        "assistant" => Some(ChatRole::Assistant),
+        _ => None,
+    }
+}
+
+/// Beacon chat — Q&A against an opened PDF. The front-end hands us the
+/// PDF path, the new question, and the prior conversation history.
+/// We extract the PDF text, build a context-rich prompt, call the
+/// configured provider (Ollama or OpenAI-compatible), and return the
+/// assistant's reply along with cited page numbers.
+///
+/// `max_context_chars` is optional — defaults to ~30K. Front-end can
+/// pass a smaller value for tiny local models or larger for hosted ones.
+#[tauri::command]
+async fn slab_beacon_chat(
+    pdf_path: PathBuf,
+    question: String,
+    history: Vec<ChatTurnDto>,
+    max_context_chars: Option<u32>,
+) -> CmdResult<BeaconChatReply> {
+    // Load the user's saved config so we honour the provider they picked
+    // in the settings panel.
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let history_msgs: Vec<ChatMessage> = history
+        .into_iter()
+        .filter_map(|t| {
+            parse_role(&t.role).map(|role| ChatMessage {
+                role,
+                content: t.content,
+            })
+        })
+        .collect();
+    let budget = max_context_chars
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_MAX_CONTEXT_CHARS);
+    do_beacon_chat(provider, &pdf_path, &question, &history_msgs, budget)
+        .await
+        .into()
+}
+
+/// Beacon summary — one-call summary of an opened PDF at the user's
+/// chosen length (TLDR / Short / Long). Reuses the same provider abstraction
+/// as `slab_beacon_chat`.
+#[tauri::command]
+async fn slab_beacon_summary(
+    pdf_path: PathBuf,
+    length: SummaryLength,
+    max_context_chars: Option<u32>,
+) -> CmdResult<BeaconSummary> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let budget = max_context_chars
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_MAX_CONTEXT_CHARS);
+    do_beacon_summary(provider, &pdf_path, length, budget)
+        .await
+        .into()
+}
+
+// ---------- Beacon semantic search (Slice 6/7) ----------
+
+/// Helper: open the shared on-disk embedding index. Each command opens
+/// fresh — SQLite handle creation is microseconds and we're single-user.
+fn open_default_index() -> Result<EmbeddingIndex, ai::embedding_index::IndexError> {
+    EmbeddingIndex::open(&default_index_path())
+}
+
+impl<T: Serialize> From<Result<T, ai::embedding_index::IndexError>> for CmdResult<T> {
+    fn from(r: Result<T, ai::embedding_index::IndexError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Index (or re-index) a PDF for semantic search. Reads page text via
+/// the existing extract pipeline, chunks it, embeds each chunk via the
+/// configured provider, and writes rows to `~/.slab/beacon-index.sqlite`.
+///
+/// If the same file content (SHA-256) has already been indexed and
+/// `force_reindex` is false, this is a no-op that returns
+/// `was_cached: true` — letting the UI fire-and-forget on PDF open.
+#[tauri::command]
+async fn slab_beacon_index_pdf(
+    pdf_path: PathBuf,
+    force_reindex: Option<bool>,
+) -> CmdResult<IndexReport> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let pages = match pdf::extract::extract_text(&pdf_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read PDF: {e}"),
+            }
+        }
+    };
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let index = std::sync::Arc::new(std::sync::Mutex::new(index));
+    let embed_model = cfg
+        .beacon
+        .embed_model
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    do_index_pdf(
+        index,
+        provider,
+        &pdf_path,
+        &pages,
+        &embed_model,
+        force_reindex.unwrap_or(false),
+    )
+    .await
+    .into()
+}
+
+/// Search the embedding index. `top_k` defaults to 12; `only_pdf_hash`
+/// restricts the search to a single PDF (set it to the hash returned
+/// by `slab_beacon_index_pdf` for "this PDF only" mode).
+#[tauri::command]
+async fn slab_beacon_search(
+    query: String,
+    top_k: Option<u32>,
+    only_pdf_hash: Option<String>,
+) -> CmdResult<Vec<SearchHit>> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let index = std::sync::Arc::new(std::sync::Mutex::new(index));
+    let k = top_k.unwrap_or(12) as usize;
+    do_search_index(index, provider, &query, k, only_pdf_hash)
+        .await
+        .into()
+}
+
+/// How many PDFs / chunks are in the index? Powers the "Indexed 4 PDFs
+/// (1,247 chunks)" footer in the search panel.
+#[tauri::command]
+fn slab_beacon_index_stats() -> CmdResult<IndexStats> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.stats().into()
+}
+
+/// Forget a single PDF from the index. The UI uses this when the user
+/// hits the trash icon next to an indexed PDF in the panel footer.
+#[tauri::command]
+fn slab_beacon_index_forget(pdf_hash: String) -> CmdResult<()> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget(&pdf_hash).into()
+}
+
+// ---------- Beacon PII Highlighter (Slice 8) ----------
+
+impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
+    fn from(r: Result<T, PiiError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Bundled response from `slab_beacon_pii_find` — the front-end shows
+/// both the per-hit list and the per-kind summary in one go.
+#[derive(Debug, Clone, Serialize)]
+struct PiiFindReport {
+    hits: Vec<PiiHit>,
+    summary: PiiSummary,
+}
+
+/// Scan a PDF for PII. Regex pass is always on; LLM pass (names +
+/// addresses) is toggled by `include_llm_pass`. When the LLM pass is
+/// requested we also load the configured Beacon provider — if it's
+/// down the UI gets a clear "provider unavailable" message.
+#[tauri::command]
+async fn slab_beacon_pii_find(
+    pdf_path: PathBuf,
+    include_llm_pass: Option<bool>,
+    kinds: Option<Vec<PiiKind>>,
+    custom_patterns: Option<Vec<PiiCustomPattern>>,
+) -> CmdResult<PiiFindReport> {
+    let want_llm = include_llm_pass.unwrap_or(false);
+    let opts = PiiOpts {
+        include_llm_pass: want_llm,
+        custom_patterns: custom_patterns.unwrap_or_default(),
+        kinds: kinds.unwrap_or_default(),
+    };
+    // Lazily build provider only if the user asked for the LLM pass —
+    // a pure regex scan should work even when Ollama isn't installed.
+    let provider_box;
+    let provider_ref: Option<&dyn ai::AiProvider> = if want_llm {
+        let cfg = match do_load_beacon_config() {
+            Ok(c) => c,
+            Err(e) => {
+                return CmdResult::Err {
+                    message: e.to_string(),
+                }
+            }
+        };
+        provider_box = match ai::config::make_provider(&cfg.beacon) {
+            Ok(p) => p,
+            Err(e) => {
+                return CmdResult::Err {
+                    message: e.to_string(),
+                }
+            }
+        };
+        Some(provider_box.as_ref())
+    } else {
+        None
+    };
+    match do_find_pii(&pdf_path, provider_ref, opts).await {
+        Ok(hits) => {
+            let summary = PiiSummary::from_hits(&hits);
+            CmdResult::Ok {
+                value: PiiFindReport { hits, summary },
+            }
+        }
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Apply auto-redaction for a chosen set of PII kinds + extra custom
+/// patterns. We translate the regex-friendly kinds (email/ssn/phone/cc)
+/// into existing `auto_redact` presets, and let the caller pass through
+/// arbitrary regex strings for everything else (Names/Addresses get
+/// turned into literal-match patterns by the UI before calling this).
+///
+/// Returns the number of regex matches the redactor blacked out.
+#[tauri::command]
+fn slab_beacon_pii_redact(
+    input: PathBuf,
+    output: PathBuf,
+    presets: Vec<String>,
+    patterns: Vec<String>,
+    gray: Option<f32>,
+) -> CmdResult<u32> {
+    let opts = pdf::auto_redact::AutoRedactOpts {
+        presets,
+        patterns,
+        gray: gray.unwrap_or(0.0),
+    };
+    let result = pdf::auto_redact::auto_redact(&input, &output, opts);
+    match result {
+        Ok(n) => CmdResult::Ok { value: n },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Beacon Selection Action — run one of five quick LLM transforms
+/// (Translate / Explain / Define / Rewrite / Summarize) on a snippet
+/// the user highlighted in the PDF reader.
+///
+/// Lightweight by design: no PDF context loading, just the snippet.
+/// Uses the same provider as chat/summary (resolved from `~/.slab/config.toml`).
+/// `target_lang` is only consulted for the Translate action; ignored otherwise.
+#[tauri::command]
+async fn slab_beacon_selection_action(
+    text: String,
+    action: SelectionAction,
+    target_lang: Option<String>,
+) -> CmdResult<SelectionActionReply> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    do_selection_action(provider, &text, action, target_lang)
+        .await
+        .into()
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -381,6 +872,19 @@ pub fn run() {
             slab_flatten,
             slab_sanitize,
             slab_repair,
+            slab_beacon_config_read,
+            slab_beacon_config_write,
+            slab_beacon_provider_test,
+            slab_beacon_provider_kinds,
+            slab_beacon_chat,
+            slab_beacon_summary,
+            slab_beacon_index_pdf,
+            slab_beacon_search,
+            slab_beacon_index_stats,
+            slab_beacon_index_forget,
+            slab_beacon_pii_find,
+            slab_beacon_pii_redact,
+            slab_beacon_selection_action,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())

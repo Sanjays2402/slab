@@ -71,7 +71,7 @@
   </header>
 
   <div class="row">
-    <label>Input PDF</label>
+    <span class="row-label">Input PDF</span>
     <div class="path-row">
       <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
@@ -79,15 +79,15 @@
   </div>
 
   <div class="row">
-    <label>Output PDF</label>
+    <span class="row-label">Output PDF</span>
     <div class="path-row">
       <input type="text" bind:value={outputPath} placeholder="/path/to/redacted.pdf" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
 
-  <div class="row">
-    <label>Rectangles</label>
+  <div class="row" role="group" aria-label="Rectangles">
+    <span class="row-label">Rectangles</span>
     <div class="rect-list">
       {#each rects as r, i (i)}
         <div class="rect-row">
@@ -159,7 +159,7 @@
     flex-direction: column;
     gap: 0.375rem;
   }
-  label {
+  .row-label {
     color: var(--muted);
     font-size: 0.8125rem;
     font-weight: 500;

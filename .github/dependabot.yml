@@ -1,0 +1,52 @@
+version: 2
+updates:
+  # npm — keep deps fresh, group dev-only updates
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      svelte-stack:
+        patterns:
+          - "svelte"
+          - "@sveltejs/*"
+          - "vite"
+      tauri-js:
+        patterns:
+          - "@tauri-apps/*"
+      types:
+        patterns:
+          - "@types/*"
+        dependency-type: "development"
+    # Accepted-risk: see SECURITY.md
+    ignore:
+      - dependency-name: "cookie"
+        versions: ["< 0.7"]
+        # Transitive via SvelteKit. Desktop app, no HTTP cookies.
+
+  # Rust / Cargo
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      tauri:
+        patterns:
+          - "tauri*"
+          - "wry"
+          - "tao"
+    # Accepted-risk: see SECURITY.md
+    ignore:
+      - dependency-name: "glib"
+        # Linux-only path through tauri/webkit2gtk; Slab is macOS-only.
+        # Re-eval when Tauri bumps gtk-rs to 0.20+.
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

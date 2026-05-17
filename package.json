@@ -1,6 +1,6 @@
 {
   "name": "slab",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -26,6 +26,7 @@
     "@tauri-apps/cli": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
+    "@types/node": "^25.8.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",
