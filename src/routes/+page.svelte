@@ -44,6 +44,7 @@
   import VimController from "$lib/vim/VimController.svelte";
   import { runReaderVim } from "$lib/vim/reader-adapter";
   import { runLibraryVim, registerLibraryNav, type LibraryVimResult } from "$lib/vim/library-adapter";
+  import { runBeaconVim } from "$lib/vim/beacon-adapter";
   import { vimSearchQuery, resetVim } from "$lib/vim/mode";
   import type { VimAction } from "$lib/vim/types";
   import DetachedShell from "$lib/components/DetachedShell.svelte";
@@ -289,6 +290,10 @@
     if (res.detachActive) {
       detachActive("library");
     }
+  }
+
+  function onBeaconVimAction(e: CustomEvent<VimAction>) {
+    runBeaconVim(e.detail);
   }
 
   async function pickAndOpenInNewTab() {
@@ -667,7 +672,9 @@
       </div>
     </VimController>
   {:else if active === "beacon"}
-    <BeaconChatPanel />
+    <VimController panel="beacon" on:action={onBeaconVimAction as unknown as (e: Event) => void}>
+      <BeaconChatPanel />
+    </VimController>
   {:else if active === "library"}
     <VimController panel="library" on:action={onLibraryVimAction as unknown as (e: Event) => void}>
       <LibraryPanel />

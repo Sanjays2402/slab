@@ -24,6 +24,7 @@
     type BeaconChatTurn,
     type RectPts,
   } from "$lib/lens";
+  import { registerBeaconNav } from "$lib/vim/beacon-adapter";
 
   type ChatTurn = {
     role: "user" | "assistant";
@@ -83,9 +84,22 @@
   onMount(() => {
     window.addEventListener("slab:open-recent", onOpenRecent);
     window.addEventListener("slab:beacon-vision-rect", onVisionRect);
+    // Glass II (v1.2.0 Slice 3 second half) — Vim adapter wiring.
+    window.addEventListener("slab:vim-beacon:scroll", onVimScroll as EventListener);
+    window.addEventListener("slab:vim-beacon:scroll-edge", onVimScrollEdge as EventListener);
+    window.addEventListener("slab:vim-beacon:focus-input", onVimFocusInput);
+    window.addEventListener("slab:vim-beacon:blur-input", onVimBlurInput);
+    window.addEventListener("slab:vim-beacon:reset-chat", onVimResetChat);
+    const unregister = registerBeaconNav();
     return () => {
       window.removeEventListener("slab:open-recent", onOpenRecent);
       window.removeEventListener("slab:beacon-vision-rect", onVisionRect);
+      window.removeEventListener("slab:vim-beacon:scroll", onVimScroll as EventListener);
+      window.removeEventListener("slab:vim-beacon:scroll-edge", onVimScrollEdge as EventListener);
+      window.removeEventListener("slab:vim-beacon:focus-input", onVimFocusInput);
+      window.removeEventListener("slab:vim-beacon:blur-input", onVimBlurInput);
+      window.removeEventListener("slab:vim-beacon:reset-chat", onVimResetChat);
+      unregister();
     };
   });
 
@@ -219,6 +233,50 @@
     if (scrollContainer) {
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
+  }
+
+  // ---------- Vim adapter event handlers (Glass II Slice 3 second half) ----------
+
+  type ScrollDetail = {
+    kind: "line" | "half" | "full";
+    direction: "up" | "down";
+    count?: number;
+  };
+
+  function onVimScroll(e: CustomEvent<ScrollDetail>) {
+    if (!scrollContainer) return;
+    const d = e.detail;
+    const h = scrollContainer.clientHeight;
+    let step = 80; // line
+    if (d.kind === "half") step = Math.max(120, Math.floor(h * 0.5));
+    else if (d.kind === "full") step = Math.max(200, h - 40);
+    const count = Math.max(1, d.count ?? 1);
+    const delta = step * count * (d.direction === "down" ? 1 : -1);
+    scrollContainer.scrollBy({ top: delta, behavior: "smooth" });
+  }
+
+  function onVimScrollEdge(e: CustomEvent<{ target: "first" | "last" }>) {
+    if (!scrollContainer) return;
+    if (e.detail.target === "first") {
+      scrollContainer.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }
+
+  function onVimFocusInput() {
+    inputEl?.focus();
+  }
+
+  function onVimBlurInput() {
+    inputEl?.blur();
+  }
+
+  function onVimResetChat() {
+    resetChat();
   }
 
   function jumpToPage(p: number) {
