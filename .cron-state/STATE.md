@@ -5,27 +5,30 @@
 
 ---
 
-## STATUS: STACK_READY — v0.14.0 "Stack" DONE on `feature/v0.14.0-stack`, ready to merge to main
+## STATUS: RELEASE_PENDING — v0.14.0 "Stack" merged to main, CI building installers
 
-**Branch:** `feature/v0.14.0-stack` (6 commits ahead of main).
+**RELEASE_PENDING:** v0.14.0 — merge SHA `6b60462`, tag `v0.14.0`, CI run `25995859871` (in_progress at push). Next tick MODE B: poll CI, if green → `gh release create v0.14.0 --notes-file docs/releases/v0.14.0.md --title "v0.14.0 — Stack 📚"` and upload 6 artifacts.
 
-**Tick at 2026-05-17 08:09 PT shipped Slices 1, 3, 5, 6 in a single autonomous run:**
+**Tick at 2026-05-17 09:00 PT — QUAD-SLICE TICK shipped Slices 1, 3, 5, 6 in 6 commits + same-tick MODE A merge:**
 - ✅ **Slice 1: `pdf::diff` backend + Tauri command + DiffPanel UI** (commits `f62ffb2`, `872f836`, `530050f`) — Myers diff via `similar = "2.6"`, line-level. `DocDiff/PageDiff/LineDiff/DiffSummary/DiffOp` types. 10 backend tests + sidebar nav + Linear-style panel with summary pills + Changes-only filter + context toggle.
-- ✅ **Slice 3: Change-Report PDF export** (commit `64e7451`) — `format_report_md` + `export_report` generate a publishable PDF (Markdown→PDF via `pdf::md2pdf`). Tauri command `slab_diff_export_report`. 5 new tests. UI `Export Report (.pdf)` button.
+- ✅ **Slice 3: Change-Report PDF export** (commit `64e7451`) — `format_report_md` + `export_report` generate publishable PDF (Markdown→PDF via `pdf::md2pdf`). Tauri command `slab_diff_export_report`. 5 new tests. UI `Export Report (.pdf)` button.
 - ✅ **Slice 5: Beacon AI diff summary** (commit `6c90441`) — new `ai::diff_summary` module (~360 lines, 5 tests). `BeaconDiffSummary { content, model, truncated, pages_included, pages_total }`. Budget-aware truncation (drops unchanged pages first, then equal lines). Tauri command `slab_beacon_diff_summary` re-runs diff server-side. "Explain Changes (AI)" button + AI card with model/pages metadata + truncation badge.
-- ⏳ **Slice 6: Release prep** — NEXT COMMIT THIS TICK — version bump 0.13.1 → 0.14.0 across `Cargo.toml`, `package.json`, `tauri.conf.json` + `Cargo.lock` refresh + comprehensive release notes at `docs/releases/v0.14.0.md`.
+- ✅ **Slice 6: Release prep** (commit `a1af2ae`) — version bump 0.13.1 → 0.14.0 across `Cargo.toml`, `package.json`, `tauri.conf.json`, sidebar pill + Cargo.lock refresh + comprehensive release notes at `docs/releases/v0.14.0.md` (4.5KB).
+- ✅ **Merged to main** (merge SHA `6b60462`) — `git merge --no-ff feature/v0.14.0-stack`. Tagged `v0.14.0`. Pushed `main` + tag. CI run `25995859871` building 6 installers.
 
 **Deferred to v0.14.1:**
 - ⏳ Slice 2: visual diff (rendered side-by-side thumbnails with highlighted regions)
 - ⏳ Slice 4: patch/merge (apply diff from A onto B)
 
-**Quality gates green at HEAD `6c90441`:**
+**Quality gates green on main (at HEAD `6b60462`):**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
 - `cargo test --lib` — 376 passed (was 356 baseline)
 - `pnpm exec svelte-check` — 0 errors, 28 (pre-existing) warnings
 
-**Next tick (MODE A): merge `feature/v0.14.0-stack` to `main`, tag `v0.14.0`, push, wait on CI.**
+**Disk-cleanup note:** /tmp/slab-v*-assets and old slab-release-v0.13.1 dirs removed mid-tick (root filesystem was at 100% → 88% after cleanup). Freed ~1.6GB.
+
+**Next tick: MODE B — poll CI run `25995859871`, finalize GH release with 6 artifacts when green.**
 
 ---
 
