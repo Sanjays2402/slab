@@ -44,8 +44,19 @@ tokio = { version = "1", features = ["full"] }
 # Temp directories for OCR rasterization pipeline
 tempfile = "3"
 
+# Beacon (v0.10.0 AI features) — HTTP client for talking to local
+# Ollama and remote OpenAI-compatible servers, async-trait for the
+# AiProvider trait, futures for streaming response handling.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+async-trait = "0.1"
+futures-util = "0.3"
+bytes = "1"
+
 [dev-dependencies]
 tempfile = "3"
+# Beacon mock HTTP server for provider unit tests (no real Ollama in CI).
+mockito = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [profile.release]
 opt-level = "s"      # optimize for size

@@ -1,6 +1,7 @@
 // Slab — fast, free, offline PDF tool.
 // All operations run locally; nothing is ever uploaded.
 
+pub mod ai;
 pub mod pdf;
 
 use pdf::annot_export::{
