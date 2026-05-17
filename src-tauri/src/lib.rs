@@ -4,6 +4,11 @@
 pub mod ai;
 pub mod pdf;
 
+use ai::config::{
+    load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
+    SlabConfig,
+};
+
 use pdf::annot_export::{
     extract as do_extract_annots, to_markdown as do_annots_to_md, ExtractedAnnotation,
 };
@@ -313,6 +318,86 @@ fn slab_repair(input: PathBuf, output: PathBuf) -> CmdResult<RepairReport> {
     do_repair(&input, &output).into()
 }
 
+// ---------- Beacon (AI) commands ----------
+
+/// Helper: turn an `AiError` into a `CmdResult` so the Tauri shell
+/// surfaces a user-readable string instead of a panic.
+impl<T: Serialize> From<Result<T, ai::AiError>> for CmdResult<T> {
+    fn from(r: Result<T, ai::AiError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Read `~/.slab/config.toml`. If the file is missing, returns the
+/// default config (local Ollama). Lets the settings panel populate
+/// without a flicker.
+#[tauri::command]
+fn slab_beacon_config_read() -> CmdResult<SlabConfig> {
+    do_load_beacon_config().into()
+}
+
+/// Persist `~/.slab/config.toml`. Caller hands the full `SlabConfig`
+/// back — the Svelte side keeps the source of truth in component
+/// state and writes the whole thing on every Save click.
+#[tauri::command]
+fn slab_beacon_config_write(config: SlabConfig) -> CmdResult<()> {
+    do_save_beacon_config(&config).into()
+}
+
+/// Smoke-test the configured provider. Currently issues a trivial chat
+/// call ("Reply with the single word READY"). Returns the model name
+/// on success so the UI can show "Connected to llama3.2:3b ✓".
+///
+/// The settings panel uses this to give users a "Test connection"
+/// button before they hit Save.
+#[tauri::command]
+async fn slab_beacon_provider_test(config: BeaconConfig) -> CmdResult<String> {
+    use ai::{ChatMessage, ChatOpts, ChatRole};
+    let provider = match ai::config::make_provider(&config) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let msgs = vec![ChatMessage {
+        role: ChatRole::User,
+        content: "Reply with the single word READY".into(),
+    }];
+    let opts = ChatOpts {
+        max_tokens: Some(8),
+        temperature: Some(0.0),
+        ..Default::default()
+    };
+    match provider.chat(&msgs, &opts).await {
+        Ok(resp) => CmdResult::Ok { value: resp.model },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Enumerate available provider kinds for the settings dropdown. Stays
+/// in lockstep with the `ProviderKind` enum without hand-syncing on
+/// the Svelte side.
+#[tauri::command]
+fn slab_beacon_provider_kinds() -> CmdResult<Vec<String>> {
+    let kinds = [ProviderKind::Ollama, ProviderKind::Openai]
+        .iter()
+        .map(|k| match k {
+            ProviderKind::Ollama => "ollama".to_string(),
+            ProviderKind::Openai => "openai".to_string(),
+        })
+        .collect();
+    CmdResult::Ok { value: kinds }
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -382,6 +467,10 @@ pub fn run() {
             slab_flatten,
             slab_sanitize,
             slab_repair,
+            slab_beacon_config_read,
+            slab_beacon_config_write,
+            slab_beacon_provider_test,
+            slab_beacon_provider_kinds,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
