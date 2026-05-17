@@ -3,6 +3,7 @@
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
+  import SplitPatternPanel from "$lib/panels/SplitPatternPanel.svelte";
   import PagesVisualPanel from "$lib/panels/PagesVisualPanel.svelte";
   import PagesListPanel from "$lib/panels/PagesListPanel.svelte";
   import CompressPanel from "$lib/panels/CompressPanel.svelte";
@@ -45,6 +46,7 @@
     { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
+    { id: "split-chapter", label: "Split by Chapter", icon: "✂", ready: true },
     { id: "pages", label: "Pages", icon: "▦", ready: true },
     { id: "pages-list", label: "Pages (list)", icon: "≣", ready: true },
     { id: "compress", label: "Compress", icon: "▼", ready: true },
@@ -145,6 +147,8 @@
     <MergePanel />
   {:else if active === "split"}
     <SplitPanel />
+  {:else if active === "split-chapter"}
+    <SplitPatternPanel />
   {:else if active === "pages"}
     <PagesVisualPanel />
   {:else if active === "pages-list"}
