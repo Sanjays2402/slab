@@ -34,6 +34,17 @@
   let filter = $state<"all" | "changed">("changed");
   let showEqualContext = $state(true);
 
+  type BeaconDiffSummary = {
+    content: string;
+    model: string;
+    truncated: boolean;
+    pages_included: number;
+    pages_total: number;
+  };
+  let aiSummary = $state<BeaconDiffSummary | null>(null);
+  let aiBusy = $state(false);
+  let aiError = $state<string | null>(null);
+
   async function pickOld() {
     const picked = await open({
       multiple: false,
@@ -81,6 +92,8 @@
     }
     status = { kind: "working", msg: "Comparing…" };
     diff = null;
+    aiSummary = null;
+    aiError = null;
     try {
       const res = await invoke<CmdResult<DocDiff>>("slab_diff_pdfs", {
         old: oldPath,
@@ -162,6 +175,29 @@
     }
   }
 
+  async function explainChanges() {
+    if (!oldPath || !newPath || aiBusy) return;
+    aiBusy = true;
+    aiError = null;
+    aiSummary = null;
+    try {
+      const res = await invoke<CmdResult<BeaconDiffSummary>>("slab_beacon_diff_summary", {
+        old: oldPath,
+        new: newPath,
+        maxDiffChars: null,
+      });
+      if (res.kind === "ok") {
+        aiSummary = res.value;
+      } else {
+        aiError = res.message;
+      }
+    } catch (e) {
+      aiError = String(e);
+    } finally {
+      aiBusy = false;
+    }
+  }
+
   function summaryPills(s: DiffSummary): { label: string; cls: string }[] {
     const out: { label: string; cls: string }[] = [];
     if (s.added > 0) out.push({ label: `+${s.added}`, cls: "ins" });
@@ -237,6 +273,9 @@
       <button onclick={exportReport} disabled={status.kind === "working"}>
         Export Report (.pdf)
       </button>
+      <button onclick={explainChanges} disabled={aiBusy || status.kind === "working"}>
+        {aiBusy ? "Asking Beacon…" : "Explain Changes (AI)"}
+      </button>
       <div class="filter-toggle">
         <button class:active={filter === "changed"} onclick={() => (filter = "changed")}
           >Changes only</button
@@ -265,6 +304,30 @@
         <div class="total-pill {p.cls}">{p.label}</div>
       {/each}
     </div>
+
+    {#if aiError}
+      <div class="ai-card ai-err">
+        <div class="ai-head">Beacon couldn't summarize the diff</div>
+        <div class="ai-msg">{aiError}</div>
+      </div>
+    {/if}
+    {#if aiSummary}
+      <div class="ai-card">
+        <div class="ai-head">
+          <span class="ai-title">Beacon’s take on the changes</span>
+          <span class="ai-meta">
+            <span class="ai-model">{aiSummary.model}</span>
+            <span class="ai-pages">
+              {aiSummary.pages_included}/{aiSummary.pages_total} pages
+            </span>
+            {#if aiSummary.truncated}
+              <span class="ai-trunc">truncated</span>
+            {/if}
+          </span>
+        </div>
+        <div class="ai-body">{aiSummary.content}</div>
+      </div>
+    {/if}
 
     <div class="pages">
       {#each visiblePages(diff) as page, idx (idx)}
@@ -480,5 +543,60 @@
     color: var(--text-3);
     font-size: 12px;
     padding: 10px 12px;
+  }
+  .ai-card {
+    margin: 4px 0 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 12px 14px;
+  }
+  .ai-card.ai-err {
+    border-color: rgba(248, 81, 73, 0.4);
+    background: rgba(248, 81, 73, 0.06);
+  }
+  .ai-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .ai-title {
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .ai-meta {
+    display: inline-flex;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .ai-model,
+  .ai-pages,
+  .ai-trunc {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .ai-trunc {
+    color: #e2b455;
+    border-color: rgba(214, 152, 0, 0.4);
+  }
+  .ai-body {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-1);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ai-msg {
+    font-size: 12px;
+    color: var(--text-2);
+    white-space: pre-wrap;
   }
 </style>

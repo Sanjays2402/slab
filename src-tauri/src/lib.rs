@@ -12,6 +12,7 @@ use ai::config::{
     load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
     SlabConfig,
 };
+use ai::diff_summary::{beacon_diff_summary as do_beacon_diff_summary, BeaconDiffSummary};
 use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
     IndexReport, IndexStats, SearchHit,
@@ -622,6 +623,45 @@ async fn slab_beacon_summary(
     do_beacon_summary(provider, &pdf_path, length, budget)
         .await
         .into()
+}
+
+/// Beacon "what changed?" — natural-language summary of a DocDiff. Re-runs
+/// the diff server-side (cheap) so the front-end doesn't need to ship the
+/// full DocDiff payload back over the IPC wire. v0.14.0 Stack Slice 5.
+#[tauri::command]
+async fn slab_beacon_diff_summary(
+    old: PathBuf,
+    new: PathBuf,
+    max_diff_chars: Option<u32>,
+) -> CmdResult<BeaconDiffSummary> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let diff = match do_diff_pdfs(&old, &new) {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let budget = max_diff_chars
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_MAX_CONTEXT_CHARS);
+    do_beacon_diff_summary(provider, &diff, budget).await.into()
 }
 
 /// Beacon vision Q&A — render `page` (or a region of it) to an image
@@ -1314,6 +1354,7 @@ pub fn run() {
             slab_beacon_provider_kinds,
             slab_beacon_chat,
             slab_beacon_summary,
+            slab_beacon_diff_summary,
             slab_beacon_index_pdf,
             slab_beacon_search,
             slab_beacon_index_stats,
