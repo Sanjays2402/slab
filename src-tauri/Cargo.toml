@@ -71,6 +71,14 @@ sha2 = "0.10"
 # stable iteration order. Single-file no-features-by-default crate.
 walkdir = "2"
 
+# Lens (v0.13.0 Slice 5 Vision Q&A) — PNG decode + post-render rect crop.
+# `default-features = false` keeps the dep tree small: we only need PNG,
+# not JPEG/WebP/GIF/TIFF. Used by `ai::vision` for rasterize + downscale.
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Base64-encode rendered PNGs for the Ollama `messages[].images` field.
+# Tiny crate, no_std-friendly, zero unsafe.
+base64 = "0.22"
+
 [dev-dependencies]
 tempfile = "3"
 # Beacon mock HTTP server for provider unit tests (no real Ollama in CI).
