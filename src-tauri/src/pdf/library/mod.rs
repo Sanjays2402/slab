@@ -15,10 +15,15 @@
 //   quick-key so re-scans of a 1000-doc folder are cheap.
 // * `query` — list/filter/sort with eager tag loading.
 
+pub mod ocr_queue;
 pub mod query;
 pub mod registry;
 pub mod scanner;
 
+pub use ocr_queue::{
+    list_pending as ocr_queue_list_pending, run_all as ocr_queue_run_all,
+    run_one as ocr_queue_run_one, OcrQueueResult,
+};
 pub use query::{query_documents, LibraryFilter, SortBy};
 pub use registry::{
     default_db_path, DocumentRecord, FolderRecord, LibraryDb, LibraryError, TagRecord,
