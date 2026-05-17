@@ -7,6 +7,7 @@
   import SplitPatternPanel from "$lib/panels/SplitPatternPanel.svelte";
   import PagesVisualPanel from "$lib/panels/PagesVisualPanel.svelte";
   import PagesListPanel from "$lib/panels/PagesListPanel.svelte";
+  import EditTextPanel from "$lib/panels/EditTextPanel.svelte";
   import CompressPanel from "$lib/panels/CompressPanel.svelte";
   import ExtractPanel from "$lib/panels/ExtractPanel.svelte";
   import EncryptPanel from "$lib/panels/EncryptPanel.svelte";
@@ -52,6 +53,7 @@
     { id: "split-chapter", label: "Split by Chapter", icon: "✂", ready: true },
     { id: "pages", label: "Pages", icon: "▦", ready: true },
     { id: "pages-list", label: "Pages (list)", icon: "≣", ready: true },
+    { id: "edit-text", label: "Edit Text", icon: "✎", ready: true },
     { id: "compress", label: "Compress", icon: "▼", ready: true },
     { id: "extract", label: "Extract", icon: "❡", ready: true },
     { id: "encrypt", label: "Encrypt", icon: "▣", ready: true },
@@ -343,6 +345,8 @@
     <PagesVisualPanel />
   {:else if active === "pages-list"}
     <PagesListPanel />
+  {:else if active === "edit-text"}
+    <EditTextPanel />
   {:else if active === "compress"}
     <CompressPanel />
   {:else if active === "extract"}
