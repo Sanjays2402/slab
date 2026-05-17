@@ -5,9 +5,44 @@
 
 ---
 
-## STATUS: RELEASE_PENDING — v0.14.0 "Stack" merged to main, CI building installers
+## STATUS: v0.14.0 RELEASED ✓ — actively shipping v0.15.0 "Theater" on `feature/v0.15.0-theater`
 
-**RELEASE_PENDING:** v0.14.0 — merge SHA `6b60462`, tag `v0.14.0`, CI run `25995859871` (in_progress at push). Next tick MODE B: poll CI, if green → `gh release create v0.14.0 --notes-file docs/releases/v0.14.0.md --title "v0.14.0 — Stack 📚"` and upload 6 artifacts.
+**v0.14.0 Released** 2026-05-17 ~09:30 PT — CI run `25995859871` green, all 6 installers attached to https://github.com/Sanjays2402/slab/releases/tag/v0.14.0 ("Stack 📚"). Merge SHA `6b60462`, tag `v0.14.0`.
+
+---
+
+## ACTIVE BRANCH: `feature/v0.15.0-theater` (4 commits ahead of main)
+
+**Tick at 2026-05-17 09:43 PT — DOUBLE-SLICE TICK Slices 3 + 4 in 2 commits:**
+
+- ✅ **Slice 3: PresenterAnnotations** (commit `6350742`) — `src/lib/components/PresenterAnnotations.svelte` (~450 lines). Big annotation pack on top of PresenterOverlay. Tools: laser pointer (L) with fading red trail, pen (P), highlighter (H), erase-slide-ink (X), blackout (B), whiteout (W), slide-picker grid (G). Strokes stored per-page in `Map<page, Stroke[]>`; coordinates normalized [0,1] so they survive resize. Picker grid is 4–12 cols based on page count, 16:9 tiles, accent-green for current. Esc cascade: closes picker → clears blackout → drops to none-tool → exits presenter. Toolbar in header `.right` with 7 active-state-aware buttons.
+- ✅ **Slice 4: Reader auto-detect + Present banner** (commit `7f2743a`) — `ReaderPanel.svelte` now fire-and-forgets `analyzeSlides(path)` after every PDF open. If `is_slides == true` a green banner appears at the top: "▷ This looks like a slide deck. N slides · {dominant_label} · M pages with notes" with one-click `▷ Present` button that mounts the full `PresenterOverlay` on top. Dismiss-sticky per-load. Resumes at `currentPage`.
+
+**Theater slices to-date (4 / 4 planned shipped, branch ready to release):**
+- ✅ Slice 1: `pdf::slides` backend + Tauri command (commit `7be30d5`, pushed)
+- ✅ Slice 2: SlidesPanel UI + sidebar nav (commit `4270d28`, pushed)
+- ✅ Slice 2 cont.: PresenterOverlay (current slide + next + notes + timer + kbd nav) (commit `2383689`, pushed)
+- ✅ Slice 3: PresenterAnnotations (laser/pen/highlighter/eraser/blackout/whiteout/picker) (commit `6350742`)
+- ✅ Slice 4: Reader auto-detect + Present banner (commit `7f2743a`)
+
+**Quality gates green on `feature/v0.15.0-theater` (at HEAD `7f2743a`):**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` — 391 passed
+- `pnpm exec svelte-check` — 0 errors / 28 baseline warnings
+
+**Next tick options (MODE C still, decide based on time):**
+1. **Slice 5: Export annotated deck as PDF** — bake pen+highlighter strokes (+notes maybe) back into a stamped output PDF. Needs new backend module `pdf::stamp_annotations` or extend `pdf::stamp`. Probably 2-3 commits.
+2. **Slice 6: Release prep v0.15.0** — bump versions, write `docs/releases/v0.15.0.md`, merge to main, tag, release. Eligible TODAY since Slices 1-4 are a complete-enough feature set (auto-detect → present → annotate live → jump → blackout).
+3. **Slice 5 alt: dual-monitor audience window via Tauri multi-window** — bigger lift; defer.
+
+**Recommended**: Slice 6 release prep next tick (ship v0.15.0 fast), then start v0.16.0 / v1.0 prep. The Theater scope already delivers a Keynote-class presenter.
+
+---
+
+## PRIOR (kept for reference)
+
+**v0.14.0 RELEASED** 2026-05-17 ~09:30 PT — CI run `25995859871` green. URL: https://github.com/Sanjays2402/slab/releases/tag/v0.14.0
 
 **Tick at 2026-05-17 09:00 PT — QUAD-SLICE TICK shipped Slices 1, 3, 5, 6 in 6 commits + same-tick MODE A merge:**
 - ✅ **Slice 1: `pdf::diff` backend + Tauri command + DiffPanel UI** (commits `f62ffb2`, `872f836`, `530050f`) — Myers diff via `similar = "2.6"`, line-level. `DocDiff/PageDiff/LineDiff/DiffSummary/DiffOp` types. 10 backend tests + sidebar nav + Linear-style panel with summary pills + Changes-only filter + context toggle.
@@ -19,22 +54,6 @@
 **Deferred to v0.14.1:**
 - ⏳ Slice 2: visual diff (rendered side-by-side thumbnails with highlighted regions)
 - ⏳ Slice 4: patch/merge (apply diff from A onto B)
-
-**Quality gates green on main (at HEAD `6b60462`):**
-- `cargo fmt --all -- --check` ✓
-- `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` — 376 passed (was 356 baseline)
-- `pnpm exec svelte-check` — 0 errors, 28 (pre-existing) warnings
-
-**Disk-cleanup note:** /tmp/slab-v*-assets and old slab-release-v0.13.1 dirs removed mid-tick (root filesystem was at 100% → 88% after cleanup). Freed ~1.6GB.
-
-**Next tick: MODE B — poll CI run `25995859871`, finalize GH release with 6 artifacts when green.**
-
----
-
-## PRIOR (kept for reference)
-
-**v0.13.1 RELEASED** 2026-05-17 ~08:09 PT — CI run `25994802981` green, all 6 installers on GH Releases. URL: https://github.com/Sanjays2402/slab/releases/tag/v0.13.1
 
 **v0.13.0 RELEASE_PENDING obsoleted:** CI run `25994119497` for v0.13.0 failed on Windows (xpdf pdftotext rejected `-bbox-layout`); bundling skipped on all 3 platforms. No artifacts ever existed. v0.13.1 supersedes it cleanly.
 
