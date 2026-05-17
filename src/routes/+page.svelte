@@ -388,6 +388,18 @@
         active={true}
         initialPath={detachedDoc}
       />
+    {:else if detachedPanel === "pages"}
+      <PagesVisualPanel />
+    {:else if detachedPanel === "pages-list"}
+      <PagesListPanel />
+    {:else if detachedPanel === "diff"}
+      <DiffPanel />
+    {:else if detachedPanel === "slides"}
+      <SlidesPanel />
+    {:else if detachedPanel === "tables"}
+      <TablesPanel />
+    {:else if detachedPanel === "markdown"}
+      <MarkdownPanel />
     {:else}
       <div class="detached-unsupported">
         <p>Panel <code>{detachedPanel}</code> doesn't support detached mode yet.</p>
