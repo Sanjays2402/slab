@@ -10,6 +10,7 @@ pub mod compress;
 pub mod crop;
 pub mod encrypt;
 pub mod extract;
+pub mod flatten;
 pub mod grayscale;
 pub mod header_footer;
 pub mod info;
@@ -25,6 +26,8 @@ pub mod page_numbers;
 pub mod pages;
 pub mod polyglot;
 pub mod redact;
+pub mod repair;
+pub mod sanitize;
 pub mod split;
 pub mod watermark;
 
