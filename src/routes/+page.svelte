@@ -42,9 +42,10 @@
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
   import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
-  import { openPanelWindow } from "$lib/windows";
+  import { openPanelWindow, closePanelWindow, focusPanelWindow, listPanelWindows, type WindowState } from "$lib/windows";
   import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
+  import { notify } from "$lib/notify";
   import type { RecentFile } from "$lib/recent";
 
   type Feature = {
@@ -147,7 +148,50 @@
    * a toast on success is Slice 7's job.
    */
   function detachActive(id: string): void {
-    void openPanelWindow(id);
+    void openPanelWindow(id).then((label) => {
+      if (label) {
+        notify.info(`Detached ${features.find((f) => f.id === id)?.label ?? id}`);
+        // Optimistic refresh so the Windows menu shows the new entry
+        // immediately rather than waiting for the next 2s poll.
+        void refreshOpenWindows();
+      }
+    });
+  }
+
+  // ---------- Slice 7: Windows menu (main window only) ----------
+  //
+  // Sidebar footer lists every currently-open detached window so the
+  // user has a single point of control for the swarm. Polls every 2s
+  // because Tauri 2 doesn't broadcast window-created/-destroyed events
+  // on a documented public channel — cheaper than maintaining a custom
+  // event bus on the Rust side, and 2s feels live enough.
+  let openWindows = $state<WindowState[]>([]);
+  let windowsPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function refreshOpenWindows(): Promise<void> {
+    try {
+      openWindows = await listPanelWindows();
+    } catch (e) {
+      // Non-fatal — leave the previous snapshot in place.
+      console.error("[cabinet] listPanelWindows failed:", e);
+    }
+  }
+
+  async function closeWindow(label: string): Promise<void> {
+    await closePanelWindow(label);
+    notify.info(`Closed detached window`);
+    void refreshOpenWindows();
+  }
+
+  function prettyWindowLabel(w: WindowState): string {
+    const feat = features.find((f) => f.id === w.panelId);
+    const name = feat ? feat.label : w.panelId;
+    if (w.targetDoc) {
+      // Show just the file's basename, not the absolute path.
+      const base = w.targetDoc.split(/[/\\]/).pop() ?? w.targetDoc;
+      return `${name} — ${base}`;
+    }
+    return name;
   }
 
   // ---------- Reader tabs (Lathe Slice 5) ----------
@@ -383,6 +427,16 @@
         .catch((e) => {
           console.error("[cabinet] failed to subscribe to slab://open-doc:", e);
         });
+
+      // Slice 7: poll the window registry every 2s so the sidebar's
+      // Windows menu stays roughly in sync with reality. We do an
+      // immediate first refresh too so the menu populates without a
+      // 2s wait if the user reloads the main window while panels are
+      // already detached.
+      void refreshOpenWindows();
+      windowsPollTimer = setInterval(() => {
+        void refreshOpenWindows();
+      }, 2000);
     }
   });
   onDestroy(() => {
@@ -391,6 +445,10 @@
     if (unlistenOpenDoc) {
       unlistenOpenDoc();
       unlistenOpenDoc = null;
+    }
+    if (windowsPollTimer) {
+      clearInterval(windowsPollTimer);
+      windowsPollTimer = null;
     }
   });
 </script>
@@ -485,6 +543,29 @@
   </button>
 
   <div class="footer">
+    {#if openWindows.length > 0}
+      <div class="windows-list" role="group" aria-label="Detached windows">
+        <h4>Detached</h4>
+        {#each openWindows as w (w.label)}
+          <div class="window-row" title={prettyWindowLabel(w)}>
+            <button
+              type="button"
+              class="window-focus"
+              onclick={() => focusPanelWindow(w.label)}
+            >
+              {prettyWindowLabel(w)}
+            </button>
+            <button
+              type="button"
+              class="window-close"
+              onclick={() => closeWindow(w.label)}
+              title="Close window"
+              aria-label="Close detached window"
+            >×</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
     <span class="version">v1.0.0</span>
   </div>
 </aside>
@@ -805,6 +886,65 @@
     border-top: 1px solid var(--border);
     font-size: 11px;
     color: var(--text-3);
+  }
+
+  /* Slice 7: Detached windows submenu. Lives in the sidebar footer and
+     only renders when at least one detached window is open. */
+  .windows-list {
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .windows-list h4 {
+    margin: 0 0 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .window-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 22px;
+  }
+  .window-focus {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    text-align: left;
+    padding: 2px 4px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .window-focus:hover {
+    background: var(--bg-2);
+    color: var(--text-1);
+  }
+  .window-close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 0;
+  }
+  .window-close:hover {
+    background: var(--bg-2);
+    color: var(--text-1);
   }
 
   .content {
