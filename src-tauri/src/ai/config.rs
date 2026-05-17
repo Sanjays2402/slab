@@ -36,6 +36,10 @@ pub struct SlabConfig {
     /// UI preferences (theme, accent, density). Added in v1.0.0 "Glass".
     #[serde(default)]
     pub ui: UiConfig,
+    /// Customizable keyboard shortcuts. Added in v1.0.0 "Glass" Slice 7.
+    /// Absent in legacy configs → defaults reconstituted at materialise time.
+    #[serde(default)]
+    pub keymap: crate::keymap::KeymapConfig,
 }
 
 /// UI preferences. Persisted alongside Beacon settings in
@@ -250,6 +254,7 @@ mod tests {
                 api_key_env: Some("OPENAI_API_KEY".into()),
             },
             ui: UiConfig::default(),
+            keymap: Default::default(),
         };
         save_to(&path, &cfg).unwrap();
         let loaded = load_from(&path).unwrap();
@@ -393,6 +398,7 @@ mod tests {
                             density,
                             onboarded: false,
                         },
+                        keymap: Default::default(),
                     };
                     save_to(&path, &cfg).unwrap();
                     let loaded = load_from(&path).unwrap();
@@ -416,6 +422,7 @@ mod tests {
                 density: Density::Compact,
                 onboarded: true,
             },
+            keymap: Default::default(),
         };
         save_to(&path, &cfg).unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
@@ -439,6 +446,7 @@ mod tests {
                     onboarded: flag,
                     ..Default::default()
                 },
+                keymap: Default::default(),
             };
             save_to(&path, &cfg).unwrap();
             let loaded = load_from(&path).unwrap();
@@ -497,6 +505,7 @@ mod tests {
                 density: Density::Compact,
                 onboarded: true,
             },
+            keymap: Default::default(),
         };
         save_to(&path, &cfg).unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
