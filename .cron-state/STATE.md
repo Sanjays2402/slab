@@ -5,11 +5,126 @@
 
 ---
 
-## STATUS: v0.15.0 RELEASE_PENDING 🎭 — CI building 6 installers on main
+## STATUS: v1.0.0 "Glass" IN PROGRESS — 15 commits on `feature/v1.0.0-glass` (Slice 7 DONE end-to-end)
 
-**v0.15.0 Theater MERGED TO MAIN** 2026-05-17 ~10:35 PT.
-Merge SHA `494295d`, tag `v0.15.0`, CI run `25997502867` (in_progress).
-Release notes staged at `docs/releases/v0.15.0.md`.
+**v0.15.0 Theater RELEASED** 2026-05-17 ~10:35 PT — https://github.com/Sanjays2402/slab/releases/tag/v0.15.0 (Theater 🎭) — 6 assets up, isLatest=true.
+
+**Active branch**: `feature/v1.0.0-glass` (15 commits ahead of main, pushed to origin)
+
+---
+
+## TICK 2026-05-17 ~12:15 PT — Slice 7 frontend half (Customizable Shortcuts) — END-TO-END DONE
+
+Tasks 5-8 shipped this tick. Slice 7 is now complete in 6 commits across two ticks.
+
+- ✅ **Task 5: $lib/keymap.ts** (`d29c806`) — runtime store + matches() module (~290 lines). Public API: `keymapView` writable store, `bootKeymap()` idempotent loader, `matches(event, actionId)` O(1) check against a parsed cache, `writeKeymap()` / `resetKeymap()` thin wrappers around the Tauri commands, `bindingFromEvent(e)` builds canonical "Mod+Shift+K" from a captured event, `prettyBinding(s)` / `bindingFor(id)` / `prettyBindingFor(id)` helpers. Modifier semantics byte-identical to Rust side: Mod resolves to meta on macOS / ctrl elsewhere, explicit Ctrl on mac is literal ctrlKey, on non-mac Mod IS ctrl so explicit-ctrl is implicitly covered, single ASCII-letter compares case-insensitively, `"Mod++"` parsing handled. Wired into `+layout.svelte` onMount alongside `bootTheme()` — silent on errors and outside Tauri.
+
+- ✅ **Task 6: Wire global shortcuts to live keymap** (`923280a`) — `+page.svelte` onGlobalKey now flows through `matches(e, "palette.open")` / `matches(e, "tabs.new")` / etc. tabs.next/prev split into two separate matches() calls (because users might rebind to totally different keys instead of the canonical Shift+Tab pattern). `ShortcutsOverlay.svelte` derives rows live from `keymapView` via prettyBinding() — rebinds appear immediately without reload. Added "Customise" group footer hinting at Settings → Keyboard shortcuts. `BeaconChatPanel.svelte` onKeydown honours both customisable beacon.send AND default Enter-sends (preserves muscle memory while letting users rebind).
+
+- ✅ **Task 7: KeymapPanel.svelte** (`5740179`) — Linear-style customisation UI (~458 lines including ~250 lines of polish CSS). Grouped rows (Global/Tabs/Reading/Beacon) with rounded-card per group + label + canonical id (mono) + click-to-capture pill + inline reset button on override rows. Pill shows prettyBinding (⌘⇧K on mac, Mod+Shift+K elsewhere). Click pill → capture mode: pill ringed accent, "Press a key combo…" hint flies in. Esc cancels, Backspace resets just-this-row to factory default. Any other key → `bindingFromEvent` → writeKeymap. Conflict detection parses backend `Conflict` error and surfaces friendly toast "Shortcut already in use → tabs.close". Toolbar shows customised count badge + "Reset all to defaults" (disabled when at defaults). Wired into +page.svelte as sidebar feature `⌨ Shortcuts`.
+
+- ✅ **Task 8: Command Palette entry + STATE update** (`4d99e5a`) — `Customize keyboard shortcuts` action in Settings group with fuzzy keywords. ⌘K → "customize" → enter → land on KeymapPanel.
+
+**Quality gates green on `feature/v1.0.0-glass` HEAD `4d99e5a`:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (451 passed, unchanged from backend tick — frontend has no rust-side tests)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Slice 7 end-to-end DONE.** User can now: ⌘K → "customize shortcuts" → click `⌘K` row → press ⌘P → palette now opens on ⌘P; binding persists to `~/.slab/config.toml [keymap]`; conflicts rejected with a toast; reset-all wipes overrides. All existing shortcuts byte-identical for default keymap.
+
+**Next tick options:**
+1. **Slice 8: Floating panels** (multi-window/detachable Beacon + Library — bigger lift, 2+ ticks). Requires Tauri multi-window plumbing.
+2. **Slice 8 alt: Performance pass** — page-render worker pool + 100-page open <500ms target. Pure backend, ~2-3 commits.
+3. **v1.0.0 release prep** — slices 1-7 are a respectable "Glass" feature set; could bump 0.15.0 → 1.0.0, write comprehensive release notes, MODE A merge. Could ship today with floating panels as v1.0.1.
+
+**Recommended**: ship v1.0.0 release prep next tick to lock in the win, then add floating panels + perf as v1.0.1 / v1.1.0. Sanjay's mandate is "ship big things every tick" — v1.0.0 is THE big shipment.
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: v1.0.0 "Glass" IN PROGRESS — 11 commits on `feature/v1.0.0-glass`
+
+Used the writing-plans skill to author a full 8-task plan, then shipped
+the entire backend half in this same tick (3 commits).
+
+- ✅ **Plan committed** (`a6ab6cb`) — `docs/plans/2026-05-17-v1.0.0-glass-slice-7-keymap.md` (~58 KB, 1612 lines). Bite-sized 2-5 min tasks, exact paths, copy-pasteable code, TDD with failing tests + expected output per step. Tick split: Tasks 1-4 backend (this tick), Tasks 5-8 frontend (next tick).
+- ✅ **Slice 7 backend module** (`e14428f`) — new `src-tauri/src/keymap/` directory (mod.rs + binding.rs + action.rs, 996 lines incl. 32 unit tests). `Binding` round-trips between `Mod+Shift+K` strings and ModifierSet+key with canonical print order. `ActionId` enum + ACTIONS registration table covers 19 bindable actions across Global/Tabs/Reading/Beacon. `default_keymap()` reproduces today's hardcoded shortcuts byte-for-byte. `KeymapConfig` (sparse overrides, defaults reconstituted at materialise time → no migration ever needed) wired into `SlabConfig` via `#[serde(default)]` so legacy `~/.slab/config.toml` files keep working. Unknown action ids in incoming TOML are silently dropped (forward-compat); malformed binding strings error loudly. Custom serde with sorted keys for stable on-disk diff.
+- ✅ **Slice 7 Tauri commands** (`1cad59c`) — `slab_keymap_{read,write,reset}` invoke commands. `apply_overrides()` is collision-aware against the *materialised* map (binding palette.open to "?" correctly collides with default shortcuts.show even though user didn't touch it). Drops overrides equal to default so the on-disk file stays tidy. +7 commands.rs tests covering view shape, override marker, every error variant, default-pruning, happy-path write-through.
+
+**Quality gates green on `feature/v1.0.0-glass` HEAD `1cad59c`:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (451 passed, +39 from Slice 7 keymap module)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Next tick (still MODE C — Slice 7 Tick 2 = frontend):**
+- Task 5: `src/lib/keymap.ts` — Svelte store + `matches(event, actionId)` matcher + `bootKeymap()` / `writeKeymap()` / `resetKeymap()` async wrappers.
+- Task 6: Replace hardcoded `e.key === "?"` / `e.metaKey && e.key === "k"` checks in `+page.svelte`, `ShortcutsOverlay.svelte`, `BeaconChatPanel.svelte` with `matches(e, "...")` calls. ShortcutsOverlay renders pills from the live store, not the hardcoded array.
+- Task 7: `src/lib/panels/KeymapPanel.svelte` — Linear-style settings UI with capture-mode pills, group headers (Global / Tabs / Reading / Beacon), override badge, per-row reset, factory-reset button. Inline conflict toast on backend rejection.
+- Task 8: Command palette entry "Customize shortcuts" + final svelte-check + push.
+
+After Slice 7 ships: Slice 8 candidate is Floating Panels (multi-window/detachable Beacon + Library — bigger lift, 2+ ticks) OR Performance pass (page-render worker pool + 100-page open <500ms) OR v1.0.0 release prep (version bump 0.15.0 → 1.0.0, comprehensive release notes, MODE A merge).
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: v1.0.0 "Glass" IN PROGRESS — 8 commits on `feature/v1.0.0-glass`
+
+**Glass slices shipped so far:**
+- ✅ **Slice 1: Settings UX** — backend `UiConfig` extension + `ui` section
+  in config.toml + 2 Tauri commands + theme.ts runtime store
+  + app.css refactored to data-attribute selectors (light/dark + 5 accents
+  + compact density) + SettingsPanel + nav entry + Command Palette
+  Appearance commands. Commits `5aa9631`, `ff23b3d`, `ec1bdde`.
+- ✅ **Slice 2: Keyboard Shortcuts overlay** — ShortcutsOverlay.svelte
+  (5 groups, platform-aware mod key) + `?` global binding + palette
+  entry. Commit `9fe816c`.
+- ✅ **Slice 3: Global toast notification system** — `$lib/notify` API
+  + ToastStack.svelte mounted in +layout + SettingsPanel wired.
+  Commit `9b0f638`.
+- ✅ **Slice 4: Recent file pinning + remove** (commit `381a33c`) —
+  $lib/recent gained `pinned` flag + `pinRecent` + `removeRecent`,
+  LIMIT 8→12, capRecents pinned-immune. ReaderPanel grew hover-revealed
+  📌/✕ overlays on every recent card + sticky badge on pinned ones.
+  `clearRecent()` now preserves pins ("clear unpinned" semantics).
+- ✅ **Slice 5: Command Palette MRU** (commit `a138bf6`) — new
+  $lib/cmdMru module (localStorage list of action IDs). Empty-query
+  view: top 6 form a synthetic "Recently used" group. Search: ties on
+  fuzzy score break in favour of MRU rank. Adds "Clear command history"
+  escape hatch (which skips its own MRU recording).
+- ✅ **Slice 6: First-launch Onboarding tour** (commit `4399180`) —
+  5-step welcome walkthrough (Slab → Open → Beacon → Palette →
+  Settings). Dismissal flips `ui.onboarded = true` in
+  ~/.slab/config.toml so it never re-appears. Re-triggerable from
+  Command Palette ("Show onboarding tour") + Settings → Onboarding
+  row → "Show tour" button. Backend: `UiConfig.onboarded` field +
+  6 ai::config tests updated/added (legacy upgrade path covered).
+  Frontend: OnboardingTour.svelte + +layout.svelte mount +
+  slab:show-onboarding window event bus.
+
+**Quality gates green on `feature/v1.0.0-glass` HEAD `4399180`:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (412 passed, was 410 — +2 from Slice 6 ai::config tests)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Next tick (still MODE C):**
+- Slice 7 candidate: Customizable shortcuts (remap any action key
+  binding in Settings, persist to `~/.slab/config.toml [keymap]`),
+  OR Floating panels (detach Beacon / Library to separate Tauri
+  windows — bigger lift, ~2 ticks), OR Performance pass (page-render
+  worker pool + 100-page open <500ms target).
+- After 2-3 more polish slices, v1.0.0 release prep slice (version
+  bump 0.15.0 → 1.0.0 across Cargo.toml/tauri.conf.json/package.json
+  + sidebar pill + comprehensive release notes at
+  `docs/releases/v1.0.0.md`) then MODE A merge to main + tag + push.
+
+---
+
+## PRIOR (kept for reference)
 
 Slices shipped in this tick (Sunday morning autonomous run, off-blackout):
 - ✅ **Slice 5a backend** (commit `8377fed`) — new `pdf::stamp_annotations` module (~585 lines, 13 unit tests). `StampStroke { page, tool: Pen|Highlighter, color [r,g,b], width_pt, points: Vec<[f32;2]> normalized top-left }`. Stamps every stroke as a `q ... Q` block on top of the original content stream (zero mutation of existing streams). Two shared ExtGState dicts (SlabAnnOp opaque, SlabAnnHL @ 0.42 alpha) registered once at the document level. Y-axis flip top-left → PDF user-space bottom-left applied per vertex via `(nx*W, (1-ny)*H)`. Round line caps + joins. Validates strokes up front (≥2 points, width_pt ∈ (0,200], color components ∈ [0,1], page > 0, page within doc length). Out-of-range coords clamp01'd instead of rejected. 391 → 404 lib tests (+13). Tests cover: single + multi-stroke + multi-page happy paths, 30-strokes-on-one-page bulk, output remains a valid PDF (lopdf re-parse + page count preserved), output ExtGState resource carries both gs names, page Contents array grew after stamp (proves overlay not overwrite), all 7 error paths, coord-clamping.
@@ -143,9 +258,10 @@ Headline: detect slide decks, present fullscreen with notes+timer,
 draw with laser/pen/highlighter, save the marked-up deck back as PDF.
 5 slices shipped; dual-monitor audience window deferred to v0.15.1.
 
-### v1.0.0 "Glass" — Stable Release (PLANNED)
+### v1.0.0 "Glass" — Stable Release (IN PROGRESS)
 Floating panels, multi-window, command palette (⌘K), Vim bindings, a11y, i18n, frozen API.
 Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v1.0.0. 10 slices.
+**Active branch**: `feature/v1.0.0-glass` — Slices 1-3 done (Settings/theme system, Keyboard Shortcuts overlay, Toast notifications). Slice 4+ pending.
 
 ---
 

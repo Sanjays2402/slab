@@ -33,6 +33,66 @@ use std::sync::Arc;
 pub struct SlabConfig {
     #[serde(default)]
     pub beacon: BeaconConfig,
+    /// UI preferences (theme, accent, density). Added in v1.0.0 "Glass".
+    #[serde(default)]
+    pub ui: UiConfig,
+    /// Customizable keyboard shortcuts. Added in v1.0.0 "Glass" Slice 7.
+    /// Absent in legacy configs → defaults reconstituted at materialise time.
+    #[serde(default)]
+    pub keymap: crate::keymap::KeymapConfig,
+}
+
+/// UI preferences. Persisted alongside Beacon settings in
+/// `~/.slab/config.toml` under `[ui]`. Frontend reads on boot and
+/// writes on every change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct UiConfig {
+    /// Light / dark / follow-system. Defaults to `auto`.
+    #[serde(default)]
+    pub theme: ThemeMode,
+    /// Accent colour (Slab orange by default). User can swap to one of
+    /// a handful of curated tints.
+    #[serde(default)]
+    pub accent: AccentColor,
+    /// Visual density. `comfortable` is the v0.x default; `compact`
+    /// shrinks spacing for power users / small screens.
+    #[serde(default)]
+    pub density: Density,
+    /// True once the user has dismissed the first-launch onboarding tour.
+    /// Defaults to `false` so brand-new installs see the walkthrough.
+    /// Users can re-trigger via the Command Palette → "Show onboarding tour".
+    #[serde(default)]
+    pub onboarded: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Follow the host OS appearance. Default for new users.
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AccentColor {
+    /// Slab orange — the historical default.
+    #[default]
+    Orange,
+    Blue,
+    Purple,
+    Green,
+    Pink,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Density {
+    #[default]
+    Comfortable,
+    Compact,
 }
 
 /// The Beacon-specific configuration block.
@@ -193,6 +253,8 @@ mod tests {
                 base_url: Some("https://api.openai.com/v1".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
             },
+            ui: UiConfig::default(),
+            keymap: Default::default(),
         };
         save_to(&path, &cfg).unwrap();
         let loaded = load_from(&path).unwrap();
@@ -293,5 +355,175 @@ mod tests {
         let p = config_path();
         assert_eq!(p, PathBuf::from("/tmp/slab-test-cfg-7777/config.toml"));
         std::env::remove_var("SLAB_CONFIG_DIR");
+    }
+
+    // ---------- UI prefs (v1.0.0 Glass) ----------
+
+    /// Default UI config = Auto theme, Slab orange, comfortable density,
+    /// onboarding tour pending.
+    /// Brand new install must look identical to v0.x users on first launch.
+    #[test]
+    fn default_ui_config() {
+        let cfg = SlabConfig::default();
+        assert_eq!(cfg.ui.theme, ThemeMode::Auto);
+        assert_eq!(cfg.ui.accent, AccentColor::Orange);
+        assert_eq!(cfg.ui.density, Density::Comfortable);
+        assert!(
+            !cfg.ui.onboarded,
+            "new installs must see the onboarding tour"
+        );
+    }
+
+    /// UI config round-trips through TOML with every variant.
+    #[test]
+    fn ui_config_roundtrip_all_variants() {
+        let tmp = TempDir::new().unwrap();
+        for theme in [ThemeMode::Auto, ThemeMode::Light, ThemeMode::Dark] {
+            for accent in [
+                AccentColor::Orange,
+                AccentColor::Blue,
+                AccentColor::Purple,
+                AccentColor::Green,
+                AccentColor::Pink,
+            ] {
+                for density in [Density::Comfortable, Density::Compact] {
+                    let path = tmp
+                        .path()
+                        .join(format!("config-{theme:?}-{accent:?}-{density:?}.toml"));
+                    let cfg = SlabConfig {
+                        beacon: BeaconConfig::default(),
+                        ui: UiConfig {
+                            theme,
+                            accent,
+                            density,
+                            onboarded: false,
+                        },
+                        keymap: Default::default(),
+                    };
+                    save_to(&path, &cfg).unwrap();
+                    let loaded = load_from(&path).unwrap();
+                    assert_eq!(loaded, cfg, "mismatch for {theme:?}/{accent:?}/{density:?}");
+                }
+            }
+        }
+    }
+
+    /// UI config block uses canonical lowercase variant names on disk
+    /// so users can hand-edit `~/.slab/config.toml` easily.
+    #[test]
+    fn ui_config_serialises_lowercase() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let cfg = SlabConfig {
+            beacon: BeaconConfig::default(),
+            ui: UiConfig {
+                theme: ThemeMode::Dark,
+                accent: AccentColor::Blue,
+                density: Density::Compact,
+                onboarded: true,
+            },
+            keymap: Default::default(),
+        };
+        save_to(&path, &cfg).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("theme = \"dark\""), "got:\n{body}");
+        assert!(body.contains("accent = \"blue\""), "got:\n{body}");
+        assert!(body.contains("density = \"compact\""), "got:\n{body}");
+        assert!(body.contains("onboarded = true"), "got:\n{body}");
+    }
+
+    /// `onboarded` defaults to false and round-trips both states. New
+    /// installs must show the tour; users who dismissed must not see it
+    /// reappear after an app restart.
+    #[test]
+    fn onboarded_defaults_false_and_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        for flag in [false, true] {
+            let path = tmp.path().join(format!("onb-{flag}.toml"));
+            let cfg = SlabConfig {
+                beacon: BeaconConfig::default(),
+                ui: UiConfig {
+                    onboarded: flag,
+                    ..Default::default()
+                },
+                keymap: Default::default(),
+            };
+            save_to(&path, &cfg).unwrap();
+            let loaded = load_from(&path).unwrap();
+            assert_eq!(loaded.ui.onboarded, flag);
+        }
+        assert!(!UiConfig::default().onboarded);
+    }
+
+    /// Reading a v0.x config that pre-dates the `onboarded` field must
+    /// yield `onboarded = false` (so upgrading users get the tour once).
+    #[test]
+    fn legacy_ui_section_without_onboarded_loads_false() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[ui]\ntheme = \"dark\"\naccent = \"blue\"\ndensity = \"compact\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert!(!cfg.ui.onboarded);
+        assert_eq!(cfg.ui.theme, ThemeMode::Dark);
+    }
+
+    /// Reading an older config.toml with no [ui] section must yield
+    /// default UI prefs (forward-compat for v0.x users upgrading).
+    #[test]
+    fn legacy_config_without_ui_section_loads_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[beacon]\nprovider = \"ollama\"\nchat_model = \"llama3.2:3b\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert_eq!(cfg.ui, UiConfig::default());
+        assert_eq!(cfg.beacon.chat_model.as_deref(), Some("llama3.2:3b"));
+    }
+
+    /// Writing a config with a [beacon]+[ui] block produces a file
+    /// containing *both* sections, so subsequent edits aren't lossy.
+    #[test]
+    fn save_emits_both_beacon_and_ui_sections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let cfg = SlabConfig {
+            beacon: BeaconConfig {
+                provider: ProviderKind::Openai,
+                api_key_env: Some("OPENAI_API_KEY".into()),
+                ..Default::default()
+            },
+            ui: UiConfig {
+                theme: ThemeMode::Light,
+                accent: AccentColor::Pink,
+                density: Density::Compact,
+                onboarded: true,
+            },
+            keymap: Default::default(),
+        };
+        save_to(&path, &cfg).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("[beacon]"), "got:\n{body}");
+        assert!(body.contains("[ui]"), "got:\n{body}");
+    }
+
+    /// Unknown variant in TOML produces a parse error rather than
+    /// silently falling back to default — protects users from typos.
+    #[test]
+    fn unknown_theme_variant_errors() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[ui]\ntheme = \"highcontrast\"\n").unwrap();
+        let err = load_from(&path).unwrap_err();
+        match err {
+            AiError::InvalidResponse(_) => {}
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
     }
 }
