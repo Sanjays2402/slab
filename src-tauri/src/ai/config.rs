@@ -54,6 +54,11 @@ pub struct UiConfig {
     /// shrinks spacing for power users / small screens.
     #[serde(default)]
     pub density: Density,
+    /// True once the user has dismissed the first-launch onboarding tour.
+    /// Defaults to `false` so brand-new installs see the walkthrough.
+    /// Users can re-trigger via the Command Palette → "Show onboarding tour".
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -349,7 +354,8 @@ mod tests {
 
     // ---------- UI prefs (v1.0.0 Glass) ----------
 
-    /// Default UI config = Auto theme, Slab orange, comfortable density.
+    /// Default UI config = Auto theme, Slab orange, comfortable density,
+    /// onboarding tour pending.
     /// Brand new install must look identical to v0.x users on first launch.
     #[test]
     fn default_ui_config() {
@@ -357,6 +363,10 @@ mod tests {
         assert_eq!(cfg.ui.theme, ThemeMode::Auto);
         assert_eq!(cfg.ui.accent, AccentColor::Orange);
         assert_eq!(cfg.ui.density, Density::Comfortable);
+        assert!(
+            !cfg.ui.onboarded,
+            "new installs must see the onboarding tour"
+        );
     }
 
     /// UI config round-trips through TOML with every variant.
@@ -381,6 +391,7 @@ mod tests {
                             theme,
                             accent,
                             density,
+                            onboarded: false,
                         },
                     };
                     save_to(&path, &cfg).unwrap();
@@ -403,6 +414,7 @@ mod tests {
                 theme: ThemeMode::Dark,
                 accent: AccentColor::Blue,
                 density: Density::Compact,
+                onboarded: true,
             },
         };
         save_to(&path, &cfg).unwrap();
@@ -410,6 +422,45 @@ mod tests {
         assert!(body.contains("theme = \"dark\""), "got:\n{body}");
         assert!(body.contains("accent = \"blue\""), "got:\n{body}");
         assert!(body.contains("density = \"compact\""), "got:\n{body}");
+        assert!(body.contains("onboarded = true"), "got:\n{body}");
+    }
+
+    /// `onboarded` defaults to false and round-trips both states. New
+    /// installs must show the tour; users who dismissed must not see it
+    /// reappear after an app restart.
+    #[test]
+    fn onboarded_defaults_false_and_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        for flag in [false, true] {
+            let path = tmp.path().join(format!("onb-{flag}.toml"));
+            let cfg = SlabConfig {
+                beacon: BeaconConfig::default(),
+                ui: UiConfig {
+                    onboarded: flag,
+                    ..Default::default()
+                },
+            };
+            save_to(&path, &cfg).unwrap();
+            let loaded = load_from(&path).unwrap();
+            assert_eq!(loaded.ui.onboarded, flag);
+        }
+        assert!(!UiConfig::default().onboarded);
+    }
+
+    /// Reading a v0.x config that pre-dates the `onboarded` field must
+    /// yield `onboarded = false` (so upgrading users get the tour once).
+    #[test]
+    fn legacy_ui_section_without_onboarded_loads_false() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[ui]\ntheme = \"dark\"\naccent = \"blue\"\ndensity = \"compact\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert!(!cfg.ui.onboarded);
+        assert_eq!(cfg.ui.theme, ThemeMode::Dark);
     }
 
     /// Reading an older config.toml with no [ui] section must yield
@@ -444,6 +495,7 @@ mod tests {
                 theme: ThemeMode::Light,
                 accent: AccentColor::Pink,
                 density: Density::Compact,
+                onboarded: true,
             },
         };
         save_to(&path, &cfg).unwrap();

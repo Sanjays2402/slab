@@ -28,6 +28,8 @@ export interface UiConfig {
   theme: ThemeMode;
   accent: AccentColor;
   density: Density;
+  /** Glass Slice 6: true once user has dismissed the onboarding tour. */
+  onboarded: boolean;
 }
 
 export const ACCENT_COLORS: { id: AccentColor; label: string; hex: string }[] = [
@@ -42,6 +44,7 @@ const DEFAULT_CONFIG: UiConfig = {
   theme: "auto",
   accent: "orange",
   density: "comfortable",
+  onboarded: false,
 };
 
 const STORAGE_KEY = "slab.ui.config.v1";
@@ -67,6 +70,9 @@ function normalise(raw: unknown): UiConfig {
   }
   if (typeof r.density === "string" && (r.density === "comfortable" || r.density === "compact")) {
     out.density = r.density;
+  }
+  if (typeof r.onboarded === "boolean") {
+    out.onboarded = r.onboarded;
   }
   return out;
 }

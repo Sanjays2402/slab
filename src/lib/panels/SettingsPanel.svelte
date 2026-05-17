@@ -146,6 +146,23 @@
     </div>
   </div>
 
+  <!-- Help & onboarding (Glass Slice 6) -->
+  <div class="row">
+    <div class="row-info">
+      <h2>Onboarding</h2>
+      <p class="row-desc">Replay the welcome tour. Useful after an update or to show a colleague what Slab does.</p>
+    </div>
+    <div class="row-control">
+      <button
+        type="button"
+        class="ghost"
+        onclick={() => window.dispatchEvent(new CustomEvent("slab:show-onboarding"))}
+      >
+        Show tour
+      </button>
+    </div>
+  </div>
+
   <!-- Reset + status -->
   <div class="footer-row">
     <button class="ghost" onclick={reset} type="button">Reset to defaults</button>
