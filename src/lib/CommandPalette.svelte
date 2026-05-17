@@ -139,6 +139,16 @@
         keywords: "keyboard shortcuts help reference cheatsheet bindings",
       });
     }
+    // Glass Slice 7: jump straight to the customisation panel.
+    out.push({
+      id: "settings:keymap",
+      title: "Customize keyboard shortcuts",
+      subtitle: "Rebind any global action",
+      icon: "⌨",
+      group: "Settings",
+      run: () => onSelectPanel("keymap"),
+      keywords: "shortcuts keymap rebind customize keys hotkeys bindings",
+    });
     // Glass Slice 6: re-trigger the onboarding tour
     out.push({
       id: "help:onboarding",
