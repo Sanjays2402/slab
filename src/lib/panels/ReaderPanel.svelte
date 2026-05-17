@@ -19,6 +19,27 @@
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
+  // ---------- Multi-tab props (Lathe Slice 5) ----------
+  // The shell mounts one ReaderPanel per open PDF tab. Each instance owns its
+  // own pdfjs viewer, so the props below just gate global event handlers so
+  // only the visible tab reacts to keyboard / drag-drop / open-recent events.
+  type ReaderProps = {
+    /** Stable id of this tab. Lets event listeners ignore other tabs. */
+    tabId?: string;
+    /** True when this tab is the visible one. Other tabs short-circuit handlers. */
+    active?: boolean;
+    /** Path to load on mount (or when the shell swaps it). Optional. */
+    initialPath?: string | null;
+    /** Callback fired after a successful load so the shell can update the tab title. */
+    onTitleChange?: (title: string) => void;
+  };
+  let {
+    tabId = "primary",
+    active = true,
+    initialPath = null,
+    onTitleChange,
+  }: ReaderProps = $props();
+
   type Doc = {
     path: string;
     pageCount: number;
@@ -322,6 +343,8 @@
       recents = listRecent();
       // Render a small thumbnail of page 1 for the recents grid
       void renderRecentThumb(pdf, path);
+      // Notify the shell so it can update the tab title.
+      onTitleChange?.(basename(path));
     } catch (e: any) {
       // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
       // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
@@ -688,6 +711,7 @@
 
   // ---------- Keyboard ----------
   function onKey(e: KeyboardEvent) {
+    if (!active) return;
     if (!doc) return;
     const isMod = e.metaKey || e.ctrlKey;
     if (isMod && e.key === "f") {
@@ -721,19 +745,27 @@
     window.addEventListener("keydown", onKey);
     window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
 
+    // If the shell handed us a path on mount, load it.
+    if (initialPath && isInTauri()) {
+      void openAny(initialPath);
+    }
+
     // Native drag-and-drop on the whole viewer.
     const onDragOver = (e: DragEvent) => {
+      if (!active) return;
       if (e.dataTransfer?.types?.includes("Files")) {
         e.preventDefault();
         dropActive = true;
       }
     };
     const onDragLeave = (e: DragEvent) => {
+      if (!active) return;
       if (e.target === document.body || (e as any).relatedTarget === null) {
         dropActive = false;
       }
     };
     const onDrop = async (e: DragEvent) => {
+      if (!active) return;
       e.preventDefault();
       dropActive = false;
       const file = e.dataTransfer?.files?.[0];
@@ -789,6 +821,7 @@
   });
 
   function onOpenRecentEvent(e: CustomEvent<RecentFile>) {
+    if (!active) return;
     const file = e.detail;
     if (!file) return;
     if (isInTauri()) {
@@ -832,6 +865,16 @@
       const btn = thumbButtons.get(n);
       btn?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
+  });
+
+  // When this tab becomes the visible one, fit-width/fit-page need to be
+  // re-applied because pdf.js sized the canvases against a `display:none`
+  // container while it was hidden. `requestAnimationFrame` lets the browser
+  // paint the now-visible container before we measure it.
+  $effect(() => {
+    if (!active) return;
+    if (!pdfViewer) return;
+    requestAnimationFrame(() => rescaleOnResize());
   });
 </script>
 
@@ -913,7 +956,7 @@
   </section>
 {/if}
 
-<div class="reader-shell" class:hidden={!doc}>
+<div class="reader-shell" class:hidden={!doc} data-tab-id={tabId}>
   <div class="toolbar">
     <div class="tb-group">
       <button class="tb-btn" onclick={pickFile} title="Open another PDF">⊕ Open</button>
