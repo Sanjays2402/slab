@@ -30,6 +30,7 @@ use pdf::outline::{
 use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
+use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
@@ -289,6 +290,11 @@ fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrRepo
 }
 
 #[tauri::command]
+fn slab_polyglot(input: PathBuf, output: PathBuf, opts: PolyglotOpts) -> CmdResult<PolyglotReport> {
+    do_polyglot(&input, &output, opts).into()
+}
+
+#[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
     output: PathBuf,
@@ -353,6 +359,7 @@ pub fn run() {
             slab_write_outline,
             slab_append_annotations,
             slab_ocr,
+            slab_polyglot,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
