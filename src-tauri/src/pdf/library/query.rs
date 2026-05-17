@@ -53,7 +53,7 @@ pub fn query_documents(
     let conn = db.conn();
 
     let mut sql = String::from(
-        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at
+        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path
          FROM library_documents",
     );
     let mut where_clauses: Vec<String> = Vec::new();
@@ -121,6 +121,8 @@ pub fn query_documents(
                 pages: row.get(7)?,
                 added_at: row.get(8)?,
                 last_seen_at: row.get(9)?,
+                ocr_state: row.get(10)?,
+                ocr_output_path: row.get(11)?,
                 tags: Vec::new(),
             })
         })?
@@ -204,6 +206,7 @@ mod tests {
                 100,
                 1,
                 Some(5),
+                None,
             )
             .unwrap();
         let d2 = db
@@ -215,6 +218,7 @@ mod tests {
                 200,
                 2,
                 Some(7),
+                None,
             )
             .unwrap();
         let _d3 = db
@@ -226,6 +230,7 @@ mod tests {
                 300,
                 3,
                 Some(2),
+                None,
             )
             .unwrap();
 

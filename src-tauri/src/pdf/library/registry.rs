@@ -9,7 +9,24 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+
+/// Initial / unknown OCR classification — written for legacy rows that
+/// predate Slice 2 (auto-OCR queue) and for documents the scanner has
+/// not yet inspected.
+pub const OCR_STATE_UNKNOWN: &str = "unknown";
+/// Document is text-native — `scan_audit` says no OCR needed.
+pub const OCR_STATE_TEXT_NATIVE: &str = "text_native";
+/// Document is image-only — `scan_audit::Recommendation::OcrAll`.
+pub const OCR_STATE_SCANNED: &str = "scanned";
+/// Document has a mix of scanned and text pages — `Recommendation::OcrSome`.
+pub const OCR_STATE_MIXED: &str = "mixed";
+/// Queue is actively OCRing this document.
+pub const OCR_STATE_PENDING: &str = "ocr_pending";
+/// OCR finished — `ocr_output_path` points at the searchable PDF.
+pub const OCR_STATE_DONE: &str = "ocr_done";
+/// OCR was attempted and failed (e.g. tesseract missing, corrupt PDF).
+pub const OCR_STATE_FAILED: &str = "ocr_failed";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
@@ -46,8 +63,21 @@ pub struct DocumentRecord {
     pub pages: Option<i64>,
     pub added_at: i64,
     pub last_seen_at: i64,
+    /// One of the `OCR_STATE_*` constants. Defaults to `unknown` for
+    /// legacy rows or until the scanner runs `scan_audit` on the file.
+    #[serde(default = "default_ocr_state")]
+    pub ocr_state: String,
+    /// When `ocr_state == "ocr_done"`, the path of the generated
+    /// searchable PDF (typically `<basename>.ocr.pdf` next to the
+    /// original). NULL otherwise.
+    #[serde(default)]
+    pub ocr_output_path: Option<String>,
     #[serde(default)]
     pub tags: Vec<TagRecord>,
+}
+
+fn default_ocr_state() -> String {
+    OCR_STATE_UNKNOWN.to_string()
 }
 
 /// One row of `library_tags`.
@@ -132,6 +162,21 @@ impl LibraryDb {
                     tag_id INTEGER NOT NULL REFERENCES library_tags(id) ON DELETE CASCADE,
                     PRIMARY KEY (doc_id, tag_id)
                 );
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 1;")?;
+        }
+        if version < 2 {
+            // Slice 2 — auto-OCR queue. Add per-doc state machine + the
+            // output path the queue writes when OCR succeeds.
+            conn.execute_batch(
+                r#"
+                ALTER TABLE library_documents
+                  ADD COLUMN ocr_state TEXT NOT NULL DEFAULT 'unknown';
+                ALTER TABLE library_documents
+                  ADD COLUMN ocr_output_path TEXT;
+                CREATE INDEX IF NOT EXISTS idx_documents_ocr_state
+                  ON library_documents(ocr_state);
                 "#,
             )?;
             conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
@@ -225,6 +270,13 @@ impl LibraryDb {
 
     /// Insert-or-update a document keyed by `path`. When the path is
     /// already present, hash/size/mtime/pages/last_seen_at are refreshed.
+    ///
+    /// `initial_ocr_state` is only honored on first insert (or when the
+    /// existing row still has `ocr_state = 'unknown'` — i.e. legacy /
+    /// pre-Slice-2 rows that the scanner has now classified). Once an
+    /// `ocr_state` has been set explicitly we refuse to overwrite it
+    /// here — use `set_doc_ocr_state` for state-machine transitions
+    /// (queue marks pending/done/failed).
     #[allow(clippy::too_many_arguments)]
     pub fn upsert_document(
         &mut self,
@@ -235,11 +287,12 @@ impl LibraryDb {
         size_bytes: i64,
         mtime_ns: i64,
         pages: Option<i64>,
+        initial_ocr_state: Option<&str>,
     ) -> Result<DocumentRecord, LibraryError> {
         let now = now_unix();
         let existing = self.find_document_by_path(path)?;
         match existing {
-            Some(_) => {
+            Some(ref e) => {
                 self.conn.execute(
                     "UPDATE library_documents
                      SET folder_id = ?1, title = COALESCE(?2, title), hash = ?3,
@@ -248,14 +301,26 @@ impl LibraryDb {
                      WHERE path = ?8",
                     params![folder_id, title, hash, size_bytes, mtime_ns, pages, now, path,],
                 )?;
+                // Only upgrade ocr_state when it's still the default
+                // 'unknown' — never clobber a real classification or a
+                // queue state (`ocr_pending` / `ocr_done` / `ocr_failed`).
+                if e.ocr_state == OCR_STATE_UNKNOWN {
+                    if let Some(state) = initial_ocr_state {
+                        self.conn.execute(
+                            "UPDATE library_documents SET ocr_state = ?1 WHERE path = ?2",
+                            params![state, path],
+                        )?;
+                    }
+                }
             }
             None => {
+                let state = initial_ocr_state.unwrap_or(OCR_STATE_UNKNOWN);
                 self.conn.execute(
                     "INSERT INTO library_documents
-                     (folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                     (folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
                     params![
-                        folder_id, path, title, hash, size_bytes, mtime_ns, pages, now,
+                        folder_id, path, title, hash, size_bytes, mtime_ns, pages, now, state,
                     ],
                 )?;
             }
@@ -267,6 +332,30 @@ impl LibraryDb {
         })?;
         doc.tags = self.tags_for_document(doc.id)?;
         Ok(doc)
+    }
+
+    /// Set the OCR state machine value for a document. Used by the
+    /// queue worker to mark pending → done / failed transitions.
+    pub fn set_doc_ocr_state(&mut self, doc_id: i64, state: &str) -> Result<(), LibraryError> {
+        self.conn.execute(
+            "UPDATE library_documents SET ocr_state = ?1 WHERE id = ?2",
+            params![state, doc_id],
+        )?;
+        Ok(())
+    }
+
+    /// Record where the OCR queue wrote the searchable PDF when an OCR
+    /// pass succeeded. Pass `None` to clear (e.g. on a re-queue).
+    pub fn set_doc_ocr_output_path(
+        &mut self,
+        doc_id: i64,
+        output_path: Option<&str>,
+    ) -> Result<(), LibraryError> {
+        self.conn.execute(
+            "UPDATE library_documents SET ocr_output_path = ?1 WHERE id = ?2",
+            params![output_path, doc_id],
+        )?;
+        Ok(())
     }
 
     /// Remove a document row by id. ON DELETE CASCADE on
@@ -297,7 +386,7 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path
                  FROM library_documents WHERE path = ?1",
                 params![path],
                 document_from_row,
@@ -413,6 +502,8 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRecord
         pages: row.get(7)?,
         added_at: row.get(8)?,
         last_seen_at: row.get(9)?,
+        ocr_state: row.get(10)?,
+        ocr_output_path: row.get(11)?,
         tags: Vec::new(),
     })
 }
@@ -511,6 +602,7 @@ mod tests {
                 100,
                 42,
                 Some(3),
+                None,
             )
             .unwrap();
         assert!(d.id > 0);
@@ -520,6 +612,8 @@ mod tests {
         assert_eq!(d.mtime_ns, 42);
         assert_eq!(d.pages, Some(3));
         assert_eq!(d.title.as_deref(), Some("Title"));
+        assert_eq!(d.ocr_state, OCR_STATE_UNKNOWN);
+        assert!(d.ocr_output_path.is_none());
     }
 
     #[test]
@@ -527,10 +621,19 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d1 = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "v1", 100, 1, Some(3))
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "v1", 100, 1, Some(3), None)
             .unwrap();
         let d2 = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", Some("New"), "v2", 200, 2, Some(5))
+            .upsert_document(
+                Some(f.id),
+                "/tmp/a.pdf",
+                Some("New"),
+                "v2",
+                200,
+                2,
+                Some(5),
+                None,
+            )
             .unwrap();
         assert_eq!(d1.id, d2.id, "upsert should keep the same id");
         assert_eq!(d2.hash, "v2");
@@ -543,7 +646,7 @@ mod tests {
     fn cascade_delete_folder_drops_documents() {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
-        db.upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+        db.upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         db.remove_folder(f.id).unwrap();
         assert!(db.find_document_by_path("/tmp/a.pdf").unwrap().is_none());
@@ -554,7 +657,7 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         let original = d.last_seen_at;
         std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -589,7 +692,7 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         let t1 = db.add_tag("research", None).unwrap();
         let t2 = db.add_tag("draft", None).unwrap();
@@ -615,12 +718,12 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         let t1 = db.add_tag("research", None).unwrap();
         db.set_doc_tags(d.id, &[t1.id]).unwrap();
         let d2 = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         assert_eq!(d2.tags.len(), 1);
         assert_eq!(d2.tags[0].id, t1.id);
@@ -638,7 +741,7 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         db.remove_document(d.id).unwrap();
         assert!(db.find_document_by_path("/tmp/a.pdf").unwrap().is_none());
@@ -649,7 +752,7 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         let t = db.add_tag("paper", None).unwrap();
         db.set_doc_tags(d.id, &[t.id]).unwrap();
@@ -657,7 +760,7 @@ mod tests {
         // Tag itself still exists, but the join row is gone — verified
         // indirectly by re-adding the doc and seeing zero attached tags.
         let d2 = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         assert_eq!(d2.tags.len(), 0);
         // And the tag itself is still listed.
@@ -677,7 +780,7 @@ mod tests {
         let mut db = db();
         let f = db.add_folder("/tmp").unwrap();
         let d = db
-            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
             .unwrap();
         let t1 = db.add_tag("paper", None).unwrap();
         let t2 = db.add_tag("read", None).unwrap();
@@ -687,5 +790,137 @@ mod tests {
         let remaining = db.tags_for_document(d.id).unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, t2.id);
+    }
+
+    // -- Slice 2: ocr_state column + transitions --
+
+    #[test]
+    fn schema_v2_is_set() {
+        let db = db();
+        assert_eq!(db.schema_version().unwrap(), 2);
+    }
+
+    #[test]
+    fn fresh_doc_defaults_to_unknown_ocr_state() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        assert_eq!(d.ocr_state, OCR_STATE_UNKNOWN);
+        assert!(d.ocr_output_path.is_none());
+    }
+
+    #[test]
+    fn upsert_with_initial_state_writes_it() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/scan.pdf",
+                None,
+                "h",
+                1,
+                1,
+                None,
+                Some(OCR_STATE_SCANNED),
+            )
+            .unwrap();
+        assert_eq!(d.ocr_state, OCR_STATE_SCANNED);
+    }
+
+    #[test]
+    fn set_doc_ocr_state_round_trips() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        db.set_doc_ocr_state(d.id, OCR_STATE_PENDING).unwrap();
+        let d2 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d2.ocr_state, OCR_STATE_PENDING);
+        db.set_doc_ocr_state(d.id, OCR_STATE_DONE).unwrap();
+        let d3 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d3.ocr_state, OCR_STATE_DONE);
+    }
+
+    #[test]
+    fn set_doc_ocr_output_path_round_trips() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        db.set_doc_ocr_output_path(d.id, Some("/tmp/a.ocr.pdf"))
+            .unwrap();
+        let d2 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d2.ocr_output_path.as_deref(), Some("/tmp/a.ocr.pdf"));
+        db.set_doc_ocr_output_path(d.id, None).unwrap();
+        let d3 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert!(d3.ocr_output_path.is_none());
+    }
+
+    #[test]
+    fn upsert_existing_doc_preserves_ocr_state() {
+        // Once an OCR state has been set (queue ran, marked done), a
+        // subsequent scanner-driven upsert MUST NOT clobber it.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/a.pdf",
+                None,
+                "h1",
+                1,
+                1,
+                None,
+                Some(OCR_STATE_SCANNED),
+            )
+            .unwrap();
+        db.set_doc_ocr_state(d.id, OCR_STATE_DONE).unwrap();
+        // Scanner re-runs with the file having changed → it would pass
+        // a fresh classification. Must not overwrite ocr_done.
+        let _ = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/a.pdf",
+                None,
+                "h2",
+                2,
+                2,
+                None,
+                Some(OCR_STATE_TEXT_NATIVE),
+            )
+            .unwrap();
+        let d2 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d2.ocr_state, OCR_STATE_DONE);
+    }
+
+    #[test]
+    fn upsert_upgrades_unknown_state_when_initial_provided() {
+        // The most common path: legacy row inserted before Slice 2 with
+        // ocr_state='unknown'. Next scan re-runs scan_audit and passes
+        // Some(state); the upsert should accept that upgrade.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let _ = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h1", 1, 1, None, None)
+            .unwrap();
+        let _ = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/a.pdf",
+                None,
+                "h2",
+                2,
+                2,
+                None,
+                Some(OCR_STATE_SCANNED),
+            )
+            .unwrap();
+        let d2 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d2.ocr_state, OCR_STATE_SCANNED);
     }
 }
