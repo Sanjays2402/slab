@@ -86,7 +86,7 @@
   </header>
 
   <div class="row">
-    <label>Input PDF</label>
+    <span class="row-label">Input PDF</span>
     <div class="path-row">
       <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
@@ -94,15 +94,15 @@
   </div>
 
   <div class="row">
-    <label>Output PDF</label>
+    <span class="row-label">Output PDF</span>
     <div class="path-row">
       <input type="text" bind:value={outputPath} placeholder="/path/to/redacted.pdf" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
 
-  <div class="row">
-    <label>Built-in Presets</label>
+  <div class="row" role="group" aria-label="Built-in Presets">
+    <span class="row-label">Built-in Presets</span>
     <div class="preset-grid">
       {#each PRESETS as p (p.id)}
         <label class="preset">
@@ -116,8 +116,8 @@
     </div>
   </div>
 
-  <div class="row">
-    <label>Custom Regex Patterns</label>
+  <div class="row" role="group" aria-label="Custom Regex Patterns">
+    <span class="row-label">Custom Regex Patterns</span>
     <div class="pattern-input-row">
       <input
         type="text"
@@ -141,8 +141,10 @@
 
   <div class="row inline">
     <div class="field">
-      <label>Bar Color (gray)</label>
-      <input type="range" min="0" max="1" step="0.05" bind:value={gray} />
+      <label>
+        <span class="row-label">Bar Color (gray)</span>
+        <input type="range" min="0" max="1" step="0.05" bind:value={gray} />
+      </label>
       <span class="muted">{(gray * 100).toFixed(0)}% — {gray === 0 ? 'pure black' : gray === 1 ? 'white' : 'gray'}</span>
     </div>
   </div>
