@@ -18,6 +18,7 @@ pub mod chat;
 pub mod config;
 pub mod ollama;
 pub mod openai_compat;
+pub mod summary;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

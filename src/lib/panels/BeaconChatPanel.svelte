@@ -38,6 +38,16 @@
     pages_used: number;
   };
 
+  type BeaconSummary = {
+    content: string;
+    model: string;
+    length: SummaryLength;
+    pages_used: number;
+    pages_total: number;
+  };
+
+  type SummaryLength = "tldr" | "short" | "long";
+
   let pdfPath = $state<string | null>(null);
   let pdfPages = $state<number | null>(null);
   let question = $state("");
@@ -203,6 +213,55 @@
     return `${Math.round((used / total) * 100)}%`;
   }
 
+  /** Run a summary call and push the result as an assistant turn. */
+  async function summarize(length: SummaryLength) {
+    if (!pdfPath) {
+      status = { kind: "err", msg: "Pick a PDF first." };
+      return;
+    }
+    if (status.kind === "working") return;
+    const label =
+      length === "tldr" ? "TL;DR" : length === "short" ? "Summary" : "Detailed summary";
+    history = [
+      ...history,
+      { role: "user", content: `▶ ${label} of this PDF`, ts: Date.now() },
+    ];
+    status = { kind: "working", msg: `Beacon is reading the PDF…` };
+    await scrollToBottom();
+    try {
+      const res = await invoke<CmdResult<BeaconSummary>>("slab_beacon_summary", {
+        pdfPath,
+        length,
+        maxContextChars: null,
+      });
+      if (res.kind === "ok") {
+        const r = res.value;
+        history = [
+          ...history,
+          {
+            role: "assistant",
+            content: r.content,
+            model: r.model,
+            ts: Date.now(),
+          },
+        ];
+        lastStats = {
+          chars_used: 0,
+          chars_total: 0,
+          pages_used: r.pages_used,
+          pages_total: r.pages_total,
+        };
+        status = idle;
+      } else {
+        status = { kind: "err", msg: friendlyError(res.message) };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+    } finally {
+      await scrollToBottom();
+    }
+  }
+
   // Sample prompts — the empty-state nudges users toward useful things.
   const samplePrompts: string[] = [
     "Summarize this PDF in 3 bullets.",
@@ -239,7 +298,9 @@
           {#if lastStats}
             · last answer used pages 1–{lastStats.pages_used} of
             {lastStats.pages_total}
-            ({fmtPct(lastStats.chars_used, lastStats.chars_total)} of text)
+            {#if lastStats.chars_total > 0}
+              ({fmtPct(lastStats.chars_used, lastStats.chars_total)} of text)
+            {/if}
           {/if}
         </div>
       </div>
@@ -249,6 +310,34 @@
         </button>
         <button class="ghost" onclick={pickPdf}>Change PDF</button>
       </div>
+    </div>
+
+    <div class="quick-actions">
+      <span class="qa-label">Quick:</span>
+      <button
+        class="qa-chip"
+        onclick={() => summarize("tldr")}
+        disabled={status.kind === "working"}
+        title="One-sentence summary"
+      >
+        ✦ TL;DR
+      </button>
+      <button
+        class="qa-chip"
+        onclick={() => summarize("short")}
+        disabled={status.kind === "working"}
+        title="Paragraph summary"
+      >
+        ✦ Summarize
+      </button>
+      <button
+        class="qa-chip"
+        onclick={() => summarize("long")}
+        disabled={status.kind === "working"}
+        title="5-bullet detailed summary"
+      >
+        ✦ Detailed
+      </button>
     </div>
 
     <div class="chat-scroll" bind:this={scrollContainer}>
@@ -344,6 +433,39 @@
   .card-actions {
     display: flex;
     gap: 6px;
+  }
+
+  .quick-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .qa-label {
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+  }
+  .qa-chip {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 4px 11px;
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all 80ms ease;
+  }
+  .qa-chip:hover:not(:disabled) {
+    background: var(--bg-3);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .qa-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .chat-scroll {

@@ -11,6 +11,7 @@ use ai::config::{
     load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
     SlabConfig,
 };
+use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
 use ai::{ChatMessage, ChatRole};
 
 use pdf::annot_export::{
@@ -469,6 +470,39 @@ async fn slab_beacon_chat(
         .into()
 }
 
+/// Beacon summary — one-call summary of an opened PDF at the user's
+/// chosen length (TLDR / Short / Long). Reuses the same provider abstraction
+/// as `slab_beacon_chat`.
+#[tauri::command]
+async fn slab_beacon_summary(
+    pdf_path: PathBuf,
+    length: SummaryLength,
+    max_context_chars: Option<u32>,
+) -> CmdResult<BeaconSummary> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let budget = max_context_chars
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_MAX_CONTEXT_CHARS);
+    do_beacon_summary(provider, &pdf_path, length, budget)
+        .await
+        .into()
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -543,6 +577,7 @@ pub fn run() {
             slab_beacon_provider_test,
             slab_beacon_provider_kinds,
             slab_beacon_chat,
+            slab_beacon_summary,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
