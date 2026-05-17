@@ -288,7 +288,7 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.14.0</span>
+    <span class="version">v0.15.0</span>
   </div>
 </aside>
 
