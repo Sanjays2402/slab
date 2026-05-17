@@ -6,7 +6,8 @@
   import { join, tempDir } from "@tauri-apps/api/path";
   import { basename, formatBytes, stripExt } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
-  import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
+  import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
+  import { notify } from "$lib/notify";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
   import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
   import DecryptModal from "$lib/components/DecryptModal.svelte";
@@ -1019,21 +1020,41 @@
         <div class="recent-grid">
           {#each recents as r (r.path)}
             {@const thumb = getRecentThumb(r.path)}
-            <button class="recent-card" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
-              <div class="recent-thumb">
-                {#if thumb}
-                  <img src={thumb} alt="" loading="lazy" />
-                {:else}
-                  <span class="recent-thumb-placeholder">PDF</span>
-                {/if}
+            <div class="recent-card-wrap" class:pinned={r.pinned}>
+              <button class="recent-card" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
+                <div class="recent-thumb">
+                  {#if thumb}
+                    <img src={thumb} alt="" loading="lazy" />
+                  {:else}
+                    <span class="recent-thumb-placeholder">PDF</span>
+                  {/if}
+                  {#if r.pinned}
+                    <span class="recent-pin-flag" title="Pinned">📌</span>
+                  {/if}
+                </div>
+                <div class="recent-card-body">
+                  <span class="recent-card-name">{r.name}</span>
+                  <span class="recent-card-meta">
+                    {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
+                  </span>
+                </div>
+              </button>
+              <div class="recent-card-actions">
+                <button
+                  class="recent-act"
+                  class:active={r.pinned}
+                  title={r.pinned ? "Unpin" : "Pin to top"}
+                  aria-label={r.pinned ? "Unpin" : "Pin to top"}
+                  onclick={(e) => { e.stopPropagation(); pinRecent(r.path); recents = listRecent(); notify.success(r.pinned ? `Unpinned ${r.name}` : `Pinned ${r.name}`); }}
+                >📌</button>
+                <button
+                  class="recent-act danger"
+                  title="Remove from recents"
+                  aria-label="Remove from recents"
+                  onclick={(e) => { e.stopPropagation(); removeRecent(r.path); recents = listRecent(); notify.info(`Removed ${r.name} from recents`); }}
+                >✕</button>
               </div>
-              <div class="recent-card-body">
-                <span class="recent-card-name">{r.name}</span>
-                <span class="recent-card-meta">
-                  {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
-                </span>
-              </div>
-            </button>
+            </div>
           {/each}
         </div>
       </div>
@@ -1704,6 +1725,72 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Glass: recent-card pin/remove overlay actions */
+  .recent-card-wrap {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .recent-card-wrap.pinned .recent-card {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .recent-pin-flag {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    font-size: 13px;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 1px 6px;
+    line-height: 1.2;
+    pointer-events: none;
+  }
+  .recent-card-actions {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 120ms;
+    pointer-events: none;
+  }
+  .recent-card-wrap:hover .recent-card-actions,
+  .recent-card-wrap:focus-within .recent-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .recent-act {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 11px;
+    color: var(--text-2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 120ms, color 120ms, background 120ms;
+  }
+  .recent-act:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .recent-act.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  }
+  .recent-act.danger:hover {
+    border-color: #e0654a;
+    color: #e0654a;
   }
   .recent-row {
     display: flex;
