@@ -96,7 +96,7 @@ pub fn ocr_output_path_for(input: &Path) -> PathBuf {
 /// no-op rather than an error.
 pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResult {
     // Look up the doc first so we know the input path.
-    let path_lookup: Result<Option<DocumentRecord>, LibraryError> = (|| {
+    let path_lookup: Result<Option<DocumentRecord>, LibraryError> = {
         let conn = db.conn();
         let row = conn
             .query_row(
@@ -128,7 +128,7 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
             Err(LibraryError::Db(rusqlite::Error::QueryReturnedNoRows)) => Ok(None),
             Err(e) => Err(e),
         }
-    })();
+    };
 
     let doc = match path_lookup {
         Ok(Some(d)) => d,

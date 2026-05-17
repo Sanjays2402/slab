@@ -28,6 +28,8 @@
     listDocuments,
     listFolders,
     listTags,
+    ocrQueueRunAll,
+    ocrQueueRunOne,
     removeDocument,
     removeFolder,
     removeTag,
@@ -38,6 +40,8 @@
     type FolderRecord,
     type LibraryFilter,
     type LibrarySortBy,
+    type OcrQueueResult,
+    type OcrState,
     type TagRecord,
   } from "$lib/library";
   import { basename } from "$lib/types";
@@ -56,6 +60,11 @@
   let scanning = $state(false);
   let error = $state<string | null>(null);
   let initialized = $state(false);
+
+  // OCR queue state.
+  let ocringAll = $state(false);
+  let ocringDocIds = $state<Set<number>>(new Set());
+  let ocrSummary = $state<string | null>(null);
 
   // Context menu state. `null` when closed.
   type Menu = {
@@ -93,6 +102,10 @@
     activeFolder === "all"
       ? docs.length
       : docs.filter((d) => d.folder_id === activeFolder).length,
+  );
+  /** Number of documents currently visible that are eligible for OCR. */
+  let pendingOcrCount = $derived(
+    docs.filter((d) => d.ocr_state === "scanned" || d.ocr_state === "mixed").length,
   );
 
   // ---------- Lifecycle ----------
@@ -214,6 +227,110 @@
     }
   }
   let lastScanSummary = $state<string | null>(null);
+
+  // ---------- OCR queue actions ----------
+
+  /** Human-readable label for the OCR state badge. */
+  function ocrStateLabel(state: OcrState): string {
+    switch (state) {
+      case "scanned":
+        return "Scanned";
+      case "mixed":
+        return "Mixed";
+      case "ocr_pending":
+        return "OCR'ing…";
+      case "ocr_done":
+        return "OCR'd";
+      case "ocr_failed":
+        return "OCR failed";
+      case "text_native":
+        return "";
+      case "unknown":
+      default:
+        return "";
+    }
+  }
+
+  /** Whether the badge should show at all for this state. */
+  function showOcrBadge(state: OcrState): boolean {
+    return state !== "text_native" && state !== "unknown";
+  }
+
+  function isOcrCandidate(state: OcrState): boolean {
+    return state === "scanned" || state === "mixed" || state === "ocr_failed";
+  }
+
+  /** Local optimistic update so the UI shows new ocr_state/output instantly. */
+  function applyResult(r: OcrQueueResult): void {
+    docs = docs.map((d) =>
+      d.id === r.doc_id
+        ? {
+            ...d,
+            ocr_state: r.state_after,
+            ocr_output_path: r.output_path,
+          }
+        : d,
+    );
+    if (menu && menu.doc.id === r.doc_id) {
+      const fresh = docs.find((d) => d.id === r.doc_id);
+      if (fresh) menu = { ...menu, doc: fresh };
+    }
+  }
+
+  async function onRunOcrFor(doc: DocumentRecord) {
+    menu = null;
+    if (ocringDocIds.has(doc.id)) return;
+    const next = new Set(ocringDocIds);
+    next.add(doc.id);
+    ocringDocIds = next;
+    error = null;
+    try {
+      const result = await ocrQueueRunOne(doc.id, null);
+      applyResult(result);
+      if (result.error) {
+        error = `OCR failed for ${displayTitle(doc)}: ${result.error}`;
+      } else {
+        ocrSummary = `OCR'd "${displayTitle(doc)}"`;
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      const after = new Set(ocringDocIds);
+      after.delete(doc.id);
+      ocringDocIds = after;
+    }
+  }
+
+  async function onRunOcrAll() {
+    if (pendingOcrCount === 0) return;
+    ocringAll = true;
+    error = null;
+    ocrSummary = null;
+    try {
+      const results = await ocrQueueRunAll(null);
+      for (const r of results) applyResult(r);
+      const ok = results.filter((r) => r.state_after === "ocr_done").length;
+      const failed = results.filter((r) => r.state_after === "ocr_failed").length;
+      ocrSummary = `OCR queue: ${ok} succeeded, ${failed} failed (of ${results.length})`;
+      if (failed > 0 && ok === 0) {
+        error = `All ${failed} OCR attempts failed. Is Tesseract installed?`;
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      ocringAll = false;
+    }
+  }
+
+  function openOcrOutput(doc: DocumentRecord) {
+    if (!doc.ocr_output_path) return;
+    menu = null;
+    window.dispatchEvent(
+      new CustomEvent("slab:open-library-doc", {
+        detail: { path: doc.ocr_output_path },
+      }),
+    );
+  }
 
   // ---------- Folder rail actions ----------
 
@@ -384,6 +501,18 @@
     <button class="ghost" onclick={onRescanAll} disabled={scanning || folders.length === 0}>
       {scanning ? "Scanning…" : "↻ Rescan All"}
     </button>
+    {#if pendingOcrCount > 0}
+      <button
+        class="ghost ocr-all"
+        onclick={onRunOcrAll}
+        disabled={ocringAll}
+        title="Run OCR on every scanned/mixed document currently visible"
+      >
+        {ocringAll
+          ? `OCR'ing ${pendingOcrCount}…`
+          : `🔍 OCR ${pendingOcrCount} pending`}
+      </button>
+    {/if}
     <div class="search">
       <span class="search-icon">⌕</span>
       <input
@@ -410,6 +539,9 @@
   {/if}
   {#if lastScanSummary && !error && !scanning}
     <div class="status ok">✓ {lastScanSummary}</div>
+  {/if}
+  {#if ocrSummary && !error && !ocringAll}
+    <div class="status ok">✓ {ocrSummary}</div>
   {/if}
 
   <div class="layout">
@@ -536,8 +668,37 @@
                 <span class="card-pages">{d.pages ?? "?"} pages</span>
                 <span class="card-sep">·</span>
                 <span class="card-seen">{formatRelTime(d.last_seen_at * 1000)}</span>
+                {#if showOcrBadge(d.ocr_state)}
+                  <span class="card-sep">·</span>
+                  <span class="ocr-badge ocr-badge-{d.ocr_state}" title={ocrStateLabel(d.ocr_state)}>
+                    {ocrStateLabel(d.ocr_state)}
+                  </span>
+                {/if}
               </div>
               <div class="card-path" title={d.path}>{relPath(d)}</div>
+              {#if isOcrCandidate(d.ocr_state) || d.ocr_state === "ocr_done"}
+                <div class="card-actions" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="toolbar" tabindex="-1">
+                  {#if isOcrCandidate(d.ocr_state)}
+                    <button
+                      class="card-action"
+                      disabled={ocringDocIds.has(d.id) || ocringAll}
+                      onclick={() => onRunOcrFor(d)}
+                      title="Run OCR on this document"
+                    >
+                      {ocringDocIds.has(d.id) ? "OCR'ing…" : "🔍 Run OCR"}
+                    </button>
+                  {/if}
+                  {#if d.ocr_state === "ocr_done" && d.ocr_output_path}
+                    <button
+                      class="card-action"
+                      onclick={() => openOcrOutput(d)}
+                      title={d.ocr_output_path}
+                    >
+                      📄 Open OCR'd
+                    </button>
+                  {/if}
+                </div>
+              {/if}
               {#if d.tags.length > 0}
                 <div class="card-tags">
                   {#each d.tags.slice(0, 3) as t (t.id)}
@@ -573,6 +734,22 @@
     <button class="menu-item" onclick={() => openDocInTab(menu!.doc)}>
       <span>Open in Reader tab</span>
     </button>
+    {#if isOcrCandidate(menu.doc.ocr_state)}
+      <button
+        class="menu-item"
+        disabled={ocringDocIds.has(menu.doc.id) || ocringAll}
+        onclick={() => onRunOcrFor(menu!.doc)}
+      >
+        <span>
+          {ocringDocIds.has(menu.doc.id) ? "OCR'ing…" : "🔍 Run OCR"}
+        </span>
+      </button>
+    {/if}
+    {#if menu.doc.ocr_state === "ocr_done" && menu.doc.ocr_output_path}
+      <button class="menu-item" onclick={() => openOcrOutput(menu!.doc)}>
+        <span>📄 Open OCR'd version</span>
+      </button>
+    {/if}
     <div class="menu-sep"></div>
     <div class="menu-section">Tags</div>
     {#each tags as t (t.id)}
@@ -923,6 +1100,73 @@
     border-left-color: var(--text-3);
     color: var(--text-3);
   }
+
+  /* OCR queue badges + actions */
+  .ocr-badge {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .ocr-badge-scanned {
+    background: rgba(245, 197, 24, 0.12);
+    color: #f5c518;
+    border-color: rgba(245, 197, 24, 0.35);
+  }
+  .ocr-badge-mixed {
+    background: rgba(192, 132, 252, 0.12);
+    color: #c084fc;
+    border-color: rgba(192, 132, 252, 0.35);
+  }
+  .ocr-badge-ocr_pending {
+    background: rgba(106, 183, 255, 0.12);
+    color: #6ab7ff;
+    border-color: rgba(106, 183, 255, 0.35);
+  }
+  .ocr-badge-ocr_done {
+    background: rgba(126, 231, 135, 0.12);
+    color: #7ee787;
+    border-color: rgba(126, 231, 135, 0.35);
+  }
+  .ocr-badge-ocr_failed {
+    background: rgba(244, 114, 114, 0.12);
+    color: #f59292;
+    border-color: rgba(244, 114, 114, 0.35);
+  }
+  .card-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  .card-action {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: border-color 80ms ease, color 80ms ease;
+  }
+  .card-action:hover:not(:disabled) {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .card-action:disabled { opacity: 0.55; cursor: progress; }
+  .toolbar .ocr-all {
+    background: rgba(245, 197, 24, 0.08);
+    border-color: rgba(245, 197, 24, 0.35);
+    color: #f5c518;
+  }
+  .toolbar .ocr-all:hover:not(:disabled) {
+    border-color: rgba(245, 197, 24, 0.6);
+  }
+  .toolbar .ocr-all:disabled { opacity: 0.55; }
 
   /* Status messages (reused look from other panels) */
   .status {
