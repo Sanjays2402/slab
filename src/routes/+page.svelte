@@ -31,6 +31,7 @@
   import BeaconChatPanel from "$lib/panels/BeaconChatPanel.svelte";
   import BeaconSearchPanel from "$lib/panels/BeaconSearchPanel.svelte";
   import BeaconPiiPanel from "$lib/panels/BeaconPiiPanel.svelte";
+  import LibraryPanel from "$lib/panels/LibraryPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import { isInTauri } from "$lib/tauri";
   import { basename } from "$lib/types";
@@ -45,6 +46,7 @@
 
   const features: Feature[] = [
     { id: "reader", label: "Reader", icon: "▥", ready: true },
+    { id: "library", label: "Library", icon: "❐", ready: true },
     { id: "beacon", label: "Beacon AI", icon: "✦", ready: true },
     { id: "search", label: "Beacon Search", icon: "⌕", ready: true },
     { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
@@ -231,11 +233,22 @@
     }
   }
 
+  // LibraryPanel dispatches this when the user clicks a card. We open
+  // the doc in a fresh Reader tab and flip the active feature so they
+  // see it immediately.
+  function onLibraryOpen(e: Event) {
+    const detail = (e as CustomEvent<{ path: string }>).detail;
+    if (!detail || typeof detail.path !== "string") return;
+    openNewTab(detail.path);
+  }
+
   onMount(() => {
     window.addEventListener("keydown", onGlobalKey);
+    window.addEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onGlobalKey);
+    window.removeEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
   });
 </script>
 
@@ -331,6 +344,8 @@
     </div>
   {:else if active === "beacon"}
     <BeaconChatPanel />
+  {:else if active === "library"}
+    <LibraryPanel />
   {:else if active === "search"}
     <BeaconSearchPanel />
   {:else if active === "pii"}

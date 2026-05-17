@@ -43,6 +43,11 @@ use pdf::grayscale::{grayscale as do_grayscale, GrayscaleOpts};
 use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::insert::{insert as do_insert, InsertOpts};
+use pdf::library::{
+    default_db_path as library_default_db_path, query_documents as do_query_documents,
+    scan_folder as do_scan_folder, DocumentRecord, FolderRecord, LibraryDb, LibraryError,
+    LibraryFilter, ScanReport, TagRecord,
+};
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
 use pdf::metadata::{
@@ -881,6 +886,143 @@ fn slab_export_annotations_md(
     result.into()
 }
 
+// ---------- Library Mode (v0.12.0 Atlas) ----------
+
+impl<T: Serialize> From<Result<T, LibraryError>> for CmdResult<T> {
+    fn from(r: Result<T, LibraryError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Open the default library DB at `~/.slab/library.sqlite`.
+fn open_library_db() -> Result<LibraryDb, LibraryError> {
+    LibraryDb::open(&library_default_db_path())
+}
+
+#[tauri::command]
+fn slab_library_add_folder(path: String) -> CmdResult<FolderRecord> {
+    let result = (|| -> Result<FolderRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.add_folder(&path)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_remove_folder(id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        db.remove_folder(id)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_list_folders() -> CmdResult<Vec<FolderRecord>> {
+    let result = (|| -> Result<Vec<FolderRecord>, LibraryError> {
+        let db = open_library_db()?;
+        db.list_folders()
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_scan(folder_id: i64) -> CmdResult<ScanReport> {
+    let result = (|| -> Result<ScanReport, LibraryError> {
+        let mut db = open_library_db()?;
+        let folders = db.list_folders()?;
+        let folder = folders
+            .into_iter()
+            .find(|f| f.id == folder_id)
+            .ok_or_else(|| LibraryError::Other(format!("folder id {folder_id} not found")))?;
+        do_scan_folder(&mut db, &folder)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_list_docs(filter: Option<LibraryFilter>) -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<Vec<DocumentRecord>, LibraryError> {
+        let db = open_library_db()?;
+        do_query_documents(&db, &filter.unwrap_or_default())
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
+    let result = (|| -> Result<Vec<TagRecord>, LibraryError> {
+        let db = open_library_db()?;
+        db.list_tags()
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_add_tag(name: String, color: Option<String>) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.add_tag(&name, color.as_deref())
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_set_doc_tags(doc_id: i64, tag_ids: Vec<i64>) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_tags(doc_id, &tag_ids)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_remove_document(doc_id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        db.remove_document(doc_id)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_remove_tag(tag_id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        db.remove_tag(tag_id)
+    })();
+    result.into()
+}
+
+/// Rescan every registered folder in one call. Returns one ScanReport
+/// per folder, in folder-insertion order. Folders that fail to scan
+/// (permission denied, etc.) emit a zero-counts report rather than
+/// aborting the whole sweep — the UI surfaces partial progress.
+#[tauri::command]
+fn slab_library_rescan_all() -> CmdResult<Vec<ScanReport>> {
+    let result = (|| -> Result<Vec<ScanReport>, LibraryError> {
+        let mut db = open_library_db()?;
+        let folders = db.list_folders()?;
+        let mut reports = Vec::with_capacity(folders.len());
+        for folder in folders {
+            match do_scan_folder(&mut db, &folder) {
+                Ok(r) => reports.push(r),
+                Err(_) => reports.push(ScanReport {
+                    folder_id: folder.id,
+                    ..Default::default()
+                }),
+            }
+        }
+        Ok(reports)
+    })();
+    result.into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -945,6 +1087,17 @@ pub fn run() {
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
             slab_export_annotations_md,
+            slab_library_add_folder,
+            slab_library_remove_folder,
+            slab_library_list_folders,
+            slab_library_scan,
+            slab_library_list_docs,
+            slab_library_list_tags,
+            slab_library_add_tag,
+            slab_library_set_doc_tags,
+            slab_library_remove_document,
+            slab_library_remove_tag,
+            slab_library_rescan_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

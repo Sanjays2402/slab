@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "0.11.0"
+version = "0.12.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -65,6 +65,11 @@ rusqlite = { version = "0.32", features = ["bundled", "blob"] }
 # is already transitively pulled by reqwest TLS, so this is a zero-cost
 # explicit dep.
 sha2 = "0.10"
+
+# Atlas (v0.12.0 Library Mode) — recursive directory walk for the
+# library scanner. Skips broken symlinks gracefully and gives us a
+# stable iteration order. Single-file no-features-by-default crate.
+walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -5,19 +5,32 @@
 
 ---
 
-## STATUS: RELEASE_PENDING — v0.11.0 Lathe merged + tagged, CI building installers
+## STATUS: DEVELOPING — v0.12.0 "Atlas" Slice 1 COMPLETE on `feature/v0.12.0-atlas`; awaiting Slice 2 (watch daemon) or Slice 3 (LibraryPanel UI) next tick
 
-**v0.10.0 RELEASED** 2026-05-17 08:03 UTC — all 6 installers on GH Releases, latest.
-**v0.11.0 MERGED + TAGGED** 2026-05-17 03:05 PDT — merge SHA `76cd7ed`, tag `v0.11.0`, pushed.
+**v0.11.0 RELEASED** 2026-05-17 10:21 UTC — all 6 installers on GH Releases, marked latest. Release URL: https://github.com/Sanjays2402/slab/releases/tag/v0.11.0
 
-**RELEASE_PENDING: v0.11.0** — merge SHA `76cd7ed`, tag `v0.11.0`, CI run `25987817724` (in_progress).
-Quality gates on main passed before push: fmt + clippy + 235 lib tests + svelte-check 0 errors.
+**Active branch:** `feature/v0.12.0-atlas` (4 commits ahead of `main`: `c3135bd`, `1027569`, `37fc505`, `08f5bdd`)
+**Active plan:** `docs/plans/2026-05-17-v0.12.0-atlas.md`
+**Last shipped slice:** Slice 1 — Library Backend Foundation (registry + scanner + query + 8 Tauri commands + TS bindings)
 
-**Next tick:** MODE B — poll CI run `25987817724`; if green download artifacts and `gh release create v0.11.0` with the 6 installers. If failed, write `RELEASE_FAILED:` and decide on revert vs follow-up fix branch.
+**Atlas slices (1 / 7 done):**
+- ✅ **Slice 1: Library Backend Foundation** — sqlite registry (`library_folders`, `library_documents`, `library_tags`, `library_doc_tags`), walking scanner with quick-key skip + SHA-256 hashing, filter+sort query layer with eager-loaded tags, 8 `slab_library_*` Tauri commands, TS client bindings at `src/lib/library.ts`. 34 new tests (15 registry + 10 scanner + 9 query). 235→269 lib tests (+34). 4 commits: `c3135bd` plan/STATE, `1027569` registry, `37fc505` scanner, `08f5bdd` commands+bindings.
+- ⏳ Slice 2: `library::watch` daemon (`notify` crate + Tauri event stream)
+- ⏳ Slice 3: `LibraryPanel.svelte` Finder-style grid
+- ⏳ Slice 4: Cross-doc Beacon chat (`slab_beacon_chat_library`)
+- ⏳ Slice 5: Saved searches
+- ⏳ Slice 6: Smart bookmarks
+- ⏳ Slice 7: Release prep + merge
 
-Then MODE C: pivot to **v0.12.0 "Atlas"** (Library Mode). Spec at `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. First slice will be library index + watch folder backend.
+**Quality gates green on `feature/v0.12.0-atlas` (Slice 1):**
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo test --lib` — 269 passed
+- `pnpm exec svelte-check` — 0 errors
 
-**Lathe slices (8 / 8 done):**
+**NOT merging to main yet.** Backend is invokable but invisible to users. Will merge once Slice 3 ships the LibraryPanel UI.
+
+**Lathe slices (8 / 8 done — for reference):**
 - ✅ Slice 1: `duplicate_pages` kernel + Tauri (commit `e95c0ef`)
 - ✅ Slice 2: `split_by_pattern` chapter splitter backend (commit `d0635a7`)
 - ✅ Slice 3 backend: `pages_build` composite kernel — handles permutations + duplicates + blank inserts + per-cell rotation in one Tauri round-trip; 14 unit tests (commit `3e93038`)
@@ -27,12 +40,6 @@ Then MODE C: pivot to **v0.12.0 "Atlas"** (Library Mode). Spec at `.cron-state/p
 - ✅ **Slice 6: `pdf::edit_text` backend** — `find_text_spans` + `replace_text_span` for ASCII Tj/TJ rewrite. 15 unit tests cover happy path + CID Type0 read-only + non-ASCII read-only + multi-segment TJ kerning read-only + multi-page id distinctness + replace round-trip with extract_text proof + control-char rejection + span-id parser. 2 Tauri commands. 220→235 lib tests (commit `46b0f3c`)
 - ✅ **Slice 7: `EditTextPanel.svelte`** — page-tab strip with editable counts, editable-only/all filter toggle, span rows with id pill + font/size + inline input + "edited" pill + revert link, read-only chips with friendly reason, iterative save (chain replace calls, reload on success), collapsible caveats section listing the ASCII-only / Type1-only / no-kerning limitations honestly. Sidebar nav `✎ Edit Text`. (commit `4e5257a`)
 - ✅ **Slice 8: Release prep** — version bumped 0.10.0 → 0.11.0 in Cargo.toml + tauri.conf.json + package.json. Cargo.lock refreshed. Sidebar version pill updated. Release notes written to `docs/release-notes/v0.11.0.md` covering all 5 user-visible features. (commit `79f820a`)
-
-**Quality gates green on `feature/v0.11.0-lathe`:**
-- `cargo fmt --all -- --check`
-- `cargo clippy --all-targets -- -D warnings`
-- `cargo test --lib` — 235 passed
-- `pnpm exec svelte-check` — 0 errors
 
 ---
 
@@ -50,11 +57,11 @@ Then MODE C: pivot to **v0.12.0 "Atlas"** (Library Mode). Spec at `.cron-state/p
 ### v0.10.0 "Beacon" — RELEASED 2026-05-17
 - Tag `v0.10.0`, merge SHA `f91b374`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.10.0)
 
-### v0.11.0 "Lathe" — DONE 2026-05-17, awaiting merge
-- 8 slices shipped on `feature/v0.11.0-lathe`. All quality gates green. Release notes at `docs/release-notes/v0.11.0.md`.
+### v0.11.0 "Lathe" — RELEASED 2026-05-17
+- Tag `v0.11.0`, merge SHA `76cd7ed`, CI run `25987817724`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.11.0)
 - Headline: in-place PDF text editing (ASCII / Type1+TrueType). Backend `pdf::edit_text` + frontend `EditTextPanel`.
 
-### v0.12.0 "Atlas" — Library Mode (PLANNED)
+### v0.12.0 "Atlas" — Library Mode (IN PROGRESS)
 Cross-doc Beacon chat across indexed library, tags, collections, watch folders.
 Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. 7 slices.
 
@@ -185,3 +192,4 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - 2026-05-17 02:30 (Cake/cron): 🚀 BIG LATHE TICK — Slice 5 multi-PDF tabs (5af4a92 + a3e0f49). v0.11.0 62% shipped.
 - **2026-05-17 02:55 (Cake/cron): 🚀🚀 TRIPLE-SLICE LATHE CLOSEOUT — Slices 6 + 7 + 8 in one tick.** Took v0.11.0 from 62% → 100% DONE. (a) Slice 6 `pdf::edit_text` backend: 818 LOC including 15 unit tests. `find_text_spans` walks every page's content streams, tracks Tf/Td/Tm/T*/BT/ET state, emits one TextSpan per Tj/TJ/'/' op with stable `p<page>:s<seq>` ids. `replace_text_span` re-decodes the target stream, finds the op by sequence number, swaps its literal-string operand, re-encodes. Handles single Tj happy path, single-segment TJ arrays (editable), multi-segment TJ (read-only, kerning hint), CID Type0 fonts (read-only, font_is_safe check), non-ASCII glyphs in source (read-only), and rejects non-ASCII replacements + control chars + malformed span-ids. 220→235 lib tests (+15). 2 new Tauri commands (commit `46b0f3c`). (b) Slice 7 `EditTextPanel.svelte` 530 LOC: file picker → scans on open → groups spans by page in a tab strip with editable counts + "•" dirty indicator → editable-only/all filter toggle → span rows with id pill + font/size badge + inline `<input>` bound to current value + "edited" pill + revert link → read-only rows with friendly reason chips → Apply chains replace calls writing to a save-dialog destination, then re-loads the saved file so user can keep editing → collapsible caveats section that's honest about ASCII/Type1/no-kerning limits. Sidebar nav `✎ Edit Text`. svelte-check 0 errors (commit `4e5257a`). (c) Slice 8 release prep: version bumped 0.10.0→0.11.0 in Cargo.toml + tauri.conf.json + package.json, Cargo.lock refreshed, sidebar version pill bumped, comprehensive release notes at `docs/release-notes/v0.11.0.md` covering all 5 user-visible Lathe features + stats + upgrade notes (commit `79f820a`). All 4 quality gates green: fmt + clippy `-D warnings` + 235 lib tests + svelte-check 0 errors. Branch pushed. STATE marked DONE — next tick is MODE A merge to main + tag v0.11.0 + push.
 - **2026-05-17 03:05 (Cake/cron): 🚀🚀🚀 v0.11.0 "Lathe" MERGED TO MAIN.** Same-tick MODE C → MODE A chain after the triple-slice closeout. Merged `feature/v0.11.0-lathe` to `main` with `--no-ff` (resolved STATE.md conflict with `--theirs` since feature branch had the up-to-date DONE flags). Re-ran all 4 quality gates ON MAIN: fmt clean, clippy `-D warnings` clean, 235 lib tests pass, svelte-check 0 errors. Tagged `v0.11.0` with message "Slab v0.11.0 — Lathe 🪚". Pushed `main` + tag. Merge SHA `76cd7ed`. CI run `25987817724` building 6 installers. STATE flipped to RELEASE_PENDING. Next tick: MODE B finalize when CI green, then pivot to v0.12.0 Atlas.
+- **2026-05-17 03:32 (Cake/cron): 🚀 ATLAS SLICE 1 SHIPPED — Library Backend Foundation.** Full backend stack for library mode in one tick: (a) sqlite registry at `pdf::library::registry` with 4 tables (`library_folders`, `library_documents`, `library_tags`, `library_doc_tags`), schema-versioned via `PRAGMA user_version`, `LibraryDb::open`/`open_in_memory`, folder CRUD, document upsert keyed by path, tag CRUD, `set_doc_tags` (replace semantics), cascade delete on folder removal. 15 unit tests. `walkdir = "2"` added to Cargo.toml. (commit `1027569`) (b) walking scanner at `pdf::library::scanner` with `walkdir`-based recursive walk (max_depth=12, no follow_links), quick-key skip on `(size, mtime_ns)`, SHA-256 only on first sight or quick-key mismatch, lopdf page count, corrupt-PDF silent skip (one bad file mustn't fail a 500-doc scan), `ScanReport` with added/updated/unchanged/skipped counts. 10 unit tests covering empty folder + root pdfs + subdir pdfs + non-pdf skip + quick-key unchanged skips hash + quick-key changed re-hashes + corrupt pdf skipped + report counts accurate. (commit `37fc505`) (c) filter+sort query layer at `pdf::library::query` with `LibraryFilter { folder_id, tag_ids: Vec<i64> AND-match, title_substring case-insensitive, limit, sort: AddedDesc|TitleAsc|LastSeenDesc }`, dynamic SQL builder, eager tag-load via second query + HashMap to avoid O(rows×tags) round-trips. 9 unit tests. (d) 8 Tauri commands in `lib.rs`: `slab_library_add_folder`, `slab_library_remove_folder`, `slab_library_list_folders`, `slab_library_scan`, `slab_library_list_docs`, `slab_library_list_tags`, `slab_library_add_tag`, `slab_library_set_doc_tags`. Each opens `~/.slab/library.sqlite` on demand. `LibraryError → CmdResult<T>` From-impl following the `IndexError` pattern. (e) TS client bindings at `src/lib/library.ts` (3927 bytes) — typed wrappers with DTO mirrors (FolderRecord, DocumentRecord, TagRecord, ScanReport, LibraryFilter, LibrarySortBy), each returns `Promise<T>` or rejects `Error(message)`. No UI logic — IPC seam only. (commit `08f5bdd`) Quality gates: fmt clean, clippy `-D warnings` clean (needed one `#[allow(clippy::too_many_arguments)]` on `upsert_document` since 8 cols is structural), 269 lib tests passing (235→269, +34), svelte-check 0 errors. Branch pushed. NOT merging to main yet — Slice 3 LibraryPanel UI must ship first to make the backend visible to users.
