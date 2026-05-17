@@ -5,7 +5,7 @@
 
 ---
 
-## STATUS: SHIPPING (v0.10.0 Beacon Slices 1-8 landed — chat + summary + search + PII live)
+## STATUS: SHIPPING (v0.10.0 Beacon Slices 1-9 landed — chat + summary + search + PII + selection actions live)
 
 **Active dev branch:** `feature/v0.10.0-beacon`
 
@@ -24,7 +24,7 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-8 of 10 shipped)
+### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-9 of 10 shipped)
 - Branch: `feature/v0.10.0-beacon`, tip pushed this tick.
 - Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
 - **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
@@ -35,8 +35,9 @@
 - **Slice 6 DONE 2026-05-16 22:48 PDT** (commit `92a58b2`): Semantic search backend. `ai::chunker` (page-aware, paragraph-first, UTF-8-safe) + `ai::embedding_index` (rusqlite at `~/.slab/beacon-index.sqlite`, brute-force cosine top-K, idempotent re-index by content SHA-256). 22 new tests via MockEmbedProvider. 133→156 lib tests.
 - **Slice 7 DONE 2026-05-16 23:11 PDT** (commit `1a8db1f`): Semantic search UI. `BeaconSearchPanel.svelte` (506 LOC) — index card with Browse/Index/Re-index, search bar with All/This-PDF scope toggle, hit cards (page chip + filename + similarity %), footer stats, friendly-error mapping. 4 Tauri commands: `slab_beacon_index_pdf`, `slab_beacon_search`, `slab_beacon_index_stats`, `slab_beacon_index_forget`. Sidebar nav `⌕ Beacon Search`.
 - **Slice 8 DONE 2026-05-16 23:25 PDT** (commits `fd303d1` + `e4a43a0`): PII Highlighter. `ai::pii` module — regex pass (email/SSN/phone/CC reusing `auto_redact` presets, now pub-exported) + optional LLM pass (names + addresses via configured provider, liberal JSON parsing, per-page best-effort errors). `BeaconPiiPanel.svelte` (~620 LOC) — kind checkboxes + AI toggle + custom regex patterns + colored kind pills + click-to-jump hits + one-click "Redact selected → save as new PDF" reusing `pdf::auto_redact`. 2 Tauri commands: `slab_beacon_pii_find` (returns hits + summary), `slab_beacon_pii_redact` (thin wrapper over auto_redact). 17 new tests via in-memory MockProvider. 156→173 lib tests. Sidebar nav `🔒 PII Redact`.
-- **Slice 9 next**: Selection right-click actions (Translate / Explain / Define / Rewrite). Will need a `ai::selection_action.rs` module + Tauri command + Reader-panel hook.
-- Remaining: Slice 10 — release prep + version bump + merge.
+- **Slice 9 DONE 2026-05-16 23:50 PDT** (commits `14b6e7d` + `4825c93`): Selection Actions — floating LLM bubble on text highlight. `ai::selection_action` module with 5 actions (Translate/Explain/Define/Rewrite/Summarize), per-action prompts, low temperature (0.2), per-action max_tokens budget (80-500), hard cap at 8K chars. Tauri command `slab_beacon_selection_action(text, action, target_lang?)`. `BeaconSelectionBubble.svelte` (~620 LOC) — captures `mouseup` selections inside the PDF.js text layer, positions above the selection bbox, 5-button action grid, inline target-language picker for Translate (15 languages), result view with Copy button, Esc/click-outside dismiss. Mounted as a sibling of `pdfjs-container` in ReaderPanel. 13 new tests via in-memory MockProvider. 173→186 lib tests. **No new sidebar nav** — this lives inline in the reader.
+- **Slice 10 next**: Release prep — version bump 0.9.x → 0.10.0, write release notes, smoke test, MARK STATUS: DONE for next tick to merge to main.
+- Remaining: Slice 10 only.
 
 ### v0.11.0 "Lathe" — Edit Mode (PLANNED)
 In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs, image insert.
@@ -167,3 +168,4 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - **2026-05-16 21:25 (Cake/cron): 🚀 RELEASE + KICKOFF TICK**: (1) v0.9.1 "Toolkit UX" published on GitHub Releases with all 6 installers, latest release. (2) v0.10.0 **Beacon Slice 1** shipped on `feature/v0.10.0-beacon`: `AiProvider` trait + `OllamaProvider` impl (chat + embeddings) + 5 mockito unit tests (no real Ollama in CI). New deps reqwest/async-trait/futures-util/bytes (runtime), mockito (dev). 101→106 lib tests. All quality gates green. Commit `154c008`. Also added `assets/` to `.gitignore` (cron-staged release binaries live on GitHub Releases, not in git).
 - 2026-05-16 21:46 (Cake/cron): Beacon Slice 2 (provider abstraction) shipped in 4 commits: plan promoted to `docs/plans/`, `OpenAiCompatibleProvider` + 6 mockito tests, `BeaconConfig` TOML + `make_provider` + 7 tests, 4 Tauri commands wired. 106→121 lib tests. New runtime dep: `toml` 0.8.
 - **2026-05-16 22:45 (Cake/cron): 🚀 TRIPLE-SLICE TICK — Beacon Slices 3+4+5 in one tick.** (a) Slice 3 backend `ai/chat.rs` — page-aware context builder + citation extractor + `beacon_chat()` + 7 tests via in-memory MockProvider + Tauri `slab_beacon_chat` command (commit `cc5a6ea`). (b) Slice 4 frontend `BeaconChatPanel.svelte` — conversation view, citation chips that dispatch goto-page events, sample-prompt grid, friendly-error mapping, Enter-to-send composer; nav entry "✦ Beacon AI" between Reader and Merge (commit `9abc425`). (c) Slice 5 summary — `ai/summary.rs` with Tldr/Short/Long enum + low-temp prompts + 5 tests; Tauri `slab_beacon_summary`; 3 quick-action chips in chat panel that push results as assistant turns (commit `21960ce`). Total: 121→133 lib tests (+12), 1 new module + 1 new component + 2 new Tauri commands. All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check). Pushed to `feature/v0.10.0-beacon`. v0.10.0 is now 50% shipped (5 of 10 slices done).
+- **2026-05-16 23:50 (Cake/cron): 🚀 Beacon Slice 9 — Selection Actions vertical slice in 2 commits.** Backend `ai::selection_action` module (5 actions: Translate/Explain/Define/Rewrite/Summarize, per-action prompts pinned in tests, low temp 0.2, per-action max_tokens 80-500, 8K-char selection cap with user-grade error) + Tauri command `slab_beacon_selection_action` (commit `14b6e7d`, 13 new tests via in-memory MockProvider). Frontend `BeaconSelectionBubble.svelte` (~620 LOC) — floats above the PDF.js text-layer selection on `mouseup`, 5-button action grid + emoji + tooltips, inline Translate target-language picker (15 languages), busy/error/result states with Copy button, friendly-error mapping for Ollama-down + 429, Esc dismiss, mounted inside ReaderPanel as a sibling of pdfjs-container (commit `4825c93`). 173→186 lib tests (+13). All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check 0 errors). v0.10.0 is now 90% shipped (9 of 10 slices). Slice 10 (release prep + version bump + DONE flag for next-tick merge) is the only remaining work.
