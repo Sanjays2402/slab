@@ -15,6 +15,10 @@ use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
     IndexReport, IndexStats, SearchHit,
 };
+use ai::pii::{
+    find_pii as do_find_pii, CustomPattern as PiiCustomPattern, PiiError, PiiHit, PiiKind, PiiOpts,
+    PiiSummary,
+};
 use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
 use ai::{ChatMessage, ChatRole};
 
@@ -658,6 +662,110 @@ fn slab_beacon_index_forget(pdf_hash: String) -> CmdResult<()> {
     index.forget(&pdf_hash).into()
 }
 
+// ---------- Beacon PII Highlighter (Slice 8) ----------
+
+impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
+    fn from(r: Result<T, PiiError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Bundled response from `slab_beacon_pii_find` — the front-end shows
+/// both the per-hit list and the per-kind summary in one go.
+#[derive(Debug, Clone, Serialize)]
+struct PiiFindReport {
+    hits: Vec<PiiHit>,
+    summary: PiiSummary,
+}
+
+/// Scan a PDF for PII. Regex pass is always on; LLM pass (names +
+/// addresses) is toggled by `include_llm_pass`. When the LLM pass is
+/// requested we also load the configured Beacon provider — if it's
+/// down the UI gets a clear "provider unavailable" message.
+#[tauri::command]
+async fn slab_beacon_pii_find(
+    pdf_path: PathBuf,
+    include_llm_pass: Option<bool>,
+    kinds: Option<Vec<PiiKind>>,
+    custom_patterns: Option<Vec<PiiCustomPattern>>,
+) -> CmdResult<PiiFindReport> {
+    let want_llm = include_llm_pass.unwrap_or(false);
+    let opts = PiiOpts {
+        include_llm_pass: want_llm,
+        custom_patterns: custom_patterns.unwrap_or_default(),
+        kinds: kinds.unwrap_or_default(),
+    };
+    // Lazily build provider only if the user asked for the LLM pass —
+    // a pure regex scan should work even when Ollama isn't installed.
+    let provider_box;
+    let provider_ref: Option<&dyn ai::AiProvider> = if want_llm {
+        let cfg = match do_load_beacon_config() {
+            Ok(c) => c,
+            Err(e) => {
+                return CmdResult::Err {
+                    message: e.to_string(),
+                }
+            }
+        };
+        provider_box = match ai::config::make_provider(&cfg.beacon) {
+            Ok(p) => p,
+            Err(e) => {
+                return CmdResult::Err {
+                    message: e.to_string(),
+                }
+            }
+        };
+        Some(provider_box.as_ref())
+    } else {
+        None
+    };
+    match do_find_pii(&pdf_path, provider_ref, opts).await {
+        Ok(hits) => {
+            let summary = PiiSummary::from_hits(&hits);
+            CmdResult::Ok {
+                value: PiiFindReport { hits, summary },
+            }
+        }
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Apply auto-redaction for a chosen set of PII kinds + extra custom
+/// patterns. We translate the regex-friendly kinds (email/ssn/phone/cc)
+/// into existing `auto_redact` presets, and let the caller pass through
+/// arbitrary regex strings for everything else (Names/Addresses get
+/// turned into literal-match patterns by the UI before calling this).
+///
+/// Returns the number of regex matches the redactor blacked out.
+#[tauri::command]
+fn slab_beacon_pii_redact(
+    input: PathBuf,
+    output: PathBuf,
+    presets: Vec<String>,
+    patterns: Vec<String>,
+    gray: Option<f32>,
+) -> CmdResult<u32> {
+    let opts = pdf::auto_redact::AutoRedactOpts {
+        presets,
+        patterns,
+        gray: gray.unwrap_or(0.0),
+    };
+    let result = pdf::auto_redact::auto_redact(&input, &output, opts);
+    match result {
+        Ok(n) => CmdResult::Ok { value: n },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -737,6 +845,8 @@ pub fn run() {
             slab_beacon_search,
             slab_beacon_index_stats,
             slab_beacon_index_forget,
+            slab_beacon_pii_find,
+            slab_beacon_pii_redact,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
