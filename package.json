@@ -11,6 +11,7 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "a11y:audit": "node scripts/audit-a11y.mjs",
     "a11y:audit:strict": "node scripts/audit-a11y.mjs --strict",
+    "i18n:test": "node scripts/i18n-test.mjs",
     "tauri": "tauri"
   },
   "license": "MIT",
