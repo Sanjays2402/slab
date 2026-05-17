@@ -1,0 +1,297 @@
+// Beacon configuration.
+//
+// Lives at `~/.slab/config.toml`. Owns provider selection so the UI can
+// switch between Ollama (default, local) and any OpenAI-compatible
+// service without code changes.
+//
+// File schema:
+//   [beacon]
+//   provider = "ollama"            # or "openai"
+//   chat_model = "llama3.2:3b"     # provider-specific model id
+//   embed_model = "nomic-embed-text"
+//   base_url = "http://localhost:11434"
+//   api_key_env = "OPENAI_API_KEY" # name of env var holding the secret
+//
+// The API key is *never* written to the config file — only the name of
+// the env var that holds it. This keeps `~/.slab/config.toml` shareable
+// across machines without leaking credentials.
+//
+// Defaults are picked so a brand-new user with Ollama running locally
+// gets a working Beacon experience with zero setup.
+
+use super::ollama::OllamaProvider;
+use super::openai_compat::OpenAiCompatibleProvider;
+use super::{AiError, AiProvider};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Top-level config file. We wrap `BeaconConfig` in a parent struct so
+/// future sections (UI prefs, telemetry opt-out, …) can land alongside
+/// without breaking the `[beacon]` namespace.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SlabConfig {
+    #[serde(default)]
+    pub beacon: BeaconConfig,
+}
+
+/// The Beacon-specific configuration block.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct BeaconConfig {
+    /// Which provider implementation to instantiate.
+    #[serde(default)]
+    pub provider: ProviderKind,
+    /// Provider-specific chat model identifier. `None` → provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_model: Option<String>,
+    /// Provider-specific embedding model identifier. `None` → provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_model: Option<String>,
+    /// HTTP base URL. For Ollama: usually `http://localhost:11434`.
+    /// For OpenAI itself: `https://api.openai.com/v1`. `None` → provider default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// Name of the env variable that holds the API key (e.g.
+    /// `OPENAI_API_KEY`). Only used by the OpenAI-compatible provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKind {
+    /// Default. Local Ollama daemon. No setup beyond `ollama pull`.
+    #[default]
+    Ollama,
+    /// Any OpenAI-compatible HTTP endpoint (OpenAI, Copilot proxy, llama.cpp `server`, …).
+    Openai,
+}
+
+/// Return the absolute path Slab expects to find its config at.
+/// Honours `$SLAB_CONFIG_DIR` so tests can redirect without touching
+/// the user's real home directory.
+pub fn config_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("SLAB_CONFIG_DIR") {
+        return PathBuf::from(dir).join("config.toml");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".slab").join("config.toml")
+}
+
+/// Load `~/.slab/config.toml`. If the file doesn't exist, return
+/// `SlabConfig::default()` — the local-Ollama happy path.
+///
+/// Parse errors propagate as `AiError::InvalidResponse` so the UI can
+/// surface them ("your config.toml has a typo on line 3").
+pub fn load() -> Result<SlabConfig, AiError> {
+    let path = config_path();
+    load_from(&path)
+}
+
+/// Read config from a specific path. Exposed for tests.
+pub fn load_from(path: &std::path::Path) -> Result<SlabConfig, AiError> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => toml::from_str(&s)
+            .map_err(|e| AiError::InvalidResponse(format!("parsing {}: {e}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SlabConfig::default()),
+        Err(e) => Err(AiError::Network(format!("reading {}: {e}", path.display()))),
+    }
+}
+
+/// Persist `cfg` to `~/.slab/config.toml`, creating the parent
+/// directory if needed.
+pub fn save(cfg: &SlabConfig) -> Result<(), AiError> {
+    let path = config_path();
+    save_to(&path, cfg)
+}
+
+/// Write config to a specific path. Exposed for tests.
+pub fn save_to(path: &std::path::Path, cfg: &SlabConfig) -> Result<(), AiError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AiError::Network(format!("mkdir {}: {e}", parent.display())))?;
+    }
+    let body = toml::to_string_pretty(cfg)
+        .map_err(|e| AiError::InvalidResponse(format!("serialising config: {e}")))?;
+    std::fs::write(path, body)
+        .map_err(|e| AiError::Network(format!("writing {}: {e}", path.display())))?;
+    Ok(())
+}
+
+/// Build a provider from a `BeaconConfig`. The returned trait object
+/// can be sent across threads (the Tauri command surface needs `Send`).
+///
+/// Errors only when the OpenAI-compatible provider is selected but the
+/// configured `api_key_env` is missing or empty in the environment.
+pub fn make_provider(cfg: &BeaconConfig) -> Result<Arc<dyn AiProvider>, AiError> {
+    match cfg.provider {
+        ProviderKind::Ollama => {
+            let base = cfg.base_url.as_deref().unwrap_or("http://localhost:11434");
+            let mut p = OllamaProvider::with_base_url(base);
+            if let Some(m) = cfg.chat_model.as_deref() {
+                p = p.with_chat_model(m);
+            }
+            if let Some(m) = cfg.embed_model.as_deref() {
+                p = p.with_embed_model(m);
+            }
+            Ok(Arc::new(p))
+        }
+        ProviderKind::Openai => {
+            let base = cfg
+                .base_url
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1");
+            let env_name = cfg.api_key_env.as_deref().unwrap_or("OPENAI_API_KEY");
+            let key = std::env::var(env_name).map_err(|_| {
+                AiError::ProviderUnavailable(format!(
+                    "missing API key: env var ${env_name} is unset. Set it in your shell, \
+                     or change `api_key_env` in ~/.slab/config.toml."
+                ))
+            })?;
+            if key.trim().is_empty() {
+                return Err(AiError::ProviderUnavailable(format!(
+                    "env var ${env_name} is empty"
+                )));
+            }
+            let mut p = OpenAiCompatibleProvider::new(base, key);
+            if let Some(m) = cfg.chat_model.as_deref() {
+                p = p.with_chat_model(m);
+            }
+            if let Some(m) = cfg.embed_model.as_deref() {
+                p = p.with_embed_model(m);
+            }
+            Ok(Arc::new(p))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Default config = local Ollama with no overrides. Most users will
+    /// never edit this file; defaults must be useful.
+    #[test]
+    fn default_is_ollama_local() {
+        let cfg = SlabConfig::default();
+        assert_eq!(cfg.beacon.provider, ProviderKind::Ollama);
+        assert!(cfg.beacon.chat_model.is_none());
+        assert!(cfg.beacon.base_url.is_none());
+    }
+
+    /// Round-trip TOML so the file we write is the file we can read.
+    #[test]
+    fn save_then_load_roundtrip() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let cfg = SlabConfig {
+            beacon: BeaconConfig {
+                provider: ProviderKind::Openai,
+                chat_model: Some("gpt-4o-mini".into()),
+                embed_model: Some("text-embedding-3-small".into()),
+                base_url: Some("https://api.openai.com/v1".into()),
+                api_key_env: Some("OPENAI_API_KEY".into()),
+            },
+        };
+        save_to(&path, &cfg).unwrap();
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(loaded, cfg);
+        // Sanity-check: the on-disk file contains the canonical key
+        // names (so users can hand-edit).
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("provider = \"openai\""), "got:\n{body}");
+        assert!(
+            body.contains("api_key_env = \"OPENAI_API_KEY\""),
+            "got:\n{body}"
+        );
+    }
+
+    /// Missing file → defaults, not an error. The cron path:
+    /// fresh-install user opens Slab → Beacon "just works" with Ollama.
+    #[test]
+    fn load_missing_file_returns_default() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("does-not-exist.toml");
+        let cfg = load_from(&path).unwrap();
+        assert_eq!(cfg, SlabConfig::default());
+    }
+
+    /// Malformed TOML → InvalidResponse with the path baked in so the
+    /// UI can render "open this file".
+    #[test]
+    fn load_malformed_toml_returns_invalid_response() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "this is not = = valid toml [[").unwrap();
+        let err = load_from(&path).unwrap_err();
+        match err {
+            AiError::InvalidResponse(m) => {
+                assert!(m.contains("config.toml"), "expected path in error, got {m}");
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    /// make_provider for default config → Ollama provider whose
+    /// `name()` is `"ollama"`. We can't introspect base_url from the
+    /// trait, but the name + a working construction is enough signal.
+    #[test]
+    fn make_provider_default_builds_ollama() {
+        let p = make_provider(&BeaconConfig::default()).unwrap();
+        assert_eq!(p.name(), "ollama");
+    }
+
+    /// make_provider for OpenAI with missing env var → ProviderUnavailable.
+    /// The error message must name the env var so the user knows what
+    /// to set.
+    #[test]
+    fn make_provider_openai_missing_key_errors() {
+        // Pick a name extremely unlikely to be set in any CI environment.
+        let env_name = "SLAB_TEST_NEVER_SET_KEY_XYZZY_123";
+        // Defensive: ensure it really isn't set.
+        std::env::remove_var(env_name);
+        let cfg = BeaconConfig {
+            provider: ProviderKind::Openai,
+            api_key_env: Some(env_name.to_string()),
+            ..Default::default()
+        };
+        let err = match make_provider(&cfg) {
+            Ok(_) => panic!("expected ProviderUnavailable, got Ok"),
+            Err(e) => e,
+        };
+        match err {
+            AiError::ProviderUnavailable(m) => {
+                assert!(m.contains(env_name), "expected env name in error, got {m}");
+            }
+            other => panic!("expected ProviderUnavailable, got {other:?}"),
+        }
+    }
+
+    /// make_provider for OpenAI with env var set → returns the
+    /// openai-compatible provider.
+    #[test]
+    fn make_provider_openai_with_key_builds_provider() {
+        let env_name = "SLAB_TEST_KEY_PRESENT_XYZZY_456";
+        std::env::set_var(env_name, "sk-fake-test-value");
+        let cfg = BeaconConfig {
+            provider: ProviderKind::Openai,
+            api_key_env: Some(env_name.to_string()),
+            base_url: Some("https://example.test/v1".to_string()),
+            ..Default::default()
+        };
+        let p = make_provider(&cfg).unwrap();
+        assert_eq!(p.name(), "openai-compatible");
+        std::env::remove_var(env_name);
+    }
+
+    /// config_path honours `$SLAB_CONFIG_DIR` so tests / CI can pin a
+    /// scratch location.
+    #[test]
+    fn config_path_respects_env_override() {
+        std::env::set_var("SLAB_CONFIG_DIR", "/tmp/slab-test-cfg-7777");
+        let p = config_path();
+        assert_eq!(p, PathBuf::from("/tmp/slab-test-cfg-7777/config.toml"));
+        std::env::remove_var("SLAB_CONFIG_DIR");
+    }
+}
