@@ -24,19 +24,44 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-5 of 10 shipped)
+### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-7 of 15 shipped)
 - Branch: `feature/v0.10.0-beacon`, tip pushed this tick.
 - Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
+- **BONUS slices 11-15 added** — see `.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`.
+  All bonus slices reuse already-built `AiProvider` + chunker + sqlite-vec.
 - **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
 - **Slice 2 DONE 2026-05-16 22:00 PDT** (4 commits): `OpenAiCompatibleProvider` + `BeaconConfig` (TOML) + `make_provider` factory + 4 Tauri config commands. 106→121 lib tests.
 - **Slice 3 DONE 2026-05-16 22:45 PDT** (commit `cc5a6ea`): Chat backend `ai/chat.rs`. `build_context` (page-aware truncation), `extract_citations` (handles `[pN]` / `[page N]` / `[pages 2,5,9]`, rejects footnote `[1]` and dates), `beacon_chat()` + `_from_path()` + 7 tests via in-memory MockProvider. Tauri command `slab_beacon_chat`. 121→128 lib tests.
 - **Slice 4 DONE 2026-05-16 22:45 PDT** (commit `9abc425`): `BeaconChatPanel.svelte` + sidebar nav (✦ Beacon AI between Reader and Merge). Conversation view, citation chips that dispatch `slab:beacon-goto-page`, sample-prompt grid empty state, friendly error mapping (Ollama down → "start ollama or switch provider" hint), Enter-to-send composer. svelte-check clean.
 - **Slice 5 DONE 2026-05-16 22:45 PDT** (commit `21960ce`): Auto-summary. `ai/summary.rs` with `SummaryLength` enum (Tldr/Short/Long), `BeaconSummary` DTO, low-temperature (0.1) prompt, per-length token budgets. Tauri command `slab_beacon_summary`. UI: 3 quick-action chips (✦ TL;DR / ✦ Summarize / ✦ Detailed) in BeaconChatPanel — result lands as an assistant turn so follow-up questions work conversationally. 5 new tests. 128→133 lib tests.
-- **Slice 6 next**: Semantic search backend (`ai/embedding_index.rs` + sqlite-vec). Will need `rusqlite` + `sqlite-vec` deps (pre-approved).
-- Remaining slices 7-10: search UI, PII highlighter, selection actions, release prep.
+- **Slice 6 DONE** (commit `92a58b2`): Semantic search backend — chunker + sqlite-vec index.
+- **Slice 7 DONE** (commit `1a8db1f`): Semantic search UI + 4 Tauri commands.
+- **Slice 8 next**: PII highlighter UI (backend reuse from existing AutoRedactPanel patterns).
+- Remaining slices 9-15: selection actions, smart outline, citations, study mode, glossary, voice mode, release prep.
 
-### v0.11.0 "Workshop" — TBD
-In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs.
+### v0.11.0 "Lathe" — Edit Mode (PLANNED)
+In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs, image insert.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.11.0. 8 slices.
+
+### v0.12.0 "Atlas" — Library Mode (PLANNED)
+Cross-doc Beacon chat across indexed library, tags, collections, watch folders.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. 7 slices.
+
+### v0.13.0 "Lens" — OCR + Vision (PLANNED)
+Local OCR (surya/tesseract), table → CSV, math → LaTeX, vision Q&A in Beacon, auto-tag.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.13.0. 9 slices.
+
+### v0.14.0 "Stack" — Diff & Compare (PLANNED)
+Visual + text diff, track changes, patch/merge, Beacon diff summary.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.14.0. 6 slices.
+
+### v0.15.0 "Theater" — Presenter Mode (PLANNED)
+Slides view, presenter window, live drawing, auto-advance, Stream Deck profile.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.15.0. 5 slices.
+
+### v1.0.0 "Glass" — Stable Release (PLANNED)
+Floating panels, multi-window, command palette (⌘K), Vim bindings, a11y, i18n, frozen API.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v1.0.0. 10 slices.
 
 ---
 
