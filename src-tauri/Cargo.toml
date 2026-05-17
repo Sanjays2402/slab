@@ -79,6 +79,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # Tiny crate, no_std-friendly, zero unsafe.
 base64 = "0.22"
 
+# Stack (v0.14.0) — Myers/Patience diff engine. Drives `pdf::diff` line+token
+# diffing for PDF compare. Pure-Rust, single crate, no transitive bloat.
+# Used only at user-trigger time so it stays out of the hot render path.
+similar = "2.6"
+
 [dev-dependencies]
 tempfile = "3"
 # Beacon mock HTTP server for provider unit tests (no real Ollama in CI).
