@@ -11,6 +11,7 @@
   import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
   import DecryptModal from "$lib/components/DecryptModal.svelte";
   import BeaconSelectionBubble from "$lib/components/BeaconSelectionBubble.svelte";
+  import { slabScanAudit, nonEmptyPages, type ScanAuditReport } from "$lib/lens";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -93,6 +94,11 @@
   let annotMode = $state<AnnotMode>("off");
   let ocrRunning = $state(false);
   let ocrStatus = $state<string>("");
+  // Scan-audit (v0.13.0 Lens Slice 1): when a PDF opens we audit it for
+  // scanned pages and surface a one-click OCR banner if needed.
+  let scanReport = $state<ScanAuditReport | null>(null);
+  let scanAuditing = $state(false);
+  let scanBannerDismissed = $state(false);
   let cheatsheetOpen = $state(false);
   let invert = $state(false);
   let dropActive = $state(false);
@@ -237,6 +243,44 @@
   }
 
   // ---------- OCR ----------
+
+  /// Audit the freshly-opened PDF for scanned pages. Runs in the background,
+  /// silent on failure. Reused by the OCR banner — when it returns an
+  /// `OcrAll` recommendation we surface the prompt automatically.
+  async function runScanAudit(path: string) {
+    scanReport = null;
+    scanBannerDismissed = false;
+    if (!isInTauri()) return;
+    scanAuditing = true;
+    try {
+      const r = await slabScanAudit(path);
+      scanReport = r;
+    } catch {
+      // Audit failures are non-fatal — the user can still OCR manually.
+      scanReport = null;
+    } finally {
+      scanAuditing = false;
+    }
+  }
+
+  function dismissScanBanner() {
+    scanBannerDismissed = true;
+  }
+
+  // Recommendation surfaced as a banner. Returns null when nothing to show.
+  let scanBannerText = $derived.by<string | null>(() => {
+    if (!scanReport || scanBannerDismissed) return null;
+    const r = scanReport.recommended_action;
+    if (r === "none") return null;
+    const total = nonEmptyPages(scanReport);
+    if (r === "ocr_all") {
+      return `This PDF looks fully scanned (${total} page${total === 1 ? "" : "s"}). Run OCR to make it searchable?`;
+    }
+    // ocr_some
+    const scanned = scanReport.image_pages + scanReport.mixed_pages;
+    return `${scanned} of ${total} page${total === 1 ? "" : "s"} look scanned. Run OCR to make text selectable?`;
+  });
+
   async function runOcr() {
     if (!doc || ocrRunning) return;
     const inputName = basename(doc.path).replace(/\.pdf$/i, "");
@@ -345,6 +389,10 @@
       void renderRecentThumb(pdf, path);
       // Notify the shell so it can update the tab title.
       onTitleChange?.(basename(path));
+      // Kick off a scan-audit in the background — non-blocking. Only for
+      // real file-system PDFs (skip data: URLs etc — `path` is a real path
+      // by contract here).
+      void runScanAudit(path);
     } catch (e: any) {
       // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
       // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
@@ -1198,6 +1246,21 @@
       <div class="ocr-toast" class:err={ocrStatus.startsWith("✗")}>{ocrStatus}</div>
     {/if}
 
+    {#if scanBannerText && !ocrRunning}
+      <div class="scan-banner" role="status">
+        <div class="scan-banner-icon" aria-hidden="true">👁</div>
+        <div class="scan-banner-text">{scanBannerText}</div>
+        <div class="scan-banner-actions">
+          <button class="sb-primary" onclick={runOcr} disabled={ocrRunning}>
+            OCR now
+          </button>
+          <button class="sb-dismiss" onclick={dismissScanBanner} title="Dismiss">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    {/if}
+
     <!-- Beacon selection bubble: floats above any text selection inside the
          PDF viewer. Mounted at the panel level so absolute positioning works
          relative to the page, not constrained by the viewer's overflow. -->
@@ -1761,6 +1824,90 @@
   .ocr-toast.err {
     border-color: #c14545;
     color: #ffb3b3;
+  }
+
+  /* ---- Scan-audit banner (Lens) ---- */
+  .scan-banner {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #1e2433, #161a25);
+    color: #e8ecf5;
+    border: 1px solid #2c3447;
+    font-size: 13px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+    max-width: min(640px, 90%);
+    animation: scan-banner-in 220ms ease-out;
+  }
+  @keyframes scan-banner-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -8px);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+  }
+  .scan-banner-icon {
+    font-size: 18px;
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+  .scan-banner-text {
+    flex: 1 1 auto;
+    line-height: 1.4;
+    white-space: normal;
+  }
+  .scan-banner-actions {
+    display: flex;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  .scan-banner-actions button {
+    border: 1px solid #2c3447;
+    background: #232a3a;
+    color: #e8ecf5;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .scan-banner-actions button:hover:not(:disabled) {
+    background: #2c3447;
+    border-color: #3a455c;
+  }
+  .scan-banner-actions button.sb-primary {
+    background: #3a73c8;
+    border-color: #3a73c8;
+    color: #fff;
+  }
+  .scan-banner-actions button.sb-primary:hover:not(:disabled) {
+    background: #4a86db;
+    border-color: #4a86db;
+  }
+  .scan-banner-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .scan-banner-actions button.sb-dismiss {
+    background: transparent;
+    border-color: transparent;
+    color: #99a3b5;
+  }
+  .scan-banner-actions button.sb-dismiss:hover {
+    color: #e8ecf5;
+    background: #232a3a;
+    border-color: #2c3447;
   }
 
   /* ---- Invert (dark-mode reading) ---- */
