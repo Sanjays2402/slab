@@ -79,6 +79,7 @@ use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, Page
 use pdf::split_pattern::{
     find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
 };
+use pdf::stamp_annotations::{stamp_annotations as do_stamp_annotations, StampAnnotationsOpts};
 use pdf::table_extract::{
     extract_tables as do_extract_tables, to_csv as do_table_to_csv, Table as TableDto, TableOpts,
 };
@@ -240,6 +241,15 @@ fn slab_diff_export_report(old: PathBuf, new: PathBuf, output: PathBuf) -> CmdRe
 #[tauri::command]
 fn slab_slides_analyze(input: PathBuf) -> CmdResult<SlideReport> {
     do_slides_analyze(&input).into()
+}
+
+#[tauri::command]
+fn slab_theater_export_annotated(
+    input: PathBuf,
+    output: PathBuf,
+    opts: StampAnnotationsOpts,
+) -> CmdResult<u32> {
+    do_stamp_annotations(&input, &output, opts).into()
 }
 
 #[tauri::command]
@@ -1323,6 +1333,7 @@ pub fn run() {
             slab_diff_pdfs,
             slab_diff_export_report,
             slab_slides_analyze,
+            slab_theater_export_annotated,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,

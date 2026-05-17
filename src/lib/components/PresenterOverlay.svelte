@@ -47,6 +47,13 @@
   let nextRenderTask: { cancel(): void } | null = null;
 
   // Annotation overlay (Slice 3) — ref via bind:this
+  type ExportStroke = {
+    page: number;
+    tool: "pen" | "highlighter";
+    color: [number, number, number];
+    width_pt: number;
+    points: Array<[number, number]>;
+  };
   type AnnotationsApi = {
     setTool: (t: "none" | "laser" | "pen" | "highlighter") => void;
     eraseCurrent: () => void;
@@ -59,6 +66,8 @@
     closePicker: () => void;
     isPickerOpen: () => boolean;
     currentTool: () => "none" | "laser" | "pen" | "highlighter";
+    getAllStrokes: () => ExportStroke[];
+    hasStrokes: () => boolean;
   };
   let annotations = $state<AnnotationsApi | null>(null);
   let toolLabel = $state<"none" | "laser" | "pen" | "highlighter">("none");
@@ -86,6 +95,66 @@
   function togglePicker() {
     annotations?.togglePicker();
     pickerOn = annotations?.isPickerOpen() ?? false;
+  }
+
+  // ---------- Slice 5: Export annotated deck ----------
+  let exporting = $state(false);
+  let exportMsg = $state<{ kind: "ok" | "err"; text: string } | null>(null);
+  let exportMsgTimer = 0;
+
+  function flashExport(kind: "ok" | "err", text: string) {
+    exportMsg = { kind, text };
+    clearTimeout(exportMsgTimer);
+    exportMsgTimer = window.setTimeout(() => {
+      exportMsg = null;
+    }, 4500);
+  }
+
+  async function exportAnnotated() {
+    if (exporting) return;
+    if (!annotations || !annotations.hasStrokes()) {
+      flashExport("err", "No ink to export — draw something first.");
+      return;
+    }
+    exporting = true;
+    try {
+      // Lazy-import Tauri APIs so we keep the component tree light.
+      const [{ save }, { invoke }] = await Promise.all([
+        import("@tauri-apps/plugin-dialog"),
+        import("@tauri-apps/api/core"),
+      ]);
+      // Derive a default output path: "<orig stem>-annotated.pdf"
+      const slash = Math.max(inputPath.lastIndexOf("/"), inputPath.lastIndexOf("\\"));
+      const dir = slash >= 0 ? inputPath.slice(0, slash) : "";
+      const base = slash >= 0 ? inputPath.slice(slash + 1) : inputPath;
+      const dot = base.lastIndexOf(".");
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      const defaultName = `${stem}-annotated.pdf`;
+      const defaultPath = dir ? `${dir}/${defaultName}` : defaultName;
+      const out = await save({
+        defaultPath,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!out) {
+        exporting = false;
+        return;
+      }
+      const strokes = annotations.getAllStrokes();
+      const res = (await invoke("slab_theater_export_annotated", {
+        input: inputPath,
+        output: out,
+        opts: { strokes },
+      })) as { status: "ok"; value: number } | { status: "err"; message: string };
+      if (res.status === "ok") {
+        flashExport("ok", `Saved ${res.value} stroke${res.value === 1 ? "" : "s"} → ${out}`);
+      } else {
+        flashExport("err", res.message || "Export failed.");
+      }
+    } catch (e) {
+      flashExport("err", String(e));
+    } finally {
+      exporting = false;
+    }
   }
 
   // Timer
@@ -318,6 +387,11 @@
       togglePicker();
       return;
     }
+    if (e.key === "s" || e.key === "S") {
+      e.preventDefault();
+      void exportAnnotated();
+      return;
+    }
   }
 
   onMount(() => {
@@ -402,6 +476,13 @@
           onclick={togglePicker}
           title="Jump to slide (G)">▦</button
         >
+        <button
+          class="ghost tool save"
+          class:busy={exporting}
+          onclick={exportAnnotated}
+          disabled={exporting}
+          title="Save annotated PDF (S)">⤓</button
+        >
       </div>
       <button class="ghost" onclick={prev} disabled={current <= 1} title="Prev (←)">‹</button>
       <span class="pos">{current} / {pageCount || pages.length}</span>
@@ -466,8 +547,14 @@
       <span>T timer · R reset</span>
       <span>L laser · P pen · H highlighter · N none</span>
       <span>X erase slide · B blackout · W whiteout</span>
-      <span>G grid · Esc exit</span>
+      <span>G grid · S save annotated · Esc exit</span>
     </footer>
+  {/if}
+
+  {#if exportMsg}
+    <div class="toast {exportMsg.kind}" role="status" aria-live="polite">
+      {exportMsg.text}
+    </div>
   {/if}
 </div>
 
@@ -593,6 +680,40 @@
     background: rgba(74, 222, 128, 0.12);
     color: #4ade80;
     border: 1px solid rgba(74, 222, 128, 0.35);
+  }
+  .tool.save {
+    color: #93c5fd;
+  }
+  .tool.save:hover {
+    background: rgba(147, 197, 253, 0.12);
+    color: #c7defb;
+  }
+  .tool.busy {
+    opacity: 0.55;
+    cursor: progress;
+  }
+  .toast {
+    position: fixed;
+    bottom: 22px;
+    right: 22px;
+    z-index: 9500;
+    max-width: 480px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.35;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    font-feature-settings: "tnum";
+  }
+  .toast.ok {
+    background: rgba(20, 70, 38, 0.92);
+    color: #d3f5dd;
+    border: 1px solid rgba(74, 222, 128, 0.55);
+  }
+  .toast.err {
+    background: rgba(96, 24, 24, 0.92);
+    color: #ffd6d6;
+    border: 1px solid rgba(248, 113, 113, 0.5);
   }
   .side {
     background: #0f1115;

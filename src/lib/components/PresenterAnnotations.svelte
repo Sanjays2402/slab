@@ -290,6 +290,80 @@
     return tool;
   }
 
+  /** Snapshot of all strokes for export (v0.15.0 Slice 5). */
+  export type ExportStroke = {
+    page: number;
+    tool: "pen" | "highlighter";
+    color: [number, number, number];
+    width_pt: number;
+    points: Array<[number, number]>;
+  };
+  /**
+   * Return every stored stroke as a flat list, ready to ship to the
+   * `slab_theater_export_annotated` Tauri command. Strokes are emitted in
+   * page-ascending order; on-page order matches insertion order.
+   *
+   * Color is parsed back to an [r,g,b] triple in [0,1]. Width is mapped
+   * from screen-ish CSS pixels to PDF points (1:1 — those happen to be
+   * close enough at typical zooms, and the user can always tune later).
+   */
+  export function getAllStrokes(): ExportStroke[] {
+    const out: ExportStroke[] = [];
+    const pageKeys = Array.from(strokesByPage.keys()).sort((a, b) => a - b);
+    for (const page of pageKeys) {
+      const list = strokesByPage.get(page) ?? [];
+      for (const s of list) {
+        const color = parseRgb(s.color);
+        if (!color) continue;
+        out.push({
+          page,
+          tool: s.tool,
+          color,
+          width_pt: s.width,
+          points: s.points.map((p) => [p.x, p.y] as [number, number]),
+        });
+      }
+    }
+    return out;
+  }
+  /** True iff we have at least one stored stroke to export. */
+  export function hasStrokes(): boolean {
+    for (const list of strokesByPage.values()) {
+      if (list.length > 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Parse a CSS color literal into an [r,g,b] triple in [0,1].
+   * Supports `#rgb`, `#rrggbb`, `rgb(...)`, and `rgba(...)`. Alpha is
+   * ignored (the PDF stamp uses a per-tool ExtGState for alpha).
+   */
+  function parseRgb(css: string): [number, number, number] | null {
+    const s = css.trim();
+    if (s.startsWith("#")) {
+      const hex = s.slice(1);
+      if (hex.length === 3) {
+        const r = parseInt(hex[0] + hex[0], 16);
+        const g = parseInt(hex[1] + hex[1], 16);
+        const b = parseInt(hex[2] + hex[2], 16);
+        return [r / 255, g / 255, b / 255];
+      }
+      if (hex.length === 6) {
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        return [r / 255, g / 255, b / 255];
+      }
+      return null;
+    }
+    const m = /^rgba?\(([^)]+)\)$/i.exec(s);
+    if (!m) return null;
+    const parts = m[1].split(",").map((x) => parseFloat(x.trim()));
+    if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null;
+    return [parts[0] / 255, parts[1] / 255, parts[2] / 255];
+  }
+
   // Picker grid math: cap at 12 cols, scrollable.
   const cols = $derived.by((): number => {
     return Math.min(12, Math.max(4, Math.ceil(Math.sqrt(Math.max(pageCount, 1)))));
