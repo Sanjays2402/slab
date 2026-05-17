@@ -33,8 +33,8 @@ use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
+use pdf::diff::{diff_pdfs as do_diff_pdfs, export_report as do_diff_export_report, DocDiff};
 use pdf::duplicate::duplicate_pages;
-use pdf::diff::{diff_pdfs as do_diff_pdfs, DocDiff};
 use pdf::edit_text::{
     find_text_spans as do_find_text_spans, replace_text_span as do_replace_text_span, PageSpans,
 };
@@ -222,6 +222,17 @@ fn slab_replace_text_span(
 #[tauri::command]
 fn slab_diff_pdfs(old: PathBuf, new: PathBuf) -> CmdResult<DocDiff> {
     do_diff_pdfs(&old, &new).into()
+}
+
+#[tauri::command]
+fn slab_diff_export_report(old: PathBuf, new: PathBuf, output: PathBuf) -> CmdResult<u32> {
+    // We re-run the diff here rather than asking the frontend to ship the
+    // (potentially huge) DocDiff payload back over the IPC wire. Cheap on
+    // any sane PDF and keeps the command surface tiny.
+    match do_diff_pdfs(&old, &new) {
+        Ok(d) => do_diff_export_report(&d, &output).into(),
+        Err(e) => Err(e).into(),
+    }
 }
 
 #[tauri::command]
@@ -1264,6 +1275,7 @@ pub fn run() {
             slab_find_text_spans,
             slab_replace_text_span,
             slab_diff_pdfs,
+            slab_diff_export_report,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,

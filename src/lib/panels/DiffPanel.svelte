@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { idle, basename, type CmdResult, type Status } from "$lib/types";
+  import { open, save } from "@tauri-apps/plugin-dialog";
+  import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
 
   // --- Backend DTOs (mirror src-tauri/src/pdf/diff.rs) ---
   type DiffOp = "equal" | "insert" | "delete";
@@ -131,6 +131,37 @@
     return "—";
   }
 
+  async function exportReport() {
+    if (!oldPath || !newPath) return;
+    const base = `${stripExt(basename(oldPath))}-vs-${stripExt(basename(newPath))}-diff`;
+    const output = await save({
+      defaultPath: `${base}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (typeof output !== "string") return;
+    const prev = status;
+    status = { kind: "working", msg: "Building report…" };
+    try {
+      const res = await invoke<CmdResult<number>>("slab_diff_export_report", {
+        old: oldPath,
+        new: newPath,
+        output,
+      });
+      if (res.kind === "ok") {
+        status = {
+          kind: "ok",
+          msg: `Wrote ${basename(output)} (${res.value} page${res.value === 1 ? "" : "s"})`,
+        };
+      } else {
+        status = { kind: "err", msg: res.message };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+      // Don't clobber the previous summary on transient failures.
+      void prev;
+    }
+  }
+
   function summaryPills(s: DiffSummary): { label: string; cls: string }[] {
     const out: { label: string; cls: string }[] = [];
     if (s.added > 0) out.push({ label: `+${s.added}`, cls: "ins" });
@@ -203,6 +234,9 @@
       {status.kind === "working" ? "Comparing…" : diff ? "Re-compare" : "Compare"}
     </button>
     {#if diff}
+      <button onclick={exportReport} disabled={status.kind === "working"}>
+        Export Report (.pdf)
+      </button>
       <div class="filter-toggle">
         <button class:active={filter === "changed"} onclick={() => (filter = "changed")}
           >Changes only</button

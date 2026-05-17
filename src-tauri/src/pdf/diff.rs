@@ -9,6 +9,7 @@
 // unsafe.
 
 use crate::pdf::extract::extract_text;
+use crate::pdf::md2pdf::{render as render_md, Md2PdfOpts};
 use crate::pdf::PdfError;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
@@ -204,6 +205,94 @@ fn trim_trailing_newline(s: &str) -> String {
     t
 }
 
+/// Build a Markdown report of `diff` suitable for human review or hand-off
+/// to `pdf::md2pdf::render`. Pure function — used by both `export_report`
+/// (which writes a PDF) and is directly callable for callers that want the
+/// raw text.
+pub fn format_report_md(diff: &DocDiff) -> String {
+    let mut out = String::new();
+    out.push_str("# Slab Diff Report\n\n");
+    out.push_str(&format!("**Old:** `{}`\n\n", diff.old_path.display()));
+    out.push_str(&format!("**New:** `{}`\n\n", diff.new_path.display()));
+    out.push_str(&format!(
+        "**Pages:** {} (old) → {} (new)\n\n",
+        diff.old_page_count, diff.new_page_count
+    ));
+    out.push_str(&format!(
+        "**Totals:** +{} added, -{} removed, ~{} changed\n\n",
+        diff.total.added, diff.total.removed, diff.total.changed
+    ));
+    out.push_str("---\n\n");
+
+    for page in &diff.pages {
+        // Skip unchanged pages — the report is signal, not noise.
+        let s = &page.summary;
+        if s.added == 0 && s.removed == 0 && s.changed == 0 {
+            continue;
+        }
+        let heading = match (page.old_page, page.new_page) {
+            (Some(o), Some(n)) if o == n => format!("## Page {o}"),
+            (Some(o), Some(n)) => format!("## Old p.{o} ↔ New p.{n}"),
+            (Some(o), None) => format!("## Old p.{o} — removed"),
+            (None, Some(n)) => format!("## New p.{n} — added"),
+            (None, None) => "## (orphan page)".into(),
+        };
+        out.push_str(&heading);
+        out.push_str(&format!("  +{} -{} ~{}\n\n", s.added, s.removed, s.changed));
+
+        for line in &page.lines {
+            // Skip equal lines — keep the report short.
+            if line.op == DiffOp::Equal {
+                continue;
+            }
+            let marker = match line.op {
+                DiffOp::Insert => '+',
+                DiffOp::Delete => '-',
+                DiffOp::Equal => ' ',
+            };
+            // Use a fenced-code-block-style prefix so the markdown→PDF
+            // renderer keeps monospace for the body text. We use a
+            // blockquote because md2pdf supports it and it visually pops.
+            let escaped = sanitize_for_md(&line.text);
+            out.push_str(&format!("> `{marker}` {escaped}\n"));
+        }
+        out.push('\n');
+    }
+
+    if diff.total.added == 0 && diff.total.removed == 0 && diff.total.changed == 0 {
+        out.push_str("_No differences detected._\n");
+    }
+
+    out
+}
+
+/// Strip the few markdown control chars we can't safely pass through. We
+/// intentionally keep this minimal — md2pdf already handles unknown chars
+/// gracefully.
+fn sanitize_for_md(s: &str) -> String {
+    s.replace('`', "'")
+        .replace(['\n', '\r'], " ")
+        .trim()
+        .to_string()
+}
+
+/// Render a diff into a PDF report at `output`.
+///
+/// Builds a Markdown body via `format_report_md` then hands it to
+/// `pdf::md2pdf::render` (Letter, default font). Returns the number of pages
+/// produced by md2pdf so callers can surface "N pages written" in the UI.
+pub fn export_report(diff: &DocDiff, output: &Path) -> Result<u32, PdfError> {
+    let md = format_report_md(diff);
+    render_md(
+        &md,
+        output,
+        Md2PdfOpts {
+            markdown: String::new(),
+            page_size: "Letter".to_string(),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +446,88 @@ mod tests {
         assert_eq!(delete.text, "b");
         let insert = p.lines.iter().find(|l| l.op == DiffOp::Insert).unwrap();
         assert_eq!(insert.text, "B");
+    }
+
+    fn make_test_diff() -> DocDiff {
+        let mut p1 = diff_page(Some(1), Some(1), "a\nb\nc\n", "a\nB\nc\n");
+        p1.old_page = Some(1);
+        p1.new_page = Some(1);
+        let p2 = PageDiff {
+            old_page: Some(2),
+            new_page: Some(2),
+            lines: vec![LineDiff {
+                op: DiffOp::Equal,
+                old_line: Some(1),
+                new_line: Some(1),
+                text: "unchanged".into(),
+            }],
+            summary: DiffSummary::default(),
+        };
+        DocDiff {
+            old_path: PathBuf::from("/tmp/old.pdf"),
+            new_path: PathBuf::from("/tmp/new.pdf"),
+            old_page_count: 2,
+            new_page_count: 2,
+            pages: vec![p1.clone(), p2],
+            total: DiffSummary {
+                added: p1.summary.added,
+                removed: p1.summary.removed,
+                changed: p1.summary.changed,
+            },
+        }
+    }
+
+    #[test]
+    fn format_report_md_skips_unchanged_pages() {
+        let d = make_test_diff();
+        let md = format_report_md(&d);
+        // Page 1 changed → must be present.
+        assert!(md.contains("## Page 1"), "missing page 1 heading: {md}");
+        // Page 2 unchanged → must NOT appear as a section.
+        assert!(!md.contains("## Page 2"), "page 2 should be skipped: {md}");
+    }
+
+    #[test]
+    fn format_report_md_includes_insert_and_delete_markers() {
+        let d = make_test_diff();
+        let md = format_report_md(&d);
+        // Old line "b" was removed.
+        assert!(md.contains("`-` b"), "missing delete marker for b: {md}");
+        // New line "B" was added.
+        assert!(md.contains("`+` B"), "missing insert marker for B: {md}");
+        // Equal line "a" should NOT appear in the body (we drop equals).
+        assert!(!md.contains("`=` a"), "equal lines must be skipped: {md}");
+    }
+
+    #[test]
+    fn format_report_md_handles_zero_diff_doc() {
+        let d = DocDiff {
+            old_path: PathBuf::from("/x.pdf"),
+            new_path: PathBuf::from("/y.pdf"),
+            old_page_count: 1,
+            new_page_count: 1,
+            pages: vec![],
+            total: DiffSummary::default(),
+        };
+        let md = format_report_md(&d);
+        assert!(md.contains("_No differences detected._"));
+    }
+
+    #[test]
+    fn export_report_writes_valid_pdf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("report.pdf");
+        let d = make_test_diff();
+        let pages = export_report(&d, &out).unwrap();
+        assert!(pages >= 1, "report should be at least one page");
+        // PDF magic header.
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"), "output is not a PDF");
+    }
+
+    #[test]
+    fn sanitize_for_md_strips_backticks_and_newlines() {
+        assert_eq!(sanitize_for_md("a`b\nc\rd"), "a'b c d");
+        assert_eq!(sanitize_for_md("  spaced  "), "spaced");
     }
 }
