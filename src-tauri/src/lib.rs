@@ -11,6 +11,10 @@ use ai::config::{
     load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
     SlabConfig,
 };
+use ai::embedding_index::{
+    default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
+    IndexReport, IndexStats, SearchHit,
+};
 use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
 use ai::{ChatMessage, ChatRole};
 
@@ -503,6 +507,157 @@ async fn slab_beacon_summary(
         .into()
 }
 
+// ---------- Beacon semantic search (Slice 6/7) ----------
+
+/// Helper: open the shared on-disk embedding index. Each command opens
+/// fresh — SQLite handle creation is microseconds and we're single-user.
+fn open_default_index() -> Result<EmbeddingIndex, ai::embedding_index::IndexError> {
+    EmbeddingIndex::open(&default_index_path())
+}
+
+impl<T: Serialize> From<Result<T, ai::embedding_index::IndexError>> for CmdResult<T> {
+    fn from(r: Result<T, ai::embedding_index::IndexError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Index (or re-index) a PDF for semantic search. Reads page text via
+/// the existing extract pipeline, chunks it, embeds each chunk via the
+/// configured provider, and writes rows to `~/.slab/beacon-index.sqlite`.
+///
+/// If the same file content (SHA-256) has already been indexed and
+/// `force_reindex` is false, this is a no-op that returns
+/// `was_cached: true` — letting the UI fire-and-forget on PDF open.
+#[tauri::command]
+async fn slab_beacon_index_pdf(
+    pdf_path: PathBuf,
+    force_reindex: Option<bool>,
+) -> CmdResult<IndexReport> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let pages = match pdf::extract::extract_text(&pdf_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read PDF: {e}"),
+            }
+        }
+    };
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let index = std::sync::Arc::new(std::sync::Mutex::new(index));
+    let embed_model = cfg
+        .beacon
+        .embed_model
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    do_index_pdf(
+        index,
+        provider,
+        &pdf_path,
+        &pages,
+        &embed_model,
+        force_reindex.unwrap_or(false),
+    )
+    .await
+    .into()
+}
+
+/// Search the embedding index. `top_k` defaults to 12; `only_pdf_hash`
+/// restricts the search to a single PDF (set it to the hash returned
+/// by `slab_beacon_index_pdf` for "this PDF only" mode).
+#[tauri::command]
+async fn slab_beacon_search(
+    query: String,
+    top_k: Option<u32>,
+    only_pdf_hash: Option<String>,
+) -> CmdResult<Vec<SearchHit>> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let index = std::sync::Arc::new(std::sync::Mutex::new(index));
+    let k = top_k.unwrap_or(12) as usize;
+    do_search_index(index, provider, &query, k, only_pdf_hash)
+        .await
+        .into()
+}
+
+/// How many PDFs / chunks are in the index? Powers the "Indexed 4 PDFs
+/// (1,247 chunks)" footer in the search panel.
+#[tauri::command]
+fn slab_beacon_index_stats() -> CmdResult<IndexStats> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.stats().into()
+}
+
+/// Forget a single PDF from the index. The UI uses this when the user
+/// hits the trash icon next to an indexed PDF in the panel footer.
+#[tauri::command]
+fn slab_beacon_index_forget(pdf_hash: String) -> CmdResult<()> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget(&pdf_hash).into()
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -578,6 +733,10 @@ pub fn run() {
             slab_beacon_provider_kinds,
             slab_beacon_chat,
             slab_beacon_summary,
+            slab_beacon_index_pdf,
+            slab_beacon_search,
+            slab_beacon_index_stats,
+            slab_beacon_index_forget,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())
