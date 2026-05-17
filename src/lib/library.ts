@@ -1,9 +1,10 @@
-// Library Mode client bindings (v0.12.0 Atlas - Slice 1)
+// Library Mode client bindings (v0.12.0 Atlas + v0.13.0 Lens Slice 2)
 //
-// Thin typed wrappers around the eight `slab_library_*` Tauri commands
-// defined in `src-tauri/src/lib.rs`. Slice 1 is backend-only; these
-// bindings exist so the upcoming LibraryPanel (Slice 2) can drop in
-// without redefining types or hand-coding `invoke` calls.
+// Thin typed wrappers around the `slab_library_*` Tauri commands
+// defined in `src-tauri/src/lib.rs`. Slice 1 of Atlas was backend-only;
+// these bindings exist so the LibraryPanel can drop in without
+// redefining types or hand-coding `invoke` calls. Slice 2 of Lens
+// extends them with OCR-queue helpers.
 //
 // Each wrapper:
 //   - returns a Promise that resolves to the unwrapped value, or
@@ -32,6 +33,17 @@ export interface TagRecord {
   color: string | null;
 }
 
+/** OCR pipeline state for a document. Mirror of `OCR_STATE_*` constants
+ * in `pdf::library::registry`. */
+export type OcrState =
+  | "unknown"
+  | "text_native"
+  | "scanned"
+  | "mixed"
+  | "ocr_pending"
+  | "ocr_done"
+  | "ocr_failed";
+
 /** Mirror of `pdf::library::registry::DocumentRecord` with eager-loaded tags. */
 export interface DocumentRecord {
   id: number;
@@ -44,6 +56,10 @@ export interface DocumentRecord {
   pages: number | null;
   added_at: number;
   last_seen_at: number;
+  /** One of the `OcrState` values; defaults to `unknown` for legacy rows. */
+  ocr_state: OcrState;
+  /** Where the OCR'd searchable PDF lives, when `ocr_state === "ocr_done"`. */
+  ocr_output_path: string | null;
   tags: TagRecord[];
 }
 
@@ -169,6 +185,64 @@ export async function removeTag(tagId: number): Promise<void> {
 export async function rescanAll(): Promise<ScanReport[]> {
   const res = await invoke<CmdResult<ScanReport[]>>(
     "slab_library_rescan_all",
+  );
+  return unwrap(res);
+}
+
+// ---------- OCR queue (Lens Slice 2) ----------
+
+/** Mirror of `pdf::library::ocr_queue::OcrQueueResult`. */
+export interface OcrQueueResult {
+  doc_id: number;
+  state_after: OcrState;
+  output_path: string | null;
+  error: string | null;
+}
+
+/** Optional Tesseract knobs forwarded to the OCR queue commands. */
+export interface OcrOpts {
+  lang?: string;
+  dpi?: number;
+}
+
+/**
+ * List documents whose ocr_state is `scanned` or `mixed` — i.e. OCR
+ * candidates not yet processed. Ordered by added_at ASC.
+ */
+export async function ocrQueueListPending(): Promise<DocumentRecord[]> {
+  const res = await invoke<CmdResult<DocumentRecord[]>>(
+    "slab_library_ocr_queue_list_pending",
+  );
+  return unwrap(res);
+}
+
+/**
+ * Run OCR on a single document by id. Returns the queue result
+ * (state_after, output_path, error). Resolves even on OCR failure —
+ * the failure surface is inside `result.error`, not a thrown Error.
+ */
+export async function ocrQueueRunOne(
+  docId: number,
+  opts?: OcrOpts | null,
+): Promise<OcrQueueResult> {
+  const res = await invoke<CmdResult<OcrQueueResult>>(
+    "slab_library_ocr_queue_run_one",
+    { docId, opts: opts ?? null },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Run OCR on every pending document, in queue order. Returns one
+ * result per processed doc. Continues past per-doc OCR failures;
+ * only rejects on a DB-level error (e.g. library DB unreadable).
+ */
+export async function ocrQueueRunAll(
+  opts?: OcrOpts | null,
+): Promise<OcrQueueResult[]> {
+  const res = await invoke<CmdResult<OcrQueueResult[]>>(
+    "slab_library_ocr_queue_run_all",
+    { opts: opts ?? null },
   );
   return unwrap(res);
 }

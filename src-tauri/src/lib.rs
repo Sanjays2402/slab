@@ -44,9 +44,10 @@ use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::insert::{insert as do_insert, InsertOpts};
 use pdf::library::{
-    default_db_path as library_default_db_path, query_documents as do_query_documents,
-    scan_folder as do_scan_folder, DocumentRecord, FolderRecord, LibraryDb, LibraryError,
-    LibraryFilter, ScanReport, TagRecord,
+    default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
+    ocr_queue_run_all as do_ocr_queue_run_all, ocr_queue_run_one as do_ocr_queue_run_one,
+    query_documents as do_query_documents, scan_folder as do_scan_folder, DocumentRecord,
+    FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult, ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
@@ -1029,6 +1030,48 @@ fn slab_library_rescan_all() -> CmdResult<Vec<ScanReport>> {
     result.into()
 }
 
+/// List documents whose ocr_state is `scanned` or `mixed` (i.e. OCR candidates
+/// not yet queued/processed). Ordered by added_at ASC.
+#[tauri::command]
+fn slab_library_ocr_queue_list_pending() -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<Vec<DocumentRecord>, LibraryError> {
+        let db = open_library_db()?;
+        do_ocr_queue_list(&db)
+    })();
+    result.into()
+}
+
+/// Run OCR on a single document by id. Returns the queue result (state_after,
+/// output_path, error). `opts` is optional — defaults to eng @ 300dpi.
+#[tauri::command]
+fn slab_library_ocr_queue_run_one(
+    doc_id: i64,
+    opts: Option<pdf::ocr::OcrOpts>,
+) -> CmdResult<OcrQueueResult> {
+    let result = (|| -> Result<OcrQueueResult, LibraryError> {
+        let mut db = open_library_db()?;
+        Ok(do_ocr_queue_run_one(
+            &mut db,
+            doc_id,
+            &opts.unwrap_or_default(),
+        ))
+    })();
+    result.into()
+}
+
+/// Run OCR on every pending document. Returns one result per document
+/// attempted, in queue order. `opts` is optional.
+#[tauri::command]
+fn slab_library_ocr_queue_run_all(
+    opts: Option<pdf::ocr::OcrOpts>,
+) -> CmdResult<Vec<OcrQueueResult>> {
+    let result = (|| -> Result<Vec<OcrQueueResult>, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_run_all(&mut db, &opts.unwrap_or_default())
+    })();
+    result.into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1105,6 +1148,9 @@ pub fn run() {
             slab_library_remove_document,
             slab_library_remove_tag,
             slab_library_rescan_all,
+            slab_library_ocr_queue_list_pending,
+            slab_library_ocr_queue_run_one,
+            slab_library_ocr_queue_run_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
