@@ -5,16 +5,44 @@
 
 ---
 
-## STATUS: 🎉🎉🎉 v1.0.0 "Glass" MERGED + TAGGED — RELEASE_PENDING
+## STATUS: ✅ v1.0.0 "Glass" RELEASED 🎉🎉🎉 — Next: v1.1.0 "Cabinet" (plan in hand)
 
-**Merge SHA**: `509008c` on `main`
-**Tag**: `v1.0.0`
-**CI run**: `26000852284` (in_progress as of 12:50 PT)
-**Branch**: `feature/v1.0.0-glass` ready to delete post-release
+**Release**: https://github.com/Sanjays2402/slab/releases/tag/v1.0.0 (latest)
+**Published**: 2026-05-17 20:06 UTC
+**Tag**: `v1.0.0` (SHA `509008c` on `main`)
+**Assets**: 6 — `Slab_1.0.0_aarch64.dmg`, `Slab_1.0.0_x64_macos.dmg`,
+`Slab_1.0.0_amd64.deb`, `Slab_1.0.0_amd64.AppImage`, `Slab_1.0.0_x64_en-US.msi`,
+`Slab_1.0.0_x64-setup.exe`.
+**CI run** `26000852284`: all 7 jobs success.
+**Branch** `feature/v1.0.0-glass`: deleted locally + remote.
 
-This is **Slab's first stable release**. The v0.x train (14 feature
-releases since v0.8.1 "Polyglot" on 2026-05-16) closes here. Stable-API
-promise applies starting now.
+Slab 1.0 is shipped. Stable-API promise is now live. v0.x train closed
+(14 feature releases between v0.8.1 Polyglot on 2026-05-16 and v1.0.0
+Glass on 2026-05-17 — 14 versions in 36 hours).
+
+---
+
+## NEXT TARGET: v1.1.0 "Cabinet" — Multi-Window Floating Panels
+
+Plan promoted to `docs/plans/2026-05-17-v1.1.0-cabinet.md` this tick
+(used `writing-plans` skill). 8 slices, ~20 tasks, target 3-4 ticks.
+
+**Branch to create next tick**: `feature/v1.1.0-cabinet`
+
+**Slice 1 (next cron tick)** — backend registry:
+- `src-tauri/src/windows.rs` — `WindowState`, `Geometry`, `WindowRegistry`
+- Tauri commands: `slab_window_open`, `slab_window_close`, `slab_window_list`
+- Capability glob `panel-*` in `capabilities/default.json`
+- 6 unit tests
+- 4 commits
+
+**Slice 2 (same or next tick)** — detached-mode route:
+- `?panel=&windowId=&doc=` query param parsing in `+page.svelte`
+- `$lib/components/DetachedShell.svelte` (minimal chrome)
+- Conditional render: `{#if detached} <Shell + one panel> {:else} <main UI> {/if}`
+- 3 commits
+
+Be aggressive: try to ship Slices 1+2 in tick #1.
 
 ---
 
@@ -98,7 +126,8 @@ Tasks 5-8 shipped this tick. Slice 7 is now complete in 6 commits across two tic
 ### v0.13.1 "Lens Patch" — RELEASED 2026-05-17
 ### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
-### v1.0.0 "Glass" — RELEASE_PENDING (this tick) 🎉
+### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
+### v1.1.0 "Cabinet" — PLANNED (this tick, plan in docs/plans/2026-05-17-v1.1.0-cabinet.md) 🗄
 
 ### v1.0.1 / v1.1.0 candidates
 - **Floating panels** — multi-window Beacon/Library (2-3 ticks)
@@ -194,3 +223,4 @@ back to 2026-05-16.)
 
 - 2026-05-17 12:15 (Cake/cron): Slice 7 frontend half — Customizable Shortcuts end-to-end DONE in 4 commits (Tasks 5-8 of the keymap plan).
 - 2026-05-17 12:40 (Cake/cron): 🎉🎉🎉 v1.0.0 "Glass" RELEASE PREP + MODE A MERGE in one tick. Version bumped lockstep, release notes written (~8.6 KB), 4 quality gates green pre-merge AND post-merge, merged with --no-ff, tagged v1.0.0, pushed main + tag. CI run `26000852284`. Next tick: MODE B finalize when CI green.
+- 2026-05-17 13:06 (Cake/cron): MODE B FINALIZE + planning. CI run `26000852284` completed all 7 jobs success at 13:04 PT (Windows bundle was the long pole, ~13 min). Downloaded all artifacts via `gh run download`, curated 6 (macOS arm64 + x64 dmgs renamed `_x64_macos.dmg`, linux deb + AppImage, win msi + nsis setup.exe), staged in `assets/v1.0.0/`. Created `v1.0.0` release as **draft** with 5 small assets first (avoid 60s gh-cli timeout on the 79 MB AppImage), then uploaded AppImage separately, then `gh release edit --draft=false --latest`. Release live at https://github.com/Sanjays2402/slab/releases/tag/v1.0.0 with all 6 assets. Deleted `feature/v1.0.0-glass` locally + remote. **Then promoted next big feature**: used `writing-plans` skill to author v1.1.0 "Cabinet" plan — 8 slices, ~20 bite-sized tasks (TDD throughout), 3-4 ticks, plan at `docs/plans/2026-05-17-v1.1.0-cabinet.md` (~44 KB). Plan covers WebviewWindow-based panel detach, `~/.slab/windows.json` persistence, cross-window events for Library↔Reader, command-palette + window-menu entries, version bump + release ceremony.
