@@ -225,6 +225,7 @@ impl LibraryDb {
 
     /// Insert-or-update a document keyed by `path`. When the path is
     /// already present, hash/size/mtime/pages/last_seen_at are refreshed.
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_document(
         &mut self,
         folder_id: Option<i64>,
