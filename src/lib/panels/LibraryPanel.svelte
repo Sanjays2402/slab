@@ -52,6 +52,7 @@
   } from "$lib/library";
   import { basename } from "$lib/types";
   import { formatRelTime } from "$lib/recent";
+  import { registerLibraryNav } from "$lib/vim/library-adapter";
 
   // ---------- Props (Cabinet v1.1.0) ----------
   //
@@ -105,6 +106,63 @@
   // Debounced search.
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ---------- Glass II Vim adapter (v1.2.0 Slice 3) ----------
+  //
+  // We track a single "focused" doc index for j/k navigation. The
+  // currently focused card gets a visual ring; Enter / l opens it,
+  // dd removes it.
+  let vimFocusIdx = $state(-1);
+  let cardEls: HTMLElement[] = [];
+
+  function clampFocus(idx: number): number {
+    if (docs.length === 0) return -1;
+    if (idx < 0) return 0;
+    if (idx >= docs.length) return docs.length - 1;
+    return idx;
+  }
+
+  function scrollFocusIntoView() {
+    if (vimFocusIdx < 0) return;
+    const el = cardEls[vimFocusIdx];
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  function onVimLibMove(e: Event) {
+    const d = (e as CustomEvent<{ direction: "up" | "down" | "left" | "right"; count?: number }>).detail;
+    const step = Math.max(1, d.count ?? 1);
+    if (vimFocusIdx < 0) vimFocusIdx = 0;
+    // h/l = left/right within row (treat as -1 / +1). j/k same as a single step.
+    const delta =
+      d.direction === "down" || d.direction === "right" ? step : -step;
+    vimFocusIdx = clampFocus(vimFocusIdx + delta);
+    scrollFocusIntoView();
+  }
+
+  function onVimLibFirst() {
+    vimFocusIdx = clampFocus(0);
+    scrollFocusIntoView();
+  }
+
+  function onVimLibLast() {
+    vimFocusIdx = clampFocus(docs.length - 1);
+    scrollFocusIntoView();
+  }
+
+  function onVimLibOpen() {
+    if (vimFocusIdx < 0 || vimFocusIdx >= docs.length) return;
+    openDocInTab(docs[vimFocusIdx]);
+  }
+
+  function onVimLibRemove() {
+    if (vimFocusIdx < 0 || vimFocusIdx >= docs.length) return;
+    const doc = docs[vimFocusIdx];
+    void onMenuRemoveDoc(doc);
+    // Step backward one so the next dd targets a sane card.
+    vimFocusIdx = clampFocus(vimFocusIdx - 1);
+  }
+
   const TAG_PALETTE = [
     "#ff7a59", // accent
     "#6ab7ff",
@@ -136,11 +194,19 @@
   // window — folder add/remove, scan, tag changes, OCR, auto-tag, doc
   // delete. We just refetch; the event is a poke, not a patch.
   let unlistenLibraryChanged: UnlistenFn | null = null;
+  let unregisterVim: (() => void) | null = null;
 
   onMount(async () => {
     await refreshAll();
     initialized = true;
     window.addEventListener("click", onWindowClickForMenu);
+    // Glass II Vim adapter — subscribe to the panel-targeted events.
+    window.addEventListener("slab:vim-library:move", onVimLibMove as EventListener);
+    window.addEventListener("slab:vim-library:first", onVimLibFirst as EventListener);
+    window.addEventListener("slab:vim-library:last", onVimLibLast as EventListener);
+    window.addEventListener("slab:vim-library:open", onVimLibOpen as EventListener);
+    window.addEventListener("slab:vim-library:remove", onVimLibRemove as EventListener);
+    unregisterVim = registerLibraryNav();
     if (isInTauri()) {
       try {
         unlistenLibraryChanged = await listen("slab://library-changed", () => {
@@ -156,6 +222,15 @@
 
   onDestroy(() => {
     window.removeEventListener("click", onWindowClickForMenu);
+    window.removeEventListener("slab:vim-library:move", onVimLibMove as EventListener);
+    window.removeEventListener("slab:vim-library:first", onVimLibFirst as EventListener);
+    window.removeEventListener("slab:vim-library:last", onVimLibLast as EventListener);
+    window.removeEventListener("slab:vim-library:open", onVimLibOpen as EventListener);
+    window.removeEventListener("slab:vim-library:remove", onVimLibRemove as EventListener);
+    if (unregisterVim) {
+      unregisterVim();
+      unregisterVim = null;
+    }
     if (unlistenLibraryChanged) {
       unlistenLibraryChanged();
       unlistenLibraryChanged = null;
@@ -816,9 +891,11 @@
         </div>
       {:else}
         <div class="grid">
-          {#each docs as d (d.id)}
+          {#each docs as d, i (d.id)}
             <div
+              bind:this={cardEls[i]}
               class="card"
+              class:vim-focused={i === vimFocusIdx}
               role="button"
               tabindex="0"
               oncontextmenu={(e) => openMenuFor(e, d)}
@@ -1230,6 +1307,11 @@
   .card:hover {
     background: var(--bg-3);
     border-color: var(--border-strong);
+  }
+  /* Glass II Vim adapter — currently-focused row gets a distinct ring. */
+  .card.vim-focused {
+    border-color: var(--accent, #ff7a59);
+    box-shadow: 0 0 0 1px var(--accent, #ff7a59) inset;
   }
   .card-head {
     display: flex;
