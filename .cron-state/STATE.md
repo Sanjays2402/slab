@@ -5,15 +5,46 @@
 
 ---
 
-## STATUS: v1.0.0 "Glass" IN PROGRESS — 11 commits on `feature/v1.0.0-glass`
+## STATUS: v1.0.0 "Glass" IN PROGRESS — 15 commits on `feature/v1.0.0-glass` (Slice 7 DONE end-to-end)
 
 **v0.15.0 Theater RELEASED** 2026-05-17 ~10:35 PT — https://github.com/Sanjays2402/slab/releases/tag/v0.15.0 (Theater 🎭) — 6 assets up, isLatest=true.
 
-**Active branch**: `feature/v1.0.0-glass` (11 commits ahead of main, pushed to origin)
+**Active branch**: `feature/v1.0.0-glass` (15 commits ahead of main, pushed to origin)
 
 ---
 
-## TICK 2026-05-17 ~11:55 PT — Slice 7 backend half (Customizable Shortcuts)
+## TICK 2026-05-17 ~12:15 PT — Slice 7 frontend half (Customizable Shortcuts) — END-TO-END DONE
+
+Tasks 5-8 shipped this tick. Slice 7 is now complete in 6 commits across two ticks.
+
+- ✅ **Task 5: $lib/keymap.ts** (`d29c806`) — runtime store + matches() module (~290 lines). Public API: `keymapView` writable store, `bootKeymap()` idempotent loader, `matches(event, actionId)` O(1) check against a parsed cache, `writeKeymap()` / `resetKeymap()` thin wrappers around the Tauri commands, `bindingFromEvent(e)` builds canonical "Mod+Shift+K" from a captured event, `prettyBinding(s)` / `bindingFor(id)` / `prettyBindingFor(id)` helpers. Modifier semantics byte-identical to Rust side: Mod resolves to meta on macOS / ctrl elsewhere, explicit Ctrl on mac is literal ctrlKey, on non-mac Mod IS ctrl so explicit-ctrl is implicitly covered, single ASCII-letter compares case-insensitively, `"Mod++"` parsing handled. Wired into `+layout.svelte` onMount alongside `bootTheme()` — silent on errors and outside Tauri.
+
+- ✅ **Task 6: Wire global shortcuts to live keymap** (`923280a`) — `+page.svelte` onGlobalKey now flows through `matches(e, "palette.open")` / `matches(e, "tabs.new")` / etc. tabs.next/prev split into two separate matches() calls (because users might rebind to totally different keys instead of the canonical Shift+Tab pattern). `ShortcutsOverlay.svelte` derives rows live from `keymapView` via prettyBinding() — rebinds appear immediately without reload. Added "Customise" group footer hinting at Settings → Keyboard shortcuts. `BeaconChatPanel.svelte` onKeydown honours both customisable beacon.send AND default Enter-sends (preserves muscle memory while letting users rebind).
+
+- ✅ **Task 7: KeymapPanel.svelte** (`5740179`) — Linear-style customisation UI (~458 lines including ~250 lines of polish CSS). Grouped rows (Global/Tabs/Reading/Beacon) with rounded-card per group + label + canonical id (mono) + click-to-capture pill + inline reset button on override rows. Pill shows prettyBinding (⌘⇧K on mac, Mod+Shift+K elsewhere). Click pill → capture mode: pill ringed accent, "Press a key combo…" hint flies in. Esc cancels, Backspace resets just-this-row to factory default. Any other key → `bindingFromEvent` → writeKeymap. Conflict detection parses backend `Conflict` error and surfaces friendly toast "Shortcut already in use → tabs.close". Toolbar shows customised count badge + "Reset all to defaults" (disabled when at defaults). Wired into +page.svelte as sidebar feature `⌨ Shortcuts`.
+
+- ✅ **Task 8: Command Palette entry + STATE update** (`4d99e5a`) — `Customize keyboard shortcuts` action in Settings group with fuzzy keywords. ⌘K → "customize" → enter → land on KeymapPanel.
+
+**Quality gates green on `feature/v1.0.0-glass` HEAD `4d99e5a`:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (451 passed, unchanged from backend tick — frontend has no rust-side tests)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Slice 7 end-to-end DONE.** User can now: ⌘K → "customize shortcuts" → click `⌘K` row → press ⌘P → palette now opens on ⌘P; binding persists to `~/.slab/config.toml [keymap]`; conflicts rejected with a toast; reset-all wipes overrides. All existing shortcuts byte-identical for default keymap.
+
+**Next tick options:**
+1. **Slice 8: Floating panels** (multi-window/detachable Beacon + Library — bigger lift, 2+ ticks). Requires Tauri multi-window plumbing.
+2. **Slice 8 alt: Performance pass** — page-render worker pool + 100-page open <500ms target. Pure backend, ~2-3 commits.
+3. **v1.0.0 release prep** — slices 1-7 are a respectable "Glass" feature set; could bump 0.15.0 → 1.0.0, write comprehensive release notes, MODE A merge. Could ship today with floating panels as v1.0.1.
+
+**Recommended**: ship v1.0.0 release prep next tick to lock in the win, then add floating panels + perf as v1.0.1 / v1.1.0. Sanjay's mandate is "ship big things every tick" — v1.0.0 is THE big shipment.
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: v1.0.0 "Glass" IN PROGRESS — 11 commits on `feature/v1.0.0-glass`
 
 Used the writing-plans skill to author a full 8-task plan, then shipped
 the entire backend half in this same tick (3 commits).
