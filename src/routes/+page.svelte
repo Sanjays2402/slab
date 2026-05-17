@@ -23,6 +23,7 @@
   import AutoRedactPanel from "$lib/panels/AutoRedactPanel.svelte";
   import FlattenPanel from "$lib/panels/FlattenPanel.svelte";
   import SanitizePanel from "$lib/panels/SanitizePanel.svelte";
+  import RepairPanel from "$lib/panels/RepairPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { RecentFile } from "$lib/recent";
 
@@ -57,6 +58,7 @@
     { id: "labels", label: "Page Labels", icon: "ⅰ", ready: true },
     { id: "flatten", label: "Flatten", icon: "▤", ready: true },
     { id: "sanitize", label: "Sanitize", icon: "⊗", ready: true },
+    { id: "repair", label: "Repair", icon: "✚", ready: true },
     { id: "ocr", label: "OCR", icon: "👁", ready: true },
   ];
 
@@ -169,6 +171,8 @@
     <FlattenPanel />
   {:else if active === "sanitize"}
     <SanitizePanel />
+  {:else if active === "repair"}
+    <RepairPanel />
   {/if}
 </main>
 
