@@ -65,3 +65,63 @@ export function recommendationLabel(r: ScanRecommendation): string {
 export function nonEmptyPages(r: ScanAuditReport): number {
   return r.text_pages + r.image_pages + r.mixed_pages;
 }
+
+// ---------- Tables (Slice 3) ----------
+
+/** Mirror of `pdf::table_extract::BBox`. */
+export interface BBox {
+  x_min: number;
+  y_min: number;
+  x_max: number;
+  y_max: number;
+}
+
+/** Mirror of `pdf::table_extract::Table`. */
+export interface Table {
+  page: number;
+  index: number;
+  bbox: BBox;
+  rows: string[][];
+  columns: number;
+}
+
+/** Mirror of `pdf::table_extract::TableOpts`. */
+export interface TableOpts {
+  page: number;
+  min_rows?: number;
+  min_cols?: number;
+}
+
+/**
+ * Detect tables on `opts.page` of `input`. Returns an empty array if
+ * no candidate meets the min_rows / min_cols thresholds. Requires
+ * `pdftotext` (poppler) on PATH.
+ */
+export async function slabExtractTables(
+  input: string,
+  opts: TableOpts,
+): Promise<Table[]> {
+  const res = await invoke<CmdResult<Table[]>>("slab_extract_tables", {
+    input,
+    opts,
+  });
+  return unwrap(res);
+}
+
+/** Serialize a Table to RFC-4180 CSV (pure backend call, never fails). */
+export async function slabTableToCsv(table: Table): Promise<string> {
+  const res = await invoke<CmdResult<string>>("slab_table_to_csv", { table });
+  return unwrap(res);
+}
+
+/** Save a Table as CSV to `output`. Resolves to the saved path. */
+export async function slabTableSaveCsv(
+  table: Table,
+  output: string,
+): Promise<string> {
+  const res = await invoke<CmdResult<string>>("slab_table_save_csv", {
+    table,
+    output,
+  });
+  return unwrap(res);
+}

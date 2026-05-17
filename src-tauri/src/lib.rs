@@ -73,6 +73,9 @@ use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, Page
 use pdf::split_pattern::{
     find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
 };
+use pdf::table_extract::{
+    extract_tables as do_extract_tables, to_csv as do_table_to_csv, Table as TableDto, TableOpts,
+};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
 use pdf::PdfError;
 use serde::{Deserialize, Serialize};
@@ -376,6 +379,29 @@ fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrRepo
 #[tauri::command]
 fn slab_scan_audit(input: PathBuf) -> CmdResult<ScanAuditReport> {
     do_scan_audit(&input).into()
+}
+
+#[tauri::command]
+fn slab_extract_tables(input: PathBuf, opts: TableOpts) -> CmdResult<Vec<TableDto>> {
+    do_extract_tables(&input, &opts).into()
+}
+
+#[tauri::command]
+fn slab_table_to_csv(table: TableDto) -> CmdResult<String> {
+    CmdResult::Ok {
+        value: do_table_to_csv(&table),
+    }
+}
+
+#[tauri::command]
+fn slab_table_save_csv(table: TableDto, output: PathBuf) -> CmdResult<PathBuf> {
+    let csv = do_table_to_csv(&table);
+    match std::fs::write(&output, csv) {
+        Ok(_) => CmdResult::Ok { value: output },
+        Err(e) => CmdResult::Err {
+            message: format!("write csv: {e}"),
+        },
+    }
 }
 
 #[tauri::command]
@@ -1119,6 +1145,9 @@ pub fn run() {
             slab_append_annotations,
             slab_ocr,
             slab_scan_audit,
+            slab_extract_tables,
+            slab_table_to_csv,
+            slab_table_save_csv,
             slab_polyglot,
             slab_flatten,
             slab_sanitize,
