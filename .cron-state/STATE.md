@@ -5,13 +5,17 @@
 
 ---
 
-## STATUS: RELEASE_PENDING — v0.10.0
+## STATUS: RELEASE_PENDING — v0.10.0 (waiting on retag CI)
 
-**RELEASE_PENDING: v0.10.0** (merged + tagged + pushed this tick; CI run `25984334503` queued).
+**RELEASE_PENDING: v0.10.0** — tag pushed at commit `8c757bf` after a hotfix; CI run `25984687462` still bundling at tick end.
 
-**Active dev branch:** none — next tick should:
-1. MODE B finalize v0.10.0 once CI succeeds (download 6 artifacts, `gh release create`)
-2. Then MODE C start v0.11.0 "Lathe" branch from main (edit mode — spec in `.cron-state/proposals/roadmap-to-v1.0.md` § v0.11.0)
+**Why the retag**: prior CI run `25984334503` (at merge SHA `f91b374`) failed because the merge resolution updated `pnpm-lock.yaml` to svelte 5.55.7 but left `package.json` saying `^5.0.0`. `pnpm install --frozen-lockfile` rejected the mismatch. Fixed via `git commit -am` bumping the manifest, `git tag -d v0.10.0 && git tag v0.10.0 HEAD`, force-pushed the tag. New CI run is green on all 4 `cargo test` jobs + 1 of 4 bundle jobs at tick end (the other 3 still building).
+
+**Active dev branch:** `feature/v0.11.0-lathe` — Slices 1+2 shipped, 6 more to go.
+
+**Next tick should:**
+1. MODE B: poll CI run `25984687462`. If success: download artifacts, `gh release create v0.10.0`, clear RELEASE_PENDING. If failure: investigate.
+2. MODE C: continue v0.11.0 Slice 3 (PagesVisualPanel.svelte — drag-reorder thumbnails) on `feature/v0.11.0-lathe`.
 
 ---
 
@@ -26,26 +30,18 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — MERGED 2026-05-17, RELEASE_PENDING
-- Tag `v0.10.0`, merge SHA `f91b374`, CI run `25984334503` queued at merge time.
-- Branch: `feature/v0.10.0-beacon` (merged via `git merge --no-ff` from `main`).
-- Merge resolved 1 conflict in `pnpm-lock.yaml`: took feature-branch lockfile (had `@types/node`) then reran `pnpm update svelte@latest` to re-pick-up main's svelte 5.55.7 security bump. svelte-check still 0 errors after merge.
-- Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
-- **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
-- **Slice 2 DONE 2026-05-16 22:00 PDT** (4 commits): `OpenAiCompatibleProvider` + `BeaconConfig` (TOML) + `make_provider` factory + 4 Tauri config commands. 106→121 lib tests.
-- **Slice 3 DONE 2026-05-16 22:45 PDT** (commit `cc5a6ea`): Chat backend `ai/chat.rs`. `build_context` (page-aware truncation), `extract_citations` (handles `[pN]` / `[page N]` / `[pages 2,5,9]`, rejects footnote `[1]` and dates), `beacon_chat()` + `_from_path()` + 7 tests via in-memory MockProvider. Tauri command `slab_beacon_chat`. 121→128 lib tests.
-- **Slice 4 DONE 2026-05-16 22:45 PDT** (commit `9abc425`): `BeaconChatPanel.svelte` + sidebar nav (✦ Beacon AI between Reader and Merge). Conversation view, citation chips that dispatch `slab:beacon-goto-page`, sample-prompt grid empty state, friendly error mapping (Ollama down → "start ollama or switch provider" hint), Enter-to-send composer. svelte-check clean.
-- **Slice 5 DONE 2026-05-16 22:45 PDT** (commit `21960ce`): Auto-summary. `ai/summary.rs` with `SummaryLength` enum (Tldr/Short/Long), `BeaconSummary` DTO, low-temperature (0.1) prompt, per-length token budgets. Tauri command `slab_beacon_summary`. UI: 3 quick-action chips (✦ TL;DR / ✦ Summarize / ✦ Detailed) in BeaconChatPanel — result lands as an assistant turn so follow-up questions work conversationally. 5 new tests. 128→133 lib tests.
-- **Slice 6 DONE 2026-05-16 22:48 PDT** (commit `92a58b2`): Semantic search backend. `ai::chunker` (page-aware, paragraph-first, UTF-8-safe) + `ai::embedding_index` (rusqlite at `~/.slab/beacon-index.sqlite`, brute-force cosine top-K, idempotent re-index by content SHA-256). 22 new tests via MockEmbedProvider. 133→156 lib tests.
-- **Slice 7 DONE 2026-05-16 23:11 PDT** (commit `1a8db1f`): Semantic search UI. `BeaconSearchPanel.svelte` (506 LOC) — index card with Browse/Index/Re-index, search bar with All/This-PDF scope toggle, hit cards (page chip + filename + similarity %), footer stats, friendly-error mapping. 4 Tauri commands: `slab_beacon_index_pdf`, `slab_beacon_search`, `slab_beacon_index_stats`, `slab_beacon_index_forget`. Sidebar nav `⌕ Beacon Search`.
-- **Slice 8 DONE 2026-05-16 23:25 PDT** (commits `fd303d1` + `e4a43a0`): PII Highlighter. `ai::pii` module — regex pass (email/SSN/phone/CC reusing `auto_redact` presets, now pub-exported) + optional LLM pass (names + addresses via configured provider, liberal JSON parsing, per-page best-effort errors). `BeaconPiiPanel.svelte` (~620 LOC) — kind checkboxes + AI toggle + custom regex patterns + colored kind pills + click-to-jump hits + one-click "Redact selected → save as new PDF" reusing `pdf::auto_redact`. 2 Tauri commands: `slab_beacon_pii_find` (returns hits + summary), `slab_beacon_pii_redact` (thin wrapper over auto_redact). 17 new tests via in-memory MockProvider. 156→173 lib tests. Sidebar nav `🔒 PII Redact`.
-- **Slice 9 DONE 2026-05-16 23:50 PDT** (commits `14b6e7d` + `4825c93`): Selection Actions — floating LLM bubble on text highlight. `ai::selection_action` module with 5 actions (Translate/Explain/Define/Rewrite/Summarize), per-action prompts, low temperature (0.2), per-action max_tokens budget (80-500), hard cap at 8K chars. Tauri command `slab_beacon_selection_action(text, action, target_lang?)`. `BeaconSelectionBubble.svelte` (~620 LOC) — captures `mouseup` selections inside the PDF.js text layer, positions above the selection bbox, 5-button action grid, inline target-language picker for Translate (15 languages), result view with Copy button, Esc/click-outside dismiss. Mounted as a sibling of `pdfjs-container` in ReaderPanel. 13 new tests via in-memory MockProvider. 173→186 lib tests. **No new sidebar nav** — this lives inline in the reader.
-- **Slice 10 DONE 2026-05-16 23:55 PDT**: Release prep. Version bumped 0.9.1 → 0.10.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `package.json`. Cargo.lock refreshed. `docs/release-notes/v0.10.0.md` written (covers all 5 user-visible features + stats + upgrade notes). Plan + STATE marked DONE.
-- **Next tick**: MODE A merge `feature/v0.10.0-beacon` → `main`, tag `v0.10.0`, push, set `RELEASE_PENDING: v0.10.0`.
+### v0.10.0 "Beacon" — MERGED 2026-05-17, RELEASE_PENDING (retag CI in flight)
+- Original tag at merge SHA `f91b374` — CI failed (lockfile/manifest svelte mismatch).
+- Hotfix commit `8c757bf` (`fix(release): bump svelte specifier in package.json to ^5.55.7 to match lockfile`), tag `v0.10.0` repointed at it.
+- New CI run `25984687462` queued at retag time. 3 of 4 `cargo test` green + macos-x64 bundle green at tick end; mac-arm64/linux-x64/windows-x64 bundles still in progress.
+- Release notes: `docs/release-notes/v0.10.0.md`.
 
-### v0.11.0 "Lathe" — Edit Mode (PLANNED)
-In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs, image insert.
-Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.11.0. 8 slices.
+### v0.11.0 "Lathe" — IN PROGRESS (Slices 1+2 done)
+- Branch: `feature/v0.11.0-lathe` (cut from `main@8c757bf`).
+- Plan: `docs/plans/2026-05-17-v0.11.0-lathe-edit-mode.md` (8 slices).
+- **Slice 1 DONE 2026-05-17 00:36 PDT** (commit `e95c0ef`): `pdf::duplicate::duplicate_pages` kernel + `slab_duplicate_pages` Tauri command + 7 tests (single-dup, multi-dup, dedup repeated input, out-of-range/zero/empty/missing-input rejection). 186 → 193 lib tests.
+- **Slice 2 DONE 2026-05-17 00:50 PDT** (commit `d0635a7`): `pdf::split_pattern` chapter splitter. `find_matching_pages` (regex preview), `outline_top_level_pages` (TOC-based fallback), `split_by_pattern` (orchestrator that always packs preface pages into chunk #1), `ranges_from_chapter_starts` helper. 3 Tauri commands: `slab_split_by_pattern`, `slab_find_matching_pages`. 13 new tests (range building incl. mid-doc start/page-1 start/single/dedup/oor/empty/zero-total, regex validation, end-to-end split with regex, no-match error, missing input). 193 → 206 lib tests.
+- **Remaining slices:** 3 = PagesVisualPanel.svelte (drag-reorder thumbnails), 4 = SplitPatternPanel.svelte, 5 = Multi-PDF tabs, 6 = in-place text editing kernel, 7 = TextEdit overlay in ReaderPanel, 8 = release prep.
 
 ### v0.12.0 "Atlas" — Library Mode (PLANNED)
 Cross-doc Beacon chat across indexed library, tags, collections, watch folders.
@@ -110,6 +106,19 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' \
 # push main, push tag (separate calls)
 ```
 
+### Retag if CI fails on first try
+```bash
+# Make the fix commit on main.
+git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='Cake (cron)' commit -am "fix(release): ..."
+# Delete & re-create the local tag at HEAD.
+git tag -d vX.Y.Z
+git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='Cake (cron)' tag -a vX.Y.Z -m "..." HEAD
+# Push main, delete remote tag, push new tag.
+GH_TOKEN=$(gh auth token) git -c credential.helper='!f() { test "$1" = get && echo "username=x-access-token" && echo "password=$GH_TOKEN"; }; f' push origin main
+GH_TOKEN=$(gh auth token) git -c credential.helper='!f() { test "$1" = get && echo "username=x-access-token" && echo "password=$GH_TOKEN"; }; f' push origin :refs/tags/vX.Y.Z
+GH_TOKEN=$(gh auth token) git -c credential.helper='!f() { test "$1" = get && echo "username=x-access-token" && echo "password=$GH_TOKEN"; }; f' push origin vX.Y.Z
+```
+
 ### Release finalize (MODE B):
 ```bash
 # 1. Download artifacts from CI run
@@ -141,14 +150,24 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
   fail with `PathError NotFound`. Workaround: `unset TMPDIR` before tests.
 - Version bump lockstep: editing `src-tauri/Cargo.toml` version requires
   running `cargo build` and committing `Cargo.lock` in the SAME commit.
+- **Merge-conflict lockstep**: if you resolve a `pnpm-lock.yaml` conflict
+  by re-running `pnpm update <pkg>@latest`, the merge commit MUST also
+  update `package.json` to match — otherwise CI's `pnpm install
+  --frozen-lockfile` will reject the mismatch. Bit Cake on v0.10.0; fix
+  required a hotfix commit + retag.
 - `markitdown` runtime: `/Users/sanjay/.local/bin/markitdown` (pipx).
   Add `$HOME/.local/bin` to PATH for cron-spawned terminals.
 - `CmdResult<T>` field on `"ok"` variant is `value`, NOT `data`.
-- Sidebar nav icons in use: ▥ ⧉ ⎯ ▦ ▼ ❡ ▣ ○ ↔ ⓘ № ✍ ⊟ ＋ ≡ ▮ ⊘ ▦ Ⓜ ◐ ⅰ ▤ ⊗ ✚ 👁
+- Sidebar nav icons in use: ▥ ⧉ ⎯ ▦ ▼ ❡ ▣ ○ ↔ ⓘ № ✍ ⊟ ＋ ≡ ▮ ⊘ ▦ Ⓜ ◐ ⅰ ▤ ⊗ ✚ 👁 ✦ ⌕ 🔒
 - `gh release create` with 6 assets including the 76MB AppImage often
   times out at 60s in foreground. Run it in `background=true` or upload
   the AppImage with a follow-up `gh release upload` and then
   `gh release edit --draft=false --latest`.
+- `OutlineNode` has fields `title: String`, `page_index: Option<u32>`
+  (0-based!), `children: Vec<OutlineNode>` — NOT `page` like I almost
+  wrote in v0.11.0 Slice 2.
+- `make_n_page_pdf` test fixture stamps "Slab page {n}" (not "Page {n}")
+  on each page — useful for regex-match unit tests on extract_text.
 
 ### Release asset naming
 - Mac x64 dmg needs `_x64_macos.dmg` rename (disambiguate from Windows x64).
@@ -172,5 +191,6 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - **2026-05-16 21:25 (Cake/cron): 🚀 RELEASE + KICKOFF TICK**: (1) v0.9.1 "Toolkit UX" published on GitHub Releases with all 6 installers, latest release. (2) v0.10.0 **Beacon Slice 1** shipped on `feature/v0.10.0-beacon`: `AiProvider` trait + `OllamaProvider` impl (chat + embeddings) + 5 mockito unit tests (no real Ollama in CI). New deps reqwest/async-trait/futures-util/bytes (runtime), mockito (dev). 101→106 lib tests. All quality gates green. Commit `154c008`. Also added `assets/` to `.gitignore` (cron-staged release binaries live on GitHub Releases, not in git).
 - 2026-05-16 21:46 (Cake/cron): Beacon Slice 2 (provider abstraction) shipped in 4 commits: plan promoted to `docs/plans/`, `OpenAiCompatibleProvider` + 6 mockito tests, `BeaconConfig` TOML + `make_provider` + 7 tests, 4 Tauri commands wired. 106→121 lib tests. New runtime dep: `toml` 0.8.
 - **2026-05-16 22:45 (Cake/cron): 🚀 TRIPLE-SLICE TICK — Beacon Slices 3+4+5 in one tick.** (a) Slice 3 backend `ai/chat.rs` — page-aware context builder + citation extractor + `beacon_chat()` + 7 tests via in-memory MockProvider + Tauri `slab_beacon_chat` command (commit `cc5a6ea`). (b) Slice 4 frontend `BeaconChatPanel.svelte` — conversation view, citation chips that dispatch goto-page events, sample-prompt grid, friendly-error mapping, Enter-to-send composer; nav entry "✦ Beacon AI" between Reader and Merge (commit `9abc425`). (c) Slice 5 summary — `ai/summary.rs` with Tldr/Short/Long enum + low-temp prompts + 5 tests; Tauri `slab_beacon_summary`; 3 quick-action chips in chat panel that push results as assistant turns (commit `21960ce`). Total: 121→133 lib tests (+12), 1 new module + 1 new component + 2 new Tauri commands. All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check). Pushed to `feature/v0.10.0-beacon`. v0.10.0 is now 50% shipped (5 of 10 slices done).
-- **2026-05-16 23:50 (Cake/cron): 🚀 Beacon Slice 9 — Selection Actions vertical slice in 2 commits.** Backend `ai::selection_action` module (5 actions: Translate/Explain/Define/Rewrite/Summarize, per-action prompts pinned in tests, low temp 0.2, per-action max_tokens 80-500, 8K-char selection cap with user-grade error) + Tauri command `slab_beacon_selection_action` (commit `14b6e7d`, 13 new tests via in-memory MockProvider). Frontend `BeaconSelectionBubble.svelte` (~620 LOC) — floats above the PDF.js text-layer selection on `mouseup`, 5-button action grid + emoji + tooltips, inline Translate target-language picker (15 languages), busy/error/result states with Copy button, friendly-error mapping for Ollama-down + 429, Esc dismiss, mounted inside ReaderPanel as a sibling of pdfjs-container (commit `4825c93`). 173→186 lib tests (+13). All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check 0 errors). v0.10.0 is now 90% shipped (9 of 10 slices). Slice 10 (release prep + version bump + DONE flag for next-tick merge) is the only remaining work.
-- **2026-05-17 00:09 (Cake/cron): 🚀 v0.10.0 "Beacon" MERGED TO MAIN.** MODE A tick: re-ran all 4 quality gates on `feature/v0.10.0-beacon` (fmt, clippy `-D warnings`, 186 lib tests, svelte-check 0 errors) — all green. Pulled main (it had moved with a dependabot svelte 5.55.5→5.55.7 security bump in `pnpm-lock.yaml`). `git merge --no-ff` hit a conflict in the lockfile — resolved by taking feature-branch lockfile then `pnpm update svelte@latest` to re-pick-up the security bump; svelte-check still 0 errors. Committed with descriptive merge message at merge SHA `f91b374`. Tagged `v0.10.0`. Pushed both `main` and the tag via gh-token credential helper. CI run `25984335488` + `25984335509` (dependabot) + `25984334503` (build) all queued. STATE.md now `RELEASE_PENDING: v0.10.0` for next tick's MODE B finalize.
+- **2026-05-16 23:50 (Cake/cron): 🚀 Beacon Slice 9 — Selection Actions vertical slice in 2 commits.** Backend `ai::selection_action` module + Tauri command + 13 tests (commit `14b6e7d`). Frontend `BeaconSelectionBubble.svelte` (~620 LOC) + ReaderPanel hook (commit `4825c93`). 173→186 lib tests. All quality gates green. v0.10.0 is now 90% shipped (9 of 10 slices).
+- **2026-05-17 00:09 (Cake/cron): 🚀 v0.10.0 "Beacon" MERGED TO MAIN.** MODE A tick: re-ran 4 quality gates on `feature/v0.10.0-beacon` (fmt, clippy `-D warnings`, 186 lib tests, svelte-check 0 errors). Pulled main with dependabot svelte security bump; resolved `pnpm-lock.yaml` conflict by taking feature-branch lockfile then `pnpm update svelte@latest`. Merge SHA `f91b374`. Tagged `v0.10.0`. Pushed via gh-token helper. CI run `25984334503` queued.
+- **2026-05-17 00:50 (Cake/cron): 🚀 RESCUE + LAUNCH TICK** — (a) v0.10.0 CI `25984334503` had failed with `ERR_PNPM_OUTDATED_LOCKFILE` (merge resolution updated `pnpm-lock.yaml` to svelte 5.55.7 but left `package.json` saying `^5.0.0`). Verified locally with `pnpm install --frozen-lockfile` after the manifest bump → green. Committed `fix(release): bump svelte specifier in package.json to ^5.55.7 to match lockfile` (`8c757bf`), deleted local + remote `v0.10.0` tag, retagged at `8c757bf`, force-pushed. New CI run `25984687462` started; 3/3 `cargo test` jobs green at tick end, 3/4 bundles still building. (b) Started v0.11.0 "Lathe" on `feature/v0.11.0-lathe` cut from `main@8c757bf`. Wrote 8-slice implementation plan to `docs/plans/2026-05-17-v0.11.0-lathe-edit-mode.md`. **Slice 1 done** (commit `e95c0ef`): `pdf::duplicate::duplicate_pages` kernel + `slab_duplicate_pages` Tauri command + 7 tests. **Slice 2 done** (commit `d0635a7`): `pdf::split_pattern` chapter splitter — regex-based + outline-fallback, `find_matching_pages`/`outline_top_level_pages`/`split_by_pattern`/`ranges_from_chapter_starts`, 2 Tauri commands (`slab_split_by_pattern`, `slab_find_matching_pages`), 13 new tests. 186 → 193 → 206 lib tests across the two slices. All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check 0 errors). Branch pushed. 6 slices remaining for v0.11.0.
