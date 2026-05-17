@@ -10,6 +10,7 @@
 use crate::pdf::PdfError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::process::Command;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct PolyglotOpts {
@@ -34,6 +35,31 @@ pub fn polyglot_to_pdf(
     _opts: PolyglotOpts,
 ) -> Result<PolyglotReport, PdfError> {
     Err(PdfError::Other("polyglot: not yet implemented".into()))
+}
+
+/// Verify the `markitdown` CLI is callable; otherwise return a friendly
+/// error pointing at the recommended install command.
+///
+/// Mirrors `pdf::ocr::require_binary` — we probe `markitdown --help`
+/// rather than a real conversion so the preflight stays fast and side-
+/// effect free.
+// TODO(v0.8.1 Task 4): drop `allow(dead_code)` once `polyglot_to_pdf`
+// calls this helper for real.
+#[allow(dead_code)]
+fn require_markitdown() -> Result<(), PdfError> {
+    match Command::new("markitdown").arg("--help").output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(PdfError::Other(format!(
+            "markitdown exited {} during preflight",
+            out.status.code().unwrap_or(-1)
+        ))),
+        Err(e) => Err(PdfError::Other(format!(
+            "markitdown not found on PATH ({e}). Install with: \
+             `pipx install 'markitdown[all]'` (recommended) or \
+             `pip install 'markitdown[all]'`. See \
+             https://github.com/microsoft/markitdown",
+        ))),
+    }
 }
 
 /// Return a canonical short kind for accepted source files.
@@ -68,6 +94,17 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// Mirrors `pdf::ocr::tesseract_available` — lets us gate tests that
+    /// require the real `markitdown` binary on `$PATH` without breaking
+    /// dev machines that haven't installed it yet.
+    fn markitdown_available() -> bool {
+        Command::new("markitdown")
+            .arg("--help")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn supported_kinds() {
         for (path, want) in [
@@ -100,5 +137,33 @@ mod tests {
     fn unknown_extension_is_rejected() {
         assert_eq!(supported_extension(&PathBuf::from("file.xyz")), None);
         assert_eq!(supported_extension(&PathBuf::from("no_extension")), None);
+    }
+
+    /// When `markitdown` is absent the error must be actionable: it
+    /// should name the binary, name `PATH`, and suggest the canonical
+    /// install command. Without these hints the failure is a black box
+    /// to the user.
+    #[test]
+    fn require_markitdown_missing_error_is_actionable() {
+        if markitdown_available() {
+            eprintln!("skip: markitdown is installed on this host");
+            return;
+        }
+        let err = require_markitdown().expect_err("expected missing-binary error");
+        let msg = format!("{err}");
+        assert!(msg.contains("markitdown"), "no binary name: {msg}");
+        assert!(msg.contains("PATH"), "no PATH hint: {msg}");
+        assert!(msg.contains("pipx install"), "no install hint: {msg}");
+    }
+
+    /// When `markitdown` IS installed the preflight must succeed —
+    /// otherwise the rest of the polyglot pipeline can never run.
+    #[test]
+    fn require_markitdown_ok_when_installed() {
+        if !markitdown_available() {
+            eprintln!("skip: markitdown not on PATH");
+            return;
+        }
+        require_markitdown().expect("preflight should succeed when binary is installed");
     }
 }
