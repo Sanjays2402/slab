@@ -5,7 +5,7 @@
 
 ---
 
-## STATUS: SHIPPING (v0.10.0 Beacon Slices 1-5 landed — chat + summary live)
+## STATUS: SHIPPING (v0.10.0 Beacon Slices 1-8 landed — chat + summary + search + PII live)
 
 **Active dev branch:** `feature/v0.10.0-beacon`
 
@@ -24,20 +24,19 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-7 of 15 shipped)
+### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-8 of 10 shipped)
 - Branch: `feature/v0.10.0-beacon`, tip pushed this tick.
 - Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
-- **BONUS slices 11-15 added** — see `.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`.
-  All bonus slices reuse already-built `AiProvider` + chunker + sqlite-vec.
 - **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
 - **Slice 2 DONE 2026-05-16 22:00 PDT** (4 commits): `OpenAiCompatibleProvider` + `BeaconConfig` (TOML) + `make_provider` factory + 4 Tauri config commands. 106→121 lib tests.
 - **Slice 3 DONE 2026-05-16 22:45 PDT** (commit `cc5a6ea`): Chat backend `ai/chat.rs`. `build_context` (page-aware truncation), `extract_citations` (handles `[pN]` / `[page N]` / `[pages 2,5,9]`, rejects footnote `[1]` and dates), `beacon_chat()` + `_from_path()` + 7 tests via in-memory MockProvider. Tauri command `slab_beacon_chat`. 121→128 lib tests.
 - **Slice 4 DONE 2026-05-16 22:45 PDT** (commit `9abc425`): `BeaconChatPanel.svelte` + sidebar nav (✦ Beacon AI between Reader and Merge). Conversation view, citation chips that dispatch `slab:beacon-goto-page`, sample-prompt grid empty state, friendly error mapping (Ollama down → "start ollama or switch provider" hint), Enter-to-send composer. svelte-check clean.
 - **Slice 5 DONE 2026-05-16 22:45 PDT** (commit `21960ce`): Auto-summary. `ai/summary.rs` with `SummaryLength` enum (Tldr/Short/Long), `BeaconSummary` DTO, low-temperature (0.1) prompt, per-length token budgets. Tauri command `slab_beacon_summary`. UI: 3 quick-action chips (✦ TL;DR / ✦ Summarize / ✦ Detailed) in BeaconChatPanel — result lands as an assistant turn so follow-up questions work conversationally. 5 new tests. 128→133 lib tests.
-- **Slice 6 DONE** (commit `92a58b2`): Semantic search backend — chunker + sqlite-vec index.
-- **Slice 7 DONE** (commit `1a8db1f`): Semantic search UI + 4 Tauri commands.
-- **Slice 8 next**: PII highlighter UI (backend reuse from existing AutoRedactPanel patterns).
-- Remaining slices 9-15: selection actions, smart outline, citations, study mode, glossary, voice mode, release prep.
+- **Slice 6 DONE 2026-05-16 22:48 PDT** (commit `92a58b2`): Semantic search backend. `ai::chunker` (page-aware, paragraph-first, UTF-8-safe) + `ai::embedding_index` (rusqlite at `~/.slab/beacon-index.sqlite`, brute-force cosine top-K, idempotent re-index by content SHA-256). 22 new tests via MockEmbedProvider. 133→156 lib tests.
+- **Slice 7 DONE 2026-05-16 23:11 PDT** (commit `1a8db1f`): Semantic search UI. `BeaconSearchPanel.svelte` (506 LOC) — index card with Browse/Index/Re-index, search bar with All/This-PDF scope toggle, hit cards (page chip + filename + similarity %), footer stats, friendly-error mapping. 4 Tauri commands: `slab_beacon_index_pdf`, `slab_beacon_search`, `slab_beacon_index_stats`, `slab_beacon_index_forget`. Sidebar nav `⌕ Beacon Search`.
+- **Slice 8 DONE 2026-05-16 23:25 PDT** (commits `fd303d1` + `e4a43a0`): PII Highlighter. `ai::pii` module — regex pass (email/SSN/phone/CC reusing `auto_redact` presets, now pub-exported) + optional LLM pass (names + addresses via configured provider, liberal JSON parsing, per-page best-effort errors). `BeaconPiiPanel.svelte` (~620 LOC) — kind checkboxes + AI toggle + custom regex patterns + colored kind pills + click-to-jump hits + one-click "Redact selected → save as new PDF" reusing `pdf::auto_redact`. 2 Tauri commands: `slab_beacon_pii_find` (returns hits + summary), `slab_beacon_pii_redact` (thin wrapper over auto_redact). 17 new tests via in-memory MockProvider. 156→173 lib tests. Sidebar nav `🔒 PII Redact`.
+- **Slice 9 next**: Selection right-click actions (Translate / Explain / Define / Rewrite). Will need a `ai::selection_action.rs` module + Tauri command + Reader-panel hook.
+- Remaining: Slice 10 — release prep + version bump + merge.
 
 ### v0.11.0 "Lathe" — Edit Mode (PLANNED)
 In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs, image insert.
