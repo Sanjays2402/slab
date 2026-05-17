@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
+  import { setUiConfig, ACCENT_COLORS, type ThemeMode, type Density } from "$lib/theme";
 
   type Action = {
     id: string;
@@ -66,6 +67,49 @@
         group: "Recent files",
         run: () => onOpenRecent(r),
         keywords: `${r.name} ${r.path} pdf recent`,
+      });
+    }
+    // Theme quick actions
+    const themes: { id: ThemeMode; label: string; icon: string }[] = [
+      { id: "auto", label: "Auto (match system)", icon: "◐" },
+      { id: "light", label: "Light", icon: "☀" },
+      { id: "dark", label: "Dark", icon: "☾" },
+    ];
+    for (const t of themes) {
+      out.push({
+        id: `theme:${t.id}`,
+        title: `Theme: ${t.label}`,
+        subtitle: "Switch appearance",
+        icon: t.icon,
+        group: "Appearance",
+        run: () => void setUiConfig({ theme: t.id }),
+        keywords: `theme appearance ${t.id} ${t.label} light dark auto`,
+      });
+    }
+    for (const a of ACCENT_COLORS) {
+      out.push({
+        id: `accent:${a.id}`,
+        title: `Accent: ${a.label}`,
+        subtitle: a.hex,
+        icon: "●",
+        group: "Appearance",
+        run: () => void setUiConfig({ accent: a.id }),
+        keywords: `accent color ${a.id} ${a.label}`,
+      });
+    }
+    const densities: { id: Density; label: string; icon: string }[] = [
+      { id: "comfortable", label: "Comfortable", icon: "▭" },
+      { id: "compact", label: "Compact", icon: "▬" },
+    ];
+    for (const d of densities) {
+      out.push({
+        id: `density:${d.id}`,
+        title: `Density: ${d.label}`,
+        subtitle: "Spacing",
+        icon: d.icon,
+        group: "Appearance",
+        run: () => void setUiConfig({ density: d.id }),
+        keywords: `density spacing ${d.id} ${d.label}`,
       });
     }
     return out;

@@ -35,6 +35,7 @@
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
+  import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import { isInTauri } from "$lib/tauri";
   import { basename } from "$lib/types";
@@ -83,6 +84,7 @@
     { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
+    { id: "settings", label: "Settings", icon: "⚙", ready: true },
   ];
 
   let active = $state("reader");
@@ -414,6 +416,8 @@
     <DiffPanel />
   {:else if active === "slides"}
     <SlidesPanel />
+  {:else if active === "settings"}
+    <SettingsPanel />
   {/if}
 </main>
 
