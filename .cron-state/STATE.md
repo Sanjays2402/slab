@@ -9,7 +9,7 @@
 **PR_READY:** false
 **BRANCH:** `feature/v0.8.1-polyglot`
 **BASE:** `main` @ `04876a8` (v0.8.0 release merge)
-**LAST COMMIT:** `c66167c` — feat(polyglot): add extension allow-list with tests
+**LAST COMMIT:** `5b7d9b9` — feat(polyglot): require_markitdown preflight + markitdown_available test gate
 
 ## GOAL
 Ship **v0.8.1 "Polyglot"** — a `markitdown` bridge that lets Slab accept .docx / .xlsx / .pptx / .html / .epub / .csv / .json / .xml / images / audio as input and convert to PDF via the existing `md2pdf` engine.
@@ -35,7 +35,7 @@ Research note: `.cron-state/research-markitdown.md`.
 - [x] Bootstrap: branch, research note, STATE.md, plan, session log
 - [x] **Task 1**: Scaffold `pdf::polyglot` module + register in `pdf.rs` (commit `708531d`)
 - [x] **Task 2**: Extension allow-list `supported_extension` (commit `c66167c`)
-- [ ] Task 3: Implement `require_markitdown()` preflight
+- [x] **Task 3**: `require_markitdown()` preflight + `markitdown_available()` test gate (commit `5b7d9b9`)
 - [ ] Task 4: Wire `polyglot_to_pdf` to subprocess + md2pdf
 - [ ] Task 5: Live integration test for .html (gated)
 - [ ] Task 6: Live integration test for .csv (gated)
@@ -50,15 +50,17 @@ Research note: `.cron-state/research-markitdown.md`.
 - [ ] Task 15: Flip STATE.md to `STATUS: DONE` / `PR_READY: true`
 
 ## NEXT UP
-**Task 3: Implement `require_markitdown()` preflight helper.**
-- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 3 (line 192+).
-- Mirror `pdf::ocr::require_binary` pattern: run `markitdown --version` (or similar) via `std::process::Command`, map missing binary to `PdfError::Other("markitdown not found on PATH … pipx install 'markitdown[all]'")`.
-- Also add `markitdown_available() -> bool` helper for gating live tests (mirror `ocr::tesseract_available`).
-- TDD: write failing test that exercises the "not on PATH" branch (mock by checking a known-bogus binary name), implement, re-run.
-- Quality gates: fmt + clippy + test --lib must pass before commit.
-- Commit message: `feat(polyglot): require_markitdown preflight + markitdown_available helper`.
+**Task 4: Wire `polyglot_to_pdf` to the real pipeline.**
+- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 4 (line 264 onwards).
+- Replace the stub `polyglot_to_pdf` body with: existence check → `supported_extension` dispatch → `require_markitdown()` → `Command::new("markitdown").arg(input).output()` → stderr / non-UTF-8 / empty-stdout error mapping → `crate::pdf::md2pdf::render` with `Md2PdfOpts { page_size }`.
+- Side effect: this call uses `require_markitdown()` for real, so **delete the `#[allow(dead_code)]` + TODO comment** in the same commit.
+- Also delete the `_input` / `_output` / `_opts` underscore prefixes on the function signature once they're used.
+- Read `src-tauri/src/pdf/md2pdf.rs` first to confirm the `render()` signature + `Md2PdfOpts` field set before writing the call.
+- Add a test that triggers the `unsupported polyglot input` branch via a `.xyz` path that exists (use `tempfile::NamedTempFile` with suffix `.xyz`) so we don't need markitdown installed.
+- Quality gates: fmt + clippy + test --lib must pass.
+- Commit message: `feat(polyglot): wire polyglot_to_pdf to markitdown + md2pdf`.
 
-Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 3 (line 192 onwards).
+Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 4.
 
 ## BLOCKERS
 None.
@@ -66,6 +68,7 @@ None.
 ## NOTES FROM PRIOR SESSIONS
 - 2026-05-16 16:43 (Cake/cron): Task 1 done. Scaffold compiled clean, clippy clean, 81 tests pass. Pushed `708531d`. No surprises. The patch tool warned about a "sibling subagent" having modified `pdf.rs` — false alarm, that was the earlier bootstrap session's edit; confirmed file state by reading before commit.
 - 2026-05-16 17:00 (Cake/cron): Task 2 done. Pure-fn allow-list + 3 tests. Plan code worked verbatim. fmt/clippy clean, full suite 84 pass (81→84). Pushed `c66167c`. Dependabot surfaced 5 vulns on default branch (4 mod, 1 low) at push time — unrelated to this branch, note for future cleanup.
+- 2026-05-16 17:18 (Cake/cron): Task 3 done. `require_markitdown()` + `markitdown_available()` test gate. Suite 84→86 (+2). Pushed `5b7d9b9`. **Plan deviation**: the plan's suggested test (`require_markitdown_error_message_mentions_install`) just constructs a `PdfError::Other` literal and asserts its formatting — it doesn't exercise `require_markitdown()` at all. Replaced with two real tests gated on `markitdown_available()`, mirroring how `ocr.rs` gates `tesseract_available()`. **Gotcha**: `require_markitdown` is dead code until Task 4 wires it in, so clippy `-D dead-code` fails the build. Added `#[allow(dead_code)]` with a TODO referencing Task 4 to remove it. Cleanup is part of Task 4's commit.
 
 ## QUICK REFERENCE
 - Quality gates (must all pass before commit):
