@@ -34,6 +34,7 @@ use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
 use pdf::duplicate::duplicate_pages;
+use pdf::diff::{diff_pdfs as do_diff_pdfs, DocDiff};
 use pdf::edit_text::{
     find_text_spans as do_find_text_spans, replace_text_span as do_replace_text_span, PageSpans,
 };
@@ -216,6 +217,11 @@ fn slab_replace_text_span(
     new_text: String,
 ) -> CmdResult<()> {
     do_replace_text_span(&input, &output, &span_id, &new_text).into()
+}
+
+#[tauri::command]
+fn slab_diff_pdfs(old: PathBuf, new: PathBuf) -> CmdResult<DocDiff> {
+    do_diff_pdfs(&old, &new).into()
 }
 
 #[tauri::command]
@@ -1257,6 +1263,7 @@ pub fn run() {
             slab_pages_build,
             slab_find_text_spans,
             slab_replace_text_span,
+            slab_diff_pdfs,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,
