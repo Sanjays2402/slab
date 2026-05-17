@@ -21,6 +21,9 @@
   import GrayscalePanel from "$lib/panels/GrayscalePanel.svelte";
   import PageLabelsPanel from "$lib/panels/PageLabelsPanel.svelte";
   import AutoRedactPanel from "$lib/panels/AutoRedactPanel.svelte";
+  import FlattenPanel from "$lib/panels/FlattenPanel.svelte";
+  import SanitizePanel from "$lib/panels/SanitizePanel.svelte";
+  import RepairPanel from "$lib/panels/RepairPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { RecentFile } from "$lib/recent";
 
@@ -53,6 +56,9 @@
     { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
     { id: "grayscale", label: "Grayscale", icon: "◐", ready: true },
     { id: "labels", label: "Page Labels", icon: "ⅰ", ready: true },
+    { id: "flatten", label: "Flatten", icon: "▤", ready: true },
+    { id: "sanitize", label: "Sanitize", icon: "⊗", ready: true },
+    { id: "repair", label: "Repair", icon: "✚", ready: true },
     { id: "ocr", label: "OCR", icon: "👁", ready: true },
   ];
 
@@ -114,7 +120,7 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.9.0</span>
+    <span class="version">v0.9.1</span>
   </div>
 </aside>
 
@@ -161,6 +167,12 @@
     <GrayscalePanel />
   {:else if active === "labels"}
     <PageLabelsPanel />
+  {:else if active === "flatten"}
+    <FlattenPanel />
+  {:else if active === "sanitize"}
+    <SanitizePanel />
+  {:else if active === "repair"}
+    <RepairPanel />
   {/if}
 </main>
 

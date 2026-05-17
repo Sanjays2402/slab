@@ -9,6 +9,7 @@
   import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
   import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
+  import DecryptModal from "$lib/components/DecryptModal.svelte";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -73,6 +74,11 @@
   let cheatsheetOpen = $state(false);
   let invert = $state(false);
   let dropActive = $state(false);
+
+  // Locked-PDF flow — when pdf.js refuses to open an encrypted file we
+  // surface a DecryptModal. `decryptPending` holds the original (encrypted)
+  // path so the modal can call slab_decrypt and reopen the plaintext copy.
+  let decryptPending = $state<string | null>(null);
 
   // Refs
   let containerEl: HTMLDivElement | undefined = $state();
@@ -316,6 +322,18 @@
       // Render a small thumbnail of page 1 for the recents grid
       void renderRecentThumb(pdf, path);
     } catch (e: any) {
+      // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
+      // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
+      // through pdf.js V1/RC4 documents directly without bridging the
+      // password callback API, so we delegate to the Rust side: pop the
+      // DecryptModal, run `slab_decrypt`, then reopen the plaintext copy.
+      if (e?.name === "PasswordException") {
+        loadError = null;
+        tearDownDoc();
+        doc = null;
+        decryptPending = path;
+        return;
+      }
       loadError = e?.message || String(e);
       tearDownDoc();
       doc = null;
@@ -1182,6 +1200,22 @@
       // Reload from the saved path so the in-app outline reflects the edit
       // (whether the user overwrote the original or used Save As).
       void loadPath(savedPath);
+    }}
+  />
+{/if}
+
+{#if decryptPending}
+  <DecryptModal
+    input={decryptPending}
+    onUnlock={(decryptedPath) => {
+      decryptPending = null;
+      // Open the plaintext copy from temp. The reader still records this
+      // path in recents — we may want to swap to the original locked path
+      // in a future tick, but for now the unlocked copy is what's open.
+      void loadPath(decryptedPath);
+    }}
+    onCancel={() => {
+      decryptPending = null;
     }}
   />
 {/if}
