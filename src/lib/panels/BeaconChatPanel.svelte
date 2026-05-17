@@ -602,6 +602,7 @@
           bind:value={visionQuestion}
           onkeydown={onVisionKeydown}
           rows="2"
+          aria-label="Vision question"
           placeholder="Ask about this page… e.g. 'What does the chart show?' (⌘/Ctrl+Enter to send, Esc to close)"
           disabled={status.kind === "working"}
         ></textarea>
@@ -675,6 +676,7 @@
         bind:value={question}
         onkeydown={onKeydown}
         rows="2"
+        aria-label="Chat with Beacon"
         placeholder="Ask about this PDF… (Enter to send, Shift+Enter for newline)"
         disabled={status.kind === "working"}
       ></textarea>

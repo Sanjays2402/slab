@@ -1165,6 +1165,7 @@
           min="1"
           max={doc?.pageCount ?? 1}
           value={currentPage}
+          aria-label="Current page"
           onchange={(e) => jumpTo(parseInt((e.currentTarget as HTMLInputElement).value, 10))}
         />
         <span class="tb-pg-total">/ {doc?.pageCount ?? "—"}</span>
@@ -1239,6 +1240,7 @@
       <input
         class="find-input"
         placeholder="Search in document"
+        aria-label="Find in document"
         bind:value={findQuery}
         oninput={() => runFind(findQuery, "find")}
         onkeydown={(e) => {

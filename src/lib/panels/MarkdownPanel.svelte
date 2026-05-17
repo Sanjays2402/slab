@@ -74,14 +74,14 @@ Try editing this and clicking **Convert**.
   </header>
 
   <div class="row editor-row">
-    <label>Markdown source <span class="muted">({charCount} chars · {lineCount} lines)</span></label>
-    <textarea bind:value={markdown} spellcheck="false"></textarea>
+    <label for="md-source">Markdown source <span class="muted">({charCount} chars · {lineCount} lines)</span></label>
+    <textarea id="md-source" bind:value={markdown} spellcheck="false"></textarea>
   </div>
 
   <div class="row inline">
     <div class="field">
-      <label>Page size</label>
-      <select bind:value={pageSize}>
+      <label for="md-page-size">Page size</label>
+      <select id="md-page-size" bind:value={pageSize}>
         <option value="A4">A4</option>
         <option value="Letter">US Letter</option>
         <option value="Legal">US Legal</option>
@@ -92,7 +92,7 @@ Try editing this and clicking **Convert**.
   <div class="row">
     <label>Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/document.pdf" />
+      <input type="text" bind:value={outputPath} placeholder="/path/to/document.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>

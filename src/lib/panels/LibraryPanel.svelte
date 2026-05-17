@@ -760,6 +760,7 @@
       <input
         type="search"
         placeholder="Search by title or filename…"
+        aria-label="Search library"
         value={query}
         oninput={onQueryInput}
       />
@@ -1063,6 +1064,7 @@
       <input
         type="text"
         placeholder="Tag name"
+        aria-label="New tag name"
         bind:value={newTagName}
         autofocus
         onkeydown={(e) => { if (e.key === "Enter") commitNewTag(); }}

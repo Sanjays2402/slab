@@ -507,6 +507,7 @@
             <input
               class="opt-input"
               placeholder="e.g. 1-3, 7, 9-12"
+              aria-label="Page range to convert"
               bind:value={imgRangeText}
             />
           {/if}

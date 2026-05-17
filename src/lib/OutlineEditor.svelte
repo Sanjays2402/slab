@@ -309,6 +309,7 @@
           type="text"
           bind:value={node.title}
           placeholder="Untitled"
+          aria-label="Outline entry title"
         />
         <span class="oe-page-wrap" title="Target page (1-based)">
           <input
@@ -317,6 +318,7 @@
             min="1"
             max={pageCount}
             value={node.pageIndex !== null ? node.pageIndex + 1 : ""}
+            aria-label="Outline entry target page"
             oninput={(e) => updatePage(node, (e.currentTarget as HTMLInputElement).value)}
             placeholder="—"
           />

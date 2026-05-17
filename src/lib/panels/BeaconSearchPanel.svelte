@@ -237,6 +237,7 @@
       bind:value={query}
       onkeydown={onSearchKeydown}
       placeholder="Search across the index (Enter to run)"
+      aria-label="Semantic search query"
       type="search"
     />
     <div class="scope-toggle" role="tablist">

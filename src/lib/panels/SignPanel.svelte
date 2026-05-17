@@ -308,6 +308,7 @@
     bind:this={pdfInput}
     type="file"
     accept="application/pdf"
+    aria-label="Choose PDF to sign"
     style="display: none"
     onchange={onPdfChange}
   />
@@ -315,6 +316,7 @@
     bind:this={stampInput}
     type="file"
     accept="image/png,image/jpeg"
+    aria-label="Choose signature image"
     style="display: none"
     onchange={onStampChange}
   />

@@ -359,6 +359,7 @@
         bind:this={inputEl}
         bind:value={query}
         placeholder="Jump to anything…"
+        aria-label="Command palette search"
         autocomplete="off"
         spellcheck="false"
       />

@@ -88,7 +88,7 @@
   <div class="row">
     <span class="row-label">Input PDF</span>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
+      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
@@ -96,7 +96,7 @@
   <div class="row">
     <span class="row-label">Output PDF</span>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/redacted.pdf" />
+      <input type="text" bind:value={outputPath} placeholder="/path/to/redacted.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
@@ -123,6 +123,7 @@
         type="text"
         bind:value={newPattern}
         placeholder="e.g. \bACME-\d{6}\b"
+        aria-label="Custom regex pattern"
         onkeydown={(e) => e.key === 'Enter' && addPattern()}
       />
       <button onclick={addPattern}>Add</button>

@@ -107,7 +107,7 @@
   <div class="row">
     <label>Input PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
+      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
@@ -115,7 +115,7 @@
   <div class="row">
     <label>Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/labeled.pdf" />
+      <input type="text" bind:value={outputPath} placeholder="/path/to/labeled.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
@@ -127,11 +127,11 @@
         <div class="range-row">
           <div class="field">
             <span class="lbl">From page (0-based)</span>
-            <input type="number" min="0" bind:value={r.start_page} />
+            <input type="number" min="0" bind:value={r.start_page} aria-label="From page (0-based) for range {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">Style</span>
-            <select bind:value={r.style}>
+            <select bind:value={r.style} aria-label="Numbering style for range {i + 1}">
               <option value="D">Decimal (1, 2, 3)</option>
               <option value="R">Uppercase Roman (I, II, III)</option>
               <option value="r">Lowercase Roman (i, ii, iii)</option>
@@ -142,11 +142,11 @@
           </div>
           <div class="field">
             <span class="lbl">Prefix</span>
-            <input type="text" bind:value={r.prefix} placeholder="Ch-" />
+            <input type="text" bind:value={r.prefix} placeholder="Ch-" aria-label="Label prefix for range {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">Start at</span>
-            <input type="number" min="1" bind:value={r.start} />
+            <input type="number" min="1" bind:value={r.start} aria-label="Starting number for range {i + 1}" />
           </div>
           <button class="del" onclick={() => removeRange(i)} title="Remove">✕</button>
         </div>

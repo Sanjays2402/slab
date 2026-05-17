@@ -167,7 +167,11 @@ const report = {
 
 for (const file of walk(SRC)) {
 	report.scanned += 1;
-	const text = readFileSync(file, "utf8");
+	const raw = readFileSync(file, "utf8");
+	// Strip <script>…</script> and <style>…</style> blocks so we don't
+	// flag matches inside JS comments / CSS selectors. We replace with
+	// equal-length blanks so line numbers stay accurate.
+	const text = stripBlocks(raw, ["script", "style"]);
 	const rel = relative(ROOT, file);
 	const ic = findIconButtons(text);
 	const ul = findUnlabelledInputs(text);
@@ -181,6 +185,23 @@ for (const file of walk(SRC)) {
 	report.totals.iconButtons += ic.length;
 	report.totals.unlabelledInputs += ul.length;
 	report.totals.imagesWithoutAlt += ia.length;
+}
+
+/** Replace the *content* of named blocks with blanks (preserves line
+ * numbers). */
+function stripBlocks(text, tags) {
+	let out = text;
+	for (const tag of tags) {
+		const re = new RegExp(
+			`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`,
+			"g",
+		);
+		out = out.replace(re, (_full, inner) => {
+			const lines = inner.split("\n").length - 1;
+			return `<${tag}>${"\n".repeat(lines)}</${tag}>`;
+		});
+	}
+	return out;
 }
 
 if (FLAG_JSON) {
