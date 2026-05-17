@@ -2,6 +2,7 @@
 // All operations run locally; nothing is ever uploaded.
 
 pub mod ai;
+pub mod keymap;
 pub mod pdf;
 
 use ai::auto_tag::AutoTagOpts;
@@ -520,6 +521,75 @@ fn slab_ui_config_write(ui: ai::config::UiConfig) -> CmdResult<()> {
     };
     cfg.ui = ui;
     do_save_beacon_config(&cfg).into()
+}
+
+// ---------- Keymap commands (Glass Slice 7) ----------
+
+/// Snapshot the user's current keymap. Frontend caches this on boot and
+/// uses it to drive every `matches(event, "...")` check across the app.
+#[tauri::command]
+fn slab_keymap_read() -> CmdResult<keymap::commands::KeymapView> {
+    match do_load_beacon_config() {
+        Ok(cfg) => CmdResult::Ok {
+            value: keymap::commands::build_view(&cfg.keymap),
+        },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Apply a batch of `(action_id, "Binding")` overrides. Validates every
+/// entry up front, rejects on first error, never persists a partial
+/// state. Returns the freshly-materialised view so the frontend never
+/// gets out of sync with disk.
+#[tauri::command]
+fn slab_keymap_write(
+    args: keymap::commands::KeymapWriteArgs,
+) -> CmdResult<keymap::commands::KeymapView> {
+    let mut cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    if let Err(e) = keymap::commands::apply_overrides(&mut cfg.keymap, args.overrides) {
+        return CmdResult::Err {
+            message: e.to_string(),
+        };
+    }
+    if let Err(e) = do_save_beacon_config(&cfg) {
+        return CmdResult::Err {
+            message: e.to_string(),
+        };
+    }
+    CmdResult::Ok {
+        value: keymap::commands::build_view(&cfg.keymap),
+    }
+}
+
+/// Wipe all user overrides — restore the factory-default keymap.
+#[tauri::command]
+fn slab_keymap_reset() -> CmdResult<keymap::commands::KeymapView> {
+    let mut cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    cfg.keymap.clear_all();
+    if let Err(e) = do_save_beacon_config(&cfg) {
+        return CmdResult::Err {
+            message: e.to_string(),
+        };
+    }
+    CmdResult::Ok {
+        value: keymap::commands::build_view(&cfg.keymap),
+    }
 }
 
 /// Smoke-test the configured provider. Currently issues a trivial chat
@@ -1400,6 +1470,9 @@ pub fn run() {
             slab_beacon_config_write,
             slab_ui_config_read,
             slab_ui_config_write,
+            slab_keymap_read,
+            slab_keymap_write,
+            slab_keymap_reset,
             slab_beacon_provider_test,
             slab_beacon_provider_kinds,
             slab_beacon_chat,
