@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod keymap;
 pub mod pdf;
+pub mod windows;
 
 use ai::auto_tag::AutoTagOpts;
 use ai::chat::{
@@ -1171,21 +1172,69 @@ fn open_library_db() -> Result<LibraryDb, LibraryError> {
     LibraryDb::open(&library_default_db_path())
 }
 
+// ---------- Cabinet (v1.1.0) Slice 6 — cross-window events ----------
+//
+// When the library mutates (folder added, doc OCR'd, tags changed, …) any
+// detached LibraryPanel instance in another window won't notice unless we
+// proactively tell it. We emit a global `slab://library-changed` event
+// after every successful library-mutation command; LibraryPanel listens
+// and refetches.
+//
+// We deliberately do NOT pass a payload — the event is a *poke*, not a
+// patch. Each listener decides how much state to refresh. This keeps
+// schema-coupling between backend and any number of frontend listeners
+// at exactly zero.
+
+/// Emit `slab://library-changed` to every Tauri window. Swallows errors —
+/// a transient event-bus failure should never escalate to a command Err
+/// the user sees on what was an otherwise-successful write.
+fn emit_library_changed(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit("slab://library-changed", ()) {
+        eprintln!("[cabinet] failed to emit slab://library-changed: {e}");
+    }
+}
+
+/// Ask the main Slab window to open `path` in a new Reader tab. Invoked
+/// from detached panel windows (typically a detached Library) so the user
+/// can still drive the main reader from a satellite window. Emits
+/// `slab://open-doc` to the main window only (NOT a broadcast — we don't
+/// want every detached Reader to also open the doc).
+///
+/// Returns Err if the main window isn't currently alive — that's an
+/// invariant violation worth surfacing, since the main window outlives
+/// every detached child.
 #[tauri::command]
-fn slab_library_add_folder(path: String) -> CmdResult<FolderRecord> {
+fn slab_request_open_in_main(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    let main = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    main.emit("slab://open-doc", path)
+        .map_err(|e| format!("emit slab://open-doc: {e}"))
+}
+
+#[tauri::command]
+fn slab_library_add_folder(app: tauri::AppHandle, path: String) -> CmdResult<FolderRecord> {
     let result = (|| -> Result<FolderRecord, LibraryError> {
         let mut db = open_library_db()?;
         db.add_folder(&path)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
 #[tauri::command]
-fn slab_library_remove_folder(id: i64) -> CmdResult<()> {
+fn slab_library_remove_folder(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         db.remove_folder(id)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
@@ -1199,7 +1248,7 @@ fn slab_library_list_folders() -> CmdResult<Vec<FolderRecord>> {
 }
 
 #[tauri::command]
-fn slab_library_scan(folder_id: i64) -> CmdResult<ScanReport> {
+fn slab_library_scan(app: tauri::AppHandle, folder_id: i64) -> CmdResult<ScanReport> {
     let result = (|| -> Result<ScanReport, LibraryError> {
         let mut db = open_library_db()?;
         let folders = db.list_folders()?;
@@ -1209,6 +1258,9 @@ fn slab_library_scan(folder_id: i64) -> CmdResult<ScanReport> {
             .ok_or_else(|| LibraryError::Other(format!("folder id {folder_id} not found")))?;
         do_scan_folder(&mut db, &folder)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
@@ -1231,38 +1283,58 @@ fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
 }
 
 #[tauri::command]
-fn slab_library_add_tag(name: String, color: Option<String>) -> CmdResult<TagRecord> {
+fn slab_library_add_tag(
+    app: tauri::AppHandle,
+    name: String,
+    color: Option<String>,
+) -> CmdResult<TagRecord> {
     let result = (|| -> Result<TagRecord, LibraryError> {
         let mut db = open_library_db()?;
         db.add_tag(&name, color.as_deref())
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
 #[tauri::command]
-fn slab_library_set_doc_tags(doc_id: i64, tag_ids: Vec<i64>) -> CmdResult<()> {
+fn slab_library_set_doc_tags(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    tag_ids: Vec<i64>,
+) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         db.set_doc_tags(doc_id, &tag_ids)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
 #[tauri::command]
-fn slab_library_remove_document(doc_id: i64) -> CmdResult<()> {
+fn slab_library_remove_document(app: tauri::AppHandle, doc_id: i64) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         db.remove_document(doc_id)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
 #[tauri::command]
-fn slab_library_remove_tag(tag_id: i64) -> CmdResult<()> {
+fn slab_library_remove_tag(app: tauri::AppHandle, tag_id: i64) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         db.remove_tag(tag_id)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
@@ -1271,7 +1343,7 @@ fn slab_library_remove_tag(tag_id: i64) -> CmdResult<()> {
 /// (permission denied, etc.) emit a zero-counts report rather than
 /// aborting the whole sweep — the UI surfaces partial progress.
 #[tauri::command]
-fn slab_library_rescan_all() -> CmdResult<Vec<ScanReport>> {
+fn slab_library_rescan_all(app: tauri::AppHandle) -> CmdResult<Vec<ScanReport>> {
     let result = (|| -> Result<Vec<ScanReport>, LibraryError> {
         let mut db = open_library_db()?;
         let folders = db.list_folders()?;
@@ -1287,6 +1359,9 @@ fn slab_library_rescan_all() -> CmdResult<Vec<ScanReport>> {
         }
         Ok(reports)
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
@@ -1305,6 +1380,7 @@ fn slab_library_ocr_queue_list_pending() -> CmdResult<Vec<DocumentRecord>> {
 /// output_path, error). `opts` is optional — defaults to eng @ 300dpi.
 #[tauri::command]
 fn slab_library_ocr_queue_run_one(
+    app: tauri::AppHandle,
     doc_id: i64,
     opts: Option<pdf::ocr::OcrOpts>,
 ) -> CmdResult<OcrQueueResult> {
@@ -1316,6 +1392,9 @@ fn slab_library_ocr_queue_run_one(
             &opts.unwrap_or_default(),
         ))
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
@@ -1323,12 +1402,16 @@ fn slab_library_ocr_queue_run_one(
 /// attempted, in queue order. `opts` is optional.
 #[tauri::command]
 fn slab_library_ocr_queue_run_all(
+    app: tauri::AppHandle,
     opts: Option<pdf::ocr::OcrOpts>,
 ) -> CmdResult<Vec<OcrQueueResult>> {
     let result = (|| -> Result<Vec<OcrQueueResult>, LibraryError> {
         let mut db = open_library_db()?;
         do_ocr_queue_run_all(&mut db, &opts.unwrap_or_default())
     })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
     result.into()
 }
 
@@ -1342,6 +1425,7 @@ fn slab_library_ocr_queue_run_all(
 /// only Errs on backend wiring problems like a missing provider config).
 #[tauri::command]
 async fn slab_library_auto_tag_one(
+    app: tauri::AppHandle,
     doc_id: i64,
     opts: Option<AutoTagOpts>,
 ) -> CmdResult<AutoTagRunResult> {
@@ -1370,6 +1454,7 @@ async fn slab_library_auto_tag_one(
         }
     };
     let res = do_auto_tag_run_one(&mut db, provider, doc_id, &opts.unwrap_or_default()).await;
+    emit_library_changed(&app);
     CmdResult::Ok { value: res }
 }
 
@@ -1377,6 +1462,7 @@ async fn slab_library_auto_tag_one(
 /// per-doc failures — inspect each result's `error` field.
 #[tauri::command]
 async fn slab_library_auto_tag_many(
+    app: tauri::AppHandle,
     doc_ids: Vec<i64>,
     opts: Option<AutoTagOpts>,
 ) -> CmdResult<Vec<AutoTagRunResult>> {
@@ -1405,6 +1491,7 @@ async fn slab_library_auto_tag_many(
         }
     };
     let res = do_auto_tag_run_many(&mut db, provider, &doc_ids, &opts.unwrap_or_default()).await;
+    emit_library_changed(&app);
     CmdResult::Ok { value: res }
 }
 
@@ -1414,6 +1501,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(windows::WindowRegistry::new())
+        .setup(|app| {
+            // Cabinet (v1.1.0): restore last session's detached windows
+            // from ~/.slab/windows.json. Quiet on error.
+            let handle = tauri::Manager::app_handle(app).clone();
+            windows::restore_windows(&handle);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             slab_merge,
@@ -1503,6 +1598,10 @@ pub fn run() {
             slab_library_ocr_queue_run_all,
             slab_library_auto_tag_one,
             slab_library_auto_tag_many,
+            windows::slab_window_open,
+            windows::slab_window_close,
+            windows::slab_window_list,
+            slab_request_open_in_main,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
@@ -39,9 +40,12 @@
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
+  import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
+  import { openPanelWindow, closePanelWindow, focusPanelWindow, listPanelWindows, type WindowState } from "$lib/windows";
   import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
+  import { notify } from "$lib/notify";
   import type { RecentFile } from "$lib/recent";
 
   type Feature = {
@@ -94,6 +98,101 @@
   let active = $state("reader");
   let paletteOpen = $state(false);
   let shortcutsOpen = $state(false);
+
+  // ---------- Cabinet (v1.1.0) — detached-window mode ----------
+  //
+  // When this route is mounted inside a child WebviewWindow opened via
+  // `slab_window_open`, the URL carries `?panel=&windowId=&doc=` params.
+  // We flip into "detached mode": the whole sidebar/tabstrip shell is
+  // skipped and we render exactly one panel filling the window.
+  let detached = $state(false);
+  let detachedPanel = $state<string | null>(null);
+  let detachedWindowId = $state<string | null>(null);
+  let detachedDoc = $state<string | null>(null);
+
+  /** Pretty label for the DetachedShell titlebar (uses `features` list). */
+  function titleForPanel(id: string | null): string {
+    if (!id) return "Slab";
+    const feat = features.find((f) => f.id === id);
+    return feat ? feat.label : "Slab";
+  }
+
+  /**
+   * Panels that have a useful "detach into its own window" experience.
+   * One-shot wizards (Encrypt, Compress, Merge, Split, etc.) aren't here:
+   * detaching them adds nothing because you close them immediately after
+   * running the action. The set here is the durable, "lives next to your
+   * reader" set — chat with the doc, browse the library, search, etc.
+   */
+  const DETACHABLE_PANELS = new Set<string>([
+    "reader",
+    "library",
+    "beacon",
+    "search",
+    "pii",
+    "pages",
+    "pages-list",
+    "diff",
+    "slides",
+    "tables",
+    "markdown",
+  ]);
+
+  function supportsDetach(id: string): boolean {
+    return DETACHABLE_PANELS.has(id);
+  }
+
+  /**
+   * Fire-and-forget detach from the sidebar. We swallow the Promise here
+   * because the call already logs on failure and never throws; surfacing
+   * a toast on success is Slice 7's job.
+   */
+  function detachActive(id: string): void {
+    void openPanelWindow(id).then((label) => {
+      if (label) {
+        notify.info(`Detached ${features.find((f) => f.id === id)?.label ?? id}`);
+        // Optimistic refresh so the Windows menu shows the new entry
+        // immediately rather than waiting for the next 2s poll.
+        void refreshOpenWindows();
+      }
+    });
+  }
+
+  // ---------- Slice 7: Windows menu (main window only) ----------
+  //
+  // Sidebar footer lists every currently-open detached window so the
+  // user has a single point of control for the swarm. Polls every 2s
+  // because Tauri 2 doesn't broadcast window-created/-destroyed events
+  // on a documented public channel — cheaper than maintaining a custom
+  // event bus on the Rust side, and 2s feels live enough.
+  let openWindows = $state<WindowState[]>([]);
+  let windowsPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function refreshOpenWindows(): Promise<void> {
+    try {
+      openWindows = await listPanelWindows();
+    } catch (e) {
+      // Non-fatal — leave the previous snapshot in place.
+      console.error("[cabinet] listPanelWindows failed:", e);
+    }
+  }
+
+  async function closeWindow(label: string): Promise<void> {
+    await closePanelWindow(label);
+    notify.info(`Closed detached window`);
+    void refreshOpenWindows();
+  }
+
+  function prettyWindowLabel(w: WindowState): string {
+    const feat = features.find((f) => f.id === w.panelId);
+    const name = feat ? feat.label : w.panelId;
+    if (w.targetDoc) {
+      // Show just the file's basename, not the absolute path.
+      const base = w.targetDoc.split(/[/\\]/).pop() ?? w.targetDoc;
+      return `${name} — ${base}`;
+    }
+    return name;
+  }
 
   // ---------- Reader tabs (Lathe Slice 5) ----------
   //
@@ -283,15 +382,122 @@
     openNewTab(detail.path);
   }
 
+  // Cabinet v1.1.0: detached LibraryPanel windows can't open Reader tabs
+  // locally (no tabstrip in those windows), so they call the
+  // `slab_request_open_in_main` Tauri command, which emits this event
+  // *only* on the main window. We treat it just like a drag-drop or a
+  // local library click — spawn a fresh Reader tab.
+  let unlistenOpenDoc: UnlistenFn | null = null;
+
   onMount(() => {
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+
+    // Cabinet: detect detached mode from URL params.
+    let isDetached = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get("panel");
+      const w = params.get("windowId");
+      if (p && w) {
+        detached = true;
+        isDetached = true;
+        detachedPanel = p;
+        detachedWindowId = w;
+        detachedDoc = params.get("doc");
+        active = p;
+      }
+    } catch {
+      // Non-browser env (SSR build) — leave detached=false.
+    }
+
+    // Only the *main* window subscribes to slab://open-doc. The backend
+    // already targets the emit at the main window, but belt-and-braces:
+    // detached windows skip the subscription entirely.
+    if (!isDetached && isInTauri()) {
+      listen<string>("slab://open-doc", (event) => {
+        const path = event.payload;
+        if (typeof path === "string" && path.length > 0) {
+          openNewTab(path);
+        }
+      })
+        .then((un) => {
+          unlistenOpenDoc = un;
+        })
+        .catch((e) => {
+          console.error("[cabinet] failed to subscribe to slab://open-doc:", e);
+        });
+
+      // Slice 7: poll the window registry every 2s so the sidebar's
+      // Windows menu stays roughly in sync with reality. We do an
+      // immediate first refresh too so the menu populates without a
+      // 2s wait if the user reloads the main window while panels are
+      // already detached.
+      void refreshOpenWindows();
+      windowsPollTimer = setInterval(() => {
+        void refreshOpenWindows();
+      }, 2000);
+    }
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onGlobalKey);
     window.removeEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+    if (unlistenOpenDoc) {
+      unlistenOpenDoc();
+      unlistenOpenDoc = null;
+    }
+    if (windowsPollTimer) {
+      clearInterval(windowsPollTimer);
+      windowsPollTimer = null;
+    }
   });
 </script>
+
+{#if detached}
+  <!--
+    Cabinet (v1.1.0) — detached panel window. No sidebar, no tabstrip,
+    no command palette: just the single panel filling the window.
+    The panel id is supplied by `?panel=` in the URL (parsed in
+    onMount above).
+  -->
+  <DetachedShell
+    panelId={detachedPanel ?? "reader"}
+    title={titleForPanel(detachedPanel)}
+  >
+    {#if detachedPanel === "beacon"}
+      <BeaconChatPanel />
+    {:else if detachedPanel === "library"}
+      <LibraryPanel detached={true} />
+    {:else if detachedPanel === "search"}
+      <BeaconSearchPanel />
+    {:else if detachedPanel === "pii"}
+      <BeaconPiiPanel />
+    {:else if detachedPanel === "reader"}
+      <ReaderPanel
+        tabId="detached"
+        active={true}
+        initialPath={detachedDoc}
+      />
+    {:else if detachedPanel === "pages"}
+      <PagesVisualPanel />
+    {:else if detachedPanel === "pages-list"}
+      <PagesListPanel />
+    {:else if detachedPanel === "diff"}
+      <DiffPanel />
+    {:else if detachedPanel === "slides"}
+      <SlidesPanel />
+    {:else if detachedPanel === "tables"}
+      <TablesPanel />
+    {:else if detachedPanel === "markdown"}
+      <MarkdownPanel />
+    {:else}
+      <div class="detached-unsupported">
+        <p>Panel <code>{detachedPanel}</code> doesn't support detached mode yet.</p>
+        <p class="hint">Close this window and use the main Slab window for now.</p>
+      </div>
+    {/if}
+  </DetachedShell>
+{:else}
 
 <aside class="sidebar">
   <div class="brand">
@@ -302,17 +508,31 @@
 
   <nav>
     {#each features as f (f.id)}
-      <button
-        class="nav-item"
-        class:active={active === f.id}
-        class:locked={!f.ready}
-        disabled={!f.ready}
-        onclick={() => (active = f.id)}
-      >
-        <span class="nav-icon">{f.icon}</span>
-        <span class="nav-label">{f.label}</span>
-        {#if !f.ready}<span class="badge">soon</span>{/if}
-      </button>
+      <div class="nav-row" class:active={active === f.id}>
+        <button
+          class="nav-item"
+          class:active={active === f.id}
+          class:locked={!f.ready}
+          disabled={!f.ready}
+          onclick={() => (active = f.id)}
+        >
+          <span class="nav-icon">{f.icon}</span>
+          <span class="nav-label">{f.label}</span>
+          {#if !f.ready}<span class="badge">soon</span>{/if}
+        </button>
+        {#if active === f.id && f.ready && supportsDetach(f.id) && isInTauri()}
+          <button
+            class="detach-btn"
+            type="button"
+            title="Open {f.label} in a new window"
+            aria-label="Open {f.label} in a new window"
+            onclick={(e) => {
+              e.stopPropagation();
+              detachActive(f.id);
+            }}
+          >⤢</button>
+        {/if}
+      </div>
     {/each}
   </nav>
 
@@ -323,7 +543,30 @@
   </button>
 
   <div class="footer">
-    <span class="version">v1.0.0</span>
+    {#if openWindows.length > 0}
+      <div class="windows-list" role="group" aria-label="Detached windows">
+        <h4>Detached</h4>
+        {#each openWindows as w (w.label)}
+          <div class="window-row" title={prettyWindowLabel(w)}>
+            <button
+              type="button"
+              class="window-focus"
+              onclick={() => focusPanelWindow(w.label)}
+            >
+              {prettyWindowLabel(w)}
+            </button>
+            <button
+              type="button"
+              class="window-close"
+              onclick={() => closeWindow(w.label)}
+              title="Close window"
+              aria-label="Close detached window"
+            >×</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <span class="version">v1.1.0</span>
   </div>
 </aside>
 
@@ -477,6 +720,8 @@
 
 <ShortcutsOverlay bind:open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
 
+{/if}
+
 <style>
   .sidebar {
     width: var(--sidebar-w);
@@ -561,6 +806,49 @@
     letter-spacing: 0.5px;
   }
 
+  /* ---------- Cabinet (v1.1.0) — detach button ---------- */
+  .nav-row {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    position: relative;
+  }
+  .nav-row > .nav-item {
+    flex: 1;
+    min-width: 0;
+  }
+  .detach-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 26px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-3);
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: var(--r-sm);
+    padding: 0;
+    line-height: 1;
+    transition:
+      background 80ms ease-out,
+      color 80ms ease-out,
+      border-color 80ms ease-out;
+  }
+  .detach-btn:hover {
+    background: var(--bg);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .detach-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .detach-btn:active {
+    transform: translateY(1px);
+  }
+
   .palette-trigger {
     display: flex;
     align-items: center;
@@ -598,6 +886,65 @@
     border-top: 1px solid var(--border);
     font-size: 11px;
     color: var(--text-3);
+  }
+
+  /* Slice 7: Detached windows submenu. Lives in the sidebar footer and
+     only renders when at least one detached window is open. */
+  .windows-list {
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .windows-list h4 {
+    margin: 0 0 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .window-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 22px;
+  }
+  .window-focus {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    text-align: left;
+    padding: 2px 4px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .window-focus:hover {
+    background: var(--bg-2);
+    color: var(--text-1);
+  }
+  .window-close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+    padding: 0;
+  }
+  .window-close:hover {
+    background: var(--bg-2);
+    color: var(--text-1);
   }
 
   .content {
@@ -727,5 +1074,24 @@
   }
   .reader-slot.active {
     display: flex;
+  }
+
+  /* Cabinet — detached-mode panel container (rare unsupported-panel case). */
+  .detached-unsupported {
+    padding: 24px;
+    color: var(--fg-2, #8a8e94);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .detached-unsupported code {
+    background: var(--bg-1, #14161a);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 12px;
+  }
+  .detached-unsupported .hint {
+    margin-top: 8px;
+    opacity: 0.7;
   }
 </style>
