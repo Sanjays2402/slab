@@ -36,6 +36,7 @@ use slab_lib::pdf::ocr::{ocr, OcrOpts};
 use slab_lib::pdf::outline::{read_outline, write_outline, OutlineNode};
 use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
+use slab_lib::pdf::preflight::{preflight, PreflightOpts, Status as PreflightStatus};
 use slab_lib::pdf::repair::repair as do_repair;
 use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
 use slab_lib::pdf::scan_audit::{audit as scan_audit, PageClassification, Recommendation};
@@ -184,6 +185,12 @@ Lens commands (v0.13.0 — OCR / Vision / Tables / AI):
                                      [--max-tags 5]
   lens auto-tag --all                Auto-tag every library doc.
                                      [--max-tags 5]
+  lens preflight                     Probe every external dep used by
+                                     Lens features (Poppler pdftoppm/
+                                     pdftotext, Tesseract, Ollama) and
+                                     print a readiness report. Exits
+                                     non-zero if any check fails.
+                                     [--json] [--ollama <url>]
 
   help, --help                       This help
   version, --version                 Print version
@@ -673,12 +680,13 @@ fn cmd_lens(args: &[String]) -> Result<(), CliError> {
         "tables" => cmd_lens_tables(rest),
         "ocr-queue" => cmd_lens_ocr_queue(rest),
         "auto-tag" => cmd_lens_auto_tag(rest),
+        "preflight" => cmd_lens_preflight(rest),
         "" => Err(CliError::Usage(
-            "lens needs a subcommand: audit | tables | ocr-queue | auto-tag".into(),
+            "lens needs a subcommand: audit | tables | ocr-queue | auto-tag | preflight".into(),
         )),
         other => Err(CliError::Usage(format!(
             "unknown lens subcommand: {other}\n\
-             try: audit | tables | ocr-queue | auto-tag"
+             try: audit | tables | ocr-queue | auto-tag | preflight"
         ))),
     }
 }
@@ -969,6 +977,54 @@ fn cmd_lens_auto_tag(args: &[String]) -> Result<(), CliError> {
         return Err(CliError::Op(PdfError::Other(
             "all auto-tag jobs failed".into(),
         )));
+    }
+    Ok(())
+}
+
+fn cmd_lens_preflight(args: &[String]) -> Result<(), CliError> {
+    // Flags:
+    //   --json           emit JSON instead of human-readable
+    //   --ollama <url>   override the ollama URL (default
+    //                    http://localhost:11434 — pass empty to skip)
+    let want_json = args.iter().any(|a| a == "--json");
+    let mut opts = PreflightOpts::default();
+    if let Some(pos) = args.iter().position(|a| a == "--ollama") {
+        let val = args
+            .get(pos + 1)
+            .ok_or_else(|| CliError::Usage("--ollama needs a value".into()))?;
+        opts.ollama_url = if val.is_empty() {
+            None
+        } else {
+            Some(val.clone())
+        };
+    }
+    let report = preflight(&opts);
+    if want_json {
+        let s = serde_json::to_string_pretty(&report)
+            .map_err(|e| CliError::Op(PdfError::Other(format!("serialize report: {e}"))))?;
+        println!("{s}");
+    } else {
+        println!("Slab Lens dependency preflight\n");
+        for c in &report.checks {
+            let (icon, body) = match &c.status {
+                PreflightStatus::Ok { detail } => ("✓", detail.as_str()),
+                PreflightStatus::Wrong { detail } => ("✗", detail.as_str()),
+                PreflightStatus::Missing { hint } => ("·", hint.as_str()),
+            };
+            println!("  {icon} {label}", label = c.label);
+            println!("    features: {f}", f = c.features);
+            println!("    {body}");
+            println!();
+        }
+        println!("{} / {} checks OK", report.ok, report.total);
+    }
+    if !report.all_ok() {
+        // Non-zero exit so this is scriptable.
+        return Err(CliError::Op(PdfError::Other(format!(
+            "{} / {} preflight checks failed",
+            report.total - report.ok,
+            report.total
+        ))));
     }
     Ok(())
 }

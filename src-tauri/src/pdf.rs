@@ -29,6 +29,7 @@ pub mod page_numbers;
 pub mod pages;
 pub mod pages_build;
 pub mod polyglot;
+pub mod preflight;
 pub mod redact;
 pub mod repair;
 pub mod sanitize;
