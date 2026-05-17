@@ -23,6 +23,7 @@
   import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
   import type { SlidePage } from "$lib/slides";
   import { onDestroy, onMount } from "svelte";
+  import PresenterAnnotations from "./PresenterAnnotations.svelte";
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -44,6 +45,48 @@
   let nextCanvas = $state<HTMLCanvasElement | null>(null);
   let mainRenderTask: { cancel(): void } | null = null;
   let nextRenderTask: { cancel(): void } | null = null;
+
+  // Annotation overlay (Slice 3) — ref via bind:this
+  type AnnotationsApi = {
+    setTool: (t: "none" | "laser" | "pen" | "highlighter") => void;
+    eraseCurrent: () => void;
+    eraseAll: () => void;
+    toggleBlackout: () => void;
+    toggleWhiteout: () => void;
+    isBlackout: () => boolean;
+    isWhiteout: () => boolean;
+    togglePicker: () => void;
+    closePicker: () => void;
+    isPickerOpen: () => boolean;
+    currentTool: () => "none" | "laser" | "pen" | "highlighter";
+  };
+  let annotations = $state<AnnotationsApi | null>(null);
+  let toolLabel = $state<"none" | "laser" | "pen" | "highlighter">("none");
+  let blackoutOn = $state(false);
+  let whiteoutOn = $state(false);
+  let pickerOn = $state(false);
+
+  function pickTool(t: "none" | "laser" | "pen" | "highlighter") {
+    annotations?.setTool(t);
+    toolLabel = t;
+  }
+  function eraseCurrent() {
+    annotations?.eraseCurrent();
+  }
+  function toggleBlackout() {
+    annotations?.toggleBlackout();
+    blackoutOn = annotations?.isBlackout() ?? false;
+    whiteoutOn = annotations?.isWhiteout() ?? false;
+  }
+  function toggleWhiteout() {
+    annotations?.toggleWhiteout();
+    blackoutOn = annotations?.isBlackout() ?? false;
+    whiteoutOn = annotations?.isWhiteout() ?? false;
+  }
+  function togglePicker() {
+    annotations?.togglePicker();
+    pickerOn = annotations?.isPickerOpen() ?? false;
+  }
 
   // Timer
   let timerMs = $state(0);
@@ -185,6 +228,22 @@
 
   function onKey(e: KeyboardEvent) {
     if (e.key === "Escape") {
+      if (annotations?.isPickerOpen()) {
+        annotations.closePicker();
+        pickerOn = false;
+        return;
+      }
+      if (annotations?.isBlackout() || annotations?.isWhiteout()) {
+        if (annotations.isBlackout()) annotations.toggleBlackout();
+        if (annotations.isWhiteout()) annotations.toggleWhiteout();
+        blackoutOn = false;
+        whiteoutOn = false;
+        return;
+      }
+      if (toolLabel !== "none") {
+        pickTool("none");
+        return;
+      }
       onClose();
       return;
     }
@@ -216,6 +275,47 @@
     if (e.key === "r" || e.key === "R") {
       e.preventDefault();
       resetTimer();
+      return;
+    }
+    // Annotation shortcuts (Slice 3)
+    if (e.key === "l" || e.key === "L") {
+      e.preventDefault();
+      pickTool(toolLabel === "laser" ? "none" : "laser");
+      return;
+    }
+    if (e.key === "p" || e.key === "P") {
+      e.preventDefault();
+      pickTool(toolLabel === "pen" ? "none" : "pen");
+      return;
+    }
+    if (e.key === "h" || e.key === "H") {
+      e.preventDefault();
+      pickTool(toolLabel === "highlighter" ? "none" : "highlighter");
+      return;
+    }
+    if (e.key === "n" || e.key === "N") {
+      e.preventDefault();
+      pickTool("none");
+      return;
+    }
+    if (e.key === "x" || e.key === "X") {
+      e.preventDefault();
+      eraseCurrent();
+      return;
+    }
+    if (e.key === "b" || e.key === "B") {
+      e.preventDefault();
+      toggleBlackout();
+      return;
+    }
+    if (e.key === "w" || e.key === "W") {
+      e.preventDefault();
+      toggleWhiteout();
+      return;
+    }
+    if (e.key === "g" || e.key === "G") {
+      e.preventDefault();
+      togglePicker();
       return;
     }
   }
@@ -262,6 +362,47 @@
       <button class="ghost" onclick={resetTimer} title="Reset timer (R)">Reset</button>
     </div>
     <div class="right">
+      <div class="toolset" role="toolbar" aria-label="Annotation tools">
+        <button
+          class="ghost tool"
+          class:active={toolLabel === "laser"}
+          onclick={() => pickTool(toolLabel === "laser" ? "none" : "laser")}
+          title="Laser pointer (L)">⦿</button
+        >
+        <button
+          class="ghost tool"
+          class:active={toolLabel === "pen"}
+          onclick={() => pickTool(toolLabel === "pen" ? "none" : "pen")}
+          title="Pen (P)">✎</button
+        >
+        <button
+          class="ghost tool"
+          class:active={toolLabel === "highlighter"}
+          onclick={() => pickTool(toolLabel === "highlighter" ? "none" : "highlighter")}
+          title="Highlighter (H)">▮</button
+        >
+        <button class="ghost tool" onclick={eraseCurrent} title="Erase ink on this slide (X)"
+          >⌫</button
+        >
+        <button
+          class="ghost tool"
+          class:active={blackoutOn}
+          onclick={toggleBlackout}
+          title="Blackout (B)">◼</button
+        >
+        <button
+          class="ghost tool"
+          class:active={whiteoutOn}
+          onclick={toggleWhiteout}
+          title="Whiteout (W)">◻</button
+        >
+        <button
+          class="ghost tool"
+          class:active={pickerOn}
+          onclick={togglePicker}
+          title="Jump to slide (G)">▦</button
+        >
+      </div>
       <button class="ghost" onclick={prev} disabled={current <= 1} title="Prev (←)">‹</button>
       <span class="pos">{current} / {pageCount || pages.length}</span>
       <button
@@ -282,7 +423,18 @@
   {:else}
     <div class="stage">
       <section class="main">
-        <canvas bind:this={mainCanvas}></canvas>
+        <div class="slide-wrap">
+          <canvas bind:this={mainCanvas}></canvas>
+          <PresenterAnnotations
+            bind:this={annotations}
+            currentPage={current}
+            pageCount={pageCount || pages.length}
+            onJumpTo={(n: number) => {
+              goTo(n);
+              pickerOn = false;
+            }}
+          />
+        </div>
       </section>
 
       <aside class="side">
@@ -311,9 +463,10 @@
       <span>← prev</span>
       <span>→ / space / PgDn next</span>
       <span>Home / End jump</span>
-      <span>T toggle timer</span>
-      <span>R reset timer</span>
-      <span>Esc exit</span>
+      <span>T timer · R reset</span>
+      <span>L laser · P pen · H highlighter · N none</span>
+      <span>X erase slide · B blackout · W whiteout</span>
+      <span>G grid · Esc exit</span>
     </footer>
   {/if}
 </div>
@@ -408,6 +561,38 @@
     max-height: 100%;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
     border-radius: 6px;
+  }
+  .slide-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+  .toolset {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    background: #1a1d24;
+    border: 1px solid #2a2f37;
+    border-radius: 8px;
+    margin-right: 8px;
+  }
+  .tool {
+    border: none;
+    background: transparent;
+    color: #c9d0db;
+    font-size: 14px;
+    padding: 4px 8px;
+    min-width: 28px;
+  }
+  .tool:hover {
+    background: #20242c;
+    color: #fff;
+  }
+  .tool.active {
+    background: rgba(74, 222, 128, 0.12);
+    color: #4ade80;
+    border: 1px solid rgba(74, 222, 128, 0.35);
   }
   .side {
     background: #0f1115;
