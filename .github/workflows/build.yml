@@ -22,7 +22,7 @@ jobs:
           - { name: "windows-x64", runner: "windows-latest" }
     runs-on: ${{ matrix.platform.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux deps
         if: matrix.platform.runner == 'ubuntu-24.04'
@@ -68,7 +68,7 @@ jobs:
           - { name: "windows-x64", runner: "windows-latest", target: "x86_64-pc-windows-msvc" }
     runs-on: ${{ matrix.platform.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Linux deps
         if: matrix.platform.runner == 'ubuntu-24.04'
