@@ -246,3 +246,66 @@ export async function ocrQueueRunAll(
   );
   return unwrap(res);
 }
+
+// ---------- Auto-tag (Lens Slice 6) ----------
+
+/**
+ * Mirror of `ai::auto_tag::AutoTagOpts`. Knobs forwarded to the auto-tag
+ * commands. All fields are optional; backend uses sensible defaults
+ * (`max_tags = 5`, `max_context_chars = 6_000`).
+ */
+export interface AutoTagOpts {
+  /** Hard cap on tags returned. Backend clamps to 1..=10. Default 5. */
+  max_tags?: number;
+  /** Max characters of doc text included in the prompt. Default 6_000. */
+  max_context_chars?: number;
+}
+
+/**
+ * Per-document result from auto-tag. Resolves even on failure — the
+ * failure surface is `result.error`, not a thrown Error.
+ *
+ * `tags_assigned` is the FINAL tag set on the doc after the run —
+ * existing user-set tags are preserved (additive union, never
+ * replaces). `tag_ids` parallels `tags_assigned`.
+ */
+export interface AutoTagRunResult {
+  doc_id: number;
+  tags_assigned: string[];
+  tag_ids: number[];
+  error: string | null;
+}
+
+/**
+ * Suggest and apply tags to a single library document. Reads the doc's
+ * text, asks the configured Beacon provider for 3–5 topical tags, and
+ * unions them with any tags the user already set by hand. Never removes
+ * user-added tags. Resolves with the final tag set (or `error` set).
+ */
+export async function autoTagRunOne(
+  docId: number,
+  opts?: AutoTagOpts | null,
+): Promise<AutoTagRunResult> {
+  const res = await invoke<CmdResult<AutoTagRunResult>>(
+    "slab_library_auto_tag_one",
+    { docId, opts: opts ?? null },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Run auto-tag across many docs sequentially. Per-doc failures collapse
+ * into `result.error` on each entry and do NOT abort the batch.
+ *
+ * Only rejects on backend wiring errors (e.g. missing provider config).
+ */
+export async function autoTagRunMany(
+  docIds: number[],
+  opts?: AutoTagOpts | null,
+): Promise<AutoTagRunResult[]> {
+  const res = await invoke<CmdResult<AutoTagRunResult[]>>(
+    "slab_library_auto_tag_many",
+    { docIds, opts: opts ?? null },
+  );
+  return unwrap(res);
+}

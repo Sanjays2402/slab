@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod pdf;
 
+use ai::auto_tag::AutoTagOpts;
 use ai::chat::{
     beacon_chat_from_path as do_beacon_chat, BeaconChatReply, DEFAULT_MAX_CONTEXT_CHARS,
 };
@@ -44,10 +45,12 @@ use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::insert::{insert as do_insert, InsertOpts};
 use pdf::library::{
+    auto_tag_run_many as do_auto_tag_run_many, auto_tag_run_one as do_auto_tag_run_one,
     default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
     ocr_queue_run_all as do_ocr_queue_run_all, ocr_queue_run_one as do_ocr_queue_run_one,
-    query_documents as do_query_documents, scan_folder as do_scan_folder, DocumentRecord,
-    FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult, ScanReport, TagRecord,
+    query_documents as do_query_documents, scan_folder as do_scan_folder, AutoTagRunResult,
+    DocumentRecord, FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult,
+    ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
@@ -1156,6 +1159,82 @@ fn slab_library_ocr_queue_run_all(
     result.into()
 }
 
+// ---------- Library auto-tag (Lens Slice 6) ----------
+
+/// Run auto-tag on one library document. Extracts page text, asks the
+/// configured Beacon provider for 3–5 topical tags, materialises them as
+/// `library_tags` rows and attaches them to the doc — unioning with any
+/// tags the user previously set by hand. Returns `AutoTagRunResult` whose
+/// `error: Some(...)` field signals per-doc failure (the command itself
+/// only Errs on backend wiring problems like a missing provider config).
+#[tauri::command]
+async fn slab_library_auto_tag_one(
+    doc_id: i64,
+    opts: Option<AutoTagOpts>,
+) -> CmdResult<AutoTagRunResult> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let mut db = match open_library_db() {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let res = do_auto_tag_run_one(&mut db, provider, doc_id, &opts.unwrap_or_default()).await;
+    CmdResult::Ok { value: res }
+}
+
+/// Run auto-tag on many library documents sequentially. Continues past
+/// per-doc failures — inspect each result's `error` field.
+#[tauri::command]
+async fn slab_library_auto_tag_many(
+    doc_ids: Vec<i64>,
+    opts: Option<AutoTagOpts>,
+) -> CmdResult<Vec<AutoTagRunResult>> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let mut db = match open_library_db() {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let res = do_auto_tag_run_many(&mut db, provider, &doc_ids, &opts.unwrap_or_default()).await;
+    CmdResult::Ok { value: res }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1239,6 +1318,8 @@ pub fn run() {
             slab_library_ocr_queue_list_pending,
             slab_library_ocr_queue_run_one,
             slab_library_ocr_queue_run_all,
+            slab_library_auto_tag_one,
+            slab_library_auto_tag_many,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
