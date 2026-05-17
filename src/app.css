@@ -1,7 +1,14 @@
-/* Slab theme — dark, sharp, Raycast/Linear aesthetic. */
+/* Slab theme — dark/light + accent + density. v1.0.0 "Glass".
+ *
+ * Palette + density tokens live inside [data-theme] / [data-density]
+ * attribute selectors on <html>. The boot-time script in
+ * `src/lib/theme.ts` flips these as soon as the page mounts, so the
+ * default-no-attribute path (this :root block) still gives us the
+ * historical dark look — no flash for v0.x users upgrading.
+ */
 
 :root {
-  /* color palette */
+  /* color palette — dark default (matches v0.x exactly) */
   --bg: #0e0e10;
   --bg-2: #16161a;
   --bg-3: #1d1d22;
@@ -12,6 +19,7 @@
   --text-3: #6e6e7a;
   --accent: #ff7a59;    /* Slab orange — warm, not corporate */
   --accent-2: #ff9d7e;
+  --accent-ink: #1a0a02; /* readable text on a primary button */
   --danger: #ff5a5a;
   --success: #5ee2a5;
 
@@ -30,9 +38,14 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
 
-  /* sizes */
+  /* sizes (default = comfortable density) */
   --sidebar-w: 220px;
   --header-h: 48px;
+  --pad-y: 8px;
+  --pad-y-tight: 6px;
+  --gap-md: 16px;
+  --gap-sm: 8px;
+  --nav-item-pad-y: 8px;
 
   color: var(--text);
   background: var(--bg);
@@ -43,6 +56,80 @@
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
+
+/* Explicit dark theme (auto-resolved at boot for auto mode + dark OS,
+ * or set directly when the user picks Dark in settings). Identical to
+ * the :root defaults so we don't repaint when the attribute lands. */
+:root[data-theme="dark"] {
+  --bg: #0e0e10;
+  --bg-2: #16161a;
+  --bg-3: #1d1d22;
+  --border: #2a2a31;
+  --border-strong: #3a3a44;
+  --text: #e8e8ee;
+  --text-2: #a4a4b0;
+  --text-3: #6e6e7a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+/* Light theme. Mirror of the dark palette tuned for readability on a
+ * white background — Linear-ish chroma, soft borders, near-black text.
+ */
+:root[data-theme="light"] {
+  --bg: #fafafa;
+  --bg-2: #ffffff;
+  --bg-3: #f1f1f3;
+  --border: #e3e3e8;
+  --border-strong: #c9c9d2;
+  --text: #16161a;
+  --text-2: #4d4d57;
+  --text-3: #828292;
+  --shadow-sm: 0 1px 2px rgba(15, 15, 20, 0.08);
+  --shadow-md: 0 4px 16px rgba(15, 15, 20, 0.12);
+}
+
+/* Accent overrides — applied per [data-accent]. The default is orange
+ * (set in :root above), so no rule needed for that case. */
+:root[data-accent="orange"] {
+  --accent: #ff7a59;
+  --accent-2: #ff9d7e;
+  --accent-ink: #1a0a02;
+}
+:root[data-accent="blue"] {
+  --accent: #4f8cff;
+  --accent-2: #79a8ff;
+  --accent-ink: #02132e;
+}
+:root[data-accent="purple"] {
+  --accent: #a780ff;
+  --accent-2: #bea0ff;
+  --accent-ink: #1a0f30;
+}
+:root[data-accent="green"] {
+  --accent: #3fc88c;
+  --accent-2: #6cd9a8;
+  --accent-ink: #042217;
+}
+:root[data-accent="pink"] {
+  --accent: #ff6aa3;
+  --accent-2: #ff8db8;
+  --accent-ink: #30041a;
+}
+
+/* Density overrides. Compact shrinks vertical breathing room
+ * throughout the shell without touching content layout. */
+:root[data-density="compact"] {
+  --header-h: 40px;
+  --pad-y: 6px;
+  --pad-y-tight: 4px;
+  --gap-md: 12px;
+  --gap-sm: 6px;
+  --nav-item-pad-y: 5px;
+  font-size: 13px;
+}
+
+
 
 * {
   box-sizing: border-box;
@@ -79,7 +166,7 @@ button:active {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a0a02;
+  color: var(--accent-ink);
   font-weight: 600;
 }
 button.primary:hover {
