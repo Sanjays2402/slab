@@ -35,6 +35,7 @@ pub mod redact;
 pub mod repair;
 pub mod sanitize;
 pub mod scan_audit;
+pub mod slides;
 pub mod split;
 pub mod split_pattern;
 pub mod table_extract;

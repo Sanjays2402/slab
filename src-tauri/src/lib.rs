@@ -74,6 +74,7 @@ use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::scan_audit::{audit as do_scan_audit, ScanAuditReport};
+use pdf::slides::{analyze as do_slides_analyze, SlideReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
 use pdf::split_pattern::{
     find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
@@ -234,6 +235,11 @@ fn slab_diff_export_report(old: PathBuf, new: PathBuf, output: PathBuf) -> CmdRe
         Ok(d) => do_diff_export_report(&d, &output).into(),
         Err(e) => Err(e).into(),
     }
+}
+
+#[tauri::command]
+fn slab_slides_analyze(input: PathBuf) -> CmdResult<SlideReport> {
+    do_slides_analyze(&input).into()
 }
 
 #[tauri::command]
@@ -1316,6 +1322,7 @@ pub fn run() {
             slab_replace_text_span,
             slab_diff_pdfs,
             slab_diff_export_report,
+            slab_slides_analyze,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,
