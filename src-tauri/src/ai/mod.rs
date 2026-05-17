@@ -14,7 +14,9 @@
 // returns a fully-buffered `ChatResponse` so we can unit-test it
 // against `mockito` without futures plumbing.
 
+pub mod config;
 pub mod ollama;
+pub mod openai_compat;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
