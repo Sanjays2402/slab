@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
@@ -337,17 +338,26 @@
     openNewTab(detail.path);
   }
 
+  // Cabinet v1.1.0: detached LibraryPanel windows can't open Reader tabs
+  // locally (no tabstrip in those windows), so they call the
+  // `slab_request_open_in_main` Tauri command, which emits this event
+  // *only* on the main window. We treat it just like a drag-drop or a
+  // local library click — spawn a fresh Reader tab.
+  let unlistenOpenDoc: UnlistenFn | null = null;
+
   onMount(() => {
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
 
     // Cabinet: detect detached mode from URL params.
+    let isDetached = false;
     try {
       const params = new URLSearchParams(window.location.search);
       const p = params.get("panel");
       const w = params.get("windowId");
       if (p && w) {
         detached = true;
+        isDetached = true;
         detachedPanel = p;
         detachedWindowId = w;
         detachedDoc = params.get("doc");
@@ -356,10 +366,32 @@
     } catch {
       // Non-browser env (SSR build) — leave detached=false.
     }
+
+    // Only the *main* window subscribes to slab://open-doc. The backend
+    // already targets the emit at the main window, but belt-and-braces:
+    // detached windows skip the subscription entirely.
+    if (!isDetached && isInTauri()) {
+      listen<string>("slab://open-doc", (event) => {
+        const path = event.payload;
+        if (typeof path === "string" && path.length > 0) {
+          openNewTab(path);
+        }
+      })
+        .then((un) => {
+          unlistenOpenDoc = un;
+        })
+        .catch((e) => {
+          console.error("[cabinet] failed to subscribe to slab://open-doc:", e);
+        });
+    }
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onGlobalKey);
     window.removeEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+    if (unlistenOpenDoc) {
+      unlistenOpenDoc();
+      unlistenOpenDoc = null;
+    }
   });
 </script>
 
@@ -377,7 +409,7 @@
     {#if detachedPanel === "beacon"}
       <BeaconChatPanel />
     {:else if detachedPanel === "library"}
-      <LibraryPanel />
+      <LibraryPanel detached={true} />
     {:else if detachedPanel === "search"}
       <BeaconSearchPanel />
     {:else if detachedPanel === "pii"}

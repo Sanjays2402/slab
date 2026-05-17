@@ -20,8 +20,11 @@
   //   - Virtualization (Slice 7-ish): a 5000-card grid will be slow.
   //     We accept that until we have a real workload to optimize against.
 
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { isInTauri } from "$lib/tauri";
   import {
     addFolder,
     addTag,
@@ -49,6 +52,16 @@
   } from "$lib/library";
   import { basename } from "$lib/types";
   import { formatRelTime } from "$lib/recent";
+
+  // ---------- Props (Cabinet v1.1.0) ----------
+  //
+  // When the panel is rendered inside a detached WebviewWindow, the parent
+  // route passes `detached={true}`. In that mode, double-clicking a doc
+  // can't just dispatch a window event — there's no Reader tabstrip in
+  // this window. We forward the path to the *main* window via the
+  // `slab_request_open_in_main` command and let it open the tab.
+  type Props = { detached?: boolean };
+  let { detached = false }: Props = $props();
 
   // ---------- State ----------
 
@@ -118,10 +131,35 @@
 
   // ---------- Lifecycle ----------
 
+  // Cabinet v1.1.0: stay coherent with sibling windows. Backend emits
+  // `slab://library-changed` (no payload) after every mutation in any
+  // window — folder add/remove, scan, tag changes, OCR, auto-tag, doc
+  // delete. We just refetch; the event is a poke, not a patch.
+  let unlistenLibraryChanged: UnlistenFn | null = null;
+
   onMount(async () => {
     await refreshAll();
     initialized = true;
     window.addEventListener("click", onWindowClickForMenu);
+    if (isInTauri()) {
+      try {
+        unlistenLibraryChanged = await listen("slab://library-changed", () => {
+          // Fire-and-forget. If a refetch fails mid-flight (e.g. sqlite
+          // file briefly locked) the next event will resync.
+          void refreshAll();
+        });
+      } catch (e) {
+        console.error("[library] failed to subscribe to library-changed:", e);
+      }
+    }
+  });
+
+  onDestroy(() => {
+    window.removeEventListener("click", onWindowClickForMenu);
+    if (unlistenLibraryChanged) {
+      unlistenLibraryChanged();
+      unlistenLibraryChanged = null;
+    }
   });
 
   function onWindowClickForMenu(_e: MouseEvent) {
@@ -333,10 +371,27 @@
   function openOcrOutput(doc: DocumentRecord) {
     if (!doc.ocr_output_path) return;
     menu = null;
+    requestOpen(doc.ocr_output_path);
+  }
+
+  /** Cabinet v1.1.0 router for "open this doc in Reader".
+   *
+   * Main window → dispatch a local CustomEvent that `+page.svelte` listens
+   * for and turns into a new Reader tab.
+   *
+   * Detached window → forward to the main window via the Tauri
+   * `slab_request_open_in_main` command (which emits `slab://open-doc`
+   * targeted at the `main` window). This keeps the user's main shell as
+   * the canonical multi-tab Reader. */
+  function requestOpen(path: string): void {
+    if (detached && isInTauri()) {
+      void invoke("slab_request_open_in_main", { path }).catch((e) => {
+        console.error("[library] slab_request_open_in_main failed:", e);
+      });
+      return;
+    }
     window.dispatchEvent(
-      new CustomEvent("slab:open-library-doc", {
-        detail: { path: doc.ocr_output_path },
-      }),
+      new CustomEvent("slab:open-library-doc", { detail: { path } }),
     );
   }
 
@@ -510,9 +565,7 @@
 
   function openDocInTab(doc: DocumentRecord) {
     menu = null;
-    window.dispatchEvent(
-      new CustomEvent("slab:open-library-doc", { detail: { path: doc.path } }),
-    );
+    requestOpen(doc.path);
   }
 
   function openMenuFor(e: MouseEvent, doc: DocumentRecord) {
