@@ -7,6 +7,7 @@
 //!
 //! See `.cron-state/research-markitdown.md` for the design rationale.
 
+use crate::pdf::md2pdf::{render as md2pdf_render, Md2PdfOpts};
 use crate::pdf::PdfError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -30,11 +31,67 @@ pub struct PolyglotReport {
 }
 
 pub fn polyglot_to_pdf(
-    _input: &Path,
-    _output: &Path,
-    _opts: PolyglotOpts,
+    input: &Path,
+    output: &Path,
+    opts: PolyglotOpts,
 ) -> Result<PolyglotReport, PdfError> {
-    Err(PdfError::Other("polyglot: not yet implemented".into()))
+    if !input.exists() {
+        return Err(PdfError::InputMissing(input.display().to_string()));
+    }
+    let kind = supported_extension(input).ok_or_else(|| {
+        PdfError::Other(format!(
+            "unsupported polyglot input: {} (try .docx, .xlsx, .pptx, \
+             .html, .epub, .csv, .json, .xml, .rtf, .odt, image, or audio)",
+            input.display()
+        ))
+    })?;
+    require_markitdown()?;
+
+    let out = Command::new("markitdown")
+        .arg(input)
+        .output()
+        .map_err(|e| PdfError::Other(format!("run markitdown: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let trimmed = stderr.trim();
+        return Err(PdfError::Other(format!(
+            "markitdown failed ({}): {}",
+            out.status.code().unwrap_or(-1),
+            if trimmed.is_empty() {
+                "(no stderr)"
+            } else {
+                trimmed
+            }
+        )));
+    }
+    let markdown = String::from_utf8(out.stdout)
+        .map_err(|e| PdfError::Other(format!("markitdown produced non-UTF-8 output: {e}")))?;
+    if markdown.trim().is_empty() {
+        return Err(PdfError::Other(
+            "markitdown returned empty document — input may be unreadable".into(),
+        ));
+    }
+    let markdown_bytes = markdown.len() as u32;
+
+    let page_size = if opts.page_size.is_empty() {
+        "A4".to_string()
+    } else {
+        opts.page_size.clone()
+    };
+    let pages = md2pdf_render(
+        &markdown,
+        output,
+        Md2PdfOpts {
+            markdown: markdown.clone(),
+            page_size,
+        },
+    )?;
+
+    Ok(PolyglotReport {
+        source_kind: kind.to_string(),
+        pages,
+        markdown_bytes,
+    })
 }
 
 /// Verify the `markitdown` CLI is callable; otherwise return a friendly
@@ -43,9 +100,6 @@ pub fn polyglot_to_pdf(
 /// Mirrors `pdf::ocr::require_binary` — we probe `markitdown --help`
 /// rather than a real conversion so the preflight stays fast and side-
 /// effect free.
-// TODO(v0.8.1 Task 4): drop `allow(dead_code)` once `polyglot_to_pdf`
-// calls this helper for real.
-#[allow(dead_code)]
 fn require_markitdown() -> Result<(), PdfError> {
     match Command::new("markitdown").arg("--help").output() {
         Ok(out) if out.status.success() => Ok(()),
@@ -165,5 +219,34 @@ mod tests {
             return;
         }
         require_markitdown().expect("preflight should succeed when binary is installed");
+    }
+
+    /// Missing input file must surface a typed `InputMissing` error,
+    /// not a generic `Other`. Front-end / CLI rely on this enum tag to
+    /// produce a friendlier UX than a string-match.
+    #[test]
+    fn missing_input_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.pdf");
+        let err = polyglot_to_pdf(&dir.path().join("nope.docx"), &out, PolyglotOpts::default())
+            .unwrap_err();
+        match err {
+            PdfError::InputMissing(_) => {}
+            other => panic!("wrong error: {other:?}"),
+        }
+    }
+
+    /// Unknown extensions must be rejected *before* we even try to
+    /// invoke markitdown — that keeps the test cheap (no binary needed)
+    /// and gives the user a clearer error than "markitdown crashed".
+    #[test]
+    fn unsupported_extension_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let bogus = dir.path().join("file.xyz");
+        std::fs::write(&bogus, b"hi").unwrap();
+        let out = dir.path().join("out.pdf");
+        let err = polyglot_to_pdf(&bogus, &out, PolyglotOpts::default()).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("unsupported polyglot input"), "got: {msg}");
     }
 }
