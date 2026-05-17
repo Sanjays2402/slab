@@ -5,11 +5,13 @@
 
 ---
 
-## STATUS: DONE (v0.10.0 Beacon all 10 slices shipped — ready for next-tick MODE A merge to main)
+## STATUS: RELEASE_PENDING — v0.10.0
 
-**Active dev branch:** `feature/v0.10.0-beacon`
+**RELEASE_PENDING: v0.10.0** (merged + tagged + pushed this tick; CI run `25984334503` queued).
 
-**No RELEASE_PENDING.** v0.8.1, v0.9.0, v0.9.1 all live on GitHub Releases with 6 installers each.
+**Active dev branch:** none — next tick should:
+1. MODE B finalize v0.10.0 once CI succeeds (download 6 artifacts, `gh release create`)
+2. Then MODE C start v0.11.0 "Lathe" branch from main (edit mode — spec in `.cron-state/proposals/roadmap-to-v1.0.md` § v0.11.0)
 
 ---
 
@@ -24,8 +26,10 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — DONE (all 10 slices shipped, awaiting MODE A merge)
-- Branch: `feature/v0.10.0-beacon`, tip pushed this tick.
+### v0.10.0 "Beacon" — MERGED 2026-05-17, RELEASE_PENDING
+- Tag `v0.10.0`, merge SHA `f91b374`, CI run `25984334503` queued at merge time.
+- Branch: `feature/v0.10.0-beacon` (merged via `git merge --no-ff` from `main`).
+- Merge resolved 1 conflict in `pnpm-lock.yaml`: took feature-branch lockfile (had `@types/node`) then reran `pnpm update svelte@latest` to re-pick-up main's svelte 5.55.7 security bump. svelte-check still 0 errors after merge.
 - Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
 - **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
 - **Slice 2 DONE 2026-05-16 22:00 PDT** (4 commits): `OpenAiCompatibleProvider` + `BeaconConfig` (TOML) + `make_provider` factory + 4 Tauri config commands. 106→121 lib tests.
@@ -169,3 +173,4 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - 2026-05-16 21:46 (Cake/cron): Beacon Slice 2 (provider abstraction) shipped in 4 commits: plan promoted to `docs/plans/`, `OpenAiCompatibleProvider` + 6 mockito tests, `BeaconConfig` TOML + `make_provider` + 7 tests, 4 Tauri commands wired. 106→121 lib tests. New runtime dep: `toml` 0.8.
 - **2026-05-16 22:45 (Cake/cron): 🚀 TRIPLE-SLICE TICK — Beacon Slices 3+4+5 in one tick.** (a) Slice 3 backend `ai/chat.rs` — page-aware context builder + citation extractor + `beacon_chat()` + 7 tests via in-memory MockProvider + Tauri `slab_beacon_chat` command (commit `cc5a6ea`). (b) Slice 4 frontend `BeaconChatPanel.svelte` — conversation view, citation chips that dispatch goto-page events, sample-prompt grid, friendly-error mapping, Enter-to-send composer; nav entry "✦ Beacon AI" between Reader and Merge (commit `9abc425`). (c) Slice 5 summary — `ai/summary.rs` with Tldr/Short/Long enum + low-temp prompts + 5 tests; Tauri `slab_beacon_summary`; 3 quick-action chips in chat panel that push results as assistant turns (commit `21960ce`). Total: 121→133 lib tests (+12), 1 new module + 1 new component + 2 new Tauri commands. All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check). Pushed to `feature/v0.10.0-beacon`. v0.10.0 is now 50% shipped (5 of 10 slices done).
 - **2026-05-16 23:50 (Cake/cron): 🚀 Beacon Slice 9 — Selection Actions vertical slice in 2 commits.** Backend `ai::selection_action` module (5 actions: Translate/Explain/Define/Rewrite/Summarize, per-action prompts pinned in tests, low temp 0.2, per-action max_tokens 80-500, 8K-char selection cap with user-grade error) + Tauri command `slab_beacon_selection_action` (commit `14b6e7d`, 13 new tests via in-memory MockProvider). Frontend `BeaconSelectionBubble.svelte` (~620 LOC) — floats above the PDF.js text-layer selection on `mouseup`, 5-button action grid + emoji + tooltips, inline Translate target-language picker (15 languages), busy/error/result states with Copy button, friendly-error mapping for Ollama-down + 429, Esc dismiss, mounted inside ReaderPanel as a sibling of pdfjs-container (commit `4825c93`). 173→186 lib tests (+13). All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check 0 errors). v0.10.0 is now 90% shipped (9 of 10 slices). Slice 10 (release prep + version bump + DONE flag for next-tick merge) is the only remaining work.
+- **2026-05-17 00:09 (Cake/cron): 🚀 v0.10.0 "Beacon" MERGED TO MAIN.** MODE A tick: re-ran all 4 quality gates on `feature/v0.10.0-beacon` (fmt, clippy `-D warnings`, 186 lib tests, svelte-check 0 errors) — all green. Pulled main (it had moved with a dependabot svelte 5.55.5→5.55.7 security bump in `pnpm-lock.yaml`). `git merge --no-ff` hit a conflict in the lockfile — resolved by taking feature-branch lockfile then `pnpm update svelte@latest` to re-pick-up the security bump; svelte-check still 0 errors. Committed with descriptive merge message at merge SHA `f91b374`. Tagged `v0.10.0`. Pushed both `main` and the tag via gh-token credential helper. CI run `25984335488` + `25984335509` (dependabot) + `25984334503` (build) all queued. STATE.md now `RELEASE_PENDING: v0.10.0` for next tick's MODE B finalize.
