@@ -5,17 +5,13 @@
 
 ---
 
-## STATUS: RELEASE_PENDING — v0.11.0 Lathe merged + tagged, CI building installers
+## STATUS: DEVELOPING — v0.12.0 "Atlas" Slice 1 in progress on `feature/v0.12.0-atlas`
 
-**v0.10.0 RELEASED** 2026-05-17 08:03 UTC — all 6 installers on GH Releases, latest.
-**v0.11.0 MERGED + TAGGED** 2026-05-17 03:05 PDT — merge SHA `76cd7ed`, tag `v0.11.0`, pushed.
+**v0.11.0 RELEASED** 2026-05-17 10:21 UTC — all 6 installers on GH Releases, marked latest. Release URL: https://github.com/Sanjays2402/slab/releases/tag/v0.11.0
 
-**RELEASE_PENDING: v0.11.0** — merge SHA `76cd7ed`, tag `v0.11.0`, CI run `25987817724` (in_progress).
-Quality gates on main passed before push: fmt + clippy + 235 lib tests + svelte-check 0 errors.
-
-**Next tick:** MODE B — poll CI run `25987817724`; if green download artifacts and `gh release create v0.11.0` with the 6 installers. If failed, write `RELEASE_FAILED:` and decide on revert vs follow-up fix branch.
-
-Then MODE C: pivot to **v0.12.0 "Atlas"** (Library Mode). Spec at `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. First slice will be library index + watch folder backend.
+**Active branch:** `feature/v0.12.0-atlas`
+**Active plan:** `docs/plans/2026-05-17-v0.12.0-atlas.md`
+**Current slice:** Slice 1 — Library Backend Foundation (registry + scanner + query + Tauri commands). Pure backend; UI lands in Slice 3.
 
 **Lathe slices (8 / 8 done):**
 - ✅ Slice 1: `duplicate_pages` kernel + Tauri (commit `e95c0ef`)
@@ -50,11 +46,11 @@ Then MODE C: pivot to **v0.12.0 "Atlas"** (Library Mode). Spec at `.cron-state/p
 ### v0.10.0 "Beacon" — RELEASED 2026-05-17
 - Tag `v0.10.0`, merge SHA `f91b374`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.10.0)
 
-### v0.11.0 "Lathe" — DONE 2026-05-17, awaiting merge
-- 8 slices shipped on `feature/v0.11.0-lathe`. All quality gates green. Release notes at `docs/release-notes/v0.11.0.md`.
+### v0.11.0 "Lathe" — RELEASED 2026-05-17
+- Tag `v0.11.0`, merge SHA `76cd7ed`, CI run `25987817724`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.11.0)
 - Headline: in-place PDF text editing (ASCII / Type1+TrueType). Backend `pdf::edit_text` + frontend `EditTextPanel`.
 
-### v0.12.0 "Atlas" — Library Mode (PLANNED)
+### v0.12.0 "Atlas" — Library Mode (IN PROGRESS)
 Cross-doc Beacon chat across indexed library, tags, collections, watch folders.
 Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. 7 slices.
 
