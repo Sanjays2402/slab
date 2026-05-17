@@ -174,6 +174,26 @@ slab autoredact input.pdf output.pdf --preset email,ssn
 slab info report.pdf
 ```
 
+### Polyglot input — *new in v0.8.1*
+
+Slab eats more than PDFs. Point it at:
+
+- **Office docs:** `.docx` `.xlsx` `.pptx` `.xls`
+- **Web & structured text:** `.html` `.htm` `.csv` `.json` `.xml` `.rtf` `.odt`
+- **Books:** `.epub`
+- **Images:** `.png` `.jpg` `.gif` `.bmp` `.tif` `.webp` (EXIF + OCR text)
+- **Audio:** `.wav` `.mp3` `.m4a` `.flac` `.ogg` (EXIF + transcription)
+
+Under the hood Slab shells out to Microsoft's [markitdown](https://github.com/microsoft/markitdown) (MIT) to extract Markdown, then renders to PDF through the same `md2pdf` engine from v0.7.0. Zero new Rust dependencies; PDF → PDF round-tripping is deliberately refused (lossy).
+
+**Requires:** `pipx install 'markitdown[all]'` (one-time, optional — Slab still works without it for PDF input).
+
+```bash
+slab polyglot report.docx -o report.pdf
+slab polyglot data.xlsx -o data.pdf --page-size Letter
+slab polyglot book.epub -o book.pdf
+```
+
 ## Install
 
 Pre‑built installers ship with each [release](https://github.com/Sanjays2402/slab/releases): `.dmg` (macOS Apple Silicon + Intel), `.msi` + `.exe` (Windows), `.deb` + `.AppImage` + `.rpm` (Linux).
