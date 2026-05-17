@@ -3,6 +3,26 @@
   import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
   import { setUiConfig, ACCENT_COLORS, type ThemeMode, type Density } from "$lib/theme";
   import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
+  import { openPanelWindow } from "$lib/windows";
+  import { isInTauri } from "$lib/tauri";
+
+  // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
+  // native window. Must stay in sync with `DETACHABLE_PANELS` in
+  // `+page.svelte`. Duplicated as a typed string-literal union here so the
+  // palette doesn't have to import that route module at runtime.
+  const DETACHABLE_PANELS = new Set<string>([
+    "reader",
+    "library",
+    "beacon",
+    "search",
+    "pii",
+    "pages",
+    "pages-list",
+    "diff",
+    "slides",
+    "tables",
+    "markdown",
+  ]);
 
   type Action = {
     id: string;
@@ -73,6 +93,26 @@
         run: () => onSelectPanel(p.id),
         keywords: `${p.label} panel ${p.id}`,
       });
+    }
+    // Cabinet Slice 5: "Open <panel> in new window" — only inside Tauri
+    // (no detached windows in vanilla browser dev), and only for panels
+    // that have a real detached experience.
+    if (isInTauri()) {
+      for (const p of panels) {
+        if (!p.ready) continue;
+        if (!DETACHABLE_PANELS.has(p.id)) continue;
+        out.push({
+          id: `panel-window:${p.id}`,
+          title: `Open ${p.label} in new window`,
+          subtitle: "Detach into its own native window",
+          icon: "⤢",
+          group: "Windows",
+          run: () => {
+            void openPanelWindow(p.id);
+          },
+          keywords: `${p.label} ${p.id} detach window new open float separate panel cabinet`,
+        });
+      }
     }
     for (const r of recents) {
       out.push({
