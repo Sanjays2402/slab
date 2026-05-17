@@ -5,11 +5,11 @@
 
 ---
 
-## STATUS: v1.0.0 "Glass" IN PROGRESS — 5 commits on `feature/v1.0.0-glass`
+## STATUS: v1.0.0 "Glass" IN PROGRESS — 8 commits on `feature/v1.0.0-glass`
 
 **v0.15.0 Theater RELEASED** 2026-05-17 ~10:35 PT — https://github.com/Sanjays2402/slab/releases/tag/v0.15.0 (Theater 🎭) — 6 assets up, isLatest=true.
 
-**Active branch**: `feature/v1.0.0-glass` (5 commits ahead of main, pushed to origin)
+**Active branch**: `feature/v1.0.0-glass` (8 commits ahead of main, pushed to origin)
 
 **Glass slices shipped so far:**
 - ✅ **Slice 1: Settings UX** — backend `UiConfig` extension + `ui` section
@@ -23,17 +23,38 @@
 - ✅ **Slice 3: Global toast notification system** — `$lib/notify` API
   + ToastStack.svelte mounted in +layout + SettingsPanel wired.
   Commit `9b0f638`.
+- ✅ **Slice 4: Recent file pinning + remove** (commit `381a33c`) —
+  $lib/recent gained `pinned` flag + `pinRecent` + `removeRecent`,
+  LIMIT 8→12, capRecents pinned-immune. ReaderPanel grew hover-revealed
+  📌/✕ overlays on every recent card + sticky badge on pinned ones.
+  `clearRecent()` now preserves pins ("clear unpinned" semantics).
+- ✅ **Slice 5: Command Palette MRU** (commit `a138bf6`) — new
+  $lib/cmdMru module (localStorage list of action IDs). Empty-query
+  view: top 6 form a synthetic "Recently used" group. Search: ties on
+  fuzzy score break in favour of MRU rank. Adds "Clear command history"
+  escape hatch (which skips its own MRU recording).
+- ✅ **Slice 6: First-launch Onboarding tour** (commit `4399180`) —
+  5-step welcome walkthrough (Slab → Open → Beacon → Palette →
+  Settings). Dismissal flips `ui.onboarded = true` in
+  ~/.slab/config.toml so it never re-appears. Re-triggerable from
+  Command Palette ("Show onboarding tour") + Settings → Onboarding
+  row → "Show tour" button. Backend: `UiConfig.onboarded` field +
+  6 ai::config tests updated/added (legacy upgrade path covered).
+  Frontend: OnboardingTour.svelte + +layout.svelte mount +
+  slab:show-onboarding window event bus.
 
-**Quality gates green on `feature/v1.0.0-glass` HEAD `9b0f638`:**
+**Quality gates green on `feature/v1.0.0-glass` HEAD `4399180`:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (410 passed, was 404 — +6 from Slice 1 ai::config tests)
+- `cargo test --lib` ✓ (412 passed, was 410 — +2 from Slice 6 ai::config tests)
 - `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
 
 **Next tick (still MODE C):**
-- Slice 4 candidate: Onboarding tour (first-launch walkthrough),
-  Recent files pinning/filtering, OR Command Palette history
-  (LRU floats to top).
+- Slice 7 candidate: Customizable shortcuts (remap any action key
+  binding in Settings, persist to `~/.slab/config.toml [keymap]`),
+  OR Floating panels (detach Beacon / Library to separate Tauri
+  windows — bigger lift, ~2 ticks), OR Performance pass (page-render
+  worker pool + 100-page open <500ms target).
 - After 2-3 more polish slices, v1.0.0 release prep slice (version
   bump 0.15.0 → 1.0.0 across Cargo.toml/tauri.conf.json/package.json
   + sidebar pill + comprehensive release notes at
