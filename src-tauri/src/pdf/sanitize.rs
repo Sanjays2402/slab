@@ -32,7 +32,7 @@ use lopdf::{Document, Object, ObjectId};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SanitizeOpts {
     /// If true, preserve `/URI` link actions. Default `false` — by
     /// default `slab sanitize` removes external URLs along with JS &
@@ -40,12 +40,6 @@ pub struct SanitizeOpts {
     /// Pass `--keep-links` from the CLI to flip this on.
     #[serde(default)]
     pub keep_links: bool,
-}
-
-impl Default for SanitizeOpts {
-    fn default() -> Self {
-        Self { keep_links: false }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
