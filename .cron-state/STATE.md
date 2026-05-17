@@ -9,7 +9,7 @@
 **PR_READY:** false
 **BRANCH:** `feature/v0.8.1-polyglot`
 **BASE:** `main` @ `04876a8` (v0.8.0 release merge)
-**LAST COMMIT:** `5b7d9b9` — feat(polyglot): require_markitdown preflight + markitdown_available test gate
+**LAST COMMIT:** `37b9356` — feat(polyglot): wire polyglot_to_pdf to markitdown + md2pdf
 
 ## GOAL
 Ship **v0.8.1 "Polyglot"** — a `markitdown` bridge that lets Slab accept .docx / .xlsx / .pptx / .html / .epub / .csv / .json / .xml / images / audio as input and convert to PDF via the existing `md2pdf` engine.
@@ -36,7 +36,7 @@ Research note: `.cron-state/research-markitdown.md`.
 - [x] **Task 1**: Scaffold `pdf::polyglot` module + register in `pdf.rs` (commit `708531d`)
 - [x] **Task 2**: Extension allow-list `supported_extension` (commit `c66167c`)
 - [x] **Task 3**: `require_markitdown()` preflight + `markitdown_available()` test gate (commit `5b7d9b9`)
-- [ ] Task 4: Wire `polyglot_to_pdf` to subprocess + md2pdf
+- [x] **Task 4**: Wire `polyglot_to_pdf` to subprocess + md2pdf (commit `37b9356`)
 - [ ] Task 5: Live integration test for .html (gated)
 - [ ] Task 6: Live integration test for .csv (gated)
 - [ ] Task 7: Wire `slab polyglot` into the CLI
@@ -50,17 +50,21 @@ Research note: `.cron-state/research-markitdown.md`.
 - [ ] Task 15: Flip STATE.md to `STATUS: DONE` / `PR_READY: true`
 
 ## NEXT UP
-**Task 4: Wire `polyglot_to_pdf` to the real pipeline.**
-- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 4 (line 264 onwards).
-- Replace the stub `polyglot_to_pdf` body with: existence check → `supported_extension` dispatch → `require_markitdown()` → `Command::new("markitdown").arg(input).output()` → stderr / non-UTF-8 / empty-stdout error mapping → `crate::pdf::md2pdf::render` with `Md2PdfOpts { page_size }`.
-- Side effect: this call uses `require_markitdown()` for real, so **delete the `#[allow(dead_code)]` + TODO comment** in the same commit.
-- Also delete the `_input` / `_output` / `_opts` underscore prefixes on the function signature once they're used.
-- Read `src-tauri/src/pdf/md2pdf.rs` first to confirm the `render()` signature + `Md2PdfOpts` field set before writing the call.
-- Add a test that triggers the `unsupported polyglot input` branch via a `.xyz` path that exists (use `tempfile::NamedTempFile` with suffix `.xyz`) so we don't need markitdown installed.
+**Task 5: Live integration test for `.html` input (gated on `markitdown_available`).**
+- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 5.
+- Add `html_round_trip_produces_pdf` test inside `mod tests` that:
+  1. Skips with `eprintln!("skip: markitdown not on PATH")` when the binary
+     is absent (mirrors `ocr::tesseract_available` pattern).
+  2. Writes a tiny `hello.html` to a `tempfile::tempdir`.
+  3. Calls `polyglot_to_pdf(&html, &out, PolyglotOpts::default())`.
+  4. Asserts `report.source_kind == "html"`, `report.pages >= 1`,
+     `report.markdown_bytes > 0`, file exists, starts with `%PDF-`.
 - Quality gates: fmt + clippy + test --lib must pass.
-- Commit message: `feat(polyglot): wire polyglot_to_pdf to markitdown + md2pdf`.
-
-Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 4.
+- Expected suite size: 88 → 89 (the new test skips here, so the count
+  still rises by 1 since it counts as "ok" even when it just `return`s).
+- Commit message: `test(polyglot): live HTML round-trip (gated on markitdown)`.
+- Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 5
+  starting around line 400.
 
 ## BLOCKERS
 None.
@@ -69,6 +73,7 @@ None.
 - 2026-05-16 16:43 (Cake/cron): Task 1 done. Scaffold compiled clean, clippy clean, 81 tests pass. Pushed `708531d`. No surprises. The patch tool warned about a "sibling subagent" having modified `pdf.rs` — false alarm, that was the earlier bootstrap session's edit; confirmed file state by reading before commit.
 - 2026-05-16 17:00 (Cake/cron): Task 2 done. Pure-fn allow-list + 3 tests. Plan code worked verbatim. fmt/clippy clean, full suite 84 pass (81→84). Pushed `c66167c`. Dependabot surfaced 5 vulns on default branch (4 mod, 1 low) at push time — unrelated to this branch, note for future cleanup.
 - 2026-05-16 17:18 (Cake/cron): Task 3 done. `require_markitdown()` + `markitdown_available()` test gate. Suite 84→86 (+2). Pushed `5b7d9b9`. **Plan deviation**: the plan's suggested test (`require_markitdown_error_message_mentions_install`) just constructs a `PdfError::Other` literal and asserts its formatting — it doesn't exercise `require_markitdown()` at all. Replaced with two real tests gated on `markitdown_available()`, mirroring how `ocr.rs` gates `tesseract_available()`. **Gotcha**: `require_markitdown` is dead code until Task 4 wires it in, so clippy `-D dead-code` fails the build. Added `#[allow(dead_code)]` with a TODO referencing Task 4 to remove it. Cleanup is part of Task 4's commit.
+- 2026-05-16 17:37 (Cake/cron): Task 4 done. Real pipeline + 2 cheap unit tests (`missing_input_errors`, `unsupported_extension_errors`). Dropped `#[allow(dead_code)]` and the underscore prefixes as planned. Plan code worked verbatim with one rustfmt nit (rustfmt prefers `polyglot_to_pdf(&a, &b, c).unwrap_err()` on one line, not multi-line). Suite 86→88 (+2). Pushed `37b9356`. The two `_available()`-gated tests (Task 3 + Task 4 setup) silently skip on this Mac mini — `markitdown` isn't installed. Live HTML/CSV tests (Tasks 5–6) will also skip until `pipx install 'markitdown[all]'` runs locally; that's fine for CI-less branch work.
 
 ## QUICK REFERENCE
 - Quality gates (must all pass before commit):
