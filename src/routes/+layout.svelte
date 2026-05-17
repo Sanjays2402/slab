@@ -2,6 +2,7 @@
   import "../app.css";
   import { onMount } from "svelte";
   import { bootTheme, uiConfig } from "$lib/theme";
+  import { bootKeymap } from "$lib/keymap";
   import ToastStack from "$lib/ToastStack.svelte";
   import OnboardingTour from "$lib/OnboardingTour.svelte";
 
@@ -29,6 +30,11 @@
         }, 400);
       }
     });
+    // Load the user's keymap as early as possible — global key handlers
+    // mount in onMount on +page.svelte and consult `matches()`, so this
+    // must complete before the first keystroke for the customised
+    // bindings to take effect. Idempotent + silent on failure.
+    void bootKeymap();
 
     // Listen for the global custom event so Settings + Command Palette
     // can re-open the tour without importing this layout.
