@@ -223,6 +223,60 @@ button:disabled {
   border: 0;
 }
 
+/* =====================================================================
+ * prefers-reduced-motion — v1.2.0 "Glass II" Slice 6.
+ *
+ * macOS / Windows / iOS / Android all expose a "reduce motion" setting.
+ * When enabled, we kill non-essential animations and transitions to
+ * prevent vestibular discomfort. We use !important because many of
+ * our component-level transitions live in <style> blocks that ship
+ * with higher specificity than this global block.
+ *
+ * We intentionally do NOT zero out *all* transitions — opacity fades
+ * for tooltips and dropdowns stay (they communicate state). What we
+ * kill: transform-based movement, slide-ins, scale animations, the
+ * progress-bar shimmer, the loading-spinner rotation.
+ * ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* =====================================================================
+ * prefers-contrast: more — v1.2.0 "Glass II" Slice 6.
+ *
+ * When the user requests higher contrast (System Settings →
+ * Accessibility → Display → Increase Contrast on macOS, or the
+ * equivalent on Windows/Linux), we strengthen borders, darken muted
+ * text, and densify the focus ring. The accent palette stays the
+ * same — we don't override --accent because user-picked colours
+ * already imply intent.
+ * ===================================================================== */
+@media (prefers-contrast: more) {
+  :root {
+    --border: color-mix(in srgb, var(--text) 50%, transparent);
+    --muted: color-mix(in srgb, var(--text) 80%, transparent);
+  }
+
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline-width: 3px;
+    outline-offset: 3px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    border-width: 2px;
+  }
+}
+
 input[type="text"] {
   font-family: inherit;
   font-size: inherit;
