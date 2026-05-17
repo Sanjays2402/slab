@@ -40,6 +40,7 @@
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
+  import VimIndicator from "$lib/vim/VimIndicator.svelte";
   import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
   import { openPanelWindow, closePanelWindow, focusPanelWindow, listPanelWindows, type WindowState } from "$lib/windows";
@@ -719,6 +720,8 @@
 />
 
 <ShortcutsOverlay bind:open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
+
+<VimIndicator />
 
 {/if}
 

@@ -16,6 +16,20 @@
   import { uiConfig, setUiConfig, ACCENT_COLORS } from "$lib/theme";
   import type { ThemeMode, AccentColor, Density } from "$lib/theme";
   import { notify } from "$lib/notify";
+  import { vimEnabled } from "$lib/vim/mode";
+
+  // Local mirror of the vim-enabled store so the segmented control reflects it.
+  let vimOn = $state(false);
+  $effect(() => {
+    const unsub = vimEnabled.subscribe((v) => (vimOn = v));
+    return unsub;
+  });
+  function setVimEnabled(on: boolean) {
+    vimEnabled.set(on);
+    notify.success(on ? "Vim bindings enabled" : "Vim bindings disabled", {
+      detail: on ? "Press Esc anytime to return to Normal mode." : undefined,
+    });
+  }
 
   // Mirror the store into local state so Svelte 5 reactivity picks up
   // changes from `bootTheme` racing the panel mount.
@@ -142,6 +156,32 @@
             {opt.label}
           </button>
         {/each}
+      </div>
+    </div>
+  </div>
+
+  <!-- Vim bindings (Glass II Slice 1) -->
+  <div class="row">
+    <div class="row-info">
+      <h2>Vim bindings</h2>
+      <p class="row-desc">Modal keyboard navigation across the Reader, Library and Beacon. Experimental — press <code>Esc</code> any time to return to Normal mode.</p>
+    </div>
+    <div class="row-control">
+      <div class="seg" role="radiogroup" aria-label="Vim bindings">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!vimOn}
+          class:tab-active={!vimOn}
+          onclick={() => setVimEnabled(false)}
+        >Off</button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={vimOn}
+          class:tab-active={vimOn}
+          onclick={() => setVimEnabled(true)}
+        >On</button>
       </div>
     </div>
   </div>
