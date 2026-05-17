@@ -25,6 +25,7 @@ pub mod outline;
 pub mod page_labels;
 pub mod page_numbers;
 pub mod pages;
+pub mod pages_build;
 pub mod polyglot;
 pub mod redact;
 pub mod repair;

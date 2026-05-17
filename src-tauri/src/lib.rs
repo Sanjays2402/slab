@@ -54,12 +54,15 @@ use pdf::outline::{
 use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
+use pdf::pages_build::{pages_build as do_pages_build, PagesBuildOpts};
 use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
-use pdf::split_pattern::{find_matching_pages, split_by_pattern as do_split_by_pattern};
+use pdf::split_pattern::{
+    find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
+};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
 use pdf::PdfError;
 use serde::{Deserialize, Serialize};
@@ -177,6 +180,16 @@ fn slab_duplicate_pages(input: PathBuf, pages: Vec<u32>, output: PathBuf) -> Cmd
 #[tauri::command]
 fn slab_reorder_pages(input: PathBuf, order: Vec<u32>, output: PathBuf) -> CmdResult<()> {
     reorder_pages(&input, &order, &output).into()
+}
+
+#[tauri::command]
+fn slab_pages_build(input: PathBuf, opts: PagesBuildOpts, output: PathBuf) -> CmdResult<u32> {
+    do_pages_build(&input, &opts, &output).into()
+}
+
+#[tauri::command]
+fn slab_outline_starts(input: PathBuf) -> CmdResult<Vec<u32>> {
+    outline_top_level_pages(&input).into()
 }
 
 #[tauri::command]
@@ -863,11 +876,13 @@ pub fn run() {
             slab_split_every,
             slab_split_by_pattern,
             slab_find_matching_pages,
+            slab_outline_starts,
             slab_page_count,
             slab_rotate,
             slab_delete_pages,
             slab_duplicate_pages,
             slab_reorder_pages,
+            slab_pages_build,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,
