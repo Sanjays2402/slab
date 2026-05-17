@@ -5,112 +5,109 @@
 
 ---
 
-## STATUS: ✅ v1.0.0 "Glass" RELEASED 🎉🎉🎉 — Next: v1.1.0 "Cabinet" (plan in hand)
+## STATUS: 🗄 v1.1.0 "Cabinet" Slices 1+2 SHIPPED — 6 commits on `feature/v1.1.0-cabinet` (pushed)
 
-**Release**: https://github.com/Sanjays2402/slab/releases/tag/v1.0.0 (latest)
-**Published**: 2026-05-17 20:06 UTC
-**Tag**: `v1.0.0` (SHA `509008c` on `main`)
-**Assets**: 6 — `Slab_1.0.0_aarch64.dmg`, `Slab_1.0.0_x64_macos.dmg`,
-`Slab_1.0.0_amd64.deb`, `Slab_1.0.0_amd64.AppImage`, `Slab_1.0.0_x64_en-US.msi`,
-`Slab_1.0.0_x64-setup.exe`.
-**CI run** `26000852284`: all 7 jobs success.
-**Branch** `feature/v1.0.0-glass`: deleted locally + remote.
+**Branch**: `feature/v1.1.0-cabinet` (pushed to origin, 6 commits ahead of main)
 
-Slab 1.0 is shipped. Stable-API promise is now live. v0.x train closed
-(14 feature releases between v0.8.1 Polyglot on 2026-05-16 and v1.0.0
-Glass on 2026-05-17 — 14 versions in 36 hours).
+**HEAD**: `8c84e9e` — `feat(cabinet): detached-mode route + conditional panel render`
 
----
-
-## NEXT TARGET: v1.1.0 "Cabinet" — Multi-Window Floating Panels
-
-Plan promoted to `docs/plans/2026-05-17-v1.1.0-cabinet.md` this tick
-(used `writing-plans` skill). 8 slices, ~20 tasks, target 3-4 ticks.
-
-**Branch to create next tick**: `feature/v1.1.0-cabinet`
-
-**Slice 1 (next cron tick)** — backend registry:
-- `src-tauri/src/windows.rs` — `WindowState`, `Geometry`, `WindowRegistry`
-- Tauri commands: `slab_window_open`, `slab_window_close`, `slab_window_list`
-- Capability glob `panel-*` in `capabilities/default.json`
-- 6 unit tests
-- 4 commits
-
-**Slice 2 (same or next tick)** — detached-mode route:
-- `?panel=&windowId=&doc=` query param parsing in `+page.svelte`
-- `$lib/components/DetachedShell.svelte` (minimal chrome)
-- Conditional render: `{#if detached} <Shell + one panel> {:else} <main UI> {/if}`
-- 3 commits
-
-Be aggressive: try to ship Slices 1+2 in tick #1.
-
----
-
-## TICK 2026-05-17 ~12:40 PT — v1.0.0 RELEASE PREP + MODE C → MODE A CHAIN (3 commits → merge)
-
-Used the writing-plans skill to author the release prep plan, then
-executed the whole thing in the same tick. Plan saved at
-`docs/plans/2026-05-17-v1.0.0-glass-release-prep.md`.
-
-- ✅ **Plan committed + version bump + release notes** (`3f1774d`) —
-  lockstep 0.15.0 → 1.0.0 across `src-tauri/Cargo.toml`, `package.json`,
-  `src-tauri/tauri.conf.json`, sidebar pill in `+page.svelte`, and
-  `Cargo.lock` refresh via `cargo check`. Comprehensive release notes
-  at `docs/releases/v1.0.0.md` (~8.6 KB) covering all 7 Glass slices +
-  stable-API promise + deferred items (floating panels, perf pass,
-  Vim/a11y/i18n) + upgrade notes + stats + next-version roadmap
-  (v1.1.0 Cabinet, v1.2.0 Glass II, v1.3.0 Foundry).
-- ✅ **MODE A merge** (`509008c`) — `git merge --no-ff
-  feature/v1.0.0-glass -F /tmp/merge-msg-v1.0.0.md`. Rich merge
-  message lists all 15 Glass commits across the 7 slices with their
-  SHAs. No conflicts.
-- ✅ **Tag v1.0.0 + push main + tag** — `git tag -a v1.0.0 -m "Slab
-  v1.0.0 — Glass 🪟"`, then `git push origin main --follow-tags`.
-
-**Quality gates green on main at HEAD `509008c`:**
+**Quality gates green** on branch HEAD:
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (451 passed)
+- `cargo test --lib` ✓ (463 passed — 12 new windows::tests added on top of 451 baseline)
 - `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
 
-(Gates also ran green pre-merge on `feature/v1.0.0-glass` HEAD `3f1774d`.)
+---
 
-**Next tick (MODE B finalize):**
-- Poll CI run `26000852284`.
-- If green: download artifacts to `/tmp/slab-release-v1.0.0`, curate the
-  6 best (macos-arm64 dmg, macos-x64 dmg renamed `_x64_macos.dmg`,
-  linux x64 deb + AppImage, windows msi + nsis-setup.exe).
-- `gh release create v1.0.0 --title 'v1.0.0 — Glass 🪟' --notes-file
-  docs/releases/v1.0.0.md <assets>`. Watch for AppImage 60s timeout
-  gotcha — may need background process + `gh release upload` fallback
-  then `gh release edit --draft=false --latest`.
-- Remove `RELEASE_PENDING` from STATE.md once release is up.
+## TICK 2026-05-17 ~13:30 PT — v1.1.0 Cabinet Slices 1 + 2 in one tick (6 commits)
 
-**After v1.0.0 ships:**
-- Pivot to v1.0.1 (floating panels OR perf pass — pick one, ship in
-  1-2 ticks).
-- Or v1.1.0 "Cabinet" if floating panels expand to multi-window etc.
+Shipped the **entire backend window-registry plumbing + the frontend
+detached-mode route** end-to-end. The plan in `docs/plans/2026-05-17-v1.1.0-cabinet.md`
+estimated 2 ticks for these two slices; pulled both into one as
+directed by Sanjay ("ship BIG things every tick").
+
+### Slice 1 — Backend (Tauri WebviewWindow plumbing)
+
+- ✅ **Task 1.1 `09db0bb`** — `src-tauri/src/windows.rs` created with
+  `WindowState` + `Geometry` serde shapes. `mod windows;` added to
+  `lib.rs`. 2 roundtrip tests.
+- ✅ **Task 1.2 `dfdfb97`** — `WindowRegistry` (Mutex<HashMap>) with
+  upsert/get/remove/list/next_label. `next_label("beacon")` returns
+  `panel-beacon-N` where N is one higher than the max existing N
+  (closed-window slots are NOT recycled mid-session — stable labels).
+  5 unit tests.
+- ✅ **Task 1.3 `9b476a9`** — Three Tauri commands wired:
+  `slab_window_open(panel_id, target_doc?)` spawns a child
+  `WebviewWindowBuilder`, `slab_window_close(label)` graceful close,
+  `slab_window_list()` snapshot. Auto-removal on `WindowEvent::Destroyed`
+  so the registry stays accurate when the user clicks X. Helpers:
+  `default_geometry_for_panel` (Beacon 520×760 tall, Library 1000×720
+  wide, Reader 900×760), `encode_doc_param` (minimal URL escape for
+  space/#/&/?/%), `title_case` ("beacon"→"Beacon", "pii"→"PII"). 5
+  more unit tests. `.manage(WindowRegistry::new())` on the builder.
+- ✅ **Task 1.4 `27c0998`** — `capabilities/default.json` `windows`
+  array changed from `["main"]` to `["main", "panel-*"]` so detached
+  windows inherit the full `slab_*` command surface.
+
+### Slice 2 — Frontend (detached route + shell component)
+
+- ✅ **Task 2.2 `32355f6`** — `src/lib/components/DetachedShell.svelte`
+  created. Thin 32px titlebar (panel name + "Slab" badge) + flex body
+  that lets the hosted panel fill the window. Uses Svelte 5 Snippets
+  for children. No runtime JS beyond props.
+- ✅ **Task 2.1 + 2.3 `8c84e9e`** — `+page.svelte` flips into
+  detached mode on URL params:
+  - New `$state` vars: `detached`, `detachedPanel`, `detachedWindowId`,
+    `detachedDoc`.
+  - `onMount` parses `?panel=&windowId=&doc=` from
+    `window.location.search`; if `panel` + `windowId` are present,
+    `detached = true` and `active = panel`.
+  - Whole template wrapped in `{#if detached}...{:else}<existing
+    sidebar+tabstrip>{/if}`. Detached branch renders one of:
+    BeaconChatPanel, LibraryPanel, BeaconSearchPanel, BeaconPiiPanel,
+    or ReaderPanel(initialPath=detachedDoc, tabId="detached"). Unknown
+    panel ids show a friendly hint (no crash).
+  - `titleForPanel(id)` helper for the DetachedShell titlebar.
+
+Main-window behaviour is byte-for-byte unchanged (detached defaults to
+false). Backwards-compat preserved.
+
+### What's still needed before Cabinet release
+
+**Next tick (Slice 3 + 4)**:
+- Slice 3: `src/lib/windows.ts` (typed Tauri wrapper) + the actual
+  "Detach" `⤢` button on each detachable sidebar item. End-to-end
+  smoke: click on the Beacon row → new native window opens with a
+  working Beacon chat. (3 commits estimated.)
+- Slice 4: Persistence to `~/.slab/windows.json` so a relaunch
+  restores last-session windows. Hook geometry-save on resize/move +
+  load on app boot. (4 commits estimated.)
+
+**After that (Slices 5-8)**:
+- Slice 5: parameterised detach for *any* panel.
+- Slice 6: cross-window events (Library row click → open file in
+  detached Reader window via `tauri::emit_to`).
+- Slice 7: Window menu + Command Palette entries
+  ("Detach: Beacon", "Close all panel windows", etc.).
+- Slice 8: version bump → 1.1.0 + release notes + `gh release create`.
+
+Be aggressive: aim to ship Slices 3+4 in tick #2, Slices 5+6 in tick
+#3, then Slice 7+8 (release) in tick #4. That's 4 ticks total to
+v1.1.0 if the world cooperates.
 
 ---
 
 ## PRIOR TICK STATE (kept for reference)
 
-## STATUS-PRIOR: v1.0.0 "Glass" IN PROGRESS — 15 commits on `feature/v1.0.0-glass` (Slice 7 DONE end-to-end)
+## STATUS-PRIOR: ✅ v1.0.0 "Glass" RELEASED 🎉🎉🎉
 
-**v0.15.0 Theater RELEASED** 2026-05-17 ~10:35 PT — https://github.com/Sanjays2402/slab/releases/tag/v0.15.0 (Theater 🎭) — 6 assets up, isLatest=true.
+**Release**: https://github.com/Sanjays2402/slab/releases/tag/v1.0.0
+**Published**: 2026-05-17 20:06 UTC
+**Tag**: `v1.0.0` (SHA `509008c` on `main`)
 
-**Active branch**: `feature/v1.0.0-glass` (15 commits ahead of main, pushed to origin)
-
-## TICK 2026-05-17 ~12:15 PT — Slice 7 frontend half (Customizable Shortcuts) — END-TO-END DONE
-
-Tasks 5-8 shipped this tick. Slice 7 is now complete in 6 commits across two ticks.
-
-- ✅ **Task 5: $lib/keymap.ts** (`d29c806`) — runtime store + matches() module (~290 lines).
-- ✅ **Task 6: Wire global shortcuts to live keymap** (`923280a`).
-- ✅ **Task 7: KeymapPanel.svelte** (`5740179`) — Linear-style customisation UI (~458 lines).
-- ✅ **Task 8: Command Palette entry + STATE update** (`4d99e5a`).
-
-**Quality gates green on `feature/v1.0.0-glass` HEAD `4d99e5a`:** fmt ✓ clippy ✓ 451 tests ✓ svelte-check 0 errors.
+Slab 1.0 is shipped. Stable-API promise is now live. v0.x train closed
+(14 feature releases between v0.8.1 Polyglot on 2026-05-16 and v1.0.0
+Glass on 2026-05-17 — 14 versions in 36 hours).
 
 ---
 
@@ -127,11 +124,7 @@ Tasks 5-8 shipped this tick. Slice 7 is now complete in 6 commits across two tic
 ### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
-### v1.1.0 "Cabinet" — PLANNED (this tick, plan in docs/plans/2026-05-17-v1.1.0-cabinet.md) 🗄
-
-### v1.0.1 / v1.1.0 candidates
-- **Floating panels** — multi-window Beacon/Library (2-3 ticks)
-- **Performance pass** — 100-page open <500ms (2-3 commits)
+### v1.1.0 "Cabinet" — IN PROGRESS (Slices 1+2 of 8 done) 🗄
 
 ### v1.2.0 "Glass II" (later)
 - Vim bindings, a11y, i18n
@@ -206,8 +199,9 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - Version bump lockstep: editing `src-tauri/Cargo.toml` version requires running `cargo check` and committing `Cargo.lock` in the SAME commit.
 - `markitdown` runtime: `/Users/sanjay/.local/bin/markitdown` (pipx). Add `$HOME/.local/bin` to PATH for cron-spawned terminals.
 - `CmdResult<T>` field on `"ok"` variant is `value`, NOT `data`.
-- Sidebar nav icons in use: ▥ ⧉ ⎯ ▦ ▼ ❡ ▣ ○ ↔ ⓘ № ✍ ⊟ ＋ ≡ ▮ ⊘ ▦ Ⓜ ◐ ⅰ ▤ ⊗ ✚ 👁 ✦ ⌕ 🔒 ✂ ≣ ✎ ⌨
+- Sidebar nav icons in use: ▥ ⧉ ⎯ ▦ ▼ ❡ ▣ ○ ↔ ⓘ № ✍ ⊟ ＋ ≡ ▮ ⊘ ▦ Ⓜ ◐ ⅰ ▤ ⊗ ✚ 👁 ✦ ⌕ 🔒 ✂ ≣ ✎ ⌨ — plus ⤢ reserved for detach button (Slice 3).
 - `gh release create` with 6 assets including the 76MB AppImage often times out at 60s in foreground. Run in `background=true` or upload AppImage with follow-up `gh release upload` and then `gh release edit --draft=false --latest`.
+- **Cabinet**: Tauri 2 capability glob `panel-*` is in `default.json` so detached windows inherit `slab_*` permissions. Without it the child windows feel "dead" — every invoke silently fails.
 
 ### Release asset naming
 - Mac x64 dmg needs `_x64_macos.dmg` rename (disambiguate from Windows x64).
@@ -221,6 +215,6 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 git log on STATE.md or .cron-state/sessions/*.md for the full history
 back to 2026-05-16.)
 
-- 2026-05-17 12:15 (Cake/cron): Slice 7 frontend half — Customizable Shortcuts end-to-end DONE in 4 commits (Tasks 5-8 of the keymap plan).
-- 2026-05-17 12:40 (Cake/cron): 🎉🎉🎉 v1.0.0 "Glass" RELEASE PREP + MODE A MERGE in one tick. Version bumped lockstep, release notes written (~8.6 KB), 4 quality gates green pre-merge AND post-merge, merged with --no-ff, tagged v1.0.0, pushed main + tag. CI run `26000852284`. Next tick: MODE B finalize when CI green.
-- 2026-05-17 13:06 (Cake/cron): MODE B FINALIZE + planning. CI run `26000852284` completed all 7 jobs success at 13:04 PT (Windows bundle was the long pole, ~13 min). Downloaded all artifacts via `gh run download`, curated 6 (macOS arm64 + x64 dmgs renamed `_x64_macos.dmg`, linux deb + AppImage, win msi + nsis setup.exe), staged in `assets/v1.0.0/`. Created `v1.0.0` release as **draft** with 5 small assets first (avoid 60s gh-cli timeout on the 79 MB AppImage), then uploaded AppImage separately, then `gh release edit --draft=false --latest`. Release live at https://github.com/Sanjays2402/slab/releases/tag/v1.0.0 with all 6 assets. Deleted `feature/v1.0.0-glass` locally + remote. **Then promoted next big feature**: used `writing-plans` skill to author v1.1.0 "Cabinet" plan — 8 slices, ~20 bite-sized tasks (TDD throughout), 3-4 ticks, plan at `docs/plans/2026-05-17-v1.1.0-cabinet.md` (~44 KB). Plan covers WebviewWindow-based panel detach, `~/.slab/windows.json` persistence, cross-window events for Library↔Reader, command-palette + window-menu entries, version bump + release ceremony.
+- 2026-05-17 12:40 (Cake/cron): 🎉🎉🎉 v1.0.0 "Glass" RELEASE PREP + MODE A MERGE in one tick. Version bumped lockstep, release notes ~8.6 KB, 4 quality gates green, merged --no-ff, tagged v1.0.0, pushed main + tag. CI run `26000852284`.
+- 2026-05-17 13:06 (Cake/cron): MODE B FINALIZE — CI green at 13:04 PT, downloaded all artifacts, curated 6, created v1.0.0 release with all assets (AppImage uploaded separately to dodge 60s timeout). Then used writing-plans skill to author v1.1.0 "Cabinet" plan (~44 KB, 8 slices, ~20 tasks).
+- 2026-05-17 13:30 (Cake/cron): v1.1.0 Cabinet Slices 1+2 shipped end-to-end in 6 commits. Backend WindowRegistry + 3 Tauri commands + capability glob; frontend DetachedShell component + URL-driven detached-mode branch in `+page.svelte`. 4 quality gates green (463 cargo tests, 0 svelte-check errors). Branch pushed.
