@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
   import { setUiConfig, ACCENT_COLORS, type ThemeMode, type Density } from "$lib/theme";
+  import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
 
   type Action = {
     id: string;
@@ -37,9 +38,14 @@
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
   let recents = $state<RecentFile[]>([]);
+  // Glass Slice 5: MRU ranks for actions (id → rank, lower = more recent).
+  let mru = $state<Record<string, number>>({});
 
   function refreshRecents() {
     recents = listRecent();
+  }
+  function refreshMru() {
+    mru = mruRanks();
   }
 
   $effect(() => {
@@ -47,6 +53,7 @@
       query = "";
       selected = 0;
       refreshRecents();
+      refreshMru();
       // focus next tick once mounted
       queueMicrotask(() => inputEl?.focus());
     }
@@ -132,6 +139,33 @@
         keywords: "keyboard shortcuts help reference cheatsheet bindings",
       });
     }
+    // Glass Slice 6: re-trigger the onboarding tour
+    out.push({
+      id: "help:onboarding",
+      title: "Show onboarding tour",
+      subtitle: "5-step walkthrough",
+      icon: "🍰",
+      group: "Help",
+      run: () => {
+        window.dispatchEvent(new CustomEvent("slab:show-onboarding"));
+      },
+      keywords: "onboarding tour welcome walkthrough tutorial intro first launch",
+    });
+    // Glass Slice 5: MRU management
+    if (Object.keys(mru).length > 0) {
+      out.push({
+        id: "settings:clear-mru",
+        title: "Clear command history",
+        subtitle: `${Object.keys(mru).length} remembered command${Object.keys(mru).length === 1 ? "" : "s"}`,
+        icon: "↺",
+        group: "Settings",
+        run: () => {
+          clearMru();
+          mru = {};
+        },
+        keywords: "clear mru reset recent commands history forget",
+      });
+    }
     return out;
   });
 
@@ -162,19 +196,52 @@
   }
 
   let filtered = $derived.by(() => {
-    if (!query.trim()) return actions;
+    if (!query.trim()) {
+      // Empty-query view: MRU floats to top, in MRU order.
+      // Actions not in MRU keep their natural order after.
+      const recent: Action[] = [];
+      const rest: Action[] = [];
+      for (const a of actions) {
+        if (a.id in mru) recent.push(a);
+        else rest.push(a);
+      }
+      recent.sort((a, b) => mru[a.id] - mru[b.id]);
+      // Cap the "Recent" pseudo-group to the 6 most recent, the rest fall back
+      // into their natural group so the palette doesn't feel front-loaded.
+      const top = recent.slice(0, 6);
+      const overflow = recent.slice(6);
+      return [...top, ...overflow, ...rest];
+    }
     const q = query.trim();
     const scored = actions
       .map((a) => ({ a, score: fuzzyScore(q, `${a.title} ${a.keywords ?? ""}`) }))
       .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => {
+        // Primary: fuzzy score. Tie-breaker: MRU rank (lower = more recent).
+        if (b.score !== a.score) return b.score - a.score;
+        const ar = mru[a.a.id] ?? 9999;
+        const br = mru[b.a.id] ?? 9999;
+        return ar - br;
+      });
     return scored.map((x) => x.a);
   });
 
-  // Group preserving filtered order
+  // Group preserving filtered order. When query is empty AND there are MRU
+  // entries, the first N items get pulled into a synthetic "Recently used"
+  // group so the user sees their muscle-memory commands first.
   let grouped = $derived.by(() => {
     const map = new Map<string, Action[]>();
+    const showMruHeader = !query.trim() && Object.keys(mru).length > 0;
+    let mruShown = 0;
+    const mruCap = 6;
     for (const a of filtered) {
+      if (showMruHeader && a.id in mru && mruShown < mruCap) {
+        const key = "Recently used";
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(a);
+        mruShown++;
+        continue;
+      }
       if (!map.has(a.group)) map.set(a.group, []);
       map.get(a.group)!.push(a);
     }
@@ -189,6 +256,9 @@
   function runSelected() {
     const a = filtered[selected];
     if (!a) return;
+    // Record into MRU before running so the next palette open shows it on top.
+    // Skip the "clear MRU" action itself so it doesn't become its own bait.
+    if (a.id !== "settings:clear-mru") recordMru(a.id);
     onClose();
     queueMicrotask(() => a.run());
   }
