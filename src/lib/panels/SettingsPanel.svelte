@@ -15,6 +15,7 @@
 
   import { uiConfig, setUiConfig, ACCENT_COLORS } from "$lib/theme";
   import type { ThemeMode, AccentColor, Density } from "$lib/theme";
+  import { notify } from "$lib/notify";
 
   // Mirror the store into local state so Svelte 5 reactivity picks up
   // changes from `bootTheme` racing the panel mount.
@@ -42,11 +43,13 @@
     } catch (e) {
       saving = "error";
       lastError = e instanceof Error ? e.message : String(e);
+      notify.error("Couldn't save settings", { detail: lastError });
     }
   }
 
   async function reset() {
     await update({ theme: "auto", accent: "orange", density: "comfortable" });
+    if (saving === "saved") notify.success("Settings reset to defaults");
   }
 
   const THEME_OPTIONS: { id: ThemeMode; label: string; hint: string }[] = [

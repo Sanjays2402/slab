@@ -2,6 +2,7 @@
   import "../app.css";
   import { onMount } from "svelte";
   import { bootTheme } from "$lib/theme";
+  import ToastStack from "$lib/ToastStack.svelte";
 
   let { children } = $props();
 
@@ -18,6 +19,8 @@
 <div class="app">
   {@render children()}
 </div>
+
+<ToastStack />
 
 <style>
   .app {
