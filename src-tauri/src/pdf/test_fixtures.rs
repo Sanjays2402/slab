@@ -289,3 +289,86 @@ pub fn make_mixed_pdf(path: &Path) {
     doc.trailer.set("ID", id_obj);
     doc.save(path).unwrap();
 }
+
+/// Build a one-page PDF with a tiny 3-column / 4-row table laid out via
+/// absolute Td positioning. Designed so `pdftotext -bbox-layout` emits a
+/// clean grid of `<word>` bboxes for `pdf::table_extract` tests.
+///
+/// Layout (PDF user-space, origin bottom-left):
+/// - Col x positions: 100, 250, 400.
+/// - Row y positions: 700 (header), 680, 660, 640.
+/// - 12-pt Helvetica throughout.
+pub fn make_table_pdf(path: &Path) {
+    use lopdf::content::{Content, Operation};
+
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+    let resources_id = doc.add_object(dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+    });
+
+    // (x, y, text) cells, in drawing order. After each cell we translate
+    // back to origin so the next absolute Td works as expected.
+    let cells: &[(i64, i64, &str)] = &[
+        (100, 700, "Name"),
+        (250, 700, "Score"),
+        (400, 700, "Note"),
+        (100, 680, "Alpha"),
+        (250, 680, "10"),
+        (400, 680, "ok"),
+        (100, 660, "Beta"),
+        (250, 660, "20"),
+        (400, 660, "fail"),
+        (100, 640, "Gamma"),
+        (250, 640, "30"),
+        (400, 640, "ok"),
+    ];
+
+    let mut ops: Vec<Operation> = vec![
+        Operation::new("BT", vec![]),
+        Operation::new("Tf", vec!["F1".into(), 12.into()]),
+    ];
+    for (x, y, txt) in cells {
+        ops.push(Operation::new("Td", vec![(*x).into(), (*y).into()]));
+        ops.push(Operation::new("Tj", vec![Object::string_literal(*txt)]));
+        ops.push(Operation::new("Td", vec![(-*x).into(), (-*y).into()]));
+    }
+    ops.push(Operation::new("ET", vec![]));
+
+    let content = Content { operations: ops };
+    let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => resources_id,
+        "Contents" => content_id,
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+    let file_id_bytes: Vec<u8> = (0..16).map(|i| 0x55u8.wrapping_add(i)).collect();
+    let id_obj = lopdf::Object::Array(vec![
+        lopdf::Object::string_literal(file_id_bytes.clone()),
+        lopdf::Object::string_literal(file_id_bytes),
+    ]);
+    doc.trailer.set("ID", id_obj);
+    doc.save(path).unwrap();
+}
