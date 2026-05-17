@@ -5,30 +5,27 @@
 
 ---
 
-## STATUS: DEVELOPING — v0.12.0 "Atlas" Slice 1 COMPLETE on `feature/v0.12.0-atlas`; awaiting Slice 2 (watch daemon) or Slice 3 (LibraryPanel UI) next tick
+## STATUS: RELEASE_PENDING — v0.12.0 "Atlas" merged to `main` (1ca71a2), tag `v0.12.0` pushed, CI run `25989140987` in_progress
+
+**v0.12.0 RELEASE_PENDING** 2026-05-17 — merge SHA `1ca71a2`, tag `v0.12.0`, CI run `25989140987`. Release notes staged at `.cron-state/release-notes/v0.12.0.md`. Next tick (MODE B): poll CI, if green → `gh release create v0.12.0 --notes-file .cron-state/release-notes/v0.12.0.md` and upload 6 artifacts.
 
 **v0.11.0 RELEASED** 2026-05-17 10:21 UTC — all 6 installers on GH Releases, marked latest. Release URL: https://github.com/Sanjays2402/slab/releases/tag/v0.11.0
 
-**Active branch:** `feature/v0.12.0-atlas` (4 commits ahead of `main`: `c3135bd`, `1027569`, `37fc505`, `08f5bdd`)
-**Active plan:** `docs/plans/2026-05-17-v0.12.0-atlas.md`
-**Last shipped slice:** Slice 1 — Library Backend Foundation (registry + scanner + query + 8 Tauri commands + TS bindings)
+**Active branch:** `main` (Atlas Slices 1+3 merged; `feature/v0.12.0-atlas` archived)
+**Last shipped slice:** Slice 3 — LibraryPanel UI + sidebar nav + Reader handoff (commit `2599144`, then merge `1ca71a2`)
 
-**Atlas slices (1 / 7 done):**
-- ✅ **Slice 1: Library Backend Foundation** — sqlite registry (`library_folders`, `library_documents`, `library_tags`, `library_doc_tags`), walking scanner with quick-key skip + SHA-256 hashing, filter+sort query layer with eager-loaded tags, 8 `slab_library_*` Tauri commands, TS client bindings at `src/lib/library.ts`. 34 new tests (15 registry + 10 scanner + 9 query). 235→269 lib tests (+34). 4 commits: `c3135bd` plan/STATE, `1027569` registry, `37fc505` scanner, `08f5bdd` commands+bindings.
-- ⏳ Slice 2: `library::watch` daemon (`notify` crate + Tauri event stream)
-- ⏳ Slice 3: `LibraryPanel.svelte` Finder-style grid
-- ⏳ Slice 4: Cross-doc Beacon chat (`slab_beacon_chat_library`)
-- ⏳ Slice 5: Saved searches
-- ⏳ Slice 6: Smart bookmarks
-- ⏳ Slice 7: Release prep + merge
+**Atlas slices (2 / 5 done):**
+- ✅ **Slice 1: Library Backend Foundation** — sqlite registry, walking scanner, filter+sort query, 8 + 3 bonus = 11 `slab_library_*` Tauri commands, TS client bindings. 38 tests in `pdf::library`.
+- ✅ **Slice 3: LibraryPanel UI** — `LibraryPanel.svelte` (~30KB), two-pane (folders+tags rail / cards grid), toolbar (Add Folder, Rescan All, search, sort), per-card context menu (Open, Add Tag, Remove), New Tag modal, a11y-clean. Sidebar nav button `❐ Library`. Click handoff via `slab:open-library-doc` window event → `+page.svelte` spawns Reader tab via `openNewTab`. Version bumped 0.11.0 → 0.12.0.
+- ⏳ **Slice 2: `library::watch` daemon** (`notify` crate + Tauri event stream → auto-refresh) — deferred to v0.12.1
+- ⏳ **Slice 4: Cross-doc Beacon chat** (`slab_beacon_chat_library`) — deferred
+- ⏳ **Slice 5: Saved searches / pinned filters** — deferred
 
-**Quality gates green on `feature/v0.12.0-atlas` (Slice 1):**
-- `cargo fmt --all -- --check`
-- `cargo clippy --all-targets -- -D warnings`
-- `cargo test --lib` — 269 passed
-- `pnpm exec svelte-check` — 0 errors
-
-**NOT merging to main yet.** Backend is invokable but invisible to users. Will merge once Slice 3 ships the LibraryPanel UI.
+**Quality gates green on `main` post-merge:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` — 273 passed (269 → 273, +4 new in `remove_document_*` / `remove_tag_*`)
+- `pnpm exec svelte-check` — 0 errors / 28 (pre-existing) warnings
 
 **Lathe slices (8 / 8 done — for reference):**
 - ✅ Slice 1: `duplicate_pages` kernel + Tauri (commit `e95c0ef`)
