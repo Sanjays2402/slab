@@ -32,6 +32,7 @@
   import BeaconSearchPanel from "$lib/panels/BeaconSearchPanel.svelte";
   import BeaconPiiPanel from "$lib/panels/BeaconPiiPanel.svelte";
   import LibraryPanel from "$lib/panels/LibraryPanel.svelte";
+  import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import { isInTauri } from "$lib/tauri";
   import { basename } from "$lib/types";
@@ -77,6 +78,7 @@
     { id: "sanitize", label: "Sanitize", icon: "⊗", ready: true },
     { id: "repair", label: "Repair", icon: "✚", ready: true },
     { id: "ocr", label: "OCR", icon: "👁", ready: true },
+    { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
   ];
 
   let active = $state("reader");
@@ -402,6 +404,8 @@
     <SanitizePanel />
   {:else if active === "repair"}
     <RepairPanel />
+  {:else if active === "tables"}
+    <TablesPanel />
   {/if}
 </main>
 
