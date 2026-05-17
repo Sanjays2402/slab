@@ -32,6 +32,7 @@ use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
+use pdf::duplicate::duplicate_pages;
 use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
 use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
 use pdf::flatten::{flatten as do_flatten, FlattenOpts, FlattenReport};
@@ -151,6 +152,11 @@ fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -
 #[tauri::command]
 fn slab_delete_pages(input: PathBuf, pages: Vec<u32>, output: PathBuf) -> CmdResult<u32> {
     delete_pages(&input, &pages, &output).into()
+}
+
+#[tauri::command]
+fn slab_duplicate_pages(input: PathBuf, pages: Vec<u32>, output: PathBuf) -> CmdResult<u32> {
+    duplicate_pages(&input, &pages, &output).into()
 }
 
 #[tauri::command]
@@ -843,6 +849,7 @@ pub fn run() {
             slab_page_count,
             slab_rotate,
             slab_delete_pages,
+            slab_duplicate_pages,
             slab_reorder_pages,
             slab_extract_text,
             slab_extract_text_save,

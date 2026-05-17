@@ -8,6 +8,7 @@ pub mod annotations;
 pub mod auto_redact;
 pub mod compress;
 pub mod crop;
+pub mod duplicate;
 pub mod encrypt;
 pub mod extract;
 pub mod flatten;
