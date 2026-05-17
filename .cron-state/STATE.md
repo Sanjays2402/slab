@@ -5,49 +5,34 @@
 
 ---
 
-## STATUS: SHIPPING (v0.8.1 + v0.9.0 merged to main; v0.9.1 dev still running)
+## STATUS: SHIPPING (v0.9.1 released; v0.10.0 Beacon Slice 1 landed)
 
-**Active dev branch:** `feature/v0.9.1-toolkit-ux` (now linear on `main` after v0.9.0 merge)
+**Active dev branch:** `feature/v0.10.0-beacon`
 
-**Releases pending CI finalize:**
-- `RELEASE_PENDING: v0.8.1` — merge SHA `39ff562` on main, tag `v0.8.1`, CI run `25980368257`
-- `RELEASE_PENDING: v0.9.0` — merge SHA `ba3b291` on main, tag `v0.9.0`, CI run `25980394616`
-
-Both runs `in_progress` as of 2026-05-16 20:36 PDT. Bundle matrix
-takes ~15-25 min (macos-arm64 + macos-x64 + linux-x64 + windows-x64).
+**No RELEASE_PENDING.** v0.8.1, v0.9.0, v0.9.1 all live on GitHub Releases with 6 installers each.
 
 ---
 
 ## ROADMAP
 
-### v0.8.1 "Polyglot" — MERGED to main 2026-05-16
-- Tag: `v0.8.1`, merge SHA `39ff562`
-- CI run: `25980394616` — POLL NEXT TICK
-- Next tick MODE B: `gh run download` artifacts → `gh release create v0.8.1`
+### v0.8.1 "Polyglot" — RELEASED 2026-05-16
+- Tag `v0.8.1`, merge SHA `39ff562`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.8.1)
 
-### v0.9.0 "Toolkit" — MERGED to main 2026-05-16
-- Tag: `v0.9.0`, merge SHA `ba3b291`
-- CI run: `25980394616` — POLL NEXT TICK
-- Next tick MODE B: `gh run download` artifacts → `gh release create v0.9.0`
+### v0.9.0 "Toolkit" — RELEASED 2026-05-16
+- Tag `v0.9.0`, merge SHA `ba3b291`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.0)
 
-### v0.9.1 "Toolkit UX" — IN PROGRESS (Tick-3 remaining)
-- Branch: `feature/v0.9.1-toolkit-ux`, tip `c1dc5c5`
-- Tick-1 + Tick-2 shipped already (FlattenPanel/SanitizePanel/RepairPanel + nav)
-- **Tick-3 to do** (one tick = ship + merge):
-  - D1: Detect encrypted-PDF error in ReaderPanel (catch PasswordException)
-  - D2: Create `src/lib/components/DecryptModal.svelte`
-  - D3: Wire DecryptModal into ReaderPanel
-  - D4: Manual smoke (encrypt → open locked → modal → unlock)
-  - D5: Commit decrypt modal
-  - R1: Version bump 0.9.0 → 0.9.1 (`package.json`, `src-tauri/Cargo.toml`, `tauri.conf.json`, footer label, refresh Cargo.lock in same commit)
-  - R2: README + release notes (`docs/release-notes/v0.9.1.md`)
-  - R3: Final quality gates (fmt/clippy/test/svelte-check)
-  - R4: Flip STATE to DONE → next-next tick MODE A merges
+### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
+- Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0+ — TBD
-Propose next: PDF/A conversion (Ghostscript shell-out), signing
-(PKCS#7 crate selection needed), or wholesale UI redesign for the
-Toolkit panel.
+### v0.10.0 "Beacon" — IN PROGRESS (Slice 1 of 10 shipped)
+- Branch: `feature/v0.10.0-beacon`, tip `154c008`
+- Spec: `.cron-state/proposals/v0.10.0-beacon-ai.md` (kept here until first develop tick promotes to docs/plans/)
+- **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. New deps: reqwest, async-trait, futures-util, bytes (runtime), mockito (dev). 106 lib tests pass (101→106 +5). All quality gates green.
+- **Slice 2 next**: `OpenAiCompatibleProvider` + `~/.slab/config.toml` schema + provider-selection wiring. Probably promote spec to docs/plans/ this tick too.
+- Remaining slices 3-10: chat backend (Tauri streaming command), chat panel UI, summary, semantic search backend + UI, PII highlighter, selection actions, release prep.
+
+### v0.11.0 "Workshop" — TBD
+In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs.
 
 ---
 
@@ -92,6 +77,23 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' \
 # push main, push tag (separate calls)
 ```
 
+### Release finalize (MODE B):
+```bash
+# 1. Download artifacts from CI run
+mkdir -p /tmp/slab-vX.Y.Z-release
+gh run download <RUN_ID> -R Sanjays2402/slab -D /tmp/slab-vX.Y.Z-release/
+# 2. Stage in assets/ (gitignored) — rename mac x64 dmg
+mkdir -p assets/vX.Y.Z
+cp .../Slab_X.Y.Z_aarch64.dmg assets/vX.Y.Z/
+cp .../Slab_X.Y.Z_x64.dmg assets/vX.Y.Z/Slab_X.Y.Z_x64_macos.dmg
+cp .../*.{deb,AppImage,msi,exe} assets/vX.Y.Z/
+# 3. Build release body from docs/release-notes/vX.Y.Z.md
+# 4. Create release. Big assets (76MB AppImage) sometimes time out the
+#    single `gh release create` call — use a background process,
+#    then `gh release edit vX.Y.Z --draft=false --latest` once all 6 assets are up.
+gh release create vX.Y.Z --title 'vX.Y.Z — Codename emoji' --notes-file body.md assets/vX.Y.Z/*
+```
+
 ### NO PRs.
 Direct merge to main is the workflow. Branch protection on main is OFF.
 Never run `gh pr create`.
@@ -110,6 +112,10 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
   Add `$HOME/.local/bin` to PATH for cron-spawned terminals.
 - `CmdResult<T>` field on `"ok"` variant is `value`, NOT `data`.
 - Sidebar nav icons in use: ▥ ⧉ ⎯ ▦ ▼ ❡ ▣ ○ ↔ ⓘ № ✍ ⊟ ＋ ≡ ▮ ⊘ ▦ Ⓜ ◐ ⅰ ▤ ⊗ ✚ 👁
+- `gh release create` with 6 assets including the 76MB AppImage often
+  times out at 60s in foreground. Run it in `background=true` or upload
+  the AppImage with a follow-up `gh release upload` and then
+  `gh release edit --draft=false --latest`.
 
 ### Release asset naming
 - Mac x64 dmg needs `_x64_macos.dmg` rename (disambiguate from Windows x64).
@@ -129,5 +135,5 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - 2026-05-16 19:34 (Cake/cron): **v0.9.0 closeout** — picked up WIP repair backend, wired CLI + Tauri, version bumped, release notes. 101 lib tests. PR_READY.
 - 2026-05-16 20:00 (Cake/cron): **Held-pattern tick** — fixed Cargo.lock drift `60945b6`, drafted v0.9.1 plan into proposals/.
 - 2026-05-16 20:21 (Cake/cron): **Override-and-ship tick** — stacked v0.9.1 on top of v0.9.0. Shipped Tick-1 + Tick-2 in one tick: plan promotion + FlattenPanel + SanitizePanel + nav + RepairPanel + nav. 4 quality gates green.
-- **2026-05-16 20:36 (Cake/cron): 🚀🚀 DOUBLE-RELEASE TICK** — Sanjay granted direct-merge permission. Cleared 3-tick PR_READY backlog: merged both `feature/v0.8.1-polyglot` (SHA `39ff562`, tag `v0.8.1`) and `feature/v0.9.0-toolkit` (SHA `ba3b291`, tag `v0.9.0`) to main. Both CI runs queued (`25980368257` + `25980394616`). Quality gates re-verified on each before merge (90 + 101 lib tests). Next tick: MODE B finalize once CI succeeds.
-
+- 2026-05-16 20:36 (Cake/cron): **🚀🚀 DOUBLE-RELEASE TICK** — Sanjay granted direct-merge permission. Cleared 3-tick PR_READY backlog: merged both `feature/v0.8.1-polyglot` (SHA `39ff562`, tag `v0.8.1`) and `feature/v0.9.0-toolkit` (SHA `ba3b291`, tag `v0.9.0`) to main. Both CI runs queued. Quality gates re-verified on each before merge (90 + 101 lib tests).
+- **2026-05-16 21:25 (Cake/cron): 🚀 RELEASE + KICKOFF TICK**: (1) v0.9.1 "Toolkit UX" published on GitHub Releases with all 6 installers, latest release. (2) v0.10.0 **Beacon Slice 1** shipped on `feature/v0.10.0-beacon`: `AiProvider` trait + `OllamaProvider` impl (chat + embeddings) + 5 mockito unit tests (no real Ollama in CI). New deps reqwest/async-trait/futures-util/bytes (runtime), mockito (dev). 101→106 lib tests. All quality gates green. Commit `154c008`. Also added `assets/` to `.gitignore` (cron-staged release binaries live on GitHub Releases, not in git).
