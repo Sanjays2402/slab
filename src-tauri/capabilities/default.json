@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main Slab window",
-  "windows": ["main"],
+  "description": "Capability for the main Slab window and all panel-* detached windows (Cabinet v1.1.0)",
+  "windows": ["main", "panel-*"],
   "permissions": [
     "core:default",
     "opener:default",
