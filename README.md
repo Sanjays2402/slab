@@ -194,6 +194,33 @@ slab polyglot data.xlsx -o data.pdf --page-size Letter
 slab polyglot book.epub -o book.pdf
 ```
 
+### Toolkit: flatten, sanitize, repair — *new in v0.9.0*
+
+The three utilities `pdftk` / `qpdf` users reach for most, native to Slab and pure-Rust (no external binaries).
+
+**Flatten** — bake form fields and annotations into the page so the output PDF has no editable layers. Visual appearance preserved; interactivity gone.
+
+```bash
+slab flatten editable.pdf -o flat.pdf
+slab flatten editable.pdf -o flat.pdf --no-widgets   # keep form widgets, flatten only annotations
+```
+
+**Sanitize** — make a PDF safe to forward. Strips JavaScript, embedded files, launch actions, `/OpenAction`, `/AA`, XFA, and (by default) external URI links. Pixel-identical output.
+
+```bash
+slab sanitize sketchy.pdf -o clean.pdf
+slab sanitize sketchy.pdf -o clean.pdf --keep-links  # leave http(s) URI actions intact
+```
+
+**Repair** — rebuild the xref table and drop unreachable indirect objects. Fixes most "this PDF won't open" files and shrinks PDFs bloated by incremental edits. (lopdf does the heavy lifting — same trick as "open in Acrobat and Save As".)
+
+```bash
+slab repair busted.pdf -o fixed.pdf
+# ✓ repaired: objects 412 → 318 (94 pruned), size 1.2 MB → 980 KB (-18.3%) → fixed.pdf
+```
+
+All three are also exposed as Tauri commands (`slab_flatten`, `slab_sanitize`, `slab_repair`) and ship with unit tests covering the happy path plus the edge cases (annot/AP variants, each strip path, synthetic bloat with unreachable streams).
+
 ## Install
 
 Pre‑built installers ship with each [release](https://github.com/Sanjays2402/slab/releases): `.dmg` (macOS Apple Silicon + Intel), `.msi` + `.exe` (Windows), `.deb` + `.AppImage` + `.rpm` (Linux).
