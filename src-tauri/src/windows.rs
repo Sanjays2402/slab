@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -156,6 +158,105 @@ fn encode_doc_param(p: &str) -> String {
     out
 }
 
+// ---------- Persistence to ~/.slab/windows.json (Slice 4) ----------
+
+/// Resolve the on-disk path for the windows registry.
+///
+/// Honours two override env vars so tests don't trample the real home:
+///   - `SLAB_HOME_OVERRIDE` — full path used as the `.slab/` parent
+///   - `SLAB_CONFIG_DIR` — same convention used by `ai::config`, kept
+///     in sync so a single env override redirects every Slab data file
+///
+/// Falls back to `$HOME/.slab/`. Creates the parent directory.
+fn windows_json_path() -> Result<PathBuf, String> {
+    let base = if let Ok(o) = std::env::var("SLAB_HOME_OVERRIDE") {
+        PathBuf::from(o).join(".slab")
+    } else if let Ok(d) = std::env::var("SLAB_CONFIG_DIR") {
+        PathBuf::from(d)
+    } else {
+        let home = std::env::var("HOME").map_err(|_| "no HOME env var".to_string())?;
+        PathBuf::from(home).join(".slab")
+    };
+    fs::create_dir_all(&base).map_err(|e| format!("creating {}: {}", base.display(), e))?;
+    Ok(base.join("windows.json"))
+}
+
+/// Persist a snapshot of the registry to disk. Atomic-ish: write to a
+/// temp sibling then rename. Returns Err on IO failure; callers are
+/// free to ignore (we don't want a transient disk hiccup to crash the
+/// whole detach flow).
+pub fn save_windows(states: &[WindowState]) -> Result<(), String> {
+    let p = windows_json_path()?;
+    let tmp = p.with_extension("json.tmp");
+    let body = serde_json::to_string_pretty(states).map_err(|e| e.to_string())?;
+    fs::write(&tmp, body).map_err(|e| format!("writing {}: {}", tmp.display(), e))?;
+    fs::rename(&tmp, &p).map_err(|e| format!("renaming to {}: {}", p.display(), e))?;
+    Ok(())
+}
+
+/// Load the persisted registry from disk. Returns an empty vec if the
+/// file is missing (first-ever launch). Parse errors propagate so the
+/// caller can decide whether to ignore-and-continue or surface.
+pub fn load_windows() -> Result<Vec<WindowState>, String> {
+    let p = windows_json_path()?;
+    if !p.exists() {
+        return Ok(vec![]);
+    }
+    let body = fs::read_to_string(&p).map_err(|e| format!("reading {}: {}", p.display(), e))?;
+    let v: Vec<WindowState> =
+        serde_json::from_str(&body).map_err(|e| format!("parsing {}: {}", p.display(), e))?;
+    Ok(v)
+}
+
+/// Best-effort flush of the registry to disk. Logs but never throws —
+/// we never want a disk problem to break the in-app detach flow.
+fn flush_to_disk(reg: &WindowRegistry) {
+    if let Err(e) = save_windows(&reg.list()) {
+        eprintln!("[cabinet] failed to persist windows.json: {}", e);
+    }
+}
+
+/// Wire the standard event handlers (Destroyed/Moved/Resized) onto a
+/// freshly-built `WebviewWindow`. Extracted so `slab_window_open` and
+/// the launch-restore path in `lib::run` use identical bookkeeping.
+pub fn wire_window_events(window: &tauri::WebviewWindow, app: tauri::AppHandle, label: String) {
+    use tauri::Manager;
+    window.on_window_event(move |e| match e {
+        tauri::WindowEvent::Destroyed => {
+            if let Some(reg) = app.try_state::<WindowRegistry>() {
+                reg.remove(&label);
+                flush_to_disk(&reg);
+            }
+        }
+        tauri::WindowEvent::Moved(p) => {
+            if let Some(reg) = app.try_state::<WindowRegistry>() {
+                if let Some(mut s) = reg.get(&label) {
+                    s.geometry.x = p.x;
+                    s.geometry.y = p.y;
+                    reg.upsert(s);
+                    flush_to_disk(&reg);
+                }
+            }
+        }
+        tauri::WindowEvent::Resized(sz) => {
+            if let Some(reg) = app.try_state::<WindowRegistry>() {
+                if let Some(mut s) = reg.get(&label) {
+                    s.geometry.width = sz.width;
+                    s.geometry.height = sz.height;
+                    reg.upsert(s);
+                    flush_to_disk(&reg);
+                }
+            }
+        }
+        _ => {}
+    });
+}
+
+/// Hard cap on concurrent detached windows. Each WebviewWindow runs its
+/// own webview process (~30-60 MB RSS); past this point we're hurting
+/// the user's machine more than we're helping. Tunable later.
+const MAX_DETACHED_WINDOWS: usize = 6;
+
 #[tauri::command]
 pub fn slab_window_open(
     app: tauri::AppHandle,
@@ -163,7 +264,14 @@ pub fn slab_window_open(
     panel_id: String,
     target_doc: Option<String>,
 ) -> Result<String, String> {
-    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    if state.list().len() >= MAX_DETACHED_WINDOWS {
+        return Err(format!(
+            "Too many detached windows ({} max). Close one before opening another.",
+            MAX_DETACHED_WINDOWS
+        ));
+    }
 
     let label = state.next_label(&panel_id);
     let geom = default_geometry_for_panel(&panel_id);
@@ -192,19 +300,9 @@ pub fn slab_window_open(
         geometry: geom,
         target_doc,
     });
+    flush_to_disk(&state);
 
-    // When the OS destroys the window (user clicked X, app shutdown,
-    // etc.), drop it from the registry so `slab_window_list` stays
-    // accurate.
-    let app_clone = app.clone();
-    let label_clone = label.clone();
-    window.on_window_event(move |e| {
-        if let tauri::WindowEvent::Destroyed = e {
-            if let Some(reg) = app_clone.try_state::<WindowRegistry>() {
-                reg.remove(&label_clone);
-            }
-        }
-    });
+    wire_window_events(&window, app.clone(), label.clone());
 
     Ok(label)
 }
@@ -220,12 +318,86 @@ pub fn slab_window_close(
         w.close().map_err(|e| e.to_string())?;
     }
     state.remove(&label);
+    flush_to_disk(&state);
     Ok(())
 }
 
 #[tauri::command]
 pub fn slab_window_list(state: tauri::State<'_, WindowRegistry>) -> Vec<WindowState> {
     state.list()
+}
+
+/// Restore previously-persisted detached windows on app launch. Called
+/// from the Tauri `setup` hook in `lib::run`. Quiet on every error —
+/// a missing/corrupt windows.json should never block app boot.
+///
+/// Each restored window is re-spawned at its last geometry and wired to
+/// the same Destroyed/Moved/Resized save handlers as a fresh detach.
+pub fn restore_windows(app: &tauri::AppHandle) {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    let states = match load_windows() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[cabinet] skipping window restore: {}", e);
+            return;
+        }
+    };
+    if states.is_empty() {
+        return;
+    }
+
+    let registry = match app.try_state::<WindowRegistry>() {
+        Some(r) => r,
+        None => {
+            eprintln!("[cabinet] WindowRegistry not managed — cannot restore");
+            return;
+        }
+    };
+
+    let mut restored = 0usize;
+    for s in states {
+        if s.label == "main" {
+            continue;
+        }
+        if restored >= MAX_DETACHED_WINDOWS {
+            eprintln!(
+                "[cabinet] hit MAX_DETACHED_WINDOWS={} during restore, skipping remainder",
+                MAX_DETACHED_WINDOWS
+            );
+            break;
+        }
+
+        let mut url = format!("/?panel={}&windowId={}", s.panel_id, s.label);
+        if let Some(d) = &s.target_doc {
+            url.push_str("&doc=");
+            url.push_str(&encode_doc_param(d));
+        }
+        let webview_url = WebviewUrl::App(url.into());
+        let title = format!("Slab — {}", title_case(&s.panel_id));
+
+        match WebviewWindowBuilder::new(app, &s.label, webview_url)
+            .title(title)
+            .inner_size(s.geometry.width as f64, s.geometry.height as f64)
+            .position(s.geometry.x as f64, s.geometry.y as f64)
+            .resizable(true)
+            .decorations(true)
+            .build()
+        {
+            Ok(window) => {
+                registry.upsert(s.clone());
+                wire_window_events(&window, app.clone(), s.label.clone());
+                restored += 1;
+            }
+            Err(e) => {
+                eprintln!("[cabinet] failed to restore window {}: {}", s.label, e);
+            }
+        }
+    }
+
+    // Re-flush the registry so any windows that failed to restore are
+    // dropped from disk and we don't keep retrying the same bad entry.
+    flush_to_disk(&registry);
 }
 
 /// Title-case a panel id for the window chrome — "beacon" → "Beacon",
@@ -418,5 +590,129 @@ mod tests {
         assert_eq!(title_case("library"), "Library");
         assert_eq!(title_case("pii"), "PII");
         assert_eq!(title_case(""), "");
+    }
+
+    // ---- Persistence (Slice 4) ---------------------------------------
+    //
+    // These mutate process env vars (SLAB_HOME_OVERRIDE), which is a
+    // shared resource. Cargo's default thread-per-test scheduler would
+    // race them — we serialise via a single Mutex. The tests are still
+    // cheap (just ~10ms apiece) so this doesn't slow the suite.
+
+    use std::sync::Mutex as StdMutex;
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    /// RAII guard: sets `SLAB_HOME_OVERRIDE`, removes it on drop.
+    /// Also wipes `SLAB_CONFIG_DIR` so an inherited env can't leak in.
+    struct EnvOverride {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        _tmp: tempfile::TempDir,
+    }
+    impl EnvOverride {
+        fn new() -> Self {
+            let guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let tmp = tempfile::tempdir().unwrap();
+            std::env::set_var("SLAB_HOME_OVERRIDE", tmp.path());
+            std::env::remove_var("SLAB_CONFIG_DIR");
+            Self {
+                _guard: guard,
+                _tmp: tmp,
+            }
+        }
+    }
+    impl Drop for EnvOverride {
+        fn drop(&mut self) {
+            std::env::remove_var("SLAB_HOME_OVERRIDE");
+        }
+    }
+
+    #[test]
+    fn save_then_load_roundtrips() {
+        let _env = EnvOverride::new();
+        let states = vec![WindowState {
+            label: "panel-library-1".into(),
+            panel_id: "library".into(),
+            geometry: Geometry {
+                x: 10,
+                y: 20,
+                width: 800,
+                height: 600,
+            },
+            target_doc: None,
+        }];
+        save_windows(&states).expect("save");
+        let loaded = load_windows().expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].label, "panel-library-1");
+        assert_eq!(loaded[0].panel_id, "library");
+        assert_eq!(loaded[0].geometry.width, 800);
+    }
+
+    #[test]
+    fn load_returns_empty_when_file_missing() {
+        let _env = EnvOverride::new();
+        let loaded = load_windows().expect("load on empty home dir");
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn save_creates_parent_directory() {
+        let _env = EnvOverride::new();
+        // `.slab/` doesn't exist yet — save should `mkdir -p`.
+        save_windows(&[]).expect("save into fresh dir");
+        let p = windows_json_path().unwrap();
+        assert!(p.exists());
+    }
+
+    #[test]
+    fn save_overwrites_previous_contents() {
+        let _env = EnvOverride::new();
+        let initial = vec![WindowState {
+            label: "panel-beacon-1".into(),
+            panel_id: "beacon".into(),
+            geometry: Geometry {
+                x: 0,
+                y: 0,
+                width: 500,
+                height: 700,
+            },
+            target_doc: Some("/tmp/a.pdf".into()),
+        }];
+        save_windows(&initial).unwrap();
+
+        let updated = vec![WindowState {
+            label: "panel-beacon-1".into(),
+            panel_id: "beacon".into(),
+            geometry: Geometry {
+                x: 200,
+                y: 300,
+                width: 600,
+                height: 800,
+            },
+            target_doc: Some("/tmp/b.pdf".into()),
+        }];
+        save_windows(&updated).unwrap();
+
+        let loaded = load_windows().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].geometry.x, 200);
+        assert_eq!(loaded[0].target_doc.as_deref(), Some("/tmp/b.pdf"));
+    }
+
+    #[test]
+    fn load_returns_error_on_corrupt_json() {
+        let _env = EnvOverride::new();
+        // First save a valid file so the path + parent dir exist.
+        save_windows(&[]).unwrap();
+        // Then trash it.
+        let p = windows_json_path().unwrap();
+        std::fs::write(&p, b"this is not json {{{").unwrap();
+
+        let err = load_windows().expect_err("expected parse error");
+        assert!(
+            err.contains("parsing"),
+            "error should mention parsing: {}",
+            err
+        );
     }
 }

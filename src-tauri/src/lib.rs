@@ -1416,6 +1416,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(windows::WindowRegistry::new())
+        .setup(|app| {
+            // Cabinet (v1.1.0): restore last session's detached windows
+            // from ~/.slab/windows.json. Quiet on error.
+            let handle = tauri::Manager::app_handle(app).clone();
+            windows::restore_windows(&handle);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             slab_merge,
