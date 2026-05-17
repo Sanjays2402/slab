@@ -5,7 +5,7 @@
 
 ---
 
-## STATUS: SHIPPING (v0.10.0 Beacon Slice 2 landed — provider abstraction complete)
+## STATUS: SHIPPING (v0.10.0 Beacon Slices 1-5 landed — chat + summary live)
 
 **Active dev branch:** `feature/v0.10.0-beacon`
 
@@ -24,20 +24,16 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — IN PROGRESS (Slices 1+2 of 10 shipped)
-- Branch: `feature/v0.10.0-beacon`, tip = HEAD (push pending in current tick)
+### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-5 of 10 shipped)
+- Branch: `feature/v0.10.0-beacon`, tip pushed this tick.
 - Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
 - **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
-- **Slice 2 DONE 2026-05-16 22:00 PDT** (4 commits, this tick):
-  - `OpenAiCompatibleProvider` impl + 6 mockito tests (handles OpenAI, Copilot, llama.cpp `server`, LM Studio, anything OpenAI-compat)
-  - `BeaconConfig` TOML schema at `~/.slab/config.toml` + load/save + 7 tests (API key never written to file — only env-var *name*)
-  - `make_provider()` factory: provider-kind → `Arc<dyn AiProvider>`
-  - 4 new Tauri commands: `slab_beacon_config_read/write/provider_test/provider_kinds`
-  - `impl From<Result<T, AiError>> for CmdResult<T>` so AI errors surface as readable strings
-  - New runtime dep: `toml` 0.8
-  - 106 → 121 lib tests (+15). All quality gates green.
-- **Slice 3 next**: Chat backend Tauri command `slab_beacon_chat` + streaming events. Probably wire `BeaconChatPanel.svelte` in the same tick.
-- Remaining slices 4-10: chat panel UI, summary, semantic search backend + UI, PII highlighter, selection actions, release prep.
+- **Slice 2 DONE 2026-05-16 22:00 PDT** (4 commits): `OpenAiCompatibleProvider` + `BeaconConfig` (TOML) + `make_provider` factory + 4 Tauri config commands. 106→121 lib tests.
+- **Slice 3 DONE 2026-05-16 22:45 PDT** (commit `cc5a6ea`): Chat backend `ai/chat.rs`. `build_context` (page-aware truncation), `extract_citations` (handles `[pN]` / `[page N]` / `[pages 2,5,9]`, rejects footnote `[1]` and dates), `beacon_chat()` + `_from_path()` + 7 tests via in-memory MockProvider. Tauri command `slab_beacon_chat`. 121→128 lib tests.
+- **Slice 4 DONE 2026-05-16 22:45 PDT** (commit `9abc425`): `BeaconChatPanel.svelte` + sidebar nav (✦ Beacon AI between Reader and Merge). Conversation view, citation chips that dispatch `slab:beacon-goto-page`, sample-prompt grid empty state, friendly error mapping (Ollama down → "start ollama or switch provider" hint), Enter-to-send composer. svelte-check clean.
+- **Slice 5 DONE 2026-05-16 22:45 PDT** (commit `21960ce`): Auto-summary. `ai/summary.rs` with `SummaryLength` enum (Tldr/Short/Long), `BeaconSummary` DTO, low-temperature (0.1) prompt, per-length token budgets. Tauri command `slab_beacon_summary`. UI: 3 quick-action chips (✦ TL;DR / ✦ Summarize / ✦ Detailed) in BeaconChatPanel — result lands as an assistant turn so follow-up questions work conversationally. 5 new tests. 128→133 lib tests.
+- **Slice 6 next**: Semantic search backend (`ai/embedding_index.rs` + sqlite-vec). Will need `rusqlite` + `sqlite-vec` deps (pre-approved).
+- Remaining slices 7-10: search UI, PII highlighter, selection actions, release prep.
 
 ### v0.11.0 "Workshop" — TBD
 In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs.
@@ -145,4 +141,5 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - 2026-05-16 20:21 (Cake/cron): **Override-and-ship tick** — stacked v0.9.1 on top of v0.9.0. Shipped Tick-1 + Tick-2 in one tick: plan promotion + FlattenPanel + SanitizePanel + nav + RepairPanel + nav. 4 quality gates green.
 - 2026-05-16 20:36 (Cake/cron): **🚀🚀 DOUBLE-RELEASE TICK** — Sanjay granted direct-merge permission. Cleared 3-tick PR_READY backlog: merged both `feature/v0.8.1-polyglot` (SHA `39ff562`, tag `v0.8.1`) and `feature/v0.9.0-toolkit` (SHA `ba3b291`, tag `v0.9.0`) to main. Both CI runs queued. Quality gates re-verified on each before merge (90 + 101 lib tests).
 - **2026-05-16 21:25 (Cake/cron): 🚀 RELEASE + KICKOFF TICK**: (1) v0.9.1 "Toolkit UX" published on GitHub Releases with all 6 installers, latest release. (2) v0.10.0 **Beacon Slice 1** shipped on `feature/v0.10.0-beacon`: `AiProvider` trait + `OllamaProvider` impl (chat + embeddings) + 5 mockito unit tests (no real Ollama in CI). New deps reqwest/async-trait/futures-util/bytes (runtime), mockito (dev). 101→106 lib tests. All quality gates green. Commit `154c008`. Also added `assets/` to `.gitignore` (cron-staged release binaries live on GitHub Releases, not in git).
-- **2026-05-16 21:46 (Cake/cron): Beacon Slice 2 (provider abstraction) shipped in 4 commits**: (a) plan promoted to `docs/plans/`, (b) `OpenAiCompatibleProvider` + 6 mockito tests (OpenAI/Copilot/llama.cpp `server`/etc.), (c) `BeaconConfig` TOML at `~/.slab/config.toml` + `make_provider()` factory + 7 tests (key is *not* stored in file — only env-var name), (d) 4 Tauri commands wired (`config_read/write/provider_test/provider_kinds`). 106→121 lib tests (+15). New runtime dep: `toml` 0.8. fmt/clippy/test/svelte-check all green. Slice 3 (chat backend + panel UI) is next.
+- 2026-05-16 21:46 (Cake/cron): Beacon Slice 2 (provider abstraction) shipped in 4 commits: plan promoted to `docs/plans/`, `OpenAiCompatibleProvider` + 6 mockito tests, `BeaconConfig` TOML + `make_provider` + 7 tests, 4 Tauri commands wired. 106→121 lib tests. New runtime dep: `toml` 0.8.
+- **2026-05-16 22:45 (Cake/cron): 🚀 TRIPLE-SLICE TICK — Beacon Slices 3+4+5 in one tick.** (a) Slice 3 backend `ai/chat.rs` — page-aware context builder + citation extractor + `beacon_chat()` + 7 tests via in-memory MockProvider + Tauri `slab_beacon_chat` command (commit `cc5a6ea`). (b) Slice 4 frontend `BeaconChatPanel.svelte` — conversation view, citation chips that dispatch goto-page events, sample-prompt grid, friendly-error mapping, Enter-to-send composer; nav entry "✦ Beacon AI" between Reader and Merge (commit `9abc425`). (c) Slice 5 summary — `ai/summary.rs` with Tldr/Short/Long enum + low-temp prompts + 5 tests; Tauri `slab_beacon_summary`; 3 quick-action chips in chat panel that push results as assistant turns (commit `21960ce`). Total: 121→133 lib tests (+12), 1 new module + 1 new component + 2 new Tauri commands. All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check). Pushed to `feature/v0.10.0-beacon`. v0.10.0 is now 50% shipped (5 of 10 slices done).
