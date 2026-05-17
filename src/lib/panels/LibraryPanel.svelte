@@ -25,6 +25,8 @@
   import {
     addFolder,
     addTag,
+    autoTagRunMany,
+    autoTagRunOne,
     listDocuments,
     listFolders,
     listTags,
@@ -36,6 +38,7 @@
     rescanAll,
     scanFolder,
     setDocumentTags,
+    type AutoTagRunResult,
     type DocumentRecord,
     type FolderRecord,
     type LibraryFilter,
@@ -65,6 +68,11 @@
   let ocringAll = $state(false);
   let ocringDocIds = $state<Set<number>>(new Set());
   let ocrSummary = $state<string | null>(null);
+
+  // Auto-tag state (Lens Slice 6).
+  let autoTaggingAll = $state(false);
+  let autoTaggingDocIds = $state<Set<number>>(new Set());
+  let autoTagSummary = $state<string | null>(null);
 
   // Context menu state. `null` when closed.
   type Menu = {
@@ -332,6 +340,100 @@
     );
   }
 
+  // ---------- Auto-tag (Lens Slice 6) ----------
+
+  /** Apply an auto-tag result optimistically — patch the doc's tag list
+   * locally so the chips show up before the next listDocuments() refresh. */
+  function applyAutoTagResult(r: AutoTagRunResult): void {
+    if (r.error) return;
+    // Build TagRecord[] from name+id pairs. If a tag was newly created
+    // by the backend we don't have its color yet — null is fine, the
+    // next refresh will fill it in (and the chip falls back to a grey
+    // border).
+    const knownById = new Map(tags.map((t) => [t.id, t]));
+    const newTags = r.tag_ids.map((id, i) => {
+      const existing = knownById.get(id);
+      if (existing) return existing;
+      return {
+        id,
+        name: r.tags_assigned[i] ?? `tag-${id}`,
+        color: null,
+      } as TagRecord;
+    });
+    docs = docs.map((d) =>
+      d.id === r.doc_id ? { ...d, tags: newTags } : d,
+    );
+    if (menu && menu.doc.id === r.doc_id) {
+      const fresh = docs.find((d) => d.id === r.doc_id);
+      if (fresh) menu = { ...menu, doc: fresh };
+    }
+  }
+
+  async function onAutoTagFor(doc: DocumentRecord) {
+    menu = null;
+    if (autoTaggingDocIds.has(doc.id)) return;
+    const next = new Set(autoTaggingDocIds);
+    next.add(doc.id);
+    autoTaggingDocIds = next;
+    error = null;
+    autoTagSummary = null;
+    try {
+      const result = await autoTagRunOne(doc.id, null);
+      applyAutoTagResult(result);
+      if (result.error) {
+        error = `Auto-tag failed for ${displayTitle(doc)}: ${result.error}`;
+      } else {
+        const added = result.tags_assigned.length;
+        autoTagSummary = `Auto-tagged "${displayTitle(doc)}" (${added} tag${added === 1 ? "" : "s"})`;
+        // Refresh the tag rail since new tags may have been created.
+        try {
+          tags = await listTags();
+        } catch {
+          // Non-fatal — the next full refresh picks it up.
+        }
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      const after = new Set(autoTaggingDocIds);
+      after.delete(doc.id);
+      autoTaggingDocIds = after;
+    }
+  }
+
+  async function onAutoTagAll() {
+    if (docs.length === 0) return;
+    if (autoTaggingAll) return;
+    const ok = window.confirm(
+      `Auto-tag ${docs.length} document${docs.length === 1 ? "" : "s"}?\n\nThis sends each doc's text to your configured Beacon provider. Suggestions are added — your existing tags are never removed.`,
+    );
+    if (!ok) return;
+    autoTaggingAll = true;
+    error = null;
+    autoTagSummary = null;
+    try {
+      const docIds = docs.map((d) => d.id);
+      const results = await autoTagRunMany(docIds, null);
+      for (const r of results) applyAutoTagResult(r);
+      const succeeded = results.filter((r) => !r.error).length;
+      const failed = results.filter((r) => r.error).length;
+      autoTagSummary = `Auto-tag: ${succeeded} tagged, ${failed} failed (of ${results.length})`;
+      if (failed > 0 && succeeded === 0) {
+        error = `All ${failed} auto-tag attempts failed. Is your Beacon provider configured and reachable?`;
+      }
+      // Refresh tag rail — new tags may have been created.
+      try {
+        tags = await listTags();
+      } catch {
+        // Non-fatal.
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      autoTaggingAll = false;
+    }
+  }
+
   // ---------- Folder rail actions ----------
 
   function selectFolder(id: number | "all") {
@@ -513,6 +615,18 @@
           : `🔍 OCR ${pendingOcrCount} pending`}
       </button>
     {/if}
+    {#if docs.length > 0}
+      <button
+        class="ghost autotag-all"
+        onclick={onAutoTagAll}
+        disabled={autoTaggingAll}
+        title="Use the Beacon AI provider to suggest tags for every visible document. Existing tags are preserved."
+      >
+        {autoTaggingAll
+          ? `Auto-tagging ${docs.length}…`
+          : `🏷️ Auto-tag ${docs.length}`}
+      </button>
+    {/if}
     <div class="search">
       <span class="search-icon">⌕</span>
       <input
@@ -542,6 +656,9 @@
   {/if}
   {#if ocrSummary && !error && !ocringAll}
     <div class="status ok">✓ {ocrSummary}</div>
+  {/if}
+  {#if autoTagSummary && !error && !autoTaggingAll}
+    <div class="status ok">✓ {autoTagSummary}</div>
   {/if}
 
   <div class="layout">
@@ -697,6 +814,25 @@
                       📄 Open OCR'd
                     </button>
                   {/if}
+                  <button
+                    class="card-action"
+                    disabled={autoTaggingDocIds.has(d.id) || autoTaggingAll}
+                    onclick={() => onAutoTagFor(d)}
+                    title="Suggest 3–5 topical tags using the Beacon AI provider"
+                  >
+                    {autoTaggingDocIds.has(d.id) ? "Tagging…" : "🏷️ Auto-tag"}
+                  </button>
+                </div>
+              {:else}
+                <div class="card-actions" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="toolbar" tabindex="-1">
+                  <button
+                    class="card-action"
+                    disabled={autoTaggingDocIds.has(d.id) || autoTaggingAll}
+                    onclick={() => onAutoTagFor(d)}
+                    title="Suggest 3–5 topical tags using the Beacon AI provider"
+                  >
+                    {autoTaggingDocIds.has(d.id) ? "Tagging…" : "🏷️ Auto-tag"}
+                  </button>
                 </div>
               {/if}
               {#if d.tags.length > 0}
@@ -750,6 +886,15 @@
         <span>📄 Open OCR'd version</span>
       </button>
     {/if}
+    <button
+      class="menu-item"
+      disabled={autoTaggingDocIds.has(menu.doc.id) || autoTaggingAll}
+      onclick={() => onAutoTagFor(menu!.doc)}
+    >
+      <span>
+        {autoTaggingDocIds.has(menu.doc.id) ? "Tagging…" : "🏷️ Auto-tag"}
+      </span>
+    </button>
     <div class="menu-sep"></div>
     <div class="menu-section">Tags</div>
     {#each tags as t (t.id)}
