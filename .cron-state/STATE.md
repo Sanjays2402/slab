@@ -5,24 +5,108 @@
 
 ---
 
-## STATUS: 🚀 v1.1.0 RELEASED + v1.2.0 "Glass II" Slice 1 + 1.5 shipped
+## STATUS: 🚀 v1.2.0 "Glass II" Slices 2 + 3 (first half) shipped (3 commits)
 
 **Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
 **v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.2.0-glass-ii` (pushed, 2 commits ahead of main)
-**Branch HEAD**: `9104ab9` — `feat(vim): VimController wrapper, VimIndicator pill, Settings + Palette toggles`
+**Active branch**: `feature/v1.2.0-glass-ii` (pushed, 5 commits ahead of main)
+**Branch HEAD**: `c93c45f` — `feat(vim): wire VimController around Reader + Library shells`
 
 **Quality gates green on branch HEAD:**
 - pnpm exec svelte-check → 0 errors / 28 baseline warnings (unchanged)
 - cargo fmt --check (no Rust touched this tick)
 
-**Next tick — MODE C — Slice 2**:
-- Wire `<VimController panel="reader">` around `<ReaderPanel>` in `+page.svelte`.
-- Add handler that translates `VimAction`s (move/scroll-half/scroll-full/page/move-line/search-next/command) into Reader operations.
-- `:42<CR>` → jump to page 42 (parse line.match(/^\d+$/) from action.line).
-- `:q<CR>` → close current doc tab.
-- `/foo<CR>` → set search query store + jump to first match.
-- After Reader works, add Library Vim adapter (Slice 3 first half).
+**Next tick — MODE C — Slice 4 (a11y pass 1) OR Slice 5 (i18n)**:
+Slice 3 second-half (Beacon) is small (4 mappings). Ship that + start Slice 4 in the next tick. Suggested batching:
+- Beacon Vim adapter (j/k scroll history, i enter chat, /search filter, dd delete last message)
+- a11y audit script (`scripts/audit-a11y.mjs`)
+- Fix top 20-30 missing aria-labels (likely buttons on toolbars)
+- `:focus-visible` ring rule in `src/app.css`
+
+After Slices 4+5+6, Slice 7 = release.
+
+---
+
+## TICK 2026-05-17 ~15:45 PT — v1.2.0 Glass II Slices 2 + 3-first-half (3 commits)
+
+Ship the **end-to-end Vim experience** in one tick: Reader bindings actually
+work now (j/k scroll, gg/G, /search, :42, :q), Library bindings actually
+work (j/k card nav, Enter open, dd remove, accent-ring focus). The
+controller was already in place from last tick — this tick wires the
+adapters and the panels around it.
+
+### Slice 2 — Reader Vim adapter (`2989e3e`)
+
+**New module**: `src/lib/vim/reader-adapter.ts` (123 lines).
+Pure function `runReaderVim(action, pendingSearchQuery)` returns a
+`ReaderVimResult` with `closeTab` + `gotoTab` hints for the shell, and
+fires window CustomEvents (`slab:vim-reader:*`) for everything else:
+page, goto, scroll, find-open, find-set, find-next.
+
+**ReaderPanel wiring**: six `onVim*` handler functions added next to
+`nextPage`/`prevPage`. Each gates on `active === true` so only the
+visible tab reacts (hidden tabs still subscribe so unregister works
+cleanly in `onDestroy`). Scroll uses `containerEl.scrollBy({behavior:
+"smooth"})`. `onVimFindOpen` opens the existing find toolbar via
+`toggleFind()`; `onVimFindSet` pushes the Vim search buffer into
+`findQuery` and re-runs `runFind`.
+
+The PDF.js viewer already exposes `currentPageNumber` setter via
+`jumpTo()`, so `gg` / `G` / `:42<CR>` all collapse to a single call.
+
+### Slice 3 first half — Library Vim adapter (`94f7086`)
+
+**New module**: `src/lib/vim/library-adapter.ts` (96 lines).
+Same shape as Reader adapter, but emits `slab:vim-library:*` events
+and uses `registerLibraryNav()` to gate emission — events only fire
+when LibraryPanel is mounted, so the adapter is a graceful no-op in
+non-Library views.
+
+**LibraryPanel wiring**:
+- `vimFocusIdx` state, `cardEls[]` bindings on each card.
+- Five handler functions (move / first / last / open / remove).
+- `class:vim-focused={i === vimFocusIdx}` on each card.
+- New CSS rule: `.card.vim-focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }`.
+- `scrollFocusIntoView()` with `behavior: "smooth", block: "nearest"`
+  keeps the focused card visible during long traversals.
+
+### Slice 2/3 — shell glue (`c93c45f`)
+
+`+page.svelte` now wraps the Reader stack and Library panel with
+`<VimController panel="..." on:action={...}>`. The two action handlers
+(`onReaderVimAction` / `onLibraryVimAction`) route through the new
+adapters and react to shell-side hints:
+- `closeTab: true` → `closeTab(activeTabId)` + `resetVim()`.
+- `gotoTab: n` → `setActiveTab(tabs[n-1].id)`.
+
+### What works end-to-end now (manual smoke check items for next launch)
+
+- Vim ON via Settings or Command Palette.
+- In Reader: `gg`, `G`, `[`, `]`, `Ctrl-d`, `/foo<CR>`, `n`, `:42<CR>`, `:q<CR>`.
+- In Library: `j`, `k`, `l`, `h`, `gg`, `G`, `<CR>` (open card), `dd` (remove).
+- Cmd/Ctrl shortcuts continue to belong to the app — controller skips them.
+- Typing in any `<input>` / `<textarea>` lets the input win (Insert-mode passthrough rule).
+
+### Commits this tick
+
+- `2989e3e` — feat(vim): Reader adapter + panel wiring (Slice 2)
+- `94f7086` — feat(vim): Library adapter + panel wiring (Slice 3 — first half)
+- `c93c45f` — feat(vim): wire VimController around Reader + Library shells
+
+### Velocity
+
+| Tick | Slices ships              | Commits | Cumulative |
+|------|---------------------------|---------|------------|
+| 1    | Slice 1 + 1.5             | 2       | 2          |
+| 2    | Slice 2 + 3 first half    | 3       | 5          |
+
+At this pace, Glass II ships in ~4 more ticks (Slice 3 second half + 4 + 5 + 6 + release).
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🚀 v1.1.0 RELEASED + v1.2.0 "Glass II" Slice 1 + 1.5 shipped
 
 ---
 
