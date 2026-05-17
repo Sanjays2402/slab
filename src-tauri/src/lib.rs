@@ -981,6 +981,48 @@ fn slab_library_set_doc_tags(doc_id: i64, tag_ids: Vec<i64>) -> CmdResult<()> {
     result.into()
 }
 
+#[tauri::command]
+fn slab_library_remove_document(doc_id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        db.remove_document(doc_id)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_remove_tag(tag_id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        db.remove_tag(tag_id)
+    })();
+    result.into()
+}
+
+/// Rescan every registered folder in one call. Returns one ScanReport
+/// per folder, in folder-insertion order. Folders that fail to scan
+/// (permission denied, etc.) emit a zero-counts report rather than
+/// aborting the whole sweep — the UI surfaces partial progress.
+#[tauri::command]
+fn slab_library_rescan_all() -> CmdResult<Vec<ScanReport>> {
+    let result = (|| -> Result<Vec<ScanReport>, LibraryError> {
+        let mut db = open_library_db()?;
+        let folders = db.list_folders()?;
+        let mut reports = Vec::with_capacity(folders.len());
+        for folder in folders {
+            match do_scan_folder(&mut db, &folder) {
+                Ok(r) => reports.push(r),
+                Err(_) => reports.push(ScanReport {
+                    folder_id: folder.id,
+                    ..Default::default()
+                }),
+            }
+        }
+        Ok(reports)
+    })();
+    result.into()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1053,6 +1095,9 @@ pub fn run() {
             slab_library_list_tags,
             slab_library_add_tag,
             slab_library_set_doc_tags,
+            slab_library_remove_document,
+            slab_library_remove_tag,
+            slab_library_rescan_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

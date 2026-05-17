@@ -150,3 +150,25 @@ export async function setDocumentTags(
   });
   unwrap(res);
 }
+
+export async function removeDocument(docId: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_remove_document", {
+    docId,
+  });
+  unwrap(res);
+}
+
+export async function removeTag(tagId: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_remove_tag", {
+    tagId,
+  });
+  unwrap(res);
+}
+
+/** Rescan every registered folder. Returns one report per folder. */
+export async function rescanAll(): Promise<ScanReport[]> {
+  const res = await invoke<CmdResult<ScanReport[]>>(
+    "slab_library_rescan_all",
+  );
+  return unwrap(res);
+}

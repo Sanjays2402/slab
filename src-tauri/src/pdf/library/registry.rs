@@ -269,6 +269,16 @@ impl LibraryDb {
         Ok(doc)
     }
 
+    /// Remove a document row by id. ON DELETE CASCADE on
+    /// `library_doc_tags` will drop its tag links too.
+    pub fn remove_document(&mut self, doc_id: i64) -> Result<(), LibraryError> {
+        self.conn.execute(
+            "DELETE FROM library_documents WHERE id = ?1",
+            params![doc_id],
+        )?;
+        Ok(())
+    }
+
     /// Bump only `last_seen_at` (scanner uses this for unchanged files
     /// it spotted on the new scan).
     pub fn touch_document(&mut self, doc_id: i64) -> Result<(), LibraryError> {
@@ -350,6 +360,14 @@ impl LibraryDb {
             .query_map([], tag_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Remove a tag by id. ON DELETE CASCADE on `library_doc_tags`
+    /// will detach it from all documents in the same transaction.
+    pub fn remove_tag(&mut self, tag_id: i64) -> Result<(), LibraryError> {
+        self.conn
+            .execute("DELETE FROM library_tags WHERE id = ?1", params![tag_id])?;
+        Ok(())
     }
 
     /// Replace this document's tag set with exactly `tag_ids`. Missing
@@ -613,5 +631,61 @@ mod tests {
         let p = default_db_path();
         let s = p.to_string_lossy();
         assert!(s.ends_with("/.slab/library.sqlite") || s.ends_with("\\.slab\\library.sqlite"));
+    }
+
+    #[test]
+    fn remove_document_drops_row() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .unwrap();
+        db.remove_document(d.id).unwrap();
+        assert!(db.find_document_by_path("/tmp/a.pdf").unwrap().is_none());
+    }
+
+    #[test]
+    fn remove_document_cascades_doc_tags() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .unwrap();
+        let t = db.add_tag("paper", None).unwrap();
+        db.set_doc_tags(d.id, &[t.id]).unwrap();
+        db.remove_document(d.id).unwrap();
+        // Tag itself still exists, but the join row is gone — verified
+        // indirectly by re-adding the doc and seeing zero attached tags.
+        let d2 = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .unwrap();
+        assert_eq!(d2.tags.len(), 0);
+        // And the tag itself is still listed.
+        assert_eq!(db.list_tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_tag_drops_row() {
+        let mut db = db();
+        let t = db.add_tag("paper", None).unwrap();
+        db.remove_tag(t.id).unwrap();
+        assert!(db.find_tag_by_name("paper").unwrap().is_none());
+    }
+
+    #[test]
+    fn remove_tag_detaches_from_documents() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None)
+            .unwrap();
+        let t1 = db.add_tag("paper", None).unwrap();
+        let t2 = db.add_tag("read", None).unwrap();
+        db.set_doc_tags(d.id, &[t1.id, t2.id]).unwrap();
+        assert_eq!(db.tags_for_document(d.id).unwrap().len(), 2);
+        db.remove_tag(t1.id).unwrap();
+        let remaining = db.tags_for_document(d.id).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, t2.id);
     }
 }
