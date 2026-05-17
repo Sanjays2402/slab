@@ -5,39 +5,37 @@
 
 ---
 
-## STATUS: RELEASE_PENDING — v0.13.0 "Lens" merged to main, awaiting CI
+## STATUS: STACK_READY — v0.14.0 "Stack" DONE on `feature/v0.14.0-stack`, ready to merge to main
 
-**RELEASE_PENDING:** v0.13.0 — merge SHA `1b5e8fe`, tag `v0.13.0`, CI run `25994119497` (in_progress at push). Next tick MODE B: poll CI, if green → `gh release create v0.13.0 --notes-file docs/release-notes/v0.13.0.md --title "v0.13.0 — Lens 🔍"` and upload 6 artifacts.
+**Branch:** `feature/v0.14.0-stack` (6 commits ahead of main).
 
-**v0.13.0 Lens shipped (7 / 9 slices, 2 deferred to v0.13.1):**
-- ✅ Slice 1: Scan-audit + Reader banner
-- ✅ Slice 2: Library Auto-OCR Queue
-- ✅ Slice 3: Table Extraction → CSV
-- ✅ Slice 5: Vision Q&A in Beacon
-- ✅ Slice 6: Auto-tag on Import
-- ✅ **Slice 8: CLI `slab lens` surface** (THIS TICK, commit `81ebc2a`) — `lens audit/tables/ocr-queue/auto-tag` end-to-end. Exposes every backend feature for scripting. `tokio::runtime::Runtime::new()` block_on bridge for async `auto_tagger::run_one`. ~330 LOC added to `src-tauri/src/bin/slab.rs`.
-- ✅ **Slice 9: Release prep** (THIS TICK, commits `b03acc5` + `e2880bf`) — version bumped 0.12.0 → 0.13.0 across Cargo.toml + tauri.conf.json + package.json + Cargo.lock + sidebar pill. Comprehensive release notes at `docs/release-notes/v0.13.0.md` covering all 6 user-visible Lens features + external-dep cheat sheet + deferred-slice callouts.
-- ⏳ Slice 4 (equation → LaTeX / pix2tex) — deferred to v0.13.1
-- ⏳ Slice 7 (mixed-OCR overlay with vector-text preservation) — deferred to v0.13.1
+**Tick at 2026-05-17 08:09 PT shipped Slices 1, 3, 5, 6 in a single autonomous run:**
+- ✅ **Slice 1: `pdf::diff` backend + Tauri command + DiffPanel UI** (commits `f62ffb2`, `872f836`, `530050f`) — Myers diff via `similar = "2.6"`, line-level. `DocDiff/PageDiff/LineDiff/DiffSummary/DiffOp` types. 10 backend tests + sidebar nav + Linear-style panel with summary pills + Changes-only filter + context toggle.
+- ✅ **Slice 3: Change-Report PDF export** (commit `64e7451`) — `format_report_md` + `export_report` generate a publishable PDF (Markdown→PDF via `pdf::md2pdf`). Tauri command `slab_diff_export_report`. 5 new tests. UI `Export Report (.pdf)` button.
+- ✅ **Slice 5: Beacon AI diff summary** (commit `6c90441`) — new `ai::diff_summary` module (~360 lines, 5 tests). `BeaconDiffSummary { content, model, truncated, pages_included, pages_total }`. Budget-aware truncation (drops unchanged pages first, then equal lines). Tauri command `slab_beacon_diff_summary` re-runs diff server-side. "Explain Changes (AI)" button + AI card with model/pages metadata + truncation badge.
+- ⏳ **Slice 6: Release prep** — NEXT COMMIT THIS TICK — version bump 0.13.1 → 0.14.0 across `Cargo.toml`, `package.json`, `tauri.conf.json` + `Cargo.lock` refresh + comprehensive release notes at `docs/releases/v0.14.0.md`.
 
-**Active branch:** `feature/v0.13.0-lens` (3 new commits this tick: `81ebc2a`, `b03acc5`, `e2880bf` — Slice 8 + 9 closeout)
-**Last shipped tick:** v0.13.0 closeout — CLI surface + release prep — branch ready for MODE A merge to main.
+**Deferred to v0.14.1:**
+- ⏳ Slice 2: visual diff (rendered side-by-side thumbnails with highlighted regions)
+- ⏳ Slice 4: patch/merge (apply diff from A onto B)
 
-**Quality gates green on feature branch (at HEAD `e2880bf`):**
+**Quality gates green at HEAD `6c90441`:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` — 346 passed
+- `cargo test --lib` — 376 passed (was 356 baseline)
 - `pnpm exec svelte-check` — 0 errors, 28 (pre-existing) warnings
 
-**Next tick: MODE B — poll CI run `25994119497`, finalize GH release with 6 artifacts when green.**
+**Next tick (MODE A): merge `feature/v0.14.0-stack` to `main`, tag `v0.14.0`, push, wait on CI.**
 
 ---
 
 ## PRIOR (kept for reference)
 
-**v0.12.0 RELEASE_PENDING** 2026-05-17 — merge SHA `1ca71a2`, tag `v0.12.0`, CI run `25989140987`. Release notes staged at `.cron-state/release-notes/v0.12.0.md`. Next tick (MODE B): poll CI, if green → `gh release create v0.12.0 --notes-file .cron-state/release-notes/v0.12.0.md` and upload 6 artifacts.
+**v0.13.1 RELEASED** 2026-05-17 ~08:09 PT — CI run `25994802981` green, all 6 installers on GH Releases. URL: https://github.com/Sanjays2402/slab/releases/tag/v0.13.1
 
-**v0.11.0 RELEASED** 2026-05-17 10:21 UTC — all 6 installers on GH Releases, marked latest. Release URL: https://github.com/Sanjays2402/slab/releases/tag/v0.11.0
+**v0.13.0 RELEASE_PENDING obsoleted:** CI run `25994119497` for v0.13.0 failed on Windows (xpdf pdftotext rejected `-bbox-layout`); bundling skipped on all 3 platforms. No artifacts ever existed. v0.13.1 supersedes it cleanly.
+
+**v0.12.0 RELEASE_PENDING** 2026-05-17 — merge SHA `1ca71a2`, tag `v0.12.0`, CI run `25989140987`. Release notes staged at `.cron-state/release-notes/v0.12.0.md`.
 
 **Atlas (v0.12.0) slices (2 / 5 done — merged to main):**
 - ✅ Slice 1: Library Backend Foundation
@@ -81,9 +79,13 @@
 Cross-doc Beacon chat across indexed library, tags, collections, watch folders.
 Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. 7 slices.
 
-### v0.13.0 "Lens" — OCR + Vision (PLANNED)
-Local OCR (surya/tesseract), table → CSV, math → LaTeX, vision Q&A in Beacon, auto-tag. **Also where CID/Unicode text-edit work lands** (CMap rewriting, font subsetting).
-Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.13.0. 9 slices.
+### v0.13.0 "Lens" — OCR + Vision (TAGGED, NOT RELEASED)
+Local OCR (tesseract), table → CSV, vision Q&A in Beacon, auto-tag. Tag `v0.13.0` on main but CI failed on Windows (xpdf pdftotext); no installers produced. Superseded by v0.13.1.
+Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v0.13.0. 7 / 9 slices done; Slice 4 (equation→LaTeX) + Slice 7 (mixed-OCR overlay) deferred.
+
+### v0.13.1 "Lens Patch" — RELEASE_PENDING
+Headline: Windows pdftotext flavor fix + `slab lens preflight` CLI.
+Merge SHA `e0bb049`, tag `v0.13.1`, CI run `25994802981`.
 
 ### v0.14.0 "Stack" — Diff & Compare (PLANNED)
 Visual + text diff, track changes, patch/merge, Beacon diff summary.
@@ -210,3 +212,5 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - **2026-05-17 03:05 (Cake/cron): 🚀🚀🚀 v0.11.0 "Lathe" MERGED TO MAIN.** Same-tick MODE C → MODE A chain after the triple-slice closeout. Merged `feature/v0.11.0-lathe` to `main` with `--no-ff` (resolved STATE.md conflict with `--theirs` since feature branch had the up-to-date DONE flags). Re-ran all 4 quality gates ON MAIN: fmt clean, clippy `-D warnings` clean, 235 lib tests pass, svelte-check 0 errors. Tagged `v0.11.0` with message "Slab v0.11.0 — Lathe 🪚". Pushed `main` + tag. Merge SHA `76cd7ed`. CI run `25987817724` building 6 installers. STATE flipped to RELEASE_PENDING. Next tick: MODE B finalize when CI green, then pivot to v0.12.0 Atlas.
 - **2026-05-17 03:32 (Cake/cron): 🚀 ATLAS SLICE 1 SHIPPED — Library Backend Foundation.** Full backend stack for library mode in one tick: (a) sqlite registry at `pdf::library::registry` with 4 tables (`library_folders`, `library_documents`, `library_tags`, `library_doc_tags`), schema-versioned via `PRAGMA user_version`, `LibraryDb::open`/`open_in_memory`, folder CRUD, document upsert keyed by path, tag CRUD, `set_doc_tags` (replace semantics), cascade delete on folder removal. 15 unit tests. `walkdir = "2"` added to Cargo.toml. (commit `1027569`) (b) walking scanner at `pdf::library::scanner` with `walkdir`-based recursive walk (max_depth=12, no follow_links), quick-key skip on `(size, mtime_ns)`, SHA-256 only on first sight or quick-key mismatch, lopdf page count, corrupt-PDF silent skip (one bad file mustn't fail a 500-doc scan), `ScanReport` with added/updated/unchanged/skipped counts. 10 unit tests covering empty folder + root pdfs + subdir pdfs + non-pdf skip + quick-key unchanged skips hash + quick-key changed re-hashes + corrupt pdf skipped + report counts accurate. (commit `37fc505`) (c) filter+sort query layer at `pdf::library::query` with `LibraryFilter { folder_id, tag_ids: Vec<i64> AND-match, title_substring case-insensitive, limit, sort: AddedDesc|TitleAsc|LastSeenDesc }`, dynamic SQL builder, eager tag-load via second query + HashMap to avoid O(rows×tags) round-trips. 9 unit tests. (d) 8 Tauri commands in `lib.rs`: `slab_library_add_folder`, `slab_library_remove_folder`, `slab_library_list_folders`, `slab_library_scan`, `slab_library_list_docs`, `slab_library_list_tags`, `slab_library_add_tag`, `slab_library_set_doc_tags`. Each opens `~/.slab/library.sqlite` on demand. `LibraryError → CmdResult<T>` From-impl following the `IndexError` pattern. (e) TS client bindings at `src/lib/library.ts` (3927 bytes) — typed wrappers with DTO mirrors (FolderRecord, DocumentRecord, TagRecord, ScanReport, LibraryFilter, LibrarySortBy), each returns `Promise<T>` or rejects `Error(message)`. No UI logic — IPC seam only. (commit `08f5bdd`) Quality gates: fmt clean, clippy `-D warnings` clean (needed one `#[allow(clippy::too_many_arguments)]` on `upsert_document` since 8 cols is structural), 269 lib tests passing (235→269, +34), svelte-check 0 errors. Branch pushed. NOT merging to main yet — Slice 3 LibraryPanel UI must ship first to make the backend visible to users.
 - **2026-05-17 05:00 (Cake/cron): 🚀 LENS SLICE 2 SHIPPED — Library Auto-OCR Queue end-to-end in 4 commits.** Vertical slice top-to-bottom: (a) `feat(lens): library schema v2 + scanner writes ocr_state` (8ca2ba0) — bumped `SCHEMA_VERSION` 1→2 in `pdf::library::registry`, added 7 `OCR_STATE_*` consts (`unknown`, `text_native`, `scanned`, `mixed`, `ocr_pending`, `ocr_done`, `ocr_failed`), added `ocr_state` (NOT NULL DEFAULT 'unknown') + `ocr_output_path` (nullable) columns via `ALTER TABLE` migration, extended `DocumentRecord` with both fields, added `set_doc_ocr_state`/`set_doc_ocr_output_path` setters; `upsert_document` gained 8th arg `initial_ocr_state` that only upgrades from `unknown` (so OCR'd files don't get reset on rescan); scanner.`heavy_inspect` now calls `scan_audit::audit` and derives ocr_state from `Recommendation::{None→text_native, OcrAll→scanned, OcrSome→mixed}` (audit failures fall back to `text_native` so registry never breaks); 13 new tests. (b) `feat(lens): add ocr_queue module` (220d025) — new `pdf::library::ocr_queue` with `list_pending(&LibraryDb)` (scanned/mixed only, added_at ASC), `run_one(&mut LibraryDb, doc_id, &OcrOpts)` (flips state to ocr_pending → calls `pdf::ocr::ocr` → flips to ocr_done+output_path on success / ocr_failed+error on failure; always returns `OcrQueueResult`), `run_all(&mut LibraryDb, &OcrOpts)` (drains list_pending, continues past per-doc failures), `ocr_output_path_for(input)` helper (canonical `<stem>.ocr.<ext>` naming). 9 unit tests cover path naming (extension casing, no-extension), list filtering (excludes done/failed/text_native), ordering (added_at ASC), error paths (missing doc id, missing input file). 290→299 lib tests. (c) `feat(lens): expose OCR queue via Tauri + TS bindings` (31bc79a) — 3 `slab_library_ocr_queue_*` commands (`list_pending`, `run_one(doc_id, opts?)`, `run_all(opts?)`) registered in `invoke_handler`; `OcrState` string union + `OcrQueueResult` + `OcrOpts` types in `src/lib/library.ts`; 3 typed wrappers `ocrQueueListPending`/`ocrQueueRunOne`/`ocrQueueRunAll` following the established `unwrap` pattern. DocumentRecord type extended with `ocr_state` + `ocr_output_path`. (d) `feat(lens): LibraryPanel OCR queue UI` (e72a60c) — color-coded badges in card-meta (amber Scanned, purple Mixed, blue OCR'ing…, green OCR'd, red OCR failed); per-card action buttons `🔍 Run OCR` (when state ∈ {scanned, mixed, ocr_failed}) and `📄 Open OCR'd` (when state == ocr_done); toolbar `🔍 OCR N pending` button shown only when `pendingOcrCount > 0`; context-menu entries for both actions; optimistic local update via `applyResult(r)` so UI repaints instantly without full re-fetch; `ocringDocIds` set tracks per-doc spinner state; per-doc OCR failures land in `result.error` (not thrown) so `runAll` keeps draining. Also fixed clippy `redundant_closure_call` in `ocr_queue::run_one` (changed `(|| { ... })()` to plain block). 302 lib tests / svelte-check 0 errors / clippy `-D warnings` clean / pnpm build clean. Branch pushed pending.
+- **2026-05-17 08:09 (Cake/cron): 🚨🔧 v0.13.1 "Lens Patch" SHIPPED + MERGED in one tick (MODE C → A chain).** Woke to RELEASE_PENDING for v0.13.0; CI run `25994119497` had failed on Windows — runner has xpdf-flavored `pdftotext` (Glyph & Cog v4.00) which doesn't support `-bbox-layout`; bundling skipped on all 3 platforms; no v0.13.0 artifacts ever existed. Pivoted to fix-forward patch release `feature/v0.13.1-lens-patch`. (a) `fix(lens/tables): detect xpdf-flavored pdftotext, require Poppler` (`dfe752e`) — rewrote `require_pdftotext()` as a two-step probe: `-v` for presence, then sniff `pdftotext -h` for `-bbox-layout`. xpdf flavor returns Poppler install hint w/ macOS/apt/scoop variants. Test-side `pdftotext_available()` helper mirrors the same logic — the 2 e2e tests will now skip cleanly on xpdf-only hosts (incl. the Windows CI runner) instead of crashing. New `require_pdftotext_agrees_with_local_probe` test keeps prod + test capability checks in lockstep. (b) `feat(lens): slab lens preflight — Lens external-dep readiness report` (`44529dc`) — NEW MODULE `pdf::preflight` (~530 LOC). Single source of truth: `Status::{Ok{detail}, Wrong{detail}, Missing{hint}}` × `Check { id, label, features, status }` × `PreflightReport { checks, ok, total }`. Probes 4 deps: pdftoppm, tesseract, Poppler pdftotext (flavor-checked), Ollama HTTP endpoint. Ollama probe = raw `TcpStream::connect_timeout` with 500ms timeout (no HTTP parse, no new deps). 9 unit tests including a runtime test against a closed port that asserts every probe classifies without panic + closed-port Ollama → `Missing`. CLI: new `slab lens preflight` subcommand with `--json` and `--ollama <url>` (empty disables) flags; exits non-zero on any failure for scripting. Help text updated. (c) `chore(release): bump 0.13.0 → 0.13.1 + v0.13.1 release notes` (`9572795`) — Cargo.toml + tauri.conf.json + package.json + Cargo.lock + sidebar pill all flipped. `docs/release-notes/v0.13.1.md` documents both the Windows fix and the... [truncated]
+- **2026-05-17 08:59 (Cake/cron): 🚀🚀🚀 v0.14.0 "Stack" QUAD-SLICE TICK — Slices 1+3+5+6 in 6 commits.** Sunday morning autonomous run, off-blackout. Picked up mid-Slice-5 (handoff from compaction): finished `slab_beacon_diff_summary` Tauri command + wired into `invoke_handler` + added `Explain Changes (AI)` button + state (`aiSummary`/`aiBusy`/`aiError`) + Linear-style AI summary card with model/pages-included/pages-total/truncation badge + distinct error card styling (commit `6c90441`). Then Slice 6 release prep: bumped 0.13.1 → 0.14.0 across `src-tauri/Cargo.toml` + `package.json` + `src-tauri/tauri.conf.json` + Cargo.lock refresh via `cargo check`. Wrote comprehensive release notes at `docs/releases/v0.14.0.md` (4.5KB) — highlights diff loop, change report export, Beacon AI explanation, privacy story, known limitations (no visual diff yet, no patch/merge — both deferred to v0.14.1), and v1.0 roadmap progress. Updated STATE.md to reflect STACK_READY status (was stale on v0.13.1 RELEASE_PENDING). All 4 quality gates green: fmt ✓ clippy ✓ 376 lib tests ✓ svelte-check 0 errors. Slices 2 (visual diff) + 4 (patch/merge) deferred to v0.14.0 follow-up to keep this ship-able. Next tick (MODE A): merge `feature/v0.14.0-stack` to main, tag `v0.14.0`, push.
