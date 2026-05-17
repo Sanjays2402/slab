@@ -33,6 +33,7 @@ use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
 use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
+use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
@@ -307,6 +308,11 @@ fn slab_sanitize(input: PathBuf, output: PathBuf, opts: SanitizeOpts) -> CmdResu
 }
 
 #[tauri::command]
+fn slab_repair(input: PathBuf, output: PathBuf) -> CmdResult<RepairReport> {
+    do_repair(&input, &output).into()
+}
+
+#[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
     output: PathBuf,
@@ -374,6 +380,7 @@ pub fn run() {
             slab_polyglot,
             slab_flatten,
             slab_sanitize,
+            slab_repair,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())

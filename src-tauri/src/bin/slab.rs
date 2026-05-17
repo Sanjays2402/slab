@@ -30,6 +30,7 @@ use slab_lib::pdf::ocr::{ocr, OcrOpts};
 use slab_lib::pdf::outline::{read_outline, write_outline, OutlineNode};
 use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
+use slab_lib::pdf::repair::repair as do_repair;
 use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
 use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
 use slab_lib::pdf::PdfError;
@@ -75,6 +76,7 @@ fn main() -> ExitCode {
         "polyglot" => cmd_polyglot(rest),
         "flatten" => cmd_flatten(rest),
         "sanitize" => cmd_sanitize(rest),
+        "repair" => cmd_repair(rest),
         "export-annots" => cmd_export_annots(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
@@ -149,6 +151,10 @@ Commands:
                                      actions, /OpenAction, /AA, /XFA, and (by
                                      default) external URI links. Visual
                                      appearance unchanged.
+  repair <file> -o <out>             Rebuild the xref table and drop
+                                     unreachable indirect objects. Fixes most
+                                     'this PDF won't open' files and shrinks
+                                     PDFs bloated by incremental edits.
   export-annots <file> -o <out.md>   Extract highlights & notes as Markdown
 
   help, --help                       This help
@@ -450,6 +456,29 @@ fn cmd_sanitize(args: &[String]) -> Result<(), CliError> {
         report.catalog_aa_removed,
         report.pages_aa_removed,
         report.xfa_removed,
+        output.display()
+    );
+    Ok(())
+}
+
+fn cmd_repair(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let report = do_repair(&input, &output)?;
+    let delta_bytes = report.bytes_before as i64 - report.bytes_after as i64;
+    let pct = if report.bytes_before > 0 {
+        (delta_bytes as f64 / report.bytes_before as f64) * 100.0
+    } else {
+        0.0
+    };
+    println!(
+        "✓ repaired: objects {} → {} ({} pruned), size {} → {} bytes ({:+.1}%) → {}",
+        report.objects_before,
+        report.objects_after,
+        report.objects_pruned,
+        report.bytes_before,
+        report.bytes_after,
+        -pct,
         output.display()
     );
     Ok(())
