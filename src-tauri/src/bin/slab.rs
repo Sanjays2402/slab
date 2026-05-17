@@ -28,6 +28,7 @@ use slab_lib::pdf::metadata::{read_metadata, strip_metadata};
 use slab_lib::pdf::ocr::{ocr, OcrOpts};
 use slab_lib::pdf::outline::{read_outline, write_outline, OutlineNode};
 use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
+use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
 use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
 use slab_lib::pdf::PdfError;
 use std::path::{Path, PathBuf};
@@ -69,6 +70,7 @@ fn main() -> ExitCode {
         "strip-metadata" => cmd_strip_metadata(rest),
         "ocr" => cmd_ocr(rest),
         "outline" => cmd_outline(rest),
+        "polyglot" => cmd_polyglot(rest),
         "export-annots" => cmd_export_annots(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
@@ -129,6 +131,11 @@ Commands:
   outline read <file>                Print outline as JSON
   outline write <file> -o <out> --json <outline.json>
                                      Replace the /Outlines tree from JSON
+  polyglot <file> -o <out> [--page-size A4|Letter|Legal]
+                                     Convert .docx/.xlsx/.pptx/.html/.epub/csv/
+                                     json/xml/img/audio → PDF. Requires
+                                     `markitdown` on PATH
+                                     (`pipx install 'markitdown[all]'`).
   export-annots <file> -o <out.md>   Extract highlights & notes as Markdown
 
   help, --help                       This help
@@ -374,6 +381,21 @@ fn cmd_md2pdf(args: &[String]) -> Result<(), CliError> {
         },
     )?;
     println!("✓ {n} page(s) → {}", output.display());
+    Ok(())
+}
+
+fn cmd_polyglot(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let page_size = find_flag(args, "--page-size").unwrap_or("A4").to_string();
+    let report = polyglot_to_pdf(&input, &output, PolyglotOpts { page_size })?;
+    println!(
+        "✓ {} ({} bytes md) → {} page(s) → {}",
+        report.source_kind,
+        report.markdown_bytes,
+        report.pages,
+        output.display()
+    );
     Ok(())
 }
 
