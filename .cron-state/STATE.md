@@ -5,11 +5,43 @@
 
 ---
 
-## STATUS: v0.15.0 RELEASE_PENDING 🎭 — CI building 6 installers on main
+## STATUS: v1.0.0 "Glass" IN PROGRESS — 5 commits on `feature/v1.0.0-glass`
 
-**v0.15.0 Theater MERGED TO MAIN** 2026-05-17 ~10:35 PT.
-Merge SHA `494295d`, tag `v0.15.0`, CI run `25997502867` (in_progress).
-Release notes staged at `docs/releases/v0.15.0.md`.
+**v0.15.0 Theater RELEASED** 2026-05-17 ~10:35 PT — https://github.com/Sanjays2402/slab/releases/tag/v0.15.0 (Theater 🎭) — 6 assets up, isLatest=true.
+
+**Active branch**: `feature/v1.0.0-glass` (5 commits ahead of main, pushed to origin)
+
+**Glass slices shipped so far:**
+- ✅ **Slice 1: Settings UX** — backend `UiConfig` extension + `ui` section
+  in config.toml + 2 Tauri commands + theme.ts runtime store
+  + app.css refactored to data-attribute selectors (light/dark + 5 accents
+  + compact density) + SettingsPanel + nav entry + Command Palette
+  Appearance commands. Commits `5aa9631`, `ff23b3d`, `ec1bdde`.
+- ✅ **Slice 2: Keyboard Shortcuts overlay** — ShortcutsOverlay.svelte
+  (5 groups, platform-aware mod key) + `?` global binding + palette
+  entry. Commit `9fe816c`.
+- ✅ **Slice 3: Global toast notification system** — `$lib/notify` API
+  + ToastStack.svelte mounted in +layout + SettingsPanel wired.
+  Commit `9b0f638`.
+
+**Quality gates green on `feature/v1.0.0-glass` HEAD `9b0f638`:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (410 passed, was 404 — +6 from Slice 1 ai::config tests)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Next tick (still MODE C):**
+- Slice 4 candidate: Onboarding tour (first-launch walkthrough),
+  Recent files pinning/filtering, OR Command Palette history
+  (LRU floats to top).
+- After 2-3 more polish slices, v1.0.0 release prep slice (version
+  bump 0.15.0 → 1.0.0 across Cargo.toml/tauri.conf.json/package.json
+  + sidebar pill + comprehensive release notes at
+  `docs/releases/v1.0.0.md`) then MODE A merge to main + tag + push.
+
+---
+
+## PRIOR (kept for reference)
 
 Slices shipped in this tick (Sunday morning autonomous run, off-blackout):
 - ✅ **Slice 5a backend** (commit `8377fed`) — new `pdf::stamp_annotations` module (~585 lines, 13 unit tests). `StampStroke { page, tool: Pen|Highlighter, color [r,g,b], width_pt, points: Vec<[f32;2]> normalized top-left }`. Stamps every stroke as a `q ... Q` block on top of the original content stream (zero mutation of existing streams). Two shared ExtGState dicts (SlabAnnOp opaque, SlabAnnHL @ 0.42 alpha) registered once at the document level. Y-axis flip top-left → PDF user-space bottom-left applied per vertex via `(nx*W, (1-ny)*H)`. Round line caps + joins. Validates strokes up front (≥2 points, width_pt ∈ (0,200], color components ∈ [0,1], page > 0, page within doc length). Out-of-range coords clamp01'd instead of rejected. 391 → 404 lib tests (+13). Tests cover: single + multi-stroke + multi-page happy paths, 30-strokes-on-one-page bulk, output remains a valid PDF (lopdf re-parse + page count preserved), output ExtGState resource carries both gs names, page Contents array grew after stamp (proves overlay not overwrite), all 7 error paths, coord-clamping.
@@ -143,9 +175,10 @@ Headline: detect slide decks, present fullscreen with notes+timer,
 draw with laser/pen/highlighter, save the marked-up deck back as PDF.
 5 slices shipped; dual-monitor audience window deferred to v0.15.1.
 
-### v1.0.0 "Glass" — Stable Release (PLANNED)
+### v1.0.0 "Glass" — Stable Release (IN PROGRESS)
 Floating panels, multi-window, command palette (⌘K), Vim bindings, a11y, i18n, frozen API.
 Spec: `.cron-state/proposals/roadmap-to-v1.0.md` § v1.0.0. 10 slices.
+**Active branch**: `feature/v1.0.0-glass` — Slices 1-3 done (Settings/theme system, Keyboard Shortcuts overlay, Toast notifications). Slice 4+ pending.
 
 ---
 
