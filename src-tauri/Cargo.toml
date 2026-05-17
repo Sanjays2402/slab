@@ -33,7 +33,7 @@ anyhow = "1"
 lopdf = "0.40"
 
 # Markdown parser for md2pdf
-pulldown-cmark = { version = "0.12", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # Regex engine for auto-redact
 regex = "1"
