@@ -374,4 +374,24 @@ mod tests {
             OpenAiCompatibleProvider::new("https://api.openai.com/v1////".to_string(), "sk-test");
         assert_eq!(p.base_url, "https://api.openai.com/v1");
     }
+
+    /// Default-impl of `chat_with_images` on `AiProvider` returns the
+    /// "vision unsupported" error so OpenAI-compat (which doesn't yet
+    /// override it for v0.13.0) fails loudly + cleanly. The UI maps
+    /// this to a "switch to Ollama for vision" hint.
+    #[tokio::test]
+    async fn openai_provider_rejects_vision_by_default() {
+        let p = OpenAiCompatibleProvider::new("http://127.0.0.1:1/v1".to_string(), "sk-test");
+        let err = p
+            .chat_with_images(&[], &[], &ChatOpts::default())
+            .await
+            .unwrap_err();
+        match err {
+            AiError::InvalidResponse(m) => assert!(
+                m.contains("vision unsupported") && m.contains("openai-compatible"),
+                "got {m}"
+            ),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
 }

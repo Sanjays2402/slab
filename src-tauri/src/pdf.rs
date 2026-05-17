@@ -32,8 +32,10 @@ pub mod polyglot;
 pub mod redact;
 pub mod repair;
 pub mod sanitize;
+pub mod scan_audit;
 pub mod split;
 pub mod split_pattern;
+pub mod table_extract;
 pub mod watermark;
 
 #[cfg(test)]

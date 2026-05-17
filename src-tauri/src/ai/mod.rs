@@ -14,6 +14,7 @@
 // returns a fully-buffered `ChatResponse` so we can unit-test it
 // against `mockito` without futures plumbing.
 
+pub mod auto_tag;
 pub mod chat;
 pub mod chunker;
 pub mod config;
@@ -23,6 +24,7 @@ pub mod openai_compat;
 pub mod pii;
 pub mod selection_action;
 pub mod summary;
+pub mod vision;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -106,6 +108,32 @@ pub trait AiProvider: Send + Sync {
     /// Slice 1 — streaming lands in Slice 3 once the Tauri command
     /// surface is wired.
     async fn chat(&self, msgs: &[ChatMessage], opts: &ChatOpts) -> Result<ChatResponse, AiError>;
+
+    /// Run a chat completion where the most-recent user turn includes
+    /// one or more PNG images (base64-encoded). Providers that lack
+    /// vision support return `AiError::InvalidResponse("vision
+    /// unsupported by provider <name>")` — the UI maps that to a clean
+    /// "your provider doesn't support vision" toast.
+    ///
+    /// `images_b64` is a Vec of base64-encoded PNGs. The provider
+    /// attaches them to the **last** user message; intermediate
+    /// history turns stay text-only.
+    ///
+    /// Default impl returns the not-supported error so providers can
+    /// opt in without breaking existing code that uses `chat()`. Added
+    /// in v0.13.0 Slice 5 (Lens — Vision Q&A in Beacon).
+    async fn chat_with_images(
+        &self,
+        msgs: &[ChatMessage],
+        images_b64: &[String],
+        opts: &ChatOpts,
+    ) -> Result<ChatResponse, AiError> {
+        let _ = (msgs, images_b64, opts);
+        Err(AiError::InvalidResponse(format!(
+            "vision unsupported by provider {}",
+            self.name()
+        )))
+    }
 
     /// Embed `texts` into vectors. Vector dimension is model-specific;
     /// the caller should pin a model for index consistency.

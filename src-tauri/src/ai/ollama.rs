@@ -22,11 +22,18 @@ use std::time::Duration;
 const DEFAULT_CHAT_MODEL: &str = "llama3.2:3b";
 /// Default embedding model. 768-dim, snappy.
 const DEFAULT_EMBED_MODEL: &str = "nomic-embed-text";
+/// Default vision model. llava:7b is the Ollama-recommended vision-capable
+/// model at the time of v0.13.0: ~4.5 GB, runs comfortably on a Mac mini.
+/// Users override via `with_vision_model` or `ChatOpts::model`.
+const DEFAULT_VISION_MODEL: &str = "llava:7b";
 
 pub struct OllamaProvider {
     base_url: String,
     chat_model: String,
     embed_model: String,
+    /// Vision model used by `chat_with_images` when `ChatOpts::model`
+    /// is `None`. Defaults to `llava:7b` (Slice 5).
+    vision_model: String,
     client: reqwest::Client,
 }
 
@@ -52,6 +59,7 @@ impl OllamaProvider {
             base_url: base_url.into(),
             chat_model: DEFAULT_CHAT_MODEL.to_string(),
             embed_model: DEFAULT_EMBED_MODEL.to_string(),
+            vision_model: DEFAULT_VISION_MODEL.to_string(),
             client,
         }
     }
@@ -65,6 +73,12 @@ impl OllamaProvider {
     /// Override the embed model.
     pub fn with_embed_model(mut self, model: impl Into<String>) -> Self {
         self.embed_model = model.into();
+        self
+    }
+
+    /// Override the vision model (e.g. `"llava:13b"`, `"bakllava"`).
+    pub fn with_vision_model(mut self, model: impl Into<String>) -> Self {
+        self.vision_model = model.into();
         self
     }
 }
@@ -99,6 +113,11 @@ struct OllamaChatOptions {
 struct OllamaMessage<'a> {
     role: &'a str,
     content: &'a str,
+    /// Base64-encoded PNGs attached to this message. `None` for text-only
+    /// turns; skip_serializing_if keeps the wire shape backward-compatible
+    /// with the existing text chat endpoint (no empty `"images": []`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    images: Option<&'a [String]>,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +159,7 @@ impl AiProvider for OllamaProvider {
             .map(|m| OllamaMessage {
                 role: role_str(m.role),
                 content: &m.content,
+                images: None,
             })
             .collect();
         let body = OllamaChatRequest {
@@ -164,6 +184,63 @@ impl AiProvider for OllamaProvider {
             .json()
             .await
             .map_err(|e| AiError::InvalidResponse(format!("decoding /api/chat body: {e}")))?;
+        Ok(ChatResponse {
+            content: parsed.message.content,
+            model: parsed.model,
+        })
+    }
+
+    /// Vision Q&A — `images_b64` rides on the last user message. Default
+    /// model is `llava:7b` (override via `ChatOpts::model` or
+    /// `with_vision_model`). Wire shape matches Ollama's documented
+    /// `/api/chat` multimodal contract.
+    async fn chat_with_images(
+        &self,
+        msgs: &[ChatMessage],
+        images_b64: &[String],
+        opts: &ChatOpts,
+    ) -> Result<ChatResponse, AiError> {
+        if msgs.is_empty() {
+            return Err(AiError::InvalidResponse(
+                "chat_with_images called with empty msgs".into(),
+            ));
+        }
+        let model = opts.model.as_deref().unwrap_or(&self.vision_model);
+        let last_idx = msgs.len() - 1;
+        let wire_msgs: Vec<OllamaMessage> = msgs
+            .iter()
+            .enumerate()
+            .map(|(i, m)| OllamaMessage {
+                role: role_str(m.role),
+                content: &m.content,
+                images: if i == last_idx && !images_b64.is_empty() {
+                    Some(images_b64)
+                } else {
+                    None
+                },
+            })
+            .collect();
+        let body = OllamaChatRequest {
+            model,
+            messages: &wire_msgs,
+            stream: false,
+            options: OllamaChatOptions {
+                temperature: opts.temperature,
+                max_tokens: opts.max_tokens,
+            },
+        };
+        let url = format!("{}/api/chat", self.base_url);
+        let res = self.client.post(&url).json(&body).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let txt = res.text().await.unwrap_or_default();
+            return Err(AiError::InvalidResponse(format!(
+                "ollama /api/chat (vision) returned HTTP {status}: {txt}"
+            )));
+        }
+        let parsed: OllamaChatResponse = res.json().await.map_err(|e| {
+            AiError::InvalidResponse(format!("decoding /api/chat (vision) body: {e}"))
+        })?;
         Ok(ChatResponse {
             content: parsed.message.content,
             model: parsed.model,
@@ -331,5 +408,133 @@ mod tests {
             }
             other => panic!("expected InvalidResponse, got {other:?}"),
         }
+    }
+
+    // -------- Vision (Slice 5) ----------------------------------------
+
+    /// Happy path: chat_with_images attaches `images: [b64]` to the last
+    /// user message, hits /api/chat, parses the reply, returns the
+    /// declared model.
+    #[tokio::test]
+    async fn ollama_chat_with_images_sends_b64_on_last_message() {
+        let mut srv = mockito::Server::new_async().await;
+        let m = srv
+            .mock("POST", "/api/chat")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "model": "llava:7b",
+                "stream": false,
+                "messages": [
+                    { "role": "user", "content": "what is this?",
+                      "images": ["AAA="] }
+                ]
+            })))
+            .with_status(200)
+            .with_body(r#"{"message":{"content":"a chart"},"model":"llava:7b"}"#)
+            .create_async()
+            .await;
+
+        let p = OllamaProvider::with_base_url(srv.url());
+        let resp = p
+            .chat_with_images(
+                &[ChatMessage {
+                    role: ChatRole::User,
+                    content: "what is this?".into(),
+                }],
+                &["AAA=".to_string()],
+                &ChatOpts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.content, "a chart");
+        assert_eq!(resp.model, "llava:7b");
+        m.assert_async().await;
+    }
+
+    /// Multi-turn history: images attach to the *last* user message only;
+    /// intermediate turns are text-only on the wire.
+    #[tokio::test]
+    async fn ollama_chat_with_images_only_attaches_to_last_turn() {
+        let mut srv = mockito::Server::new_async().await;
+        let m = srv
+            .mock("POST", "/api/chat")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "messages": [
+                    { "role": "user", "content": "first" },
+                    { "role": "assistant", "content": "ok" },
+                    { "role": "user", "content": "what about now?",
+                      "images": ["IMG="] }
+                ]
+            })))
+            .with_status(200)
+            .with_body(r#"{"message":{"content":"ok"},"model":"llava:7b"}"#)
+            .create_async()
+            .await;
+
+        let p = OllamaProvider::with_base_url(srv.url());
+        let history = vec![
+            ChatMessage {
+                role: ChatRole::User,
+                content: "first".into(),
+            },
+            ChatMessage {
+                role: ChatRole::Assistant,
+                content: "ok".into(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                content: "what about now?".into(),
+            },
+        ];
+        p.chat_with_images(&history, &["IMG=".to_string()], &ChatOpts::default())
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    /// Empty msgs is a programmer error — we surface a clear message
+    /// instead of letting the server reject it with a cryptic 400.
+    #[tokio::test]
+    async fn ollama_chat_with_images_empty_msgs_errors() {
+        let p = OllamaProvider::with_base_url("http://127.0.0.1:1");
+        let err = p
+            .chat_with_images(&[], &["AAA=".to_string()], &ChatOpts::default())
+            .await
+            .unwrap_err();
+        match err {
+            AiError::InvalidResponse(m) => assert!(m.contains("empty msgs"), "got {m}"),
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    /// `ChatOpts::model` overrides the default `llava:7b` so power users
+    /// can ship `llava:13b` or `bakllava` without rebuilding.
+    #[tokio::test]
+    async fn ollama_chat_with_images_honors_opts_model() {
+        let mut srv = mockito::Server::new_async().await;
+        let m = srv
+            .mock("POST", "/api/chat")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "model": "llava:13b"
+            })))
+            .with_status(200)
+            .with_body(r#"{"message":{"content":"ok"},"model":"llava:13b"}"#)
+            .create_async()
+            .await;
+        let p = OllamaProvider::with_base_url(srv.url());
+        let opts = ChatOpts {
+            model: Some("llava:13b".into()),
+            ..Default::default()
+        };
+        p.chat_with_images(
+            &[ChatMessage {
+                role: ChatRole::User,
+                content: "?".into(),
+            }],
+            &["AAA=".to_string()],
+            &opts,
+        )
+        .await
+        .unwrap();
+        m.assert_async().await;
     }
 }

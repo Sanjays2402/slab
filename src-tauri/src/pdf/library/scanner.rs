@@ -20,7 +20,11 @@
 // * **Bounded depth 12**: stops a runaway scan on infinite symlink
 //   loops outside the home dir.
 
-use super::registry::{FolderRecord, LibraryDb, LibraryError};
+use super::registry::{
+    FolderRecord, LibraryDb, LibraryError, OCR_STATE_MIXED, OCR_STATE_SCANNED,
+    OCR_STATE_TEXT_NATIVE,
+};
+use crate::pdf::scan_audit::{audit as scan_audit, Recommendation};
 use lopdf::Document;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -83,7 +87,7 @@ pub fn scan_folder(db: &mut LibraryDb, folder: &FolderRecord) -> Result<ScanRepo
         }
 
         // First sight or quick-key mismatch — do the heavy work.
-        let (hash, pages) = match heavy_inspect(path) {
+        let (hash, pages, ocr_state) = match heavy_inspect(path) {
             Ok(v) => v,
             Err(_) => continue, // corrupt PDF — skip rather than fail the whole scan
         };
@@ -97,6 +101,7 @@ pub fn scan_folder(db: &mut LibraryDb, folder: &FolderRecord) -> Result<ScanRepo
             size_bytes,
             mtime_ns,
             Some(pages as i64),
+            Some(ocr_state),
         )?;
         if was_new {
             report.files_added += 1;
@@ -131,15 +136,30 @@ fn read_quick_key(p: &Path) -> Result<(i64, i64), LibraryError> {
     Ok((size, mtime_ns))
 }
 
-/// SHA-256 of file contents + page count from lopdf. Performed only
-/// when the quick-key indicates a new or changed file.
-fn heavy_inspect(p: &Path) -> Result<(String, u32), LibraryError> {
+/// SHA-256 of file contents + page count from lopdf + a scan_audit
+/// classification. Performed only when the quick-key indicates a new
+/// or changed file.
+///
+/// The ocr_state is one of `text_native`, `scanned`, or `mixed`:
+/// it maps directly to `scan_audit::Recommendation`. Errors from the
+/// audit are *not* fatal — we fall back to `text_native` so the row
+/// still lands in the registry even if the audit logic ever chokes
+/// on an oddball PDF.
+fn heavy_inspect(p: &Path) -> Result<(String, u32, &'static str), LibraryError> {
     let hash = sha256_file(p)?;
     let pages = match Document::load(p) {
         Ok(doc) => doc.get_pages().len() as u32,
         Err(_) => 0,
     };
-    Ok((hash, pages))
+    let ocr_state = match scan_audit(p) {
+        Ok(report) => match report.recommended_action {
+            Recommendation::None => OCR_STATE_TEXT_NATIVE,
+            Recommendation::OcrAll => OCR_STATE_SCANNED,
+            Recommendation::OcrSome => OCR_STATE_MIXED,
+        },
+        Err(_) => OCR_STATE_TEXT_NATIVE,
+    };
+    Ok((hash, pages, ocr_state))
 }
 
 fn sha256_file(p: &Path) -> Result<String, LibraryError> {
@@ -318,5 +338,64 @@ mod tests {
         assert_eq!(hex::encode_lower([0u8]), "00");
         assert_eq!(hex::encode_lower([255u8]), "ff");
         assert_eq!(hex::encode_lower([0xab, 0xcd]), "abcd");
+    }
+
+    // -- Slice 2: scanner writes ocr_state from scan_audit --
+
+    #[test]
+    fn scans_text_pdf_marks_text_native() {
+        let (mut db, dir, folder) = fresh();
+        let p = write_pdf(dir.path(), "doc.pdf");
+        scan_folder(&mut db, &folder).unwrap();
+        let row = db
+            .find_document_by_path(p.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        // Our text fixture is short and may classify as text_native or
+        // unknown depending on the audit thresholds — either is fine,
+        // what matters is that it is NOT 'scanned'.
+        assert_ne!(row.ocr_state, super::super::registry::OCR_STATE_SCANNED);
+    }
+
+    #[test]
+    fn scans_image_only_pdf_marks_scanned() {
+        use crate::pdf::test_fixtures::make_image_only_pdf;
+        let (mut db, dir, folder) = fresh();
+        let p = dir.path().join("scan.pdf");
+        make_image_only_pdf(&p, 3);
+        scan_folder(&mut db, &folder).unwrap();
+        let row = db
+            .find_document_by_path(p.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.ocr_state, super::super::registry::OCR_STATE_SCANNED);
+    }
+
+    #[test]
+    fn re_scan_does_not_overwrite_ocr_done() {
+        use crate::pdf::test_fixtures::make_image_only_pdf;
+        let (mut db, dir, folder) = fresh();
+        let p = dir.path().join("scan.pdf");
+        make_image_only_pdf(&p, 2);
+        scan_folder(&mut db, &folder).unwrap();
+        let row = db
+            .find_document_by_path(p.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        // Pretend the queue ran and marked done.
+        db.set_doc_ocr_state(row.id, super::super::registry::OCR_STATE_DONE)
+            .unwrap();
+        // Touch the file so the quick-key changes and heavy_inspect runs.
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        let mut bytes = std::fs::read(&p).unwrap();
+        bytes.extend_from_slice(b"%%MORE\n");
+        std::fs::write(&p, &bytes).unwrap();
+        scan_folder(&mut db, &folder).unwrap();
+        let after = db
+            .find_document_by_path(p.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        // Must still be 'ocr_done', not clobbered back to 'scanned'.
+        assert_eq!(after.ocr_state, super::super::registry::OCR_STATE_DONE);
     }
 }

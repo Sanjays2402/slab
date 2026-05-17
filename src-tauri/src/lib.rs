@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod pdf;
 
+use ai::auto_tag::AutoTagOpts;
 use ai::chat::{
     beacon_chat_from_path as do_beacon_chat, BeaconChatReply, DEFAULT_MAX_CONTEXT_CHARS,
 };
@@ -44,9 +45,12 @@ use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::insert::{insert as do_insert, InsertOpts};
 use pdf::library::{
-    default_db_path as library_default_db_path, query_documents as do_query_documents,
-    scan_folder as do_scan_folder, DocumentRecord, FolderRecord, LibraryDb, LibraryError,
-    LibraryFilter, ScanReport, TagRecord,
+    auto_tag_run_many as do_auto_tag_run_many, auto_tag_run_one as do_auto_tag_run_one,
+    default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
+    ocr_queue_run_all as do_ocr_queue_run_all, ocr_queue_run_one as do_ocr_queue_run_one,
+    query_documents as do_query_documents, scan_folder as do_scan_folder, AutoTagRunResult,
+    DocumentRecord, FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult,
+    ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
@@ -67,9 +71,13 @@ use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
+use pdf::scan_audit::{audit as do_scan_audit, ScanAuditReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
 use pdf::split_pattern::{
     find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
+};
+use pdf::table_extract::{
+    extract_tables as do_extract_tables, to_csv as do_table_to_csv, Table as TableDto, TableOpts,
 };
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
 use pdf::PdfError;
@@ -372,6 +380,34 @@ fn slab_ocr(input: PathBuf, output: PathBuf, opts: OcrOpts) -> CmdResult<OcrRepo
 }
 
 #[tauri::command]
+fn slab_scan_audit(input: PathBuf) -> CmdResult<ScanAuditReport> {
+    do_scan_audit(&input).into()
+}
+
+#[tauri::command]
+fn slab_extract_tables(input: PathBuf, opts: TableOpts) -> CmdResult<Vec<TableDto>> {
+    do_extract_tables(&input, &opts).into()
+}
+
+#[tauri::command]
+fn slab_table_to_csv(table: TableDto) -> CmdResult<String> {
+    CmdResult::Ok {
+        value: do_table_to_csv(&table),
+    }
+}
+
+#[tauri::command]
+fn slab_table_save_csv(table: TableDto, output: PathBuf) -> CmdResult<PathBuf> {
+    let csv = do_table_to_csv(&table);
+    match std::fs::write(&output, csv) {
+        Ok(_) => CmdResult::Ok { value: output },
+        Err(e) => CmdResult::Err {
+            message: format!("write csv: {e}"),
+        },
+    }
+}
+
+#[tauri::command]
 fn slab_polyglot(input: PathBuf, output: PathBuf, opts: PolyglotOpts) -> CmdResult<PolyglotReport> {
     do_polyglot(&input, &output, opts).into()
 }
@@ -569,6 +605,64 @@ async fn slab_beacon_summary(
     do_beacon_summary(provider, &pdf_path, length, budget)
         .await
         .into()
+}
+
+/// Beacon vision Q&A — render `page` (or a region of it) to an image
+/// and ask the configured provider a question about it. Buffered for
+/// v0.13.0; streaming variant arrives in v0.13.1 once the Beacon
+/// channel surface is uniformly wired across `chat` / `summary` /
+/// `selection_action` / vision.
+///
+/// Requires a vision-capable provider. Ollama is the default
+/// (`llava:7b`); OpenAI-compat surfaces a clean
+/// "vision unsupported" error until the multimodal endpoint is wired
+/// (a v0.13.1 follow-up).
+#[tauri::command]
+async fn slab_beacon_vision_ask(
+    pdf_path: PathBuf,
+    page: u32,
+    rect_pts: Option<ai::vision::RectPts>,
+    prompt: String,
+    history: Vec<ChatTurnDto>,
+    opts: Option<ai::vision::VisionOpts>,
+) -> CmdResult<ai::vision::VisionReply> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let history_msgs: Vec<ChatMessage> = history
+        .into_iter()
+        .filter_map(|t| {
+            parse_role(&t.role).map(|role| ChatMessage {
+                role,
+                content: t.content,
+            })
+        })
+        .collect();
+    let opts = opts.unwrap_or_default();
+    ai::vision::vision_ask(
+        provider,
+        &pdf_path,
+        page,
+        rect_pts,
+        &prompt,
+        &history_msgs,
+        &opts,
+    )
+    .await
+    .into()
 }
 
 // ---------- Beacon semantic search (Slice 6/7) ----------
@@ -1023,6 +1117,124 @@ fn slab_library_rescan_all() -> CmdResult<Vec<ScanReport>> {
     result.into()
 }
 
+/// List documents whose ocr_state is `scanned` or `mixed` (i.e. OCR candidates
+/// not yet queued/processed). Ordered by added_at ASC.
+#[tauri::command]
+fn slab_library_ocr_queue_list_pending() -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<Vec<DocumentRecord>, LibraryError> {
+        let db = open_library_db()?;
+        do_ocr_queue_list(&db)
+    })();
+    result.into()
+}
+
+/// Run OCR on a single document by id. Returns the queue result (state_after,
+/// output_path, error). `opts` is optional — defaults to eng @ 300dpi.
+#[tauri::command]
+fn slab_library_ocr_queue_run_one(
+    doc_id: i64,
+    opts: Option<pdf::ocr::OcrOpts>,
+) -> CmdResult<OcrQueueResult> {
+    let result = (|| -> Result<OcrQueueResult, LibraryError> {
+        let mut db = open_library_db()?;
+        Ok(do_ocr_queue_run_one(
+            &mut db,
+            doc_id,
+            &opts.unwrap_or_default(),
+        ))
+    })();
+    result.into()
+}
+
+/// Run OCR on every pending document. Returns one result per document
+/// attempted, in queue order. `opts` is optional.
+#[tauri::command]
+fn slab_library_ocr_queue_run_all(
+    opts: Option<pdf::ocr::OcrOpts>,
+) -> CmdResult<Vec<OcrQueueResult>> {
+    let result = (|| -> Result<Vec<OcrQueueResult>, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_run_all(&mut db, &opts.unwrap_or_default())
+    })();
+    result.into()
+}
+
+// ---------- Library auto-tag (Lens Slice 6) ----------
+
+/// Run auto-tag on one library document. Extracts page text, asks the
+/// configured Beacon provider for 3–5 topical tags, materialises them as
+/// `library_tags` rows and attaches them to the doc — unioning with any
+/// tags the user previously set by hand. Returns `AutoTagRunResult` whose
+/// `error: Some(...)` field signals per-doc failure (the command itself
+/// only Errs on backend wiring problems like a missing provider config).
+#[tauri::command]
+async fn slab_library_auto_tag_one(
+    doc_id: i64,
+    opts: Option<AutoTagOpts>,
+) -> CmdResult<AutoTagRunResult> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let mut db = match open_library_db() {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let res = do_auto_tag_run_one(&mut db, provider, doc_id, &opts.unwrap_or_default()).await;
+    CmdResult::Ok { value: res }
+}
+
+/// Run auto-tag on many library documents sequentially. Continues past
+/// per-doc failures — inspect each result's `error` field.
+#[tauri::command]
+async fn slab_library_auto_tag_many(
+    doc_ids: Vec<i64>,
+    opts: Option<AutoTagOpts>,
+) -> CmdResult<Vec<AutoTagRunResult>> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let mut db = match open_library_db() {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let res = do_auto_tag_run_many(&mut db, provider, &doc_ids, &opts.unwrap_or_default()).await;
+    CmdResult::Ok { value: res }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1069,6 +1281,10 @@ pub fn run() {
             slab_write_outline,
             slab_append_annotations,
             slab_ocr,
+            slab_scan_audit,
+            slab_extract_tables,
+            slab_table_to_csv,
+            slab_table_save_csv,
             slab_polyglot,
             slab_flatten,
             slab_sanitize,
@@ -1086,6 +1302,7 @@ pub fn run() {
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
+            slab_beacon_vision_ask,
             slab_export_annotations_md,
             slab_library_add_folder,
             slab_library_remove_folder,
@@ -1098,6 +1315,11 @@ pub fn run() {
             slab_library_remove_document,
             slab_library_remove_tag,
             slab_library_rescan_all,
+            slab_library_ocr_queue_list_pending,
+            slab_library_ocr_queue_run_one,
+            slab_library_ocr_queue_run_all,
+            slab_library_auto_tag_one,
+            slab_library_auto_tag_many,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

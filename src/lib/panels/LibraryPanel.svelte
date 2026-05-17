@@ -25,19 +25,26 @@
   import {
     addFolder,
     addTag,
+    autoTagRunMany,
+    autoTagRunOne,
     listDocuments,
     listFolders,
     listTags,
+    ocrQueueRunAll,
+    ocrQueueRunOne,
     removeDocument,
     removeFolder,
     removeTag,
     rescanAll,
     scanFolder,
     setDocumentTags,
+    type AutoTagRunResult,
     type DocumentRecord,
     type FolderRecord,
     type LibraryFilter,
     type LibrarySortBy,
+    type OcrQueueResult,
+    type OcrState,
     type TagRecord,
   } from "$lib/library";
   import { basename } from "$lib/types";
@@ -56,6 +63,16 @@
   let scanning = $state(false);
   let error = $state<string | null>(null);
   let initialized = $state(false);
+
+  // OCR queue state.
+  let ocringAll = $state(false);
+  let ocringDocIds = $state<Set<number>>(new Set());
+  let ocrSummary = $state<string | null>(null);
+
+  // Auto-tag state (Lens Slice 6).
+  let autoTaggingAll = $state(false);
+  let autoTaggingDocIds = $state<Set<number>>(new Set());
+  let autoTagSummary = $state<string | null>(null);
 
   // Context menu state. `null` when closed.
   type Menu = {
@@ -93,6 +110,10 @@
     activeFolder === "all"
       ? docs.length
       : docs.filter((d) => d.folder_id === activeFolder).length,
+  );
+  /** Number of documents currently visible that are eligible for OCR. */
+  let pendingOcrCount = $derived(
+    docs.filter((d) => d.ocr_state === "scanned" || d.ocr_state === "mixed").length,
   );
 
   // ---------- Lifecycle ----------
@@ -214,6 +235,204 @@
     }
   }
   let lastScanSummary = $state<string | null>(null);
+
+  // ---------- OCR queue actions ----------
+
+  /** Human-readable label for the OCR state badge. */
+  function ocrStateLabel(state: OcrState): string {
+    switch (state) {
+      case "scanned":
+        return "Scanned";
+      case "mixed":
+        return "Mixed";
+      case "ocr_pending":
+        return "OCR'ing…";
+      case "ocr_done":
+        return "OCR'd";
+      case "ocr_failed":
+        return "OCR failed";
+      case "text_native":
+        return "";
+      case "unknown":
+      default:
+        return "";
+    }
+  }
+
+  /** Whether the badge should show at all for this state. */
+  function showOcrBadge(state: OcrState): boolean {
+    return state !== "text_native" && state !== "unknown";
+  }
+
+  function isOcrCandidate(state: OcrState): boolean {
+    return state === "scanned" || state === "mixed" || state === "ocr_failed";
+  }
+
+  /** Local optimistic update so the UI shows new ocr_state/output instantly. */
+  function applyResult(r: OcrQueueResult): void {
+    docs = docs.map((d) =>
+      d.id === r.doc_id
+        ? {
+            ...d,
+            ocr_state: r.state_after,
+            ocr_output_path: r.output_path,
+          }
+        : d,
+    );
+    if (menu && menu.doc.id === r.doc_id) {
+      const fresh = docs.find((d) => d.id === r.doc_id);
+      if (fresh) menu = { ...menu, doc: fresh };
+    }
+  }
+
+  async function onRunOcrFor(doc: DocumentRecord) {
+    menu = null;
+    if (ocringDocIds.has(doc.id)) return;
+    const next = new Set(ocringDocIds);
+    next.add(doc.id);
+    ocringDocIds = next;
+    error = null;
+    try {
+      const result = await ocrQueueRunOne(doc.id, null);
+      applyResult(result);
+      if (result.error) {
+        error = `OCR failed for ${displayTitle(doc)}: ${result.error}`;
+      } else {
+        ocrSummary = `OCR'd "${displayTitle(doc)}"`;
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      const after = new Set(ocringDocIds);
+      after.delete(doc.id);
+      ocringDocIds = after;
+    }
+  }
+
+  async function onRunOcrAll() {
+    if (pendingOcrCount === 0) return;
+    ocringAll = true;
+    error = null;
+    ocrSummary = null;
+    try {
+      const results = await ocrQueueRunAll(null);
+      for (const r of results) applyResult(r);
+      const ok = results.filter((r) => r.state_after === "ocr_done").length;
+      const failed = results.filter((r) => r.state_after === "ocr_failed").length;
+      ocrSummary = `OCR queue: ${ok} succeeded, ${failed} failed (of ${results.length})`;
+      if (failed > 0 && ok === 0) {
+        error = `All ${failed} OCR attempts failed. Is Tesseract installed?`;
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      ocringAll = false;
+    }
+  }
+
+  function openOcrOutput(doc: DocumentRecord) {
+    if (!doc.ocr_output_path) return;
+    menu = null;
+    window.dispatchEvent(
+      new CustomEvent("slab:open-library-doc", {
+        detail: { path: doc.ocr_output_path },
+      }),
+    );
+  }
+
+  // ---------- Auto-tag (Lens Slice 6) ----------
+
+  /** Apply an auto-tag result optimistically — patch the doc's tag list
+   * locally so the chips show up before the next listDocuments() refresh. */
+  function applyAutoTagResult(r: AutoTagRunResult): void {
+    if (r.error) return;
+    // Build TagRecord[] from name+id pairs. If a tag was newly created
+    // by the backend we don't have its color yet — null is fine, the
+    // next refresh will fill it in (and the chip falls back to a grey
+    // border).
+    const knownById = new Map(tags.map((t) => [t.id, t]));
+    const newTags = r.tag_ids.map((id, i) => {
+      const existing = knownById.get(id);
+      if (existing) return existing;
+      return {
+        id,
+        name: r.tags_assigned[i] ?? `tag-${id}`,
+        color: null,
+      } as TagRecord;
+    });
+    docs = docs.map((d) =>
+      d.id === r.doc_id ? { ...d, tags: newTags } : d,
+    );
+    if (menu && menu.doc.id === r.doc_id) {
+      const fresh = docs.find((d) => d.id === r.doc_id);
+      if (fresh) menu = { ...menu, doc: fresh };
+    }
+  }
+
+  async function onAutoTagFor(doc: DocumentRecord) {
+    menu = null;
+    if (autoTaggingDocIds.has(doc.id)) return;
+    const next = new Set(autoTaggingDocIds);
+    next.add(doc.id);
+    autoTaggingDocIds = next;
+    error = null;
+    autoTagSummary = null;
+    try {
+      const result = await autoTagRunOne(doc.id, null);
+      applyAutoTagResult(result);
+      if (result.error) {
+        error = `Auto-tag failed for ${displayTitle(doc)}: ${result.error}`;
+      } else {
+        const added = result.tags_assigned.length;
+        autoTagSummary = `Auto-tagged "${displayTitle(doc)}" (${added} tag${added === 1 ? "" : "s"})`;
+        // Refresh the tag rail since new tags may have been created.
+        try {
+          tags = await listTags();
+        } catch {
+          // Non-fatal — the next full refresh picks it up.
+        }
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      const after = new Set(autoTaggingDocIds);
+      after.delete(doc.id);
+      autoTaggingDocIds = after;
+    }
+  }
+
+  async function onAutoTagAll() {
+    if (docs.length === 0) return;
+    if (autoTaggingAll) return;
+    const ok = window.confirm(
+      `Auto-tag ${docs.length} document${docs.length === 1 ? "" : "s"}?\n\nThis sends each doc's text to your configured Beacon provider. Suggestions are added — your existing tags are never removed.`,
+    );
+    if (!ok) return;
+    autoTaggingAll = true;
+    error = null;
+    autoTagSummary = null;
+    try {
+      const docIds = docs.map((d) => d.id);
+      const results = await autoTagRunMany(docIds, null);
+      for (const r of results) applyAutoTagResult(r);
+      const succeeded = results.filter((r) => !r.error).length;
+      const failed = results.filter((r) => r.error).length;
+      autoTagSummary = `Auto-tag: ${succeeded} tagged, ${failed} failed (of ${results.length})`;
+      if (failed > 0 && succeeded === 0) {
+        error = `All ${failed} auto-tag attempts failed. Is your Beacon provider configured and reachable?`;
+      }
+      // Refresh tag rail — new tags may have been created.
+      try {
+        tags = await listTags();
+      } catch {
+        // Non-fatal.
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      autoTaggingAll = false;
+    }
+  }
 
   // ---------- Folder rail actions ----------
 
@@ -384,6 +603,30 @@
     <button class="ghost" onclick={onRescanAll} disabled={scanning || folders.length === 0}>
       {scanning ? "Scanning…" : "↻ Rescan All"}
     </button>
+    {#if pendingOcrCount > 0}
+      <button
+        class="ghost ocr-all"
+        onclick={onRunOcrAll}
+        disabled={ocringAll}
+        title="Run OCR on every scanned/mixed document currently visible"
+      >
+        {ocringAll
+          ? `OCR'ing ${pendingOcrCount}…`
+          : `🔍 OCR ${pendingOcrCount} pending`}
+      </button>
+    {/if}
+    {#if docs.length > 0}
+      <button
+        class="ghost autotag-all"
+        onclick={onAutoTagAll}
+        disabled={autoTaggingAll}
+        title="Use the Beacon AI provider to suggest tags for every visible document. Existing tags are preserved."
+      >
+        {autoTaggingAll
+          ? `Auto-tagging ${docs.length}…`
+          : `🏷️ Auto-tag ${docs.length}`}
+      </button>
+    {/if}
     <div class="search">
       <span class="search-icon">⌕</span>
       <input
@@ -410,6 +653,12 @@
   {/if}
   {#if lastScanSummary && !error && !scanning}
     <div class="status ok">✓ {lastScanSummary}</div>
+  {/if}
+  {#if ocrSummary && !error && !ocringAll}
+    <div class="status ok">✓ {ocrSummary}</div>
+  {/if}
+  {#if autoTagSummary && !error && !autoTaggingAll}
+    <div class="status ok">✓ {autoTagSummary}</div>
   {/if}
 
   <div class="layout">
@@ -536,8 +785,56 @@
                 <span class="card-pages">{d.pages ?? "?"} pages</span>
                 <span class="card-sep">·</span>
                 <span class="card-seen">{formatRelTime(d.last_seen_at * 1000)}</span>
+                {#if showOcrBadge(d.ocr_state)}
+                  <span class="card-sep">·</span>
+                  <span class="ocr-badge ocr-badge-{d.ocr_state}" title={ocrStateLabel(d.ocr_state)}>
+                    {ocrStateLabel(d.ocr_state)}
+                  </span>
+                {/if}
               </div>
               <div class="card-path" title={d.path}>{relPath(d)}</div>
+              {#if isOcrCandidate(d.ocr_state) || d.ocr_state === "ocr_done"}
+                <div class="card-actions" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="toolbar" tabindex="-1">
+                  {#if isOcrCandidate(d.ocr_state)}
+                    <button
+                      class="card-action"
+                      disabled={ocringDocIds.has(d.id) || ocringAll}
+                      onclick={() => onRunOcrFor(d)}
+                      title="Run OCR on this document"
+                    >
+                      {ocringDocIds.has(d.id) ? "OCR'ing…" : "🔍 Run OCR"}
+                    </button>
+                  {/if}
+                  {#if d.ocr_state === "ocr_done" && d.ocr_output_path}
+                    <button
+                      class="card-action"
+                      onclick={() => openOcrOutput(d)}
+                      title={d.ocr_output_path}
+                    >
+                      📄 Open OCR'd
+                    </button>
+                  {/if}
+                  <button
+                    class="card-action"
+                    disabled={autoTaggingDocIds.has(d.id) || autoTaggingAll}
+                    onclick={() => onAutoTagFor(d)}
+                    title="Suggest 3–5 topical tags using the Beacon AI provider"
+                  >
+                    {autoTaggingDocIds.has(d.id) ? "Tagging…" : "🏷️ Auto-tag"}
+                  </button>
+                </div>
+              {:else}
+                <div class="card-actions" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="toolbar" tabindex="-1">
+                  <button
+                    class="card-action"
+                    disabled={autoTaggingDocIds.has(d.id) || autoTaggingAll}
+                    onclick={() => onAutoTagFor(d)}
+                    title="Suggest 3–5 topical tags using the Beacon AI provider"
+                  >
+                    {autoTaggingDocIds.has(d.id) ? "Tagging…" : "🏷️ Auto-tag"}
+                  </button>
+                </div>
+              {/if}
               {#if d.tags.length > 0}
                 <div class="card-tags">
                   {#each d.tags.slice(0, 3) as t (t.id)}
@@ -572,6 +869,31 @@
   >
     <button class="menu-item" onclick={() => openDocInTab(menu!.doc)}>
       <span>Open in Reader tab</span>
+    </button>
+    {#if isOcrCandidate(menu.doc.ocr_state)}
+      <button
+        class="menu-item"
+        disabled={ocringDocIds.has(menu.doc.id) || ocringAll}
+        onclick={() => onRunOcrFor(menu!.doc)}
+      >
+        <span>
+          {ocringDocIds.has(menu.doc.id) ? "OCR'ing…" : "🔍 Run OCR"}
+        </span>
+      </button>
+    {/if}
+    {#if menu.doc.ocr_state === "ocr_done" && menu.doc.ocr_output_path}
+      <button class="menu-item" onclick={() => openOcrOutput(menu!.doc)}>
+        <span>📄 Open OCR'd version</span>
+      </button>
+    {/if}
+    <button
+      class="menu-item"
+      disabled={autoTaggingDocIds.has(menu.doc.id) || autoTaggingAll}
+      onclick={() => onAutoTagFor(menu!.doc)}
+    >
+      <span>
+        {autoTaggingDocIds.has(menu.doc.id) ? "Tagging…" : "🏷️ Auto-tag"}
+      </span>
     </button>
     <div class="menu-sep"></div>
     <div class="menu-section">Tags</div>
@@ -923,6 +1245,73 @@
     border-left-color: var(--text-3);
     color: var(--text-3);
   }
+
+  /* OCR queue badges + actions */
+  .ocr-badge {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .ocr-badge-scanned {
+    background: rgba(245, 197, 24, 0.12);
+    color: #f5c518;
+    border-color: rgba(245, 197, 24, 0.35);
+  }
+  .ocr-badge-mixed {
+    background: rgba(192, 132, 252, 0.12);
+    color: #c084fc;
+    border-color: rgba(192, 132, 252, 0.35);
+  }
+  .ocr-badge-ocr_pending {
+    background: rgba(106, 183, 255, 0.12);
+    color: #6ab7ff;
+    border-color: rgba(106, 183, 255, 0.35);
+  }
+  .ocr-badge-ocr_done {
+    background: rgba(126, 231, 135, 0.12);
+    color: #7ee787;
+    border-color: rgba(126, 231, 135, 0.35);
+  }
+  .ocr-badge-ocr_failed {
+    background: rgba(244, 114, 114, 0.12);
+    color: #f59292;
+    border-color: rgba(244, 114, 114, 0.35);
+  }
+  .card-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  .card-action {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: border-color 80ms ease, color 80ms ease;
+  }
+  .card-action:hover:not(:disabled) {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .card-action:disabled { opacity: 0.55; cursor: progress; }
+  .toolbar .ocr-all {
+    background: rgba(245, 197, 24, 0.08);
+    border-color: rgba(245, 197, 24, 0.35);
+    color: #f5c518;
+  }
+  .toolbar .ocr-all:hover:not(:disabled) {
+    border-color: rgba(245, 197, 24, 0.6);
+  }
+  .toolbar .ocr-all:disabled { opacity: 0.55; }
 
   /* Status messages (reused look from other panels) */
   .status {
