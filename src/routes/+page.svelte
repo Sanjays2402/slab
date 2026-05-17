@@ -39,6 +39,7 @@
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
   import { isInTauri } from "$lib/tauri";
+  import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
   import type { RecentFile } from "$lib/recent";
 
@@ -190,14 +191,15 @@
   }
 
   function onGlobalKey(e: KeyboardEvent) {
-    const isMod = e.metaKey || e.ctrlKey;
-    if (isMod && e.key.toLowerCase() === "k") {
+    // Glass Slice 7: every shortcut now flows through the user-customisable
+    // keymap. `matches()` resolves against ~/.slab/config.toml [keymap].
+    if (matches(e, "palette.open")) {
       e.preventDefault();
       paletteOpen = !paletteOpen;
       return;
     }
     // "?" opens the shortcuts overlay (but not while typing in a field).
-    if (e.key === "?" && !isMod) {
+    if (matches(e, "shortcuts.show")) {
       const target = e.target as HTMLElement | null;
       const inField =
         target && (target.matches("input,textarea") || target.isContentEditable);
@@ -213,35 +215,51 @@
     // Skip when typing in form fields so we don't steal ⌘T from inputs.
     const target = e.target as HTMLElement | null;
     if (target && (target.matches("input,textarea") || target.isContentEditable)) {
-      // Still allow ⌘W to close even when an input has focus — feels native.
-      if (!(isMod && e.key.toLowerCase() === "w")) return;
+      // Still allow tabs.close to fire even when an input has focus — feels native.
+      if (!matches(e, "tabs.close")) return;
     }
-    if (isMod && e.key.toLowerCase() === "t" && !e.shiftKey) {
+    if (matches(e, "tabs.new")) {
       e.preventDefault();
       void pickAndOpenInNewTab();
       return;
     }
-    if (isMod && e.key.toLowerCase() === "w") {
+    if (matches(e, "tabs.close")) {
       e.preventDefault();
       closeTab(activeTabId);
       return;
     }
-    if (isMod && /^[1-9]$/.test(e.key)) {
-      const n = parseInt(e.key, 10);
-      if (n <= tabs.length) {
-        e.preventDefault();
-        setActiveTab(tabs[n - 1].id);
+    // tabs.goto1 … tabs.goto9. We use a small loop so users can rebind any
+    // single one without us iterating in a fragile hardcoded order.
+    const gotoIds = [
+      "tabs.goto1", "tabs.goto2", "tabs.goto3",
+      "tabs.goto4", "tabs.goto5", "tabs.goto6",
+      "tabs.goto7", "tabs.goto8", "tabs.goto9",
+    ] as const;
+    for (let n = 1; n <= 9; n++) {
+      if (matches(e, gotoIds[n - 1])) {
+        if (n <= tabs.length) {
+          e.preventDefault();
+          setActiveTab(tabs[n - 1].id);
+        }
+        return;
       }
-      return;
     }
-    // Ctrl+Tab / Ctrl+Shift+Tab to cycle through tabs (works across all OS,
-    // doesn't conflict with macOS Cmd+Tab app switcher).
-    if (e.ctrlKey && e.key === "Tab") {
+    // Cycle through tabs. tabs.prev is checked first because Shift+Tab also
+    // matches the modifier-less "Tab" pattern of tabs.next on some envs;
+    // checking the more-specific binding first avoids that ambiguity.
+    if (matches(e, "tabs.prev")) {
       e.preventDefault();
       const idx = tabs.findIndex((t) => t.id === activeTabId);
       if (idx < 0) return;
-      const step = e.shiftKey ? -1 : 1;
-      const nextIdx = (idx + step + tabs.length) % tabs.length;
+      const nextIdx = (idx - 1 + tabs.length) % tabs.length;
+      setActiveTab(tabs[nextIdx].id);
+      return;
+    }
+    if (matches(e, "tabs.next")) {
+      e.preventDefault();
+      const idx = tabs.findIndex((t) => t.id === activeTabId);
+      if (idx < 0) return;
+      const nextIdx = (idx + 1) % tabs.length;
       setActiveTab(tabs[nextIdx].id);
     }
   }

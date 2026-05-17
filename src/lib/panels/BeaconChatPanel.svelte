@@ -18,6 +18,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { onMount, tick } from "svelte";
   import { basename, idle, type CmdResult, type Status } from "$lib/types";
+  import { matches } from "$lib/keymap";
   import {
     slabBeaconVisionAsk,
     type BeaconChatTurn,
@@ -197,7 +198,16 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    // Enter sends, Shift+Enter newlines, Cmd/Ctrl+Enter sends too.
+    // Enter sends (Shift+Enter newlines).
+    // The customisable `beacon.send` action (defaults to Mod+Enter) also
+    // sends — that lets users rebind to e.g. Mod+Shift+Enter if they want
+    // Enter to *always* mean newline in long-form prompts. Both checks
+    // are honoured so existing muscle memory keeps working.
+    if (matches(e, "beacon.send")) {
+      e.preventDefault();
+      send();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();

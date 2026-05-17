@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { keymapView, prettyBinding, type ActionId } from "$lib/keymap";
 
   type Props = {
     open: boolean;
@@ -8,40 +9,88 @@
 
   let { open = $bindable(false), onClose }: Props = $props();
 
-  type Shortcut = { keys: string[]; label: string };
-  type Group = { title: string; items: Shortcut[] };
+  // Glass Slice 7: render the bindings live from the keymap store
+  // rather than a hardcoded array. The Settings → Keyboard shortcuts
+  // panel writes to the same store, so any user-rebound action shows
+  // its custom keys here without a reload.
+  //
+  // Curated grouping: we want a richer overlay than just the bindable
+  // actions list (e.g. "Esc closes overlays" — not technically
+  // bindable, but useful to surface). So we keep a hand-edited array
+  // of "info" rows and a parallel set of action-id rows pulled from
+  // the live store.
 
-  // Detect macOS once at module load. We render ⌘ on Mac, Ctrl elsewhere.
+  // Detect macOS once at module load. Used for the "static" rows
+  // that aren't part of the bindable action set.
   const IS_MAC =
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
   const MOD = IS_MAC ? "⌘" : "Ctrl";
 
-  const groups: Group[] = [
+  type Item = { keys: string[]; label: string };
+  type Group = { title: string; items: Item[] };
+
+  function bindingKeys(s: string): string[] {
+    // Pretty-print then split on the appropriate separator. On mac
+    // the pretty form is glued (e.g. "⌘⇧K") so we split per-char;
+    // elsewhere it's "+"-joined.
+    const pretty = prettyBinding(s);
+    if (IS_MAC) {
+      // Each modifier char is one symbol; the last segment can be
+      // multi-char (e.g. "Tab", "PgUp"). Naive but works because
+      // modifiers are always one codepoint.
+      const out: string[] = [];
+      const sym = "⌘⌃⌥⇧";
+      let i = 0;
+      while (i < pretty.length && sym.includes(pretty[i])) {
+        out.push(pretty[i]);
+        i++;
+      }
+      const rest = pretty.slice(i);
+      if (rest) out.push(rest);
+      return out;
+    }
+    return pretty.split("+");
+  }
+
+  function lookup(id: ActionId, fallback: string): string {
+    const a = $keymapView.actions.find((x) => x.id === id);
+    return a ? a.binding : fallback;
+  }
+
+  let groups = $derived<Group[]>([
     {
       title: "Global",
       items: [
-        { keys: [MOD, "K"], label: "Open command palette" },
-        { keys: ["?"], label: "Show keyboard shortcuts" },
+        { keys: bindingKeys(lookup("palette.open", "Mod+K")), label: "Open command palette" },
+        { keys: bindingKeys(lookup("shortcuts.show", "?")), label: "Show keyboard shortcuts" },
         { keys: ["Esc"], label: "Close current overlay" },
       ],
     },
     {
       title: "Tabs (Reader)",
       items: [
-        { keys: [MOD, "T"], label: "Open a PDF in a new tab" },
-        { keys: [MOD, "W"], label: "Close current tab" },
-        { keys: [MOD, "1", "…", "9"], label: "Jump to tab N" },
-        { keys: ["Ctrl", "Tab"], label: "Next tab" },
-        { keys: ["Ctrl", "Shift", "Tab"], label: "Previous tab" },
+        { keys: bindingKeys(lookup("tabs.new", "Mod+T")), label: "Open a PDF in a new tab" },
+        { keys: bindingKeys(lookup("tabs.close", "Mod+W")), label: "Close current tab" },
+        // Jump-to-tab N — show the canonical 1 + "…" + 9.
+        {
+          keys: [
+            ...bindingKeys(lookup("tabs.goto1", "Mod+1")),
+            "…",
+            bindingKeys(lookup("tabs.goto9", "Mod+9")).slice(-1)[0] ?? "9",
+          ],
+          label: "Jump to tab N",
+        },
+        { keys: bindingKeys(lookup("tabs.next", "Ctrl+Tab")), label: "Next tab" },
+        { keys: bindingKeys(lookup("tabs.prev", "Ctrl+Shift+Tab")), label: "Previous tab" },
       ],
     },
     {
       title: "Reading",
       items: [
-        { keys: [MOD, "F"], label: "Find in document" },
-        { keys: [MOD, "+"], label: "Zoom in" },
-        { keys: [MOD, "−"], label: "Zoom out" },
+        { keys: bindingKeys(lookup("find.open", "Mod+F")), label: "Find in document" },
+        { keys: bindingKeys(lookup("zoom.in", "Mod++")), label: "Zoom in" },
+        { keys: bindingKeys(lookup("zoom.out", "Mod+-")), label: "Zoom out" },
         { keys: ["↑", "↓"], label: "Scroll one line" },
         { keys: ["PgUp", "PgDn"], label: "Scroll one page" },
       ],
@@ -49,18 +98,17 @@
     {
       title: "Beacon (AI chat)",
       items: [
-        { keys: [MOD, "↵"], label: "Send message" },
+        { keys: bindingKeys(lookup("beacon.send", "Mod+Enter")), label: "Send message" },
         { keys: ["Shift", "↵"], label: "Newline in prompt" },
       ],
     },
     {
-      title: "Navigation",
+      title: "Customise",
       items: [
-        { keys: ["Click sidebar"], label: "Switch panel" },
-        { keys: [MOD, "K"], label: "Then type to filter panels & recents" },
+        { keys: [MOD, "K"], label: "Open palette → \"Customize shortcuts\"" },
       ],
     },
-  ];
+  ]);
 
   function onKey(e: KeyboardEvent) {
     if (!open) return;
@@ -106,7 +154,7 @@
       {/each}
     </div>
     <footer>
-      <span>Press <kbd>?</kbd> any time to open this sheet.</span>
+      <span>Press <kbd>?</kbd> any time to open this sheet. Rebind any action in Settings → Keyboard shortcuts.</span>
     </footer>
   </div>
 {/if}
