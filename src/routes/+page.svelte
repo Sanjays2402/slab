@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { open } from "@tauri-apps/plugin-dialog";
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
-  import PagesPanel from "$lib/panels/PagesPanel.svelte";
+  import SplitPatternPanel from "$lib/panels/SplitPatternPanel.svelte";
+  import PagesVisualPanel from "$lib/panels/PagesVisualPanel.svelte";
+  import PagesListPanel from "$lib/panels/PagesListPanel.svelte";
+  import EditTextPanel from "$lib/panels/EditTextPanel.svelte";
   import CompressPanel from "$lib/panels/CompressPanel.svelte";
   import ExtractPanel from "$lib/panels/ExtractPanel.svelte";
   import EncryptPanel from "$lib/panels/EncryptPanel.svelte";
@@ -28,6 +32,8 @@
   import BeaconSearchPanel from "$lib/panels/BeaconSearchPanel.svelte";
   import BeaconPiiPanel from "$lib/panels/BeaconPiiPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
+  import { isInTauri } from "$lib/tauri";
+  import { basename } from "$lib/types";
   import type { RecentFile } from "$lib/recent";
 
   type Feature = {
@@ -44,7 +50,10 @@
     { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
+    { id: "split-chapter", label: "Split by Chapter", icon: "✂", ready: true },
     { id: "pages", label: "Pages", icon: "▦", ready: true },
+    { id: "pages-list", label: "Pages (list)", icon: "≣", ready: true },
+    { id: "edit-text", label: "Edit Text", icon: "✎", ready: true },
     { id: "compress", label: "Compress", icon: "▼", ready: true },
     { id: "extract", label: "Extract", icon: "❡", ready: true },
     { id: "encrypt", label: "Encrypt", icon: "▣", ready: true },
@@ -71,8 +80,96 @@
   let active = $state("reader");
   let paletteOpen = $state(false);
 
+  // ---------- Reader tabs (Lathe Slice 5) ----------
+  //
+  // Each tab is its own ReaderPanel instance with its own pdfjs viewer, so we
+  // can keep document state alive across tab switches. Inactive tabs are
+  // kept in the DOM but hidden via `display: none` — switching is just
+  // updating `activeTabId`. This is the same pattern the Reader panel uses
+  // internally for the document <-> empty-state swap.
+  type Tab = {
+    id: string;
+    initialPath: string | null;
+    title: string;
+  };
+  let nextTabSeq = 0;
+  function newTabId(): string {
+    nextTabSeq += 1;
+    return `tab-${Date.now().toString(36)}-${nextTabSeq}`;
+  }
+  const initialTab: Tab = { id: newTabId(), initialPath: null, title: "New tab" };
+  let tabs = $state<Tab[]>([initialTab]);
+  let activeTabId = $state(initialTab.id);
+
+  function setActiveTab(id: string) {
+    activeTabId = id;
+    active = "reader";
+  }
+
+  function openNewTab(initialPath: string | null = null) {
+    const tab: Tab = {
+      id: newTabId(),
+      initialPath,
+      title: initialPath ? basename(initialPath) : "New tab",
+    };
+    tabs = [...tabs, tab];
+    setActiveTab(tab.id);
+  }
+
+  function closeTab(id: string) {
+    // Always keep at least one tab open. If the last tab is closed,
+    // reset it to an empty "New tab" instead of disappearing.
+    if (tabs.length === 1) {
+      tabs = [{ id: newTabId(), initialPath: null, title: "New tab" }];
+      activeTabId = tabs[0].id;
+      return;
+    }
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const next = tabs.filter((t) => t.id !== id);
+    tabs = next;
+    if (activeTabId === id) {
+      // Activate the tab that took the closed one's slot, or the last one.
+      activeTabId = next[Math.min(idx, next.length - 1)].id;
+    }
+  }
+
+  /** Called by ReaderPanel after a successful load. Updates the tab label. */
+  function onTabTitleChange(id: string, title: string) {
+    tabs = tabs.map((t) => (t.id === id ? { ...t, title } : t));
+  }
+
+  async function pickAndOpenInNewTab() {
+    if (!isInTauri()) {
+      // In browser dev, just create an empty tab — the user can pick via the
+      // dropzone inside the panel.
+      openNewTab(null);
+      return;
+    }
+    const picked = await open({
+      multiple: false,
+      filters: [
+        { name: "PDF only", extensions: ["pdf"] },
+        {
+          name: "Documents (PDF, Office, HTML, EPUB, CSV, JSON, XML, RTF, ODT)",
+          extensions: [
+            "pdf", "docx", "pptx", "xlsx", "xls",
+            "html", "htm", "epub",
+            "csv", "json", "xml", "rtf", "odt",
+            "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp",
+            "wav", "mp3", "m4a", "flac", "ogg",
+          ],
+        },
+      ],
+    });
+    if (typeof picked !== "string") return;
+    openNewTab(picked);
+  }
+
   // Pending recent-file open request — Reader panel reads this and reacts.
-  // We keep it on window so the ReaderPanel can subscribe without prop drilling.
+  // When triggered from the palette we route it to the *active* tab so the
+  // user's current view changes in place. (To open a recent in a new tab
+  // instead, hold Cmd while picking from the palette — TODO follow-up.)
   function requestOpenRecent(file: RecentFile) {
     active = "reader";
     queueMicrotask(() => {
@@ -85,6 +182,52 @@
     if (isMod && e.key.toLowerCase() === "k") {
       e.preventDefault();
       paletteOpen = !paletteOpen;
+      return;
+    }
+    // Tab shortcuts only fire when the Reader panel is the active feature.
+    // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
+    if (active !== "reader") return;
+    // Skip when typing in form fields so we don't steal ⌘T from inputs.
+    const target = e.target as HTMLElement | null;
+    if (target && (target.matches("input,textarea") || target.isContentEditable)) {
+      // Still allow ⌘W to close even when an input has focus — feels native.
+      if (!(isMod && e.key.toLowerCase() === "w")) return;
+    }
+    if (isMod && e.key.toLowerCase() === "t" && !e.shiftKey) {
+      e.preventDefault();
+      void pickAndOpenInNewTab();
+      return;
+    }
+    if (isMod && e.key.toLowerCase() === "w") {
+      e.preventDefault();
+      closeTab(activeTabId);
+      return;
+    }
+    if (isMod && /^[1-9]$/.test(e.key)) {
+      const n = parseInt(e.key, 10);
+      if (n <= tabs.length) {
+        e.preventDefault();
+        setActiveTab(tabs[n - 1].id);
+      }
+      return;
+    }
+    // Ctrl+Tab / Ctrl+Shift+Tab to cycle through tabs (works across all OS,
+    // doesn't conflict with macOS Cmd+Tab app switcher).
+    if (e.ctrlKey && e.key === "Tab") {
+      e.preventDefault();
+      const idx = tabs.findIndex((t) => t.id === activeTabId);
+      if (idx < 0) return;
+      const step = e.shiftKey ? -1 : 1;
+      const nextIdx = (idx + step + tabs.length) % tabs.length;
+      setActiveTab(tabs[nextIdx].id);
+    }
+  }
+
+  // Middle-click on a tab closes it (browser convention).
+  function onTabMouseDown(e: MouseEvent, id: string) {
+    if (e.button === 1) {
+      e.preventDefault();
+      closeTab(id);
     }
   }
 
@@ -126,13 +269,66 @@
   </button>
 
   <div class="footer">
-    <span class="version">v0.9.1</span>
+    <span class="version">v0.11.0</span>
   </div>
 </aside>
 
 <main class="content">
   {#if active === "reader"}
-    <ReaderPanel />
+    <!-- Tab strip — only shown for the Reader feature. -->
+    <div class="tabstrip" role="tablist" aria-label="Open PDFs">
+      {#each tabs as t (t.id)}
+        <div
+          class="tab"
+          class:active={t.id === activeTabId}
+          role="presentation"
+          onmousedown={(e) => onTabMouseDown(e, t.id)}
+          title={t.title}
+        >
+          <button
+            class="tab-label"
+            role="tab"
+            tabindex={t.id === activeTabId ? 0 : -1}
+            aria-selected={t.id === activeTabId}
+            onclick={() => setActiveTab(t.id)}
+          >
+            <span class="tab-icon">▥</span>
+            <span class="tab-title">{t.title}</span>
+          </button>
+          <button
+            class="tab-close"
+            aria-label="Close tab"
+            title="Close (⌘W)"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeTab(t.id);
+            }}
+          >×</button>
+        </div>
+      {/each}
+      <button
+        class="tab-new"
+        title="New tab (⌘T)"
+        aria-label="Open a PDF in a new tab"
+        onclick={pickAndOpenInNewTab}
+      >+</button>
+    </div>
+
+    <!-- Render every tab; only the active one is visible. Keeping the
+         hidden tabs mounted preserves their pdfjs viewer state (current
+         page, zoom, find state, outline) across switches. -->
+    <div class="reader-stack">
+      {#each tabs as t (t.id)}
+        <div class="reader-slot" class:active={t.id === activeTabId}>
+          <ReaderPanel
+            tabId={t.id}
+            active={t.id === activeTabId}
+            initialPath={t.initialPath}
+            onTitleChange={(title) => onTabTitleChange(t.id, title)}
+          />
+        </div>
+      {/each}
+    </div>
   {:else if active === "beacon"}
     <BeaconChatPanel />
   {:else if active === "search"}
@@ -143,8 +339,14 @@
     <MergePanel />
   {:else if active === "split"}
     <SplitPanel />
+  {:else if active === "split-chapter"}
+    <SplitPatternPanel />
   {:else if active === "pages"}
-    <PagesPanel />
+    <PagesVisualPanel />
+  {:else if active === "pages-list"}
+    <PagesListPanel />
+  {:else if active === "edit-text"}
+    <EditTextPanel />
   {:else if active === "compress"}
     <CompressPanel />
   {:else if active === "extract"}
@@ -333,5 +535,125 @@
     overflow-y: hidden;
     padding: 28px 36px 36px;
     min-height: 0;
+  }
+
+  /* ---------- Tab strip (Reader only) ---------- */
+  .tabstrip {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    margin: -8px -8px 12px;
+    padding: 0 2px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+    scrollbar-width: thin;
+  }
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-bottom: -1px;
+    max-width: 240px;
+    min-width: 120px;
+    position: relative;
+  }
+  .tab:hover {
+    background: var(--bg-3);
+  }
+  .tab.active {
+    background: var(--bg);
+    border-color: var(--border);
+    z-index: 1;
+  }
+  .tab-label {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    padding: 6px 4px 7px 10px;
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+    min-width: 0;
+  }
+  .tab:hover .tab-label,
+  .tab.active .tab-label {
+    color: var(--text);
+  }
+  .tab-icon {
+    color: var(--accent);
+    opacity: 0.9;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .tab-title {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left;
+  }
+  .tab-close {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 6px;
+    margin-right: 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .tab-close:hover {
+    background: var(--bg-3);
+    color: var(--text);
+  }
+  .tab.active .tab-close:hover {
+    background: var(--bg-2);
+  }
+  .tab-new {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 10px;
+    margin-left: 2px;
+    cursor: pointer;
+    align-self: center;
+    border-radius: 4px;
+  }
+  .tab-new:hover {
+    background: var(--bg-3);
+    color: var(--text);
+  }
+
+  /* ---------- Reader stack ---------- */
+  /* All tabs are mounted; only the active one is displayed. Keeps pdfjs
+     viewer state alive across switches. */
+  .reader-stack {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .reader-slot {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+  }
+  .reader-slot.active {
+    display: flex;
   }
 </style>

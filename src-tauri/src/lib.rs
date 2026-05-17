@@ -32,6 +32,10 @@ use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
+use pdf::duplicate::duplicate_pages;
+use pdf::edit_text::{
+    find_text_spans as do_find_text_spans, replace_text_span as do_replace_text_span, PageSpans,
+};
 use pdf::encrypt::{decrypt as do_decrypt, encrypt as do_encrypt};
 use pdf::extract::{extract_text as do_extract_text, extract_text_concat};
 use pdf::flatten::{flatten as do_flatten, FlattenOpts, FlattenReport};
@@ -53,11 +57,15 @@ use pdf::outline::{
 use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
+use pdf::pages_build::{pages_build as do_pages_build, PagesBuildOpts};
 use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
+use pdf::split_pattern::{
+    find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
+};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
 use pdf::PdfError;
 use serde::{Deserialize, Serialize};
@@ -134,6 +142,20 @@ fn slab_split_every(input: PathBuf, chunk_size: u32, out_dir: PathBuf) -> CmdRes
 }
 
 #[tauri::command]
+fn slab_split_by_pattern(
+    input: PathBuf,
+    pattern: Option<String>,
+    out_dir: PathBuf,
+) -> CmdResult<Vec<PathBuf>> {
+    do_split_by_pattern(&input, pattern.as_deref(), &out_dir).into()
+}
+
+#[tauri::command]
+fn slab_find_matching_pages(input: PathBuf, pattern: String) -> CmdResult<Vec<u32>> {
+    find_matching_pages(&input, &pattern).into()
+}
+
+#[tauri::command]
 fn slab_page_count(input: PathBuf) -> CmdResult<u32> {
     do_page_count(&input).into()
 }
@@ -154,8 +176,38 @@ fn slab_delete_pages(input: PathBuf, pages: Vec<u32>, output: PathBuf) -> CmdRes
 }
 
 #[tauri::command]
+fn slab_duplicate_pages(input: PathBuf, pages: Vec<u32>, output: PathBuf) -> CmdResult<u32> {
+    duplicate_pages(&input, &pages, &output).into()
+}
+
+#[tauri::command]
 fn slab_reorder_pages(input: PathBuf, order: Vec<u32>, output: PathBuf) -> CmdResult<()> {
     reorder_pages(&input, &order, &output).into()
+}
+
+#[tauri::command]
+fn slab_pages_build(input: PathBuf, opts: PagesBuildOpts, output: PathBuf) -> CmdResult<u32> {
+    do_pages_build(&input, &opts, &output).into()
+}
+
+#[tauri::command]
+fn slab_find_text_spans(input: PathBuf) -> CmdResult<Vec<PageSpans>> {
+    do_find_text_spans(&input).into()
+}
+
+#[tauri::command]
+fn slab_replace_text_span(
+    input: PathBuf,
+    output: PathBuf,
+    span_id: String,
+    new_text: String,
+) -> CmdResult<()> {
+    do_replace_text_span(&input, &output, &span_id, &new_text).into()
+}
+
+#[tauri::command]
+fn slab_outline_starts(input: PathBuf) -> CmdResult<Vec<u32>> {
+    outline_top_level_pages(&input).into()
 }
 
 #[tauri::command]
@@ -840,10 +892,17 @@ pub fn run() {
             slab_merge,
             slab_split_ranges,
             slab_split_every,
+            slab_split_by_pattern,
+            slab_find_matching_pages,
+            slab_outline_starts,
             slab_page_count,
             slab_rotate,
             slab_delete_pages,
+            slab_duplicate_pages,
             slab_reorder_pages,
+            slab_pages_build,
+            slab_find_text_spans,
+            slab_replace_text_span,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,

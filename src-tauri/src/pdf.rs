@@ -8,6 +8,8 @@ pub mod annotations;
 pub mod auto_redact;
 pub mod compress;
 pub mod crop;
+pub mod duplicate;
+pub mod edit_text;
 pub mod encrypt;
 pub mod extract;
 pub mod flatten;
@@ -24,11 +26,13 @@ pub mod outline;
 pub mod page_labels;
 pub mod page_numbers;
 pub mod pages;
+pub mod pages_build;
 pub mod polyglot;
 pub mod redact;
 pub mod repair;
 pub mod sanitize;
 pub mod split;
+pub mod split_pattern;
 pub mod watermark;
 
 #[cfg(test)]
