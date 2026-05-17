@@ -59,6 +59,7 @@ use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
+use pdf::split_pattern::{find_matching_pages, split_by_pattern as do_split_by_pattern};
 use pdf::watermark::{watermark as do_watermark, WatermarkOpts};
 use pdf::PdfError;
 use serde::{Deserialize, Serialize};
@@ -132,6 +133,20 @@ fn slab_split_ranges(
 #[tauri::command]
 fn slab_split_every(input: PathBuf, chunk_size: u32, out_dir: PathBuf) -> CmdResult<Vec<PathBuf>> {
     split_every(&input, chunk_size, &out_dir).into()
+}
+
+#[tauri::command]
+fn slab_split_by_pattern(
+    input: PathBuf,
+    pattern: Option<String>,
+    out_dir: PathBuf,
+) -> CmdResult<Vec<PathBuf>> {
+    do_split_by_pattern(&input, pattern.as_deref(), &out_dir).into()
+}
+
+#[tauri::command]
+fn slab_find_matching_pages(input: PathBuf, pattern: String) -> CmdResult<Vec<u32>> {
+    find_matching_pages(&input, &pattern).into()
 }
 
 #[tauri::command]
@@ -846,6 +861,8 @@ pub fn run() {
             slab_merge,
             slab_split_ranges,
             slab_split_every,
+            slab_split_by_pattern,
+            slab_find_matching_pages,
             slab_page_count,
             slab_rotate,
             slab_delete_pages,
