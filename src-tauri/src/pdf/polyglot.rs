@@ -249,4 +249,33 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("unsupported polyglot input"), "got: {msg}");
     }
+
+    /// Full end-to-end smoke: HTML → markitdown → md2pdf → PDF on disk.
+    ///
+    /// Gated on `markitdown_available()` so dev machines without the
+    /// binary don't break the build. When markitdown is on PATH, this is
+    /// the canary that proves the whole pipeline works for at least one
+    /// real input format.
+    #[test]
+    fn html_round_trip_produces_pdf() {
+        if !markitdown_available() {
+            eprintln!("skip: markitdown not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let html = dir.path().join("hello.html");
+        std::fs::write(
+            &html,
+            b"<html><body><h1>Polyglot</h1><p>Hello world.</p></body></html>",
+        )
+        .unwrap();
+        let out = dir.path().join("out.pdf");
+        let report = polyglot_to_pdf(&html, &out, PolyglotOpts::default()).unwrap();
+        assert_eq!(report.source_kind, "html");
+        assert!(report.pages >= 1);
+        assert!(report.markdown_bytes > 0);
+        assert!(out.exists());
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+    }
 }
