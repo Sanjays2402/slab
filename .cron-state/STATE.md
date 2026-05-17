@@ -5,21 +5,22 @@
 
 ---
 
-## STATUS: DEVELOP — `feature/v0.13.0-lens`, Slice 3 of 9 DONE (table extraction → CSV)
+## STATUS: DEVELOP — `feature/v0.13.0-lens`, Slice 5 of 9 DONE (Vision Q&A in Beacon)
 
-**v0.13.0 Lens slices progress (3 / 9):**
+**v0.13.0 Lens slices progress (4 / 9):**
 - ✅ **Slice 1: Scan-audit + Reader banner** — `pdf::scan_audit` classifier (text/image/mixed), `slab_scan_audit` Tauri cmd, Reader `lens.ts` auto-banner on open (commits d4905e2, b53e0e5, dfb2061)
 - ✅ **Slice 2: Library Auto-OCR Queue** — schema v2 + scanner derives `ocr_state` from scan_audit; new `pdf::library::ocr_queue` module (synchronous run_one/run_all/list_pending, `<stem>.ocr.<ext>` output naming); 3 Tauri commands `slab_library_ocr_queue_*` + TS bindings; LibraryPanel UI with color-coded badges, per-card Run-OCR / Open-OCR'd buttons, "OCR N pending" toolbar action, context-menu items (commits 8ca2ba0, 220d025, 31bc79a, e72a60c). 302 lib tests / svelte-check 0 errors / clippy `-D warnings` clean.
 - ✅ **Slice 3: Table Extraction → CSV** — new `pdf::table_extract` module shells out to `pdftotext -bbox-layout`, parses XHTML word bboxes (hand-rolled, no quick-xml dep), clusters rows by y-overlap (≥50%) and columns by 1-D x-gap (>12pt), snaps words to nearest column, emits 2-D `Table { page, index, bbox, rows, columns }`. RFC-4180 CSV serializer. 16 unit + 2 end-to-end tests (gated on pdftotext availability) via new `make_table_pdf` fixture. 3 Tauri commands (`slab_extract_tables`, `slab_table_to_csv`, `slab_table_save_csv`) + TS bindings in `src/lib/lens.ts`. New ⊞ **Tables → CSV** sidebar panel: file picker + page + min-rows/cols knobs → detect → card per table with 4-row preview (show-all toggle), Copy CSV (clipboard) + Save CSV (save dialog) actions, toast feedback. 302→318 lib tests / svelte-check 0 errors / clippy `-D warnings` clean. (commits 7cab48e, 6f58925, 731bb71, 00e3c6c, 8bff253)
-- ⏳ **Slice 4+: equation → LaTeX (pix2tex sidecar), vision Q&A in Beacon, auto-tag, tesseract DPI tuning, mixed-OCR overlay, CLI surface, release prep** — see `.cron-state/proposals/v0.13.0-lens.md`
+- ✅ **Slice 5: Vision Q&A in Beacon** — vertical slice in 2 commits. (a) `ccb1824` — new `ai::vision` module (rasterize page via `pdftoppm`, optional rect crop with PDF↔image y-flip, Triangle downscale to 1568 px max edge, base64 PNG, `vision_ask` orchestrator); `AiProvider::chat_with_images` default-impl trait method that returns clean "vision unsupported by provider …" for non-multimodal providers; full Ollama impl with `DEFAULT_VISION_MODEL = "llava:7b"`, `with_vision_model` builder, `OllamaMessage.images: Option<&[String]>` with `skip_serializing_if` so text-only wire format stays byte-identical; 4 new Ollama tests + 1 openai-compat rejection test + 6 vision-module tests gated on `pdftoppm`. (b) `6710485` — `slab_beacon_vision_ask` Tauri command mirroring `slab_beacon_summary` pattern; `lens.ts` adds `slabBeaconVisionAsk` + DTOs (`RectPts`, `VisionOpts`, `VisionReply`, `BeaconChatTurn`); `BeaconChatPanel.svelte` gains a "👁 Vision" quick chip that toggles a composer drawer (page picker + optional rect chip + ⌘/Ctrl+Enter to send + Esc to close), vision-turn badge in transcript, friendly errors mapping "vision unsupported" → install-llava hint and "pdftoppm" → install-poppler hint, listener for future `slab:beacon-vision-rect` event that the Reader will emit in v0.13.1 once rect selection lands. Docs at `docs/beacon-vision.md`. **318 → 332 lib tests** (+14), svelte-check 0 errors, fmt + clippy `-D warnings` clean.
+- ⏳ **Slice 4, 6+: equation → LaTeX (pix2tex sidecar), auto-tag, tesseract DPI tuning, mixed-OCR overlay, CLI surface, release prep** — see `.cron-state/proposals/v0.13.0-lens.md`
 
-**Active branch:** `feature/v0.13.0-lens` (5 new commits this tick: 7cab48e → 8bff253)
-**Last shipped tick:** Slice 3 closeout — vertical slice top-to-bottom (module + 16 tests → IPC → TS bindings → UI panel + sidebar nav)
+**Active branch:** `feature/v0.13.0-lens` (2 new commits this tick: ccb1824, 6710485 — Slice 5 end-to-end)
+**Last shipped tick:** Slice 5 Vision Q&A — top-to-bottom vertical slice (module + 10 tests → trait extension → Ollama impl + 4 tests → openai-compat rejection test → Tauri command → TS bindings → composer drawer + badge + listener → docs)
 
 **Quality gates green on feature branch:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` — 318 passed (302 → 318, +16)
+- `cargo test --lib` — 332 passed (318 → 332, +14)
 - `pnpm check` — 0 errors, 28 (pre-existing) warnings
 
 ---
