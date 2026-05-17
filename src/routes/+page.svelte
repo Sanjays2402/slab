@@ -53,6 +53,7 @@
   import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
   import { notify } from "$lib/notify";
+  import { t, tStore } from "$lib/i18n";
   import type { RecentFile } from "$lib/recent";
 
   type Feature = {
@@ -117,11 +118,10 @@
   let detachedWindowId = $state<string | null>(null);
   let detachedDoc = $state<string | null>(null);
 
-  /** Pretty label for the DetachedShell titlebar (uses `features` list). */
+  /** Pretty label for the DetachedShell titlebar (uses i18n bundle). */
   function titleForPanel(id: string | null): string {
     if (!id) return "Slab";
-    const feat = features.find((f) => f.id === id);
-    return feat ? feat.label : "Slab";
+    return t(`features.${id}`);
   }
 
   /**
@@ -157,7 +157,8 @@
   function detachActive(id: string): void {
     void openPanelWindow(id).then((label) => {
       if (label) {
-        notify.info(`Detached ${features.find((f) => f.id === id)?.label ?? id}`);
+        const featLabel = t(`features.${id}`);
+        notify.info(t("toast.detached", { panel: featLabel }));
         // Optimistic refresh so the Windows menu shows the new entry
         // immediately rather than waiting for the next 2s poll.
         void refreshOpenWindows();
@@ -186,13 +187,12 @@
 
   async function closeWindow(label: string): Promise<void> {
     await closePanelWindow(label);
-    notify.info(`Closed detached window`);
+    notify.info(t("toast.closedDetached"));
     void refreshOpenWindows();
   }
 
   function prettyWindowLabel(w: WindowState): string {
-    const feat = features.find((f) => f.id === w.panelId);
-    const name = feat ? feat.label : w.panelId;
+    const name = t(`features.${w.panelId}`);
     if (w.targetDoc) {
       // Show just the file's basename, not the absolute path.
       const base = w.targetDoc.split(/[/\\]/).pop() ?? w.targetDoc;
@@ -561,15 +561,15 @@
           onclick={() => (active = f.id)}
         >
           <span class="nav-icon">{f.icon}</span>
-          <span class="nav-label">{f.label}</span>
+          <span class="nav-label">{$tStore(`features.${f.id}`)}</span>
           {#if !f.ready}<span class="badge">soon</span>{/if}
         </button>
         {#if active === f.id && f.ready && supportsDetach(f.id) && isInTauri()}
           <button
             class="detach-btn"
             type="button"
-            title="Open {f.label} in a new window"
-            aria-label="Open {f.label} in a new window"
+            title="Open {$tStore(`features.${f.id}`)} in a new window"
+            aria-label="Open {$tStore(`features.${f.id}`)} in a new window"
             onclick={(e) => {
               e.stopPropagation();
               detachActive(f.id);
