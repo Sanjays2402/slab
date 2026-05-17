@@ -5,7 +5,9 @@
 
 ---
 
-## STATUS: DONE — `feature/v0.13.0-lens` — Slices 1+2+3+5+6+8+9 ready to merge
+## STATUS: RELEASE_PENDING — v0.13.0 "Lens" merged to main, awaiting CI
+
+**RELEASE_PENDING:** v0.13.0 — merge SHA `1b5e8fe`, tag `v0.13.0`, CI run `25994119497` (in_progress at push). Next tick MODE B: poll CI, if green → `gh release create v0.13.0 --notes-file docs/release-notes/v0.13.0.md --title "v0.13.0 — Lens 🔍"` and upload 6 artifacts.
 
 **v0.13.0 Lens shipped (7 / 9 slices, 2 deferred to v0.13.1):**
 - ✅ Slice 1: Scan-audit + Reader banner
@@ -27,7 +29,7 @@
 - `cargo test --lib` — 346 passed
 - `pnpm exec svelte-check` — 0 errors, 28 (pre-existing) warnings
 
-**Next tick: MODE A — merge `feature/v0.13.0-lens` to main, tag `v0.13.0`, push, then MODE B finalize once CI green.**
+**Next tick: MODE B — poll CI run `25994119497`, finalize GH release with 6 artifacts when green.**
 
 ---
 
