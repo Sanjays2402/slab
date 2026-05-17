@@ -521,8 +521,10 @@ mod tests {
             .create_async()
             .await;
         let p = OllamaProvider::with_base_url(srv.url());
-        let mut opts = ChatOpts::default();
-        opts.model = Some("llava:13b".into());
+        let opts = ChatOpts {
+            model: Some("llava:13b".into()),
+            ..Default::default()
+        };
         p.chat_with_images(
             &[ChatMessage {
                 role: ChatRole::User,

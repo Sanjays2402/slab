@@ -125,3 +125,65 @@ export async function slabTableSaveCsv(
   });
   return unwrap(res);
 }
+
+// ---------- Vision Q&A (Slice 5) ----------
+
+/** Mirror of `ai::vision::RectPts` — PDF-space rectangle in points.
+ *  Origin is bottom-left, matching PDF convention. */
+export interface RectPts {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Mirror of `ai::vision::VisionOpts`. All fields optional — backend
+ *  fills sensible defaults (150 DPI, 1568 px max edge, llava:7b). */
+export interface VisionOpts {
+  dpi?: number;
+  max_edge_px?: number;
+  model?: string;
+}
+
+/** Mirror of `ai::vision::VisionReply`. */
+export interface VisionReply {
+  content: string;
+  model: string;
+  page: number;
+  rect_pts: RectPts | null;
+  image_width: number;
+  image_height: number;
+}
+
+/** Mirror of the chat-history DTO used by every Beacon command. */
+export interface BeaconChatTurn {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/**
+ * Ask the configured Beacon vision provider a question about a page —
+ * optionally cropped to `rectPts`. Rasterizes via `pdftoppm`, downscales,
+ * sends to `llava:7b` (default) or whatever model the user configured.
+ *
+ * Requires Ollama (or any provider that implements `chat_with_images`);
+ * OpenAI-compat surfaces a clean "vision unsupported" error in v0.13.0.
+ */
+export async function slabBeaconVisionAsk(args: {
+  pdfPath: string;
+  page: number;
+  rectPts?: RectPts | null;
+  prompt: string;
+  history?: BeaconChatTurn[];
+  opts?: VisionOpts;
+}): Promise<VisionReply> {
+  const res = await invoke<CmdResult<VisionReply>>("slab_beacon_vision_ask", {
+    pdfPath: args.pdfPath,
+    page: args.page,
+    rectPts: args.rectPts ?? null,
+    prompt: args.prompt,
+    history: args.history ?? [],
+    opts: args.opts ?? null,
+  });
+  return unwrap(res);
+}

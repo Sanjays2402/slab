@@ -78,8 +78,7 @@ pub struct VisionReply {
 }
 
 /// System prompt that scopes Beacon to the supplied page image.
-const SYSTEM_PROMPT: &str =
-    "You are Beacon, an AI assistant looking at a PDF page rendered as an \
+const SYSTEM_PROMPT: &str = "You are Beacon, an AI assistant looking at a PDF page rendered as an \
      image. Answer the user's question grounded in what's visible. If the \
      question can't be answered from the image, say so plainly. Keep \
      responses concise unless asked for detail.";
@@ -108,8 +107,7 @@ pub fn render_page_image(
         )));
     }
 
-    let tmp = tempfile::tempdir()
-        .map_err(|e| AiError::Network(format!("create temp dir: {e}")))?;
+    let tmp = tempfile::tempdir().map_err(|e| AiError::Network(format!("create temp dir: {e}")))?;
     let prefix = tmp.path().join("page");
     let status = Command::new("pdftoppm")
         .arg("-r")
@@ -147,8 +145,7 @@ pub fn render_page_image(
         AiError::InvalidResponse("pdftoppm produced no PNG (bad page index?)".into())
     })?;
 
-    let bytes = std::fs::read(&png_path)
-        .map_err(|e| AiError::Network(format!("read png: {e}")))?;
+    let bytes = std::fs::read(&png_path).map_err(|e| AiError::Network(format!("read png: {e}")))?;
     let mut img = image::load_from_memory(&bytes)
         .map_err(|e| AiError::InvalidResponse(format!("decode png: {e}")))?;
 
@@ -257,7 +254,7 @@ fn pdftoppm_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::{ChatResponse, ChatRole};
+    use crate::ai::ChatResponse;
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -326,8 +323,7 @@ mod tests {
             width: 100.0,
             height: 100.0,
         };
-        let cropped =
-            render_page_image(&pdf, 1, Some(rect), &VisionOpts::default()).unwrap();
+        let cropped = render_page_image(&pdf, 1, Some(rect), &VisionOpts::default()).unwrap();
         assert!(cropped.starts_with(&[0x89, 0x50, 0x4E, 0x47]));
         assert!(
             cropped.len() < full.len(),
@@ -375,7 +371,12 @@ mod tests {
         };
         let bytes = render_page_image(&pdf, 1, None, &opts).unwrap();
         let img = image::load_from_memory(&bytes).unwrap();
-        assert!(img.width() <= 200 && img.height() <= 200, "got {}x{}", img.width(), img.height());
+        assert!(
+            img.width() <= 200 && img.height() <= 200,
+            "got {}x{}",
+            img.width(),
+            img.height()
+        );
     }
 
     // --- Orchestrator test (mock provider, no network) -----------------

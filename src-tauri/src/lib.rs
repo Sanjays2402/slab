@@ -604,6 +604,64 @@ async fn slab_beacon_summary(
         .into()
 }
 
+/// Beacon vision Q&A — render `page` (or a region of it) to an image
+/// and ask the configured provider a question about it. Buffered for
+/// v0.13.0; streaming variant arrives in v0.13.1 once the Beacon
+/// channel surface is uniformly wired across `chat` / `summary` /
+/// `selection_action` / vision.
+///
+/// Requires a vision-capable provider. Ollama is the default
+/// (`llava:7b`); OpenAI-compat surfaces a clean
+/// "vision unsupported" error until the multimodal endpoint is wired
+/// (a v0.13.1 follow-up).
+#[tauri::command]
+async fn slab_beacon_vision_ask(
+    pdf_path: PathBuf,
+    page: u32,
+    rect_pts: Option<ai::vision::RectPts>,
+    prompt: String,
+    history: Vec<ChatTurnDto>,
+    opts: Option<ai::vision::VisionOpts>,
+) -> CmdResult<ai::vision::VisionReply> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let history_msgs: Vec<ChatMessage> = history
+        .into_iter()
+        .filter_map(|t| {
+            parse_role(&t.role).map(|role| ChatMessage {
+                role,
+                content: t.content,
+            })
+        })
+        .collect();
+    let opts = opts.unwrap_or_default();
+    ai::vision::vision_ask(
+        provider,
+        &pdf_path,
+        page,
+        rect_pts,
+        &prompt,
+        &history_msgs,
+        &opts,
+    )
+    .await
+    .into()
+}
+
 // ---------- Beacon semantic search (Slice 6/7) ----------
 
 /// Helper: open the shared on-disk embedding index. Each command opens
@@ -1165,6 +1223,7 @@ pub fn run() {
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
+            slab_beacon_vision_ask,
             slab_export_annotations_md,
             slab_library_add_folder,
             slab_library_remove_folder,
