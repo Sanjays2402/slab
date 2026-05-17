@@ -10,6 +10,7 @@ pub mod compress;
 pub mod crop;
 pub mod encrypt;
 pub mod extract;
+pub mod flatten;
 pub mod grayscale;
 pub mod header_footer;
 pub mod info;
