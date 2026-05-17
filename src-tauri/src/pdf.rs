@@ -17,6 +17,7 @@ pub mod grayscale;
 pub mod header_footer;
 pub mod info;
 pub mod insert;
+pub mod library;
 pub mod md2pdf;
 pub mod merge;
 pub mod metadata;
