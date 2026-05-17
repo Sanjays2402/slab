@@ -5,11 +5,42 @@
 
 ---
 
-## STATUS: v1.0.0 "Glass" IN PROGRESS — 8 commits on `feature/v1.0.0-glass`
+## STATUS: v1.0.0 "Glass" IN PROGRESS — 11 commits on `feature/v1.0.0-glass`
 
 **v0.15.0 Theater RELEASED** 2026-05-17 ~10:35 PT — https://github.com/Sanjays2402/slab/releases/tag/v0.15.0 (Theater 🎭) — 6 assets up, isLatest=true.
 
-**Active branch**: `feature/v1.0.0-glass` (8 commits ahead of main, pushed to origin)
+**Active branch**: `feature/v1.0.0-glass` (11 commits ahead of main, pushed to origin)
+
+---
+
+## TICK 2026-05-17 ~11:55 PT — Slice 7 backend half (Customizable Shortcuts)
+
+Used the writing-plans skill to author a full 8-task plan, then shipped
+the entire backend half in this same tick (3 commits).
+
+- ✅ **Plan committed** (`a6ab6cb`) — `docs/plans/2026-05-17-v1.0.0-glass-slice-7-keymap.md` (~58 KB, 1612 lines). Bite-sized 2-5 min tasks, exact paths, copy-pasteable code, TDD with failing tests + expected output per step. Tick split: Tasks 1-4 backend (this tick), Tasks 5-8 frontend (next tick).
+- ✅ **Slice 7 backend module** (`e14428f`) — new `src-tauri/src/keymap/` directory (mod.rs + binding.rs + action.rs, 996 lines incl. 32 unit tests). `Binding` round-trips between `Mod+Shift+K` strings and ModifierSet+key with canonical print order. `ActionId` enum + ACTIONS registration table covers 19 bindable actions across Global/Tabs/Reading/Beacon. `default_keymap()` reproduces today's hardcoded shortcuts byte-for-byte. `KeymapConfig` (sparse overrides, defaults reconstituted at materialise time → no migration ever needed) wired into `SlabConfig` via `#[serde(default)]` so legacy `~/.slab/config.toml` files keep working. Unknown action ids in incoming TOML are silently dropped (forward-compat); malformed binding strings error loudly. Custom serde with sorted keys for stable on-disk diff.
+- ✅ **Slice 7 Tauri commands** (`1cad59c`) — `slab_keymap_{read,write,reset}` invoke commands. `apply_overrides()` is collision-aware against the *materialised* map (binding palette.open to "?" correctly collides with default shortcuts.show even though user didn't touch it). Drops overrides equal to default so the on-disk file stays tidy. +7 commands.rs tests covering view shape, override marker, every error variant, default-pruning, happy-path write-through.
+
+**Quality gates green on `feature/v1.0.0-glass` HEAD `1cad59c`:**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (451 passed, +39 from Slice 7 keymap module)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Next tick (still MODE C — Slice 7 Tick 2 = frontend):**
+- Task 5: `src/lib/keymap.ts` — Svelte store + `matches(event, actionId)` matcher + `bootKeymap()` / `writeKeymap()` / `resetKeymap()` async wrappers.
+- Task 6: Replace hardcoded `e.key === "?"` / `e.metaKey && e.key === "k"` checks in `+page.svelte`, `ShortcutsOverlay.svelte`, `BeaconChatPanel.svelte` with `matches(e, "...")` calls. ShortcutsOverlay renders pills from the live store, not the hardcoded array.
+- Task 7: `src/lib/panels/KeymapPanel.svelte` — Linear-style settings UI with capture-mode pills, group headers (Global / Tabs / Reading / Beacon), override badge, per-row reset, factory-reset button. Inline conflict toast on backend rejection.
+- Task 8: Command palette entry "Customize shortcuts" + final svelte-check + push.
+
+After Slice 7 ships: Slice 8 candidate is Floating Panels (multi-window/detachable Beacon + Library — bigger lift, 2+ ticks) OR Performance pass (page-render worker pool + 100-page open <500ms) OR v1.0.0 release prep (version bump 0.15.0 → 1.0.0, comprehensive release notes, MODE A merge).
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: v1.0.0 "Glass" IN PROGRESS — 8 commits on `feature/v1.0.0-glass`
 
 **Glass slices shipped so far:**
 - ✅ **Slice 1: Settings UX** — backend `UiConfig` extension + `ui` section
