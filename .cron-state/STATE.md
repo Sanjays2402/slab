@@ -5,7 +5,81 @@
 
 ---
 
-## STATUS: 🗄 v1.1.0 "Cabinet" Slices 1+2+3+4 SHIPPED — 9 commits on `feature/v1.1.0-cabinet` (pushed)
+## STATUS: ✅ v1.1.0 "Cabinet" DONE on `feature/v1.1.0-cabinet` — READY FOR MODE A MERGE
+
+**Branch**: `feature/v1.1.0-cabinet` (pushed to origin, 14 commits ahead of main)
+
+**HEAD**: `7de26bb` — `docs(release): v1.1.0 "Cabinet" release notes`
+
+**Quality gates green** on branch HEAD:
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (468 passed)
+- `pnpm exec svelte-check` ✓ (0 errors / 28 baseline warnings)
+
+**Next tick**: MODE A — merge `feature/v1.1.0-cabinet` into `main` with
+`--no-ff`, tag `v1.1.0`, push tag + main, kick CI. Then MODE B in the
+subsequent tick once CI is green.
+
+---
+
+## TICK 2026-05-17 ~14:30 PT — v1.1.0 Cabinet Slices 5+6+7+8 in ONE tick (6 commits) → DONE
+
+Closing the loop on Cabinet in a single big tick. All four remaining
+slices shipped sequentially, each with its own atomic commit set, each
+following the slice's plan to the letter.
+
+### Commits this tick
+
+- `0bc8402` — Slice 5 Task 1 — wire all 11 detachable panels into the
+  detached-mode `{#if}` branch in `+page.svelte` (was 5 panels, now
+  full 11: added pages, pages-list, diff, slides, tables, markdown).
+- `a87a55d` — Slice 5 Task 2 — Command Palette "Open <panel> in new
+  window" entries for all 11 panels, gated on isInTauri().
+- `cbec38a` — Slice 6 backend — 12 library-mutation Tauri commands
+  now take `app: AppHandle` and call `emit_library_changed(&app)` on
+  success. New `slab_request_open_in_main(path)` command emits
+  `slab://open-doc` targeted at the `main` window only.
+- `896cb91` — Slice 6 frontend — LibraryPanel subscribes to
+  `slab://library-changed` (refetch on poke), accepts `detached?`
+  prop, reroutes card activation through `slab_request_open_in_main`
+  when detached. Main `+page.svelte` subscribes to `slab://open-doc`
+  and opens the path as a new Reader tab.
+- `ede2038` — Slice 7 — sidebar Windows menu (polls every 2s, lists
+  detached windows with focus + close buttons) + toast confirmations
+  ("Detached Beacon AI", "Closed detached window").
+- `40ae7bf` — Slice 8 Task 1 — version bump 1.0.0 → 1.1.0 across
+  package.json, Cargo.toml (+Cargo.lock), tauri.conf.json, sidebar
+  pill.
+- `7de26bb` — Slice 8 Task 2 — `docs/releases/v1.1.0.md` release
+  notes (~7.4 KB, 8-slice breakdown, 11-panel table, upgrade notes,
+  stability promise, what's next).
+
+### Quality gates
+
+All four green on `7de26bb`:
+- cargo fmt --check
+- cargo clippy --all-targets -D warnings
+- cargo test --lib → 468 passed, 0 failed
+- pnpm exec svelte-check → 0 errors, 28 unrelated CSS warnings
+
+### Cabinet velocity
+
+| Tick | Slices                 | Commits | Cumulative |
+|------|------------------------|---------|------------|
+| 1    | 1 + 2                  | 6       | 6          |
+| 2    | 3 + 4                  | 3       | 9          |
+| 3    | 5 + 6 + 7 + 8 (TODAY)  | 7       | 16         |
+
+**3 ticks total for v1.1.0 Cabinet** (vs 8-tick plan estimate).
+Sanjay's "ship BIG things every tick" directive paid out: tick 3 alone
+swallowed half the remaining plan.
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🗄 v1.1.0 "Cabinet" Slices 1+2+3+4 SHIPPED — 9 commits on `feature/v1.1.0-cabinet` (pushed)
 
 **Branch**: `feature/v1.1.0-cabinet` (pushed to origin, 9 commits ahead of main)
 
@@ -135,7 +209,7 @@ Glass on 2026-05-17 — 14 versions in 36 hours).
 ### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
-### v1.1.0 "Cabinet" — IN PROGRESS (Slices 1-4 of 8 done — 50% in 2 ticks) 🗄
+### v1.1.0 "Cabinet" — DONE on feature branch (3 ticks, 16 commits) — awaiting MODE A merge 🗄
 
 ### v1.2.0 "Glass II" (later)
 - Vim bindings, a11y, i18n
