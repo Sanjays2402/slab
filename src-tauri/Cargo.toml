@@ -54,6 +54,17 @@ bytes = "1"
 # Beacon config file (`~/.slab/config.toml`) parser. Tiny, no_std-friendly,
 # zero unsafe — good citizen.
 toml = "0.8"
+# Beacon embedding index storage (Slice 6). `bundled` ships SQLite with
+# the crate so we don't depend on the host's libsqlite3 — keeps Windows
+# / macOS Tauri bundles self-contained. `blob` is needed for raw f32
+# embedding storage. We skip `sqlite-vec` for v1: brute-force cosine
+# in Rust handles up to ~200k chunks @ 768d in <100ms on M1, and we
+# avoid the cross-platform extension-loading headache.
+rusqlite = { version = "0.32", features = ["bundled", "blob"] }
+# Beacon: PDF content hash → cache key for the embedding index. `sha2`
+# is already transitively pulled by reqwest TLS, so this is a zero-cost
+# explicit dep.
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

@@ -15,7 +15,9 @@
 // against `mockito` without futures plumbing.
 
 pub mod chat;
+pub mod chunker;
 pub mod config;
+pub mod embedding_index;
 pub mod ollama;
 pub mod openai_compat;
 pub mod summary;
