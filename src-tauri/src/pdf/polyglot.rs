@@ -278,4 +278,28 @@ mod tests {
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.starts_with(b"%PDF-"));
     }
+
+    /// CSV is a non-Office text format — markitdown handles it via its
+    /// own tabular converter rather than mammoth/pandoc, so we keep a
+    /// separate canary that proves the bridge isn't Office-only.
+    ///
+    /// Gated on `markitdown_available()` for the same reason as the HTML
+    /// round-trip test.
+    #[test]
+    fn csv_round_trip_produces_pdf() {
+        if !markitdown_available() {
+            eprintln!("skip: markitdown not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let csv = dir.path().join("rows.csv");
+        std::fs::write(&csv, b"name,score\nalice,99\nbob,87\n").unwrap();
+        let out = dir.path().join("out.pdf");
+        let report = polyglot_to_pdf(&csv, &out, PolyglotOpts::default()).unwrap();
+        assert_eq!(report.source_kind, "csv");
+        assert!(report.pages >= 1);
+        assert!(out.exists());
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+    }
 }
