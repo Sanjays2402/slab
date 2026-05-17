@@ -5,22 +5,22 @@
 
 ---
 
-## STATUS: DEVELOP — `feature/v0.13.0-lens`, Slice 2 of 9 DONE (auto-OCR queue end-to-end)
+## STATUS: DEVELOP — `feature/v0.13.0-lens`, Slice 3 of 9 DONE (table extraction → CSV)
 
-**v0.13.0 Lens slices progress (2 / 9):**
+**v0.13.0 Lens slices progress (3 / 9):**
 - ✅ **Slice 1: Scan-audit + Reader banner** — `pdf::scan_audit` classifier (text/image/mixed), `slab_scan_audit` Tauri cmd, Reader `lens.ts` auto-banner on open (commits d4905e2, b53e0e5, dfb2061)
 - ✅ **Slice 2: Library Auto-OCR Queue** — schema v2 + scanner derives `ocr_state` from scan_audit; new `pdf::library::ocr_queue` module (synchronous run_one/run_all/list_pending, `<stem>.ocr.<ext>` output naming); 3 Tauri commands `slab_library_ocr_queue_*` + TS bindings; LibraryPanel UI with color-coded badges, per-card Run-OCR / Open-OCR'd buttons, "OCR N pending" toolbar action, context-menu items (commits 8ca2ba0, 220d025, 31bc79a, e72a60c). 302 lib tests / svelte-check 0 errors / clippy `-D warnings` clean.
-- ⏳ **Slice 3+: tesseract DPI tuning, table → CSV, math → LaTeX, vision Q&A in Beacon, auto-tag, CMap rewriting, font subsetting** — see `.cron-state/proposals/v0.13.0-lens.md`
+- ✅ **Slice 3: Table Extraction → CSV** — new `pdf::table_extract` module shells out to `pdftotext -bbox-layout`, parses XHTML word bboxes (hand-rolled, no quick-xml dep), clusters rows by y-overlap (≥50%) and columns by 1-D x-gap (>12pt), snaps words to nearest column, emits 2-D `Table { page, index, bbox, rows, columns }`. RFC-4180 CSV serializer. 16 unit + 2 end-to-end tests (gated on pdftotext availability) via new `make_table_pdf` fixture. 3 Tauri commands (`slab_extract_tables`, `slab_table_to_csv`, `slab_table_save_csv`) + TS bindings in `src/lib/lens.ts`. New ⊞ **Tables → CSV** sidebar panel: file picker + page + min-rows/cols knobs → detect → card per table with 4-row preview (show-all toggle), Copy CSV (clipboard) + Save CSV (save dialog) actions, toast feedback. 302→318 lib tests / svelte-check 0 errors / clippy `-D warnings` clean. (commits 7cab48e, 6f58925, 731bb71, 00e3c6c, 8bff253)
+- ⏳ **Slice 4+: equation → LaTeX (pix2tex sidecar), vision Q&A in Beacon, auto-tag, tesseract DPI tuning, mixed-OCR overlay, CLI surface, release prep** — see `.cron-state/proposals/v0.13.0-lens.md`
 
-**Active branch:** `feature/v0.13.0-lens` (4 new commits this tick: 8ca2ba0 → e72a60c)
-**Last shipped tick:** Slice 2 closeout — vertical slice top-to-bottom (registry → scanner → queue → IPC → UI)
+**Active branch:** `feature/v0.13.0-lens` (5 new commits this tick: 7cab48e → 8bff253)
+**Last shipped tick:** Slice 3 closeout — vertical slice top-to-bottom (module + 16 tests → IPC → TS bindings → UI panel + sidebar nav)
 
 **Quality gates green on feature branch:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` — 302 passed (273 → 302, +29 between Slice 1 & 2 additions: schema v2 + ocr_queue module + scanner ocr_state derivation)
+- `cargo test --lib` — 318 passed (302 → 318, +16)
 - `pnpm check` — 0 errors, 28 (pre-existing) warnings
-- `pnpm build` — clean
 
 ---
 
