@@ -20,9 +20,18 @@
     onClose: () => void;
     onSelectPanel: (id: string) => void;
     onOpenRecent: (file: RecentFile) => void;
+    onShowShortcuts?: () => void;
   };
 
-  let { open = $bindable(false), panels, activePanel, onClose, onSelectPanel, onOpenRecent }: Props = $props();
+  let {
+    open = $bindable(false),
+    panels,
+    activePanel,
+    onClose,
+    onSelectPanel,
+    onOpenRecent,
+    onShowShortcuts,
+  }: Props = $props();
 
   let query = $state("");
   let selected = $state(0);
@@ -110,6 +119,17 @@
         group: "Appearance",
         run: () => void setUiConfig({ density: d.id }),
         keywords: `density spacing ${d.id} ${d.label}`,
+      });
+    }
+    if (onShowShortcuts) {
+      out.push({
+        id: "help:shortcuts",
+        title: "Keyboard shortcuts",
+        subtitle: "Show the full reference (?)",
+        icon: "⌨",
+        group: "Help",
+        run: () => onShowShortcuts!(),
+        keywords: "keyboard shortcuts help reference cheatsheet bindings",
       });
     }
     return out;

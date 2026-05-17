@@ -37,6 +37,7 @@
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
+  import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
   import { isInTauri } from "$lib/tauri";
   import { basename } from "$lib/types";
   import type { RecentFile } from "$lib/recent";
@@ -89,6 +90,7 @@
 
   let active = $state("reader");
   let paletteOpen = $state(false);
+  let shortcutsOpen = $state(false);
 
   // ---------- Reader tabs (Lathe Slice 5) ----------
   //
@@ -193,6 +195,17 @@
       e.preventDefault();
       paletteOpen = !paletteOpen;
       return;
+    }
+    // "?" opens the shortcuts overlay (but not while typing in a field).
+    if (e.key === "?" && !isMod) {
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target && (target.matches("input,textarea") || target.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        shortcutsOpen = !shortcutsOpen;
+        return;
+      }
     }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
@@ -434,7 +447,13 @@
     paletteOpen = false;
     requestOpenRecent(file);
   }}
+  onShowShortcuts={() => {
+    paletteOpen = false;
+    shortcutsOpen = true;
+  }}
 />
+
+<ShortcutsOverlay bind:open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
 
 <style>
   .sidebar {
