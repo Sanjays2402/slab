@@ -26,6 +26,7 @@ pub mod page_numbers;
 pub mod pages;
 pub mod polyglot;
 pub mod redact;
+pub mod sanitize;
 pub mod split;
 pub mod watermark;
 

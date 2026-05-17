@@ -30,6 +30,7 @@ use slab_lib::pdf::ocr::{ocr, OcrOpts};
 use slab_lib::pdf::outline::{read_outline, write_outline, OutlineNode};
 use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
+use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
 use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
 use slab_lib::pdf::PdfError;
 use std::path::{Path, PathBuf};
@@ -73,6 +74,7 @@ fn main() -> ExitCode {
         "outline" => cmd_outline(rest),
         "polyglot" => cmd_polyglot(rest),
         "flatten" => cmd_flatten(rest),
+        "sanitize" => cmd_sanitize(rest),
         "export-annots" => cmd_export_annots(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
@@ -142,6 +144,11 @@ Commands:
                                      Bake annotations into the page content
                                      stream and remove /AcroForm. The result
                                      is a static PDF with no editable fields.
+  sanitize <file> -o <out> [--keep-links]
+                                     Strip JavaScript, embedded files, launch
+                                     actions, /OpenAction, /AA, /XFA, and (by
+                                     default) external URI links. Visual
+                                     appearance unchanged.
   export-annots <file> -o <out.md>   Extract highlights & notes as Markdown
 
   help, --help                       This help
@@ -422,6 +429,27 @@ fn cmd_flatten(args: &[String]) -> Result<(), CliError> {
         } else {
             ""
         },
+        output.display()
+    );
+    Ok(())
+}
+
+fn cmd_sanitize(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let keep_links = args.iter().any(|a| a == "--keep-links");
+    let opts = SanitizeOpts { keep_links };
+    let report = do_sanitize(&input, &output, opts)?;
+    println!(
+        "✓ stripped: js={} launch={} uri={} embeds={} open-action={} aa-catalog={} aa-pages={} xfa={} → {}",
+        report.js_removed,
+        report.launch_removed,
+        report.uri_removed,
+        report.embedded_files_removed,
+        report.open_action_removed,
+        report.catalog_aa_removed,
+        report.pages_aa_removed,
+        report.xfa_removed,
         output.display()
     );
     Ok(())
