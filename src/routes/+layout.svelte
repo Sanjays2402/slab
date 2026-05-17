@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { bootTheme, uiConfig } from "$lib/theme";
   import { bootKeymap } from "$lib/keymap";
+  import { bootI18n } from "$lib/i18n";
   import ToastStack from "$lib/ToastStack.svelte";
   import OnboardingTour from "$lib/OnboardingTour.svelte";
 
@@ -16,6 +17,10 @@
   // idempotent and applies attributes synchronously after the
   // initial async read.
   onMount(() => {
+    // Apply persisted locale + <html lang>/<dir> before anything else
+    // so screen readers and `:dir(rtl)` CSS see the right values on
+    // first paint. Synchronous — i18n state is purely client-side.
+    bootI18n();
     void bootTheme().then(() => {
       // After the initial config load, decide whether to show the
       // onboarding tour. First-launch only — once dismissed it stays
