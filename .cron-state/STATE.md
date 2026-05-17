@@ -5,7 +5,77 @@
 
 ---
 
-## STATUS: 🚀 v1.1.0 "Cabinet" MERGED + TAGGED + PUSHED — CI running
+## STATUS: 🚀 v1.1.0 RELEASED + v1.2.0 "Glass II" Slice 1 + 1.5 shipped
+
+**Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
+**v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
+**Active branch**: `feature/v1.2.0-glass-ii` (pushed, 2 commits ahead of main)
+**Branch HEAD**: `9104ab9` — `feat(vim): VimController wrapper, VimIndicator pill, Settings + Palette toggles`
+
+**Quality gates green on branch HEAD:**
+- pnpm exec svelte-check → 0 errors / 28 baseline warnings (unchanged)
+- cargo fmt --check (no Rust touched this tick)
+
+**Next tick — MODE C — Slice 2**:
+- Wire `<VimController panel="reader">` around `<ReaderPanel>` in `+page.svelte`.
+- Add handler that translates `VimAction`s (move/scroll-half/scroll-full/page/move-line/search-next/command) into Reader operations.
+- `:42<CR>` → jump to page 42 (parse line.match(/^\d+$/) from action.line).
+- `:q<CR>` → close current doc tab.
+- `/foo<CR>` → set search query store + jump to first match.
+- After Reader works, add Library Vim adapter (Slice 3 first half).
+
+---
+
+## TICK 2026-05-17 ~15:15 PT — v1.1.0 finalize + v1.2.0 Slice 1+1.5 (3 commits)
+
+Big two-mode tick: MODE B finalize for v1.1.0 → MODE C kickoff for v1.2.0.
+
+### MODE B — v1.1.0 Cabinet release
+- CI run `26003858536` polled → success (completed 22:14 UTC).
+- Downloaded all 6 artifacts to `/tmp/slab-v1.1.0-release/`.
+- Curated to `assets/v1.1.0/` with mac x64 rename to `_x64_macos.dmg`.
+- `gh release create v1.1.0 --title 'v1.1.0 — Cabinet 🗄' --notes-file docs/releases/v1.1.0.md` with 5 assets (held back AppImage to dodge 60s timeout).
+- Background uploaded AppImage via `gh release upload` (79 MB, completed cleanly).
+- Final asset list: 6/6 — verified via `gh release view v1.1.0 --json assets`.
+
+### MODE C — v1.2.0 Glass II launch
+Sanjay's "ship BIG things every tick" directive: instead of just finalizing v1.1.0 and stopping, kicked off v1.2.0 with two slices in the same tick.
+
+**Slice 1 — pure Vim state machine** (`9104ab9..f4e83b1`... commit `<sha1>` previous to current HEAD):
+- `src/lib/vim/types.ts` — `Mode` enum, `VimAction` discriminated union (12 variants), `VimPending`.
+- `src/lib/vim/keymap.ts` — pure `dispatchKey(state, ev) -> {state', action}` reducer. hjkl, gg/G, Ctrl-d/u/f/b, n/N, /, ?, :, i/I/a/A/o/O, v/V, dd, yy, count prefixes, [/], }/{ for page nav.
+- `src/lib/vim/mode.ts` — Svelte stores (`vimState`, `vimMode`, `vimEnabled`, `vimSearchQuery`, `vimCommandLine`) + `dispatch()` + `resetVim()`. `vimEnabled` persisted to localStorage.
+
+**Slice 1.5 — user-facing surface**:
+- `VimController.svelte` — reusable wrapper; capture-phase keydown; passthrough in Insert mode; Cmd/Ctrl reserved for the app.
+- `VimIndicator.svelte` — fixed pill bottom-left, colour-coded per mode, only renders when enabled.
+- Settings panel: Vim Off/On segmented control row.
+- Command Palette: "Enable/Disable Vim bindings" entry (group: Settings, keywords: vim modal hjkl).
+- `<VimIndicator />` mounted globally in `+page.svelte`.
+
+### Commits this tick
+
+- `<v1.1.0 finalize done via gh CLI, no commits>` — MODE B is artifact-side only
+- `feat(vim): modal state machine + keymap interpreter (Slice 1)` — pure logic + types + store
+- `feat(vim): VimController wrapper, VimIndicator pill, Settings + Palette toggles` — UI surface
+
+### Cabinet release verification
+
+```
+$ gh release view v1.1.0 --json assets --jq '.assets[].name'
+Slab_1.1.0_aarch64.dmg
+Slab_1.1.0_amd64.AppImage
+Slab_1.1.0_amd64.deb
+Slab_1.1.0_x64-setup.exe
+Slab_1.1.0_x64_en-US.msi
+Slab_1.1.0_x64_macos.dmg
+```
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🚀 v1.1.0 "Cabinet" MERGED + TAGGED + PUSHED — CI running
 
 **Main HEAD**: `4c13e1d` — `Merge v1.1.0 "Cabinet" 🗄 — Multi-window detach for 11 panels`
 **Tag**: `v1.1.0` (pushed)
@@ -213,10 +283,8 @@ Glass on 2026-05-17 — 14 versions in 36 hours).
 ### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
-### v1.1.0 "Cabinet" — TAGGED 2026-05-17, CI run `26003858536` running 🗄
-
-### v1.2.0 "Glass II" (later)
-- Vim bindings, a11y, i18n
+### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
+### v1.2.0 "Glass II" — Slice 1+1.5 DONE on `feature/v1.2.0-glass-ii` (Vim core)
 
 ### v1.3.0 "Foundry" (much later)
 - Plugin API, community-extensible
