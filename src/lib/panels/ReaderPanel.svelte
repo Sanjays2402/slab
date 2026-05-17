@@ -692,6 +692,75 @@
   function nextPage() { jumpTo(currentPage + 1); }
   function prevPage() { jumpTo(currentPage - 1); }
 
+  // ---------- Glass II Vim adapter (v1.2.0 Slice 2) ----------
+  //
+  // The reader subscribes to `slab:vim-reader:*` events emitted by
+  // `runReaderVim()`. Only the visible tab reacts — others short-circuit
+  // on `active === false`. We keep the handlers here next to the nav
+  // primitives because they're trivial fan-outs to existing functions.
+
+  function vimScrollContainer(direction: "up" | "down", deltaPx: number) {
+    if (!containerEl) return;
+    const dy = direction === "down" ? deltaPx : -deltaPx;
+    containerEl.scrollBy({ top: dy, behavior: "smooth" });
+  }
+
+  function onVimPage(e: Event) {
+    if (!active) return;
+    const d = (e as CustomEvent<{ direction: "next" | "prev"; count?: number }>).detail;
+    const n = Math.max(1, d?.count ?? 1);
+    for (let i = 0; i < n; i++) {
+      if (d.direction === "next") nextPage();
+      else prevPage();
+    }
+  }
+
+  function onVimGoto(e: Event) {
+    if (!active) return;
+    if (!doc) return;
+    const d = (e as CustomEvent<{ page: number }>).detail;
+    // page === -1 is the "last page" sentinel from `G`.
+    const target = d.page === -1 ? doc.pageCount : d.page;
+    jumpTo(target);
+  }
+
+  function onVimScroll(e: Event) {
+    if (!active) return;
+    const d = (e as CustomEvent<{
+      kind: "line" | "half" | "full";
+      direction: "up" | "down";
+      count?: number;
+    }>).detail;
+    const containerH = containerEl?.clientHeight ?? 800;
+    const px =
+      d.kind === "line"
+        ? 80 * Math.max(1, d.count ?? 1)
+        : d.kind === "half"
+          ? Math.floor(containerH / 2)
+          : containerH; // full
+    vimScrollContainer(d.direction, px);
+  }
+
+  function onVimFindOpen() {
+    if (!active) return;
+    if (!findOpen) toggleFind();
+  }
+
+  function onVimFindSet(e: Event) {
+    if (!active) return;
+    const d = (e as CustomEvent<{ query: string }>).detail;
+    findQuery = d.query;
+    if (!findOpen) toggleFind();
+    runFind(findQuery, "find");
+  }
+
+  function onVimFindNext(e: Event) {
+    if (!active) return;
+    const d = (e as CustomEvent<{ backward: boolean }>).detail;
+    if (d.backward) findPrev();
+    else findNext();
+  }
+
   function setZoomValue(v: string | number) {
     if (!pdfViewer) return;
     pdfViewer.currentScaleValue = v;
@@ -830,6 +899,15 @@
   onMount(() => {
     window.addEventListener("keydown", onKey);
     window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    // Glass II Vim adapter — only the active tab actually reacts (gated
+    // inside each handler), but every tab subscribes so the registration
+    // matches the unsubscribe path.
+    window.addEventListener("slab:vim-reader:page", onVimPage as EventListener);
+    window.addEventListener("slab:vim-reader:goto", onVimGoto as EventListener);
+    window.addEventListener("slab:vim-reader:scroll", onVimScroll as EventListener);
+    window.addEventListener("slab:vim-reader:find-open", onVimFindOpen as EventListener);
+    window.addEventListener("slab:vim-reader:find-set", onVimFindSet as EventListener);
+    window.addEventListener("slab:vim-reader:find-next", onVimFindNext as EventListener);
 
     // If the shell handed us a path on mount, load it.
     if (initialPath && isInTauri()) {
@@ -897,6 +975,12 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    window.removeEventListener("slab:vim-reader:page", onVimPage as EventListener);
+    window.removeEventListener("slab:vim-reader:goto", onVimGoto as EventListener);
+    window.removeEventListener("slab:vim-reader:scroll", onVimScroll as EventListener);
+    window.removeEventListener("slab:vim-reader:find-open", onVimFindOpen as EventListener);
+    window.removeEventListener("slab:vim-reader:find-set", onVimFindSet as EventListener);
+    window.removeEventListener("slab:vim-reader:find-next", onVimFindNext as EventListener);
     const dnd = (onMount as any)._slabDnd;
     if (dnd) {
       window.removeEventListener("dragover", dnd.onDragOver);
