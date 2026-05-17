@@ -5,7 +5,7 @@
 
 ---
 
-## STATUS: SHIPPING (v0.10.0 Beacon Slices 1-9 landed — chat + summary + search + PII + selection actions live)
+## STATUS: DONE (v0.10.0 Beacon all 10 slices shipped — ready for next-tick MODE A merge to main)
 
 **Active dev branch:** `feature/v0.10.0-beacon`
 
@@ -24,7 +24,7 @@
 ### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
 - Tag `v0.9.1`, merge SHA `7226574`, CI run `25980874364`, [GH release](https://github.com/Sanjays2402/slab/releases/tag/v0.9.1)
 
-### v0.10.0 "Beacon" — IN PROGRESS (Slices 1-9 of 10 shipped)
+### v0.10.0 "Beacon" — DONE (all 10 slices shipped, awaiting MODE A merge)
 - Branch: `feature/v0.10.0-beacon`, tip pushed this tick.
 - Plan promoted to `docs/plans/2026-05-16-v0.10.0-beacon-ai.md` 2026-05-16 21:46 PDT.
 - **Slice 1 DONE 2026-05-16 21:25 PDT**: `AiProvider` trait + `OllamaProvider` impl + 5 mockito unit tests. Commit `154c008`.
@@ -36,8 +36,8 @@
 - **Slice 7 DONE 2026-05-16 23:11 PDT** (commit `1a8db1f`): Semantic search UI. `BeaconSearchPanel.svelte` (506 LOC) — index card with Browse/Index/Re-index, search bar with All/This-PDF scope toggle, hit cards (page chip + filename + similarity %), footer stats, friendly-error mapping. 4 Tauri commands: `slab_beacon_index_pdf`, `slab_beacon_search`, `slab_beacon_index_stats`, `slab_beacon_index_forget`. Sidebar nav `⌕ Beacon Search`.
 - **Slice 8 DONE 2026-05-16 23:25 PDT** (commits `fd303d1` + `e4a43a0`): PII Highlighter. `ai::pii` module — regex pass (email/SSN/phone/CC reusing `auto_redact` presets, now pub-exported) + optional LLM pass (names + addresses via configured provider, liberal JSON parsing, per-page best-effort errors). `BeaconPiiPanel.svelte` (~620 LOC) — kind checkboxes + AI toggle + custom regex patterns + colored kind pills + click-to-jump hits + one-click "Redact selected → save as new PDF" reusing `pdf::auto_redact`. 2 Tauri commands: `slab_beacon_pii_find` (returns hits + summary), `slab_beacon_pii_redact` (thin wrapper over auto_redact). 17 new tests via in-memory MockProvider. 156→173 lib tests. Sidebar nav `🔒 PII Redact`.
 - **Slice 9 DONE 2026-05-16 23:50 PDT** (commits `14b6e7d` + `4825c93`): Selection Actions — floating LLM bubble on text highlight. `ai::selection_action` module with 5 actions (Translate/Explain/Define/Rewrite/Summarize), per-action prompts, low temperature (0.2), per-action max_tokens budget (80-500), hard cap at 8K chars. Tauri command `slab_beacon_selection_action(text, action, target_lang?)`. `BeaconSelectionBubble.svelte` (~620 LOC) — captures `mouseup` selections inside the PDF.js text layer, positions above the selection bbox, 5-button action grid, inline target-language picker for Translate (15 languages), result view with Copy button, Esc/click-outside dismiss. Mounted as a sibling of `pdfjs-container` in ReaderPanel. 13 new tests via in-memory MockProvider. 173→186 lib tests. **No new sidebar nav** — this lives inline in the reader.
-- **Slice 10 next**: Release prep — version bump 0.9.x → 0.10.0, write release notes, smoke test, MARK STATUS: DONE for next tick to merge to main.
-- Remaining: Slice 10 only.
+- **Slice 10 DONE 2026-05-16 23:55 PDT**: Release prep. Version bumped 0.9.1 → 0.10.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `package.json`. Cargo.lock refreshed. `docs/release-notes/v0.10.0.md` written (covers all 5 user-visible features + stats + upgrade notes). Plan + STATE marked DONE.
+- **Next tick**: MODE A merge `feature/v0.10.0-beacon` → `main`, tag `v0.10.0`, push, set `RELEASE_PENDING: v0.10.0`.
 
 ### v0.11.0 "Lathe" — Edit Mode (PLANNED)
 In-place PDF text editing, page reorder/insert/delete, multi-PDF tabs, image insert.
