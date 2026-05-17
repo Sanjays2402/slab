@@ -14,6 +14,7 @@
 // returns a fully-buffered `ChatResponse` so we can unit-test it
 // against `mockito` without futures plumbing.
 
+pub mod auto_tag;
 pub mod chat;
 pub mod chunker;
 pub mod config;
