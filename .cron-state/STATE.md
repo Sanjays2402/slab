@@ -5,12 +5,17 @@
 
 ---
 
-## STATUS: DONE — v0.11.0 Lathe ready to merge
+## STATUS: RELEASE_PENDING — v0.11.0 Lathe merged + tagged, CI building installers
 
 **v0.10.0 RELEASED** 2026-05-17 08:03 UTC — all 6 installers on GH Releases, latest.
-**v0.11.0 DONE** 2026-05-17 02:55 PDT — all 8 slices shipped on `feature/v0.11.0-lathe`.
+**v0.11.0 MERGED + TAGGED** 2026-05-17 03:05 PDT — merge SHA `76cd7ed`, tag `v0.11.0`, pushed.
 
-**Next tick:** MODE A merge `feature/v0.11.0-lathe` → `main`, tag `v0.11.0`, push, set `RELEASE_PENDING: v0.11.0`.
+**RELEASE_PENDING: v0.11.0** — merge SHA `76cd7ed`, tag `v0.11.0`, CI run `25987817724` (in_progress).
+Quality gates on main passed before push: fmt + clippy + 235 lib tests + svelte-check 0 errors.
+
+**Next tick:** MODE B — poll CI run `25987817724`; if green download artifacts and `gh release create v0.11.0` with the 6 installers. If failed, write `RELEASE_FAILED:` and decide on revert vs follow-up fix branch.
+
+Then MODE C: pivot to **v0.12.0 "Atlas"** (Library Mode). Spec at `.cron-state/proposals/roadmap-to-v1.0.md` § v0.12.0. First slice will be library index + watch folder backend.
 
 **Lathe slices (8 / 8 done):**
 - ✅ Slice 1: `duplicate_pages` kernel + Tauri (commit `e95c0ef`)
@@ -179,3 +184,4 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - 2026-05-17 01:20 (Cake/cron): 🚀 BIG LATHE TICK — Slice 3 (backend+UI) + Slice 4 in 3 commits. v0.11.0 50% shipped.
 - 2026-05-17 02:30 (Cake/cron): 🚀 BIG LATHE TICK — Slice 5 multi-PDF tabs (5af4a92 + a3e0f49). v0.11.0 62% shipped.
 - **2026-05-17 02:55 (Cake/cron): 🚀🚀 TRIPLE-SLICE LATHE CLOSEOUT — Slices 6 + 7 + 8 in one tick.** Took v0.11.0 from 62% → 100% DONE. (a) Slice 6 `pdf::edit_text` backend: 818 LOC including 15 unit tests. `find_text_spans` walks every page's content streams, tracks Tf/Td/Tm/T*/BT/ET state, emits one TextSpan per Tj/TJ/'/' op with stable `p<page>:s<seq>` ids. `replace_text_span` re-decodes the target stream, finds the op by sequence number, swaps its literal-string operand, re-encodes. Handles single Tj happy path, single-segment TJ arrays (editable), multi-segment TJ (read-only, kerning hint), CID Type0 fonts (read-only, font_is_safe check), non-ASCII glyphs in source (read-only), and rejects non-ASCII replacements + control chars + malformed span-ids. 220→235 lib tests (+15). 2 new Tauri commands (commit `46b0f3c`). (b) Slice 7 `EditTextPanel.svelte` 530 LOC: file picker → scans on open → groups spans by page in a tab strip with editable counts + "•" dirty indicator → editable-only/all filter toggle → span rows with id pill + font/size badge + inline `<input>` bound to current value + "edited" pill + revert link → read-only rows with friendly reason chips → Apply chains replace calls writing to a save-dialog destination, then re-loads the saved file so user can keep editing → collapsible caveats section that's honest about ASCII/Type1/no-kerning limits. Sidebar nav `✎ Edit Text`. svelte-check 0 errors (commit `4e5257a`). (c) Slice 8 release prep: version bumped 0.10.0→0.11.0 in Cargo.toml + tauri.conf.json + package.json, Cargo.lock refreshed, sidebar version pill bumped, comprehensive release notes at `docs/release-notes/v0.11.0.md` covering all 5 user-visible Lathe features + stats + upgrade notes (commit `79f820a`). All 4 quality gates green: fmt + clippy `-D warnings` + 235 lib tests + svelte-check 0 errors. Branch pushed. STATE marked DONE — next tick is MODE A merge to main + tag v0.11.0 + push.
+- **2026-05-17 03:05 (Cake/cron): 🚀🚀🚀 v0.11.0 "Lathe" MERGED TO MAIN.** Same-tick MODE C → MODE A chain after the triple-slice closeout. Merged `feature/v0.11.0-lathe` to `main` with `--no-ff` (resolved STATE.md conflict with `--theirs` since feature branch had the up-to-date DONE flags). Re-ran all 4 quality gates ON MAIN: fmt clean, clippy `-D warnings` clean, 235 lib tests pass, svelte-check 0 errors. Tagged `v0.11.0` with message "Slab v0.11.0 — Lathe 🪚". Pushed `main` + tag. Merge SHA `76cd7ed`. CI run `25987817724` building 6 installers. STATE flipped to RELEASE_PENDING. Next tick: MODE B finalize when CI green, then pivot to v0.12.0 Atlas.
