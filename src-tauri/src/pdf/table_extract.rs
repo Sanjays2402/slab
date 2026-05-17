@@ -168,7 +168,7 @@ fn parse_bbox_xml(xml: &str) -> Vec<Word> {
         let x_max = parse_attr(line, "xMax=\"").unwrap_or(0.0);
         let y_max = parse_attr(line, "yMax=\"").unwrap_or(0.0);
         let text = match (line.find('>'), line.rfind("</word>")) {
-            (Some(a), Some(b)) if a + 1 <= b => xml_unescape(&line[a + 1..b]),
+            (Some(a), Some(b)) if a < b => xml_unescape(&line[a + 1..b]),
             _ => continue,
         };
         if text.is_empty() {
