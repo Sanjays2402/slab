@@ -5,54 +5,37 @@
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Rust tests](https://img.shields.io/badge/rust%20tests-56%20passing-brightgreen.svg)](src-tauri)
+[![Rust tests](https://img.shields.io/badge/rust%20tests-468%20passing-brightgreen.svg)](src-tauri)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
 
 Every other PDF tool wants you to upload your taxes, your contracts, your medical records to a server you've never heard of, then watch a 30‑second ad, then pay $9.99 to remove the watermark. Slab does the opposite: **everything runs locally on your machine.** No accounts. No uploads. No subscriptions. No nonsense.
 
 ![Slab Reader with the PDF 1.7 spec open](docs/screenshots/00-hero-reader.png)
 
-## What it does
+## What's in v1.0.0 "Glass"
 
-**Twenty‑one tools shipping in v0.7.0 "Slab Workshop"** — a real Adobe‑Acrobat‑replacing toolkit, built one feature at a time and shipped honestly:
+A real Adobe‑Acrobat‑replacing toolkit, shipped in 16 honest releases. Six pillars, all local:
 
-| Tool | What it does | Status |
+| Pillar | What it does | Highlight versions |
 | --- | --- | --- |
-| **Reader** | Open any PDF, thumbnails, find, outline, zoom | ✅ shipping |
-| **Merge** | Drag‑to‑reorder, save anywhere | ✅ shipping |
-| **Split** | By page range or every N pages | ✅ shipping |
-| **Pages** | Rotate, delete, reorder | ✅ shipping |
-| **Compress** | Lossless re‑stream, shows bytes saved | ✅ shipping |
-| **Extract** | Page‑by‑page text preview, copy or save .txt | ✅ shipping |
-| **Encrypt / Decrypt** | Password‑protect any PDF (RC4‑40) | ✅ shipping |
-| **Watermark** | Text, any angle, opacity, gray, live preview | ✅ shipping |
-| **Convert** | PDF ↔ PNG/JPG/WebP (both directions) | ✅ shipping |
-| **Metadata** | View, edit, or strip every identifying field | ✅ shipping |
-| **Page Numbers** | Templates, 6 positions, custom start, skip cover | ✅ shipping |
-| **Sign & Stamp** | Drop signature / logo / approval image on any page | ✅ shipping |
-| **Crop** | Trim margins with percentage edges, optional MediaBox resize | ✅ shipping |
-| **Insert Pages** | Splice blank pages (A4/Letter/Legal) or another PDF at any index | ✅ shipping |
-| **Headers & Footers** | Templated text bands with `{n}/{total}/{date}/{filename}` | ✅ shipping |
-| **Redact** | Paint solid black rectangles over sensitive regions | ✅ shipping |
-| **N‑up** | Compose 2/4/6/9 pages onto a single sheet for printing | ✅ shipping |
-| **Markdown → PDF** | Convert Markdown into a clean, tiny PDF — no font embedding | ✅ **NEW in v0.7.0** |
-| **Grayscale** | RGB/CMYK → gray inside content streams, vector‑true, BT.601 luminance | ✅ **NEW in v0.7.0** |
-| **Page Labels** | Roman, arabic, alpha, prefix labels per range — sets `/PageLabels` | ✅ **NEW in v0.7.0** |
-| **Auto‑Redact** | Find & cover emails / SSNs / phones / cards / custom regex | ✅ **NEW in v0.7.0** |
-| **Standalone CLI** | A separate `slab` binary — every op from the terminal | ✅ **NEW in v0.7.0** |
-| **OCR** | Make scans searchable (Tesseract) | 🗺️ next |
+| **Read & navigate** | Open PDFs, thumbnails, outline, find, highlights, sticky notes, recents | v0.5 → v0.8 |
+| **Manipulate** | Merge / Split / Pages / Compress / Extract / Encrypt / Watermark / Convert / Metadata / Numbers / Sign / Crop / Insert / Headers&Footers / Redact / N‑up | v0.5 → v0.7 |
+| **Document tools** | Markdown→PDF · Grayscale · Page Labels · Auto‑Redact · Polyglot (.docx/.xlsx/.epub/.html/...) · Flatten · Sanitize · Repair · Edit Text | v0.7 → v0.11 |
+| **OCR & Lens** | Tesseract OCR (v0.8) plus a full Lens panel: table extraction, language packs, batch, preflight (v0.13) | v0.8, v0.13 |
+| **AI (local)** | **Beacon** — Chat / Summary / Semantic Search across the open PDF, on‑device only | v0.10 |
+| **Productivity** | **Atlas** PDF Library · **Stack** line‑level diff · **Theater** present mode · **Glass** settings + keyboard shortcuts | v0.12, v0.14, v0.15, v1.0 |
 
-**56 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. OCR queued for v0.8.0 "Compass."
+**468 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
 
 ## Why Slab?
 
-- **Local‑first.** Your documents never touch a server. Air‑gap a laptop and Slab still works.
+- **Local‑first.** Your documents never touch a server. Air‑gap a laptop and Slab still works — including the AI features.
 - **Fast.** Native Rust under the hood. Merging a hundred files takes a second, not a minute.
-- **Tiny.** The installer is under 10 MB. Compare that to anything else in the category.
+- **Tiny.** Installers are ~15–25 MB depending on platform. Compare that to anything else in the category.
 - **Honest.** Free forever. GPL‑3.0. No "Pro tier." No telemetry. No upsells.
-- **Beautiful.** A dark‑first interface that doesn't look like a 2008 toolbar exploded.
+- **Beautiful.** A dark‑first interface with themeable accent colors and three density modes (Glass settings).
 
-## The tools, one by one
+## The toolkit, one by one
 
 ### ⌘K Command Palette
 Jump to any tool from anywhere. Type a few letters and hit Enter.
@@ -104,68 +87,68 @@ Two‑way conversion: PDF → PNG/JPG/WebP, or images → PDF.
 
 ![Convert](docs/screenshots/09-convert.png)
 
-### Metadata — *new in v0.5.0*
+### Metadata
 View every Info‑dictionary field (Title, Author, Subject, Keywords, Creator, Producer), edit them, or hit one button to strip everything (plus XMP) for a truly anonymous PDF.
 
 ![Metadata](docs/screenshots/10-metadata.png)
 
-### Page Numbers — *new in v0.5.0*
+### Page Numbers
 Stamp page numbers with a template like `Page {n} of {total}`, in any of 6 positions, with custom font size, gray level, starting number, and a "skip first N pages" option for covers.
 
 ![Page numbers](docs/screenshots/11-numbers.png)
 
-### Sign & Stamp — *new in v0.5.0*
+### Sign & Stamp
 Drop a signature scan, company logo, or `APPROVED` stamp onto any page. Position, scale, and opacity all live‑tweakable.
 
 ![Sign & Stamp](docs/screenshots/12-sign.png)
 
-### Crop — *new in v0.6.0*
+### Crop
 Trim margins by percentage from each edge. Optionally rewrite the MediaBox so downstream tools see the new size, not just a clipped view.
 
 ![Crop](docs/screenshots/18-crop.png)
 
-### Insert Pages — *new in v0.6.0*
+### Insert Pages
 Splice blank A4/Letter/Legal pages or pages from another PDF at any 1‑indexed position. Insert before or after, in bulk.
 
 ![Insert](docs/screenshots/19-insert.png)
 
-### Headers & Footers — *new in v0.6.0*
+### Headers & Footers
 Stamp templated text bands across every page. `{n}`, `{total}`, `{date}`, `{filename}` tokens, six anchor positions, custom font size + opacity.
 
 ![Header / Footer](docs/screenshots/20-headerfooter.png)
 
-### Redact — *new in v0.6.0*
+### Redact
 Paint solid black rectangles over sensitive regions. Page‑by‑page, drag to draw, burned into the content stream — no scrubbing reveals the original.
 
 ![Redact](docs/screenshots/21-redact.png)
 
-### N‑up — *new in v0.6.0*
+### N‑up
 Compose 2, 4, 6, or 9 pages onto a single sheet for printing — landscape or portrait, configurable spacing, exact reproductions of each source page.
 
 ![N-up](docs/screenshots/17-nup.png)
 
-### Markdown → PDF — *new in v0.7.0*
+### Markdown → PDF
 Write or paste Markdown, click Convert, get a clean PDF. Headings, **bold**, *italic*, `code`, lists, blockquotes, code blocks, horizontal rules — all rendered with standard Helvetica. No font embedding means tiny output files (~1 KB per page).
 
 ![Markdown → PDF](docs/screenshots/13-markdown.png)
 
-### Grayscale — *new in v0.7.0*
+### Grayscale
 Convert RGB and CMYK fills and strokes to gray inside PDF content streams. Vector‑true — no rasterization — using ITU‑R BT.601 luminance. Range‑selectable. Embedded raster images are unchanged in this pass.
 
 ![Grayscale](docs/screenshots/14-grayscale.png)
 
-### Page Labels — *new in v0.7.0*
+### Page Labels
 Control how PDF readers display page numbers: roman numerals for front matter, arabic for the body, custom prefixes for chapters. Multiple ranges in one shot, live preview of exactly what each style produces. Sets the catalog's `/PageLabels` number tree per the PDF spec.
 
 ![Page Labels](docs/screenshots/15-labels.png)
 
-### Auto‑Redact — *new in v0.7.0*
+### Auto‑Redact
 Find and cover sensitive content automatically. Built‑in presets for **emails**, **US SSNs**, **phone numbers**, and **credit cards**. Add your own regex patterns. Adjustable bar color. Line‑level bounding boxes drawn over each match.
 
 ![Auto-Redact](docs/screenshots/16-autoredact.png)
 
-### Standalone CLI — *new in v0.7.0*
-A separate `slab` binary ships in every bundle alongside the GUI. All 21 ops available from the terminal — no Tauri runtime, no IPC, direct library calls.
+### Standalone CLI
+A separate `slab` binary ships in every bundle alongside the GUI. Every op available from the terminal — no Tauri runtime, no IPC, direct library calls.
 
 ```bash
 slab md2pdf input.md output.pdf --page-size Letter
@@ -174,9 +157,12 @@ slab autoredact input.pdf output.pdf --preset email,ssn
 slab info report.pdf
 ```
 
-### Polyglot input — *new in v0.8.1*
+### Compass — annotations & recents *(v0.8.0)*
+Highlights and sticky notes with a real annotation layer (saved into `/Annots` per spec). Edit the outline (Table of Contents) directly. Recents grid with thumbnails. Tesseract‑backed OCR makes scanned documents searchable. Drag‑and‑drop file opening everywhere. A dark‑mode polish pass. A keyboard cheatsheet (`?`). And one‑click annotation export to Markdown.
 
-Slab eats more than PDFs. Point it at:
+### Polyglot — eat more than PDFs *(v0.8.1)*
+
+Point Slab at:
 
 - **Office docs:** `.docx` `.xlsx` `.pptx` `.xls`
 - **Web & structured text:** `.html` `.htm` `.csv` `.json` `.xml` `.rtf` `.odt`
@@ -184,9 +170,9 @@ Slab eats more than PDFs. Point it at:
 - **Images:** `.png` `.jpg` `.gif` `.bmp` `.tif` `.webp` (EXIF + OCR text)
 - **Audio:** `.wav` `.mp3` `.m4a` `.flac` `.ogg` (EXIF + transcription)
 
-Under the hood Slab shells out to Microsoft's [markitdown](https://github.com/microsoft/markitdown) (MIT) to extract Markdown, then renders to PDF through the same `md2pdf` engine from v0.7.0. Zero new Rust dependencies; PDF → PDF round-tripping is deliberately refused (lossy).
+Under the hood Slab shells out to Microsoft's [markitdown](https://github.com/microsoft/markitdown) (MIT) to extract Markdown, then renders to PDF through the same `md2pdf` engine. Zero new Rust dependencies; PDF → PDF round‑tripping is deliberately refused (lossy).
 
-**Requires:** `pipx install 'markitdown[all]'` (one-time, optional — Slab still works without it for PDF input).
+**Requires:** `pipx install 'markitdown[all]'` (one‑time, optional — Slab still works without it for PDF input).
 
 ```bash
 slab polyglot report.docx -o report.pdf
@@ -194,9 +180,9 @@ slab polyglot data.xlsx -o data.pdf --page-size Letter
 slab polyglot book.epub -o book.pdf
 ```
 
-### Toolkit: flatten, sanitize, repair — *new in v0.9.0*
+### Toolkit: flatten, sanitize, repair *(v0.9.0–v0.9.1)*
 
-The three utilities `pdftk` / `qpdf` users reach for most, native to Slab and pure-Rust (no external binaries).
+The three utilities `pdftk` / `qpdf` users reach for most, native to Slab and pure‑Rust (no external binaries). All three exposed in the sidebar as panels and as Tauri commands.
 
 **Flatten** — bake form fields and annotations into the page so the output PDF has no editable layers. Visual appearance preserved; interactivity gone.
 
@@ -205,21 +191,55 @@ slab flatten editable.pdf -o flat.pdf
 slab flatten editable.pdf -o flat.pdf --no-widgets   # keep form widgets, flatten only annotations
 ```
 
-**Sanitize** — make a PDF safe to forward. Strips JavaScript, embedded files, launch actions, `/OpenAction`, `/AA`, XFA, and (by default) external URI links. Pixel-identical output.
+**Sanitize** — make a PDF safe to forward. Strips JavaScript, embedded files, launch actions, `/OpenAction`, `/AA`, XFA, and (by default) external URI links. Pixel‑identical output.
 
 ```bash
 slab sanitize sketchy.pdf -o clean.pdf
 slab sanitize sketchy.pdf -o clean.pdf --keep-links  # leave http(s) URI actions intact
 ```
 
-**Repair** — rebuild the xref table and drop unreachable indirect objects. Fixes most "this PDF won't open" files and shrinks PDFs bloated by incremental edits. (lopdf does the heavy lifting — same trick as "open in Acrobat and Save As".)
+**Repair** — rebuild the xref table and drop unreachable indirect objects. Fixes most "this PDF won't open" files and shrinks PDFs bloated by incremental edits.
 
 ```bash
 slab repair busted.pdf -o fixed.pdf
 # ✓ repaired: objects 412 → 318 (94 pruned), size 1.2 MB → 980 KB (-18.3%) → fixed.pdf
 ```
 
-All three are also exposed as Tauri commands (`slab_flatten`, `slab_sanitize`, `slab_repair`) and ship with unit tests covering the happy path plus the edge cases (annot/AP variants, each strip path, synthetic bloat with unreachable streams).
+v0.9.1 also adds a **decrypt‑on‑open** prompt so password‑protected PDFs unlock with one click.
+
+### Beacon — local AI you actually own *(v0.10.0)*
+
+Three AI features that run **entirely on your machine**. No API keys, no cloud, no telemetry — the same air‑gap promise as every other Slab tool.
+
+- **Beacon Chat** — Q&A against the open PDF. Citations point back to exact pages.
+- **Beacon Summary** — TL;DR / Short / Long summaries on demand.
+- **Beacon Search** — semantic search across every PDF you've opened, ranked by meaning instead of keyword.
+
+Powered by local embeddings + an on‑device chat model (configurable). The first model download is the only thing that hits the network; after that, Beacon works offline.
+
+### Lathe — Edit Text *(v0.11.0)*
+
+In‑place PDF text editing. Click a word, change it, save. Slab rewrites the content stream while preserving fonts, positioning, and surrounding layout. Plus a visual Pages panel with drag‑reorder, duplicate, blank inserts, and rotate.
+
+### Atlas — the PDF Library *(v0.12.0)*
+
+A browsable library view across every PDF you've imported. Folders, tags, search‑within‑library, thumbnail grid, and a watched‑folder mode that auto‑indexes new files as they appear. The recents grid grew up.
+
+### Lens — OCR, tables, language packs *(v0.13.0–v0.13.1)*
+
+Beyond the v0.8 OCR baseline: a full **Lens** panel for batch OCR jobs, **table extraction** that recognizes ruled and unruled grids, downloadable **language packs**, and a `slab lens preflight` CLI to diagnose missing dependencies. v0.13.1 also fixes the Windows `pdftotext` flavor detection.
+
+### Stack — text diff for PDFs *(v0.14.0)*
+
+Line‑level text diff between any two PDFs, with optional Beacon‑powered "Explain Changes" plain‑English summaries. Export a **Change Report** as PDF for review workflows. The diff itself, like everything else, never leaves your machine.
+
+### Theater — presenter mode *(v0.15.0)*
+
+Turn any PDF into a deck. Full‑screen slideshow, speaker notes view, live annotation on top of slides, and a remote keyboard shortcut layout. Great for decks that started life as a PDF export.
+
+### Glass — settings & shortcuts *(v1.0.0)*
+
+The 1.0 polish layer: a proper Settings system with theme + accent color + density (compact / cozy / comfortable), a customizable keymap, an MRU‑sorted command palette, and a `?` shortcut overlay that lists every keybinding in the app.
 
 ## Install
 
@@ -240,7 +260,7 @@ To verify the signature integrity yourself:
 codesign -dvv /Applications/Slab.app
 ```
 
-If you'd like to help fund a Developer ID certificate (so this prompt goes away for everyone), see [SIGNING.md](SIGNING.md). The CI is already wired to switch to full Developer ID signing + notarization the moment six GitHub secrets are configured.
+If you'd like to help fund a Developer ID certificate (so this prompt goes away for everyone), see [SIGNING.md](SIGNING.md). CI is already wired to switch to full Developer ID signing + notarization the moment the six GitHub secrets are configured.
 
 ### Build from source
 
@@ -257,16 +277,17 @@ pnpm tauri build        # produce an installer / app bundle for your platform
 ## Tests
 
 ```bash
-cd src-tauri && cargo test          # 56 tests
+cd src-tauri && cargo test          # 468 tests
 cargo clippy --all-targets -- -D warnings
 cd .. && pnpm exec svelte-check     # type-check the UI
 ```
 
 ## Under the hood
 
-- **Shell:** [Tauri 2](https://tauri.app) — system webview, ~10 MB binaries, native menus.
+- **Shell:** [Tauri 2](https://tauri.app) — system webview, ~15–25 MB binaries, native menus.
 - **UI:** [SvelteKit](https://svelte.dev) + Svelte 5 runes + TypeScript.
-- **PDF core:** [`lopdf`](https://crates.io/crates/lopdf) (pure Rust) for manipulation, [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) for rendering in the Reader, [`pdf-lib`](https://pdf-lib.js.org) for client‑side composition (stamps, image embedding), [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) for the Markdown → PDF tool, [`pdfium-render`](https://crates.io/crates/pdfium-render) + [`tesseract-rs`](https://crates.io/crates/tesseract-rs) queued for OCR.
+- **PDF core:** [`lopdf`](https://crates.io/crates/lopdf) (pure Rust) for manipulation, [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) for rendering in the Reader, [`pdf-lib`](https://pdf-lib.js.org) for client‑side composition (stamps, image embedding), [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) for Markdown → PDF, [`pdfium-render`](https://crates.io/crates/pdfium-render) + [`tesseract-rs`](https://crates.io/crates/tesseract-rs) for OCR and Lens.
+- **AI:** local embeddings + on‑device chat model for Beacon (configurable, network only touched during first model download).
 - **License:** GPL‑3.0 — free as in freedom. Fork it, ship it, just don't close‑source it.
 
 ## A small promise
