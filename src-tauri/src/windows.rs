@@ -89,6 +89,160 @@ impl WindowRegistry {
     }
 }
 
+/// Sensible per-panel default size + position for newly-spawned detached
+/// windows. We don't try to be clever about screen geometry here; the
+/// OS handles edge clamping, and Slice 4 will persist user-resized
+/// dimensions on subsequent opens.
+pub fn default_geometry_for_panel(panel_id: &str) -> Geometry {
+    match panel_id {
+        // Wide for the document table + tags sidebar.
+        "library" => Geometry {
+            x: 80,
+            y: 80,
+            width: 1000,
+            height: 720,
+        },
+        // Tall narrow chat column — slots next to the main reader.
+        "beacon" => Geometry {
+            x: 120,
+            y: 100,
+            width: 520,
+            height: 760,
+        },
+        // Roomy enough for a 1-page render at ~125 % zoom.
+        "reader" => Geometry {
+            x: 100,
+            y: 100,
+            width: 900,
+            height: 760,
+        },
+        "search" => Geometry {
+            x: 140,
+            y: 120,
+            width: 720,
+            height: 680,
+        },
+        "pii" => Geometry {
+            x: 140,
+            y: 120,
+            width: 760,
+            height: 720,
+        },
+        _ => Geometry {
+            x: 140,
+            y: 120,
+            width: 720,
+            height: 640,
+        },
+    }
+}
+
+/// URL-encode just enough of the path to survive the query string.
+/// We deliberately don't pull in a full percent-encoding crate: the
+/// frontend only needs to round-trip an opaque path string. Special
+/// chars handled: space, `#`, `&`, `?`, `%`.
+fn encode_doc_param(p: &str) -> String {
+    let mut out = String::with_capacity(p.len());
+    for c in p.chars() {
+        match c {
+            ' ' => out.push_str("%20"),
+            '#' => out.push_str("%23"),
+            '&' => out.push_str("%26"),
+            '?' => out.push_str("%3F"),
+            '%' => out.push_str("%25"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+#[tauri::command]
+pub fn slab_window_open(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WindowRegistry>,
+    panel_id: String,
+    target_doc: Option<String>,
+) -> Result<String, String> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    let label = state.next_label(&panel_id);
+    let geom = default_geometry_for_panel(&panel_id);
+
+    let mut url = format!("/?panel={}&windowId={}", panel_id, label);
+    if let Some(p) = &target_doc {
+        url.push_str("&doc=");
+        url.push_str(&encode_doc_param(p));
+    }
+
+    let webview_url = WebviewUrl::App(url.into());
+    let title = format!("Slab — {}", title_case(&panel_id));
+
+    let window = WebviewWindowBuilder::new(&app, &label, webview_url)
+        .title(title)
+        .inner_size(geom.width as f64, geom.height as f64)
+        .position(geom.x as f64, geom.y as f64)
+        .resizable(true)
+        .decorations(true)
+        .build()
+        .map_err(|e| format!("failed to build window: {}", e))?;
+
+    state.upsert(WindowState {
+        label: label.clone(),
+        panel_id,
+        geometry: geom,
+        target_doc,
+    });
+
+    // When the OS destroys the window (user clicked X, app shutdown,
+    // etc.), drop it from the registry so `slab_window_list` stays
+    // accurate.
+    let app_clone = app.clone();
+    let label_clone = label.clone();
+    window.on_window_event(move |e| {
+        if let tauri::WindowEvent::Destroyed = e {
+            if let Some(reg) = app_clone.try_state::<WindowRegistry>() {
+                reg.remove(&label_clone);
+            }
+        }
+    });
+
+    Ok(label)
+}
+
+#[tauri::command]
+pub fn slab_window_close(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WindowRegistry>,
+    label: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window(&label) {
+        w.close().map_err(|e| e.to_string())?;
+    }
+    state.remove(&label);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn slab_window_list(state: tauri::State<'_, WindowRegistry>) -> Vec<WindowState> {
+    state.list()
+}
+
+/// Title-case a panel id for the window chrome — "beacon" → "Beacon",
+/// "pii" → "PII". Avoids pulling in heck for one fn.
+fn title_case(s: &str) -> String {
+    match s {
+        "pii" => "PII".to_string(),
+        _ => {
+            let mut chars = s.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +381,42 @@ mod tests {
             labels,
             vec!["panel-beacon-1", "panel-beacon-2", "panel-library-1"]
         );
+    }
+
+    #[test]
+    fn default_geometry_for_panel_beacon_is_narrow_tall() {
+        let g = default_geometry_for_panel("beacon");
+        // Beacon should be a tall narrow column.
+        assert!(g.width <= 600, "beacon too wide: {}", g.width);
+        assert!(g.height >= 600, "beacon too short: {}", g.height);
+    }
+
+    #[test]
+    fn default_geometry_for_panel_library_is_wide() {
+        let g = default_geometry_for_panel("library");
+        // Library needs room for the document table.
+        assert!(g.width >= 900, "library too narrow: {}", g.width);
+    }
+
+    #[test]
+    fn default_geometry_for_panel_unknown_falls_back() {
+        let g = default_geometry_for_panel("custom-thing");
+        assert_eq!(g.width, 720);
+        assert_eq!(g.height, 640);
+    }
+
+    #[test]
+    fn encode_doc_param_escapes_special_chars() {
+        assert_eq!(encode_doc_param("/tmp/a.pdf"), "/tmp/a.pdf");
+        assert_eq!(encode_doc_param("/tmp/a b.pdf"), "/tmp/a%20b.pdf");
+        assert_eq!(encode_doc_param("a#b&c?d%e"), "a%23b%26c%3Fd%25e");
+    }
+
+    #[test]
+    fn title_case_handles_panel_ids() {
+        assert_eq!(title_case("beacon"), "Beacon");
+        assert_eq!(title_case("library"), "Library");
+        assert_eq!(title_case("pii"), "PII");
+        assert_eq!(title_case(""), "");
     }
 }

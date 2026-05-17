@@ -1415,6 +1415,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(windows::WindowRegistry::new())
         .invoke_handler(tauri::generate_handler![
             app_info,
             slab_merge,
@@ -1504,6 +1505,9 @@ pub fn run() {
             slab_library_ocr_queue_run_all,
             slab_library_auto_tag_one,
             slab_library_auto_tag_many,
+            windows::slab_window_open,
+            windows::slab_window_close,
+            windows::slab_window_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
