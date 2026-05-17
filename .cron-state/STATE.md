@@ -9,7 +9,7 @@
 **PR_READY:** true
 **BRANCH:** `feature/v0.9.0-toolkit`
 **BASE:** `main` @ `04876a8` (v0.8.0 release merge)
-**LAST COMMIT (v0.9.0):** `99dd3e3` — docs: README + release notes for v0.9.0 Toolkit
+**LAST COMMIT (v0.9.0):** `60945b6` — chore: sync Cargo.lock to 0.9.0 (was `99dd3e3` before lockfile sync this tick)
 
 > v0.8.1 also still PR_READY (separate branch `feature/v0.8.1-polyglot`,
 > tip `e49899e`). Open both PRs when ready. They don't conflict — v0.9.0
@@ -121,6 +121,7 @@ wait until both land, then cut a single fresh branch.
 - 2026-05-16 18:43 (Cake/cron): **Closeout tick** — shipped Task 10 (frontend polyglot wiring incl. drag-and-drop), installed markitdown via pipx on the Mac mini, **verified Task 14 manually** (HTML/CSV/JSON → PDF via release CLI), live tests now actually run (`html_round_trip_produces_pdf` + `csv_round_trip_produces_pdf` both PASS, not skip), flipped STATE to `STATUS: DONE / PR_READY: true`. v0.8.1 is shippable. Commit: `ac401be`. Next: human opens PR; cron drafts v0.9.0 plan when v0.8.1 merges.
 - 2026-05-16 19:05 (Cake/cron): **v0.9.0 kickoff** — cut `feature/v0.9.0-toolkit`, wrote plan doc, shipped Feature A (flatten backend + CLI + Tauri) and Feature B (sanitize backend + CLI + Tauri) in one tick. Commits `e7983b8 c776ded a52f707`.
 - 2026-05-16 19:34 (Cake/cron): **v0.9.0 closeout** — picked up WIP `pdf::repair` backend (already passing 3 tests), committed it as `c1bcfb0`, then wired CLI + Tauri (`b632270`), fixed a clippy::derivable_impls nit on SanitizeOpts, bumped version 0.8.1→0.9.0 (`cb1b00f`), wrote README + release-notes (`99dd3e3`). 101 lib tests pass; fmt/clippy/svelte-check all clean. v0.9.0 is **PR_READY**. Stacked two ready releases (v0.8.1 + v0.9.0); cron does not auto-open PRs, human decides order. Next: v0.9.1 Toolkit UX once both merge.
+- 2026-05-16 20:00 (Cake/cron): **Held-pattern tick** — both v0.8.1 and v0.9.0 still awaiting human review on `main`. Per STATE rule, did not cut v0.9.1 branch. Useful work within constraints: (1) fixed Cargo.lock drift left by `cb1b00f` — lockfile still showed `slab-app 0.8.1`, now `0.9.0` (`60945b6`). (2) Drafted full v0.9.1 plan into `.cron-state/proposals/v0.9.1-toolkit-ux.md` — four features, ~18 sub-tasks, three-tick cadence. Includes a self-contained pre-flight script that promotes the draft to `docs/plans/` when the v0.9.1 branch is finally cut. Next tick: re-run the branch-decision tree at top of session log; if both PRs are merged, cut v0.9.1 and ship Tick-1 (Flatten + Sanitize panels).
 
 ## QUICK REFERENCE
 - Quality gates (run from `src-tauri/`):
@@ -140,4 +141,5 @@ wait until both land, then cut a single fresh branch.
   ```
 - **Commit author:** use `git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='Cake (cron)' commit …`
 - Skill discipline: clippy prefers `&Path` over `&PathBuf`; rustfmt expands single-statement `if x { y; }` to braces; prefer `#[derive(Default)]` to manual impls when the body is `Self::default()`-equivalent.
+- **Version-bump lockstep:** after editing `src-tauri/Cargo.toml` version, run `cargo build` (or `cargo metadata --no-deps`) and commit `Cargo.lock` in the SAME commit. Otherwise the lockfile drifts (caught `cb1b00f` → `60945b6` in v0.9.0).
 - `markitdown` runtime: `/Users/sanjay/.local/bin/markitdown` (pipx). Add `$HOME/.local/bin` to PATH when invoking from cron-spawned terminals.
