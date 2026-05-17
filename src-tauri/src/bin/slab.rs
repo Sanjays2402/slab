@@ -15,6 +15,8 @@
 //
 // Run `slab help` for the full list.
 
+use slab_lib::ai::auto_tag::AutoTagOpts;
+use slab_lib::ai::config::{load as load_ai_config, make_provider};
 use slab_lib::pdf::annot_export::{extract as extract_annots, to_markdown as annots_to_md};
 use slab_lib::pdf::auto_redact::{auto_redact, AutoRedactOpts};
 use slab_lib::pdf::compress::compress;
@@ -23,6 +25,10 @@ use slab_lib::pdf::extract::{extract_text, extract_text_concat};
 use slab_lib::pdf::flatten::{flatten as do_flatten, FlattenOpts};
 use slab_lib::pdf::grayscale::{grayscale, GrayscaleOpts};
 use slab_lib::pdf::info::info;
+use slab_lib::pdf::library::{
+    auto_tag_run_one, default_db_path as library_db_path, ocr_queue_list_pending,
+    ocr_queue_run_one, query_documents, LibraryDb, LibraryFilter,
+};
 use slab_lib::pdf::md2pdf::{render as md2pdf_render, Md2PdfOpts};
 use slab_lib::pdf::merge::merge_pdfs;
 use slab_lib::pdf::metadata::{read_metadata, strip_metadata};
@@ -32,7 +38,9 @@ use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
 use slab_lib::pdf::repair::repair as do_repair;
 use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
+use slab_lib::pdf::scan_audit::{audit as scan_audit, PageClassification, Recommendation};
 use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
+use slab_lib::pdf::table_extract::{extract_tables, to_csv as table_to_csv, TableOpts};
 use slab_lib::pdf::PdfError;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -78,6 +86,7 @@ fn main() -> ExitCode {
         "sanitize" => cmd_sanitize(rest),
         "repair" => cmd_repair(rest),
         "export-annots" => cmd_export_annots(rest),
+        "lens" => cmd_lens(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
         ))),
@@ -156,6 +165,25 @@ Commands:
                                      'this PDF won't open' files and shrinks
                                      PDFs bloated by incremental edits.
   export-annots <file> -o <out.md>   Extract highlights & notes as Markdown
+
+Lens commands (v0.13.0 — OCR / Vision / Tables / AI):
+  lens audit <file>                  Classify each page as text/image/mixed/empty
+                                     and print the recommended action.
+  lens tables <file> <page>          Extract tables from a page → CSV.
+                                     Optional: --min-rows N, --min-cols N,
+                                     -o <out.csv> (multiple tables → suffixed).
+                                     Requires `pdftotext` on PATH.
+  lens ocr-queue list                List library docs queued for OCR
+                                     (state ∈ scanned, mixed).
+  lens ocr-queue run <doc-id>        OCR a single library doc.
+                                     [--lang eng] [--dpi 300]
+  lens ocr-queue run-all             Drain the queue sequentially.
+                                     [--lang eng] [--dpi 300]
+  lens auto-tag <doc-id>             AI auto-tag a library doc via Beacon
+                                     provider (~/.slab/config.toml).
+                                     [--max-tags 5]
+  lens auto-tag --all                Auto-tag every library doc.
+                                     [--max-tags 5]
 
   help, --help                       This help
   version, --version                 Print version
@@ -632,5 +660,315 @@ fn cmd_export_annots(args: &[String]) -> Result<(), CliError> {
         annots.len(),
         output.display()
     );
+    Ok(())
+}
+
+// ---- lens subcommands (v0.13.0) ----
+
+fn cmd_lens(args: &[String]) -> Result<(), CliError> {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    let rest = if args.is_empty() { &[][..] } else { &args[1..] };
+    match sub {
+        "audit" => cmd_lens_audit(rest),
+        "tables" => cmd_lens_tables(rest),
+        "ocr-queue" => cmd_lens_ocr_queue(rest),
+        "auto-tag" => cmd_lens_auto_tag(rest),
+        "" => Err(CliError::Usage(
+            "lens needs a subcommand: audit | tables | ocr-queue | auto-tag".into(),
+        )),
+        other => Err(CliError::Usage(format!(
+            "unknown lens subcommand: {other}\n\
+             try: audit | tables | ocr-queue | auto-tag"
+        ))),
+    }
+}
+
+fn classification_label(c: PageClassification) -> &'static str {
+    match c {
+        PageClassification::Text => "text",
+        PageClassification::Image => "image",
+        PageClassification::Mixed => "mixed",
+        PageClassification::Empty => "empty",
+    }
+}
+
+fn recommendation_label(r: Recommendation) -> (&'static str, &'static str) {
+    match r {
+        Recommendation::OcrAll => (
+            "ocr_all",
+            "run `slab ocr <file> -o <out>` — every page is scanned",
+        ),
+        Recommendation::OcrSome => ("ocr_some", "consider OCR — some pages are scanned"),
+        Recommendation::None => ("none", "nothing to do — fully text-native"),
+    }
+}
+
+fn cmd_lens_audit(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let report = scan_audit(&input).map_err(CliError::Op)?;
+    println!("pages: {}", report.total());
+    for (i, p) in report.pages.iter().enumerate() {
+        println!("  {}: {}", i + 1, classification_label(*p));
+    }
+    println!(
+        "text={} image={} mixed={} empty={}",
+        report.text_pages, report.image_pages, report.mixed_pages, report.empty_pages,
+    );
+    let (label, hint) = recommendation_label(report.recommended_action);
+    println!("recommended: {label} — {hint}");
+    Ok(())
+}
+
+fn parse_u32_flag(args: &[String], flag: &str, default: u32) -> Result<u32, CliError> {
+    match find_flag(args, flag) {
+        Some(s) => s
+            .parse::<u32>()
+            .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer"))),
+        None => Ok(default),
+    }
+}
+
+fn cmd_lens_tables(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let page = args
+        .get(1)
+        .ok_or_else(|| CliError::Usage("missing <page>".into()))?
+        .parse::<u32>()
+        .map_err(|_| CliError::Usage("page must be a positive integer".into()))?;
+    let min_rows = parse_u32_flag(args, "--min-rows", 2)?;
+    let min_cols = parse_u32_flag(args, "--min-cols", 2)?;
+    let opts = TableOpts {
+        page,
+        min_rows,
+        min_cols,
+    };
+    let tables = extract_tables(&input, &opts).map_err(CliError::Op)?;
+    if tables.is_empty() {
+        println!("no tables found on page {page} (min_rows={min_rows}, min_cols={min_cols})");
+        return Ok(());
+    }
+    let out_flag = find_flag(args, "-o")
+        .or_else(|| find_flag(args, "--output"))
+        .map(PathBuf::from);
+    match out_flag {
+        None => {
+            for (i, t) in tables.iter().enumerate() {
+                println!("--- table {} ({}×{}) ---", i + 1, t.row_count(), t.columns);
+                print!("{}", table_to_csv(t));
+            }
+        }
+        Some(out) if tables.len() == 1 => {
+            std::fs::write(&out, table_to_csv(&tables[0]))
+                .map_err(|e| CliError::Op(PdfError::Other(format!("write csv: {e}"))))?;
+            println!(
+                "✓ 1 table ({}×{}) → {}",
+                tables[0].row_count(),
+                tables[0].columns,
+                out.display()
+            );
+        }
+        Some(out) => {
+            // ≥2 tables — write <stem>_t<N>.csv siblings.
+            let stem = out
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("table")
+                .to_string();
+            let parent = out
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            for (i, t) in tables.iter().enumerate() {
+                let p = parent.join(format!("{stem}_t{}.csv", i + 1));
+                std::fs::write(&p, table_to_csv(t))
+                    .map_err(|e| CliError::Op(PdfError::Other(format!("write csv: {e}"))))?;
+                println!(
+                    "✓ table {} ({}×{}) → {}",
+                    i + 1,
+                    t.row_count(),
+                    t.columns,
+                    p.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn open_default_library() -> Result<LibraryDb, CliError> {
+    LibraryDb::open(&library_db_path()).map_err(|e| {
+        CliError::Op(PdfError::Other(format!(
+            "open library DB at {}: {e}",
+            library_db_path().display()
+        )))
+    })
+}
+
+fn cmd_lens_ocr_queue(args: &[String]) -> Result<(), CliError> {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    let rest = if args.is_empty() { &[][..] } else { &args[1..] };
+    match sub {
+        "list" => cmd_lens_ocr_queue_list(rest),
+        "run" => cmd_lens_ocr_queue_run(rest),
+        "run-all" => cmd_lens_ocr_queue_run_all(rest),
+        "" => Err(CliError::Usage(
+            "ocr-queue needs a subcommand: list | run <id> | run-all".into(),
+        )),
+        other => Err(CliError::Usage(format!(
+            "unknown ocr-queue subcommand: {other}\n\
+             try: list | run <id> | run-all"
+        ))),
+    }
+}
+
+fn cmd_lens_ocr_queue_list(_args: &[String]) -> Result<(), CliError> {
+    let db = open_default_library()?;
+    let pending = ocr_queue_list_pending(&db)
+        .map_err(|e| CliError::Op(PdfError::Other(format!("list ocr queue: {e}"))))?;
+    if pending.is_empty() {
+        println!("no docs pending OCR.");
+        return Ok(());
+    }
+    println!("{} doc(s) pending OCR:", pending.len());
+    for d in &pending {
+        println!(
+            "  [{}] {} ({}, {} page(s))",
+            d.id,
+            d.path,
+            d.ocr_state,
+            d.pages.unwrap_or(0),
+        );
+    }
+    Ok(())
+}
+
+fn parse_ocr_opts(args: &[String]) -> OcrOpts {
+    let lang = find_flag(args, "--lang").unwrap_or("eng").to_string();
+    let dpi: u32 = find_flag(args, "--dpi")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300);
+    OcrOpts { lang, dpi }
+}
+
+fn cmd_lens_ocr_queue_run(args: &[String]) -> Result<(), CliError> {
+    let doc_id: i64 = args
+        .first()
+        .ok_or_else(|| CliError::Usage("missing <doc-id>".into()))?
+        .parse()
+        .map_err(|_| CliError::Usage("<doc-id> must be an integer".into()))?;
+    let opts = parse_ocr_opts(args);
+    let mut db = open_default_library()?;
+    let r = ocr_queue_run_one(&mut db, doc_id, &opts);
+    if let Some(err) = &r.error {
+        eprintln!("✗ doc {doc_id}: {err}");
+        return Err(CliError::Op(PdfError::Other(err.clone())));
+    }
+    println!(
+        "✓ doc {} → {} (state: {})",
+        r.doc_id,
+        r.output_path.as_deref().unwrap_or("?"),
+        r.state_after,
+    );
+    Ok(())
+}
+
+fn cmd_lens_ocr_queue_run_all(args: &[String]) -> Result<(), CliError> {
+    let opts = parse_ocr_opts(args);
+    let mut db = open_default_library()?;
+    let pending = ocr_queue_list_pending(&db)
+        .map_err(|e| CliError::Op(PdfError::Other(format!("list ocr queue: {e}"))))?;
+    if pending.is_empty() {
+        println!("no docs pending OCR.");
+        return Ok(());
+    }
+    println!("running OCR on {} doc(s)…", pending.len());
+    let mut ok = 0usize;
+    let mut fail = 0usize;
+    for d in pending {
+        let r = ocr_queue_run_one(&mut db, d.id, &opts);
+        if let Some(err) = &r.error {
+            eprintln!("✗ doc {} ({}): {err}", d.id, d.path);
+            fail += 1;
+        } else {
+            println!(
+                "✓ doc {} ({}) → {}",
+                r.doc_id,
+                d.path,
+                r.output_path.as_deref().unwrap_or("?"),
+            );
+            ok += 1;
+        }
+    }
+    println!("{ok} succeeded, {fail} failed");
+    if fail > 0 && ok == 0 {
+        return Err(CliError::Op(PdfError::Other("all OCR jobs failed".into())));
+    }
+    Ok(())
+}
+
+fn cmd_lens_auto_tag(args: &[String]) -> Result<(), CliError> {
+    let max_tags = parse_u32_flag(args, "--max-tags", 5)?;
+    let opts = AutoTagOpts {
+        max_tags,
+        ..Default::default()
+    };
+
+    let all = args.iter().any(|a| a == "--all");
+    let cfg = load_ai_config()
+        .map_err(|e| CliError::Op(PdfError::Other(format!("load ai config: {e}"))))?;
+    let provider = make_provider(&cfg.beacon)
+        .map_err(|e| CliError::Op(PdfError::Other(format!("build ai provider: {e}"))))?;
+
+    let mut db = open_default_library()?;
+
+    // Resolve target doc id(s).
+    let doc_ids: Vec<i64> = if all {
+        let docs = query_documents(&db, &LibraryFilter::default())
+            .map_err(|e| CliError::Op(PdfError::Other(format!("list docs: {e}"))))?;
+        if docs.is_empty() {
+            println!("library is empty — nothing to tag.");
+            return Ok(());
+        }
+        docs.iter().map(|d| d.id).collect()
+    } else {
+        let first = args
+            .iter()
+            .find(|a| !a.starts_with("--"))
+            .ok_or_else(|| CliError::Usage("missing <doc-id> (or pass --all)".into()))?;
+        let id: i64 = first
+            .parse()
+            .map_err(|_| CliError::Usage("<doc-id> must be an integer".into()))?;
+        vec![id]
+    };
+
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| CliError::Op(PdfError::Other(format!("start tokio runtime: {e}"))))?;
+
+    let mut ok = 0usize;
+    let mut fail = 0usize;
+    for id in &doc_ids {
+        let provider = provider.clone();
+        let r = rt.block_on(auto_tag_run_one(&mut db, provider, *id, &opts));
+        if let Some(err) = &r.error {
+            eprintln!("✗ doc {id}: {err}");
+            fail += 1;
+        } else {
+            let tags = if r.tags_assigned.is_empty() {
+                "<none>".to_string()
+            } else {
+                r.tags_assigned.join(", ")
+            };
+            println!("✓ doc {id}: {tags}");
+            ok += 1;
+        }
+    }
+    if doc_ids.len() > 1 {
+        println!("{ok} succeeded, {fail} failed");
+    }
+    if fail > 0 && ok == 0 {
+        return Err(CliError::Op(PdfError::Other(
+            "all auto-tag jobs failed".into(),
+        )));
+    }
     Ok(())
 }
