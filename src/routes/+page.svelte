@@ -39,6 +39,7 @@
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
+  import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
   import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
@@ -94,6 +95,24 @@
   let active = $state("reader");
   let paletteOpen = $state(false);
   let shortcutsOpen = $state(false);
+
+  // ---------- Cabinet (v1.1.0) — detached-window mode ----------
+  //
+  // When this route is mounted inside a child WebviewWindow opened via
+  // `slab_window_open`, the URL carries `?panel=&windowId=&doc=` params.
+  // We flip into "detached mode": the whole sidebar/tabstrip shell is
+  // skipped and we render exactly one panel filling the window.
+  let detached = $state(false);
+  let detachedPanel = $state<string | null>(null);
+  let detachedWindowId = $state<string | null>(null);
+  let detachedDoc = $state<string | null>(null);
+
+  /** Pretty label for the DetachedShell titlebar (uses `features` list). */
+  function titleForPanel(id: string | null): string {
+    if (!id) return "Slab";
+    const feat = features.find((f) => f.id === id);
+    return feat ? feat.label : "Slab";
+  }
 
   // ---------- Reader tabs (Lathe Slice 5) ----------
   //
@@ -286,12 +305,62 @@
   onMount(() => {
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+
+    // Cabinet: detect detached mode from URL params.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get("panel");
+      const w = params.get("windowId");
+      if (p && w) {
+        detached = true;
+        detachedPanel = p;
+        detachedWindowId = w;
+        detachedDoc = params.get("doc");
+        active = p;
+      }
+    } catch {
+      // Non-browser env (SSR build) — leave detached=false.
+    }
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onGlobalKey);
     window.removeEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
   });
 </script>
+
+{#if detached}
+  <!--
+    Cabinet (v1.1.0) — detached panel window. No sidebar, no tabstrip,
+    no command palette: just the single panel filling the window.
+    The panel id is supplied by `?panel=` in the URL (parsed in
+    onMount above).
+  -->
+  <DetachedShell
+    panelId={detachedPanel ?? "reader"}
+    title={titleForPanel(detachedPanel)}
+  >
+    {#if detachedPanel === "beacon"}
+      <BeaconChatPanel />
+    {:else if detachedPanel === "library"}
+      <LibraryPanel />
+    {:else if detachedPanel === "search"}
+      <BeaconSearchPanel />
+    {:else if detachedPanel === "pii"}
+      <BeaconPiiPanel />
+    {:else if detachedPanel === "reader"}
+      <ReaderPanel
+        tabId="detached"
+        active={true}
+        initialPath={detachedDoc}
+      />
+    {:else}
+      <div class="detached-unsupported">
+        <p>Panel <code>{detachedPanel}</code> doesn't support detached mode yet.</p>
+        <p class="hint">Close this window and use the main Slab window for now.</p>
+      </div>
+    {/if}
+  </DetachedShell>
+{:else}
 
 <aside class="sidebar">
   <div class="brand">
@@ -476,6 +545,8 @@
 />
 
 <ShortcutsOverlay bind:open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
+
+{/if}
 
 <style>
   .sidebar {
@@ -727,5 +798,24 @@
   }
   .reader-slot.active {
     display: flex;
+  }
+
+  /* Cabinet — detached-mode panel container (rare unsupported-panel case). */
+  .detached-unsupported {
+    padding: 24px;
+    color: var(--fg-2, #8a8e94);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .detached-unsupported code {
+    background: var(--bg-1, #14161a);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 12px;
+  }
+  .detached-unsupported .hint {
+    margin-top: 8px;
+    opacity: 0.7;
   }
 </style>
