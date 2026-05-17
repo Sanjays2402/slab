@@ -9,7 +9,7 @@
 **PR_READY:** false
 **BRANCH:** `feature/v0.8.1-polyglot`
 **BASE:** `main` @ `04876a8` (v0.8.0 release merge)
-**LAST COMMIT:** `708531d` — feat(polyglot): scaffold module + register in pdf.rs
+**LAST COMMIT:** `c66167c` — feat(polyglot): add extension allow-list with tests
 
 ## GOAL
 Ship **v0.8.1 "Polyglot"** — a `markitdown` bridge that lets Slab accept .docx / .xlsx / .pptx / .html / .epub / .csv / .json / .xml / images / audio as input and convert to PDF via the existing `md2pdf` engine.
@@ -34,7 +34,7 @@ Research note: `.cron-state/research-markitdown.md`.
 ## SUB-TASKS (from plan)
 - [x] Bootstrap: branch, research note, STATE.md, plan, session log
 - [x] **Task 1**: Scaffold `pdf::polyglot` module + register in `pdf.rs` (commit `708531d`)
-- [ ] Task 2: Implement extension allow-list (`supported_extension`)
+- [x] **Task 2**: Extension allow-list `supported_extension` (commit `c66167c`)
 - [ ] Task 3: Implement `require_markitdown()` preflight
 - [ ] Task 4: Wire `polyglot_to_pdf` to subprocess + md2pdf
 - [ ] Task 5: Live integration test for .html (gated)
@@ -50,22 +50,22 @@ Research note: `.cron-state/research-markitdown.md`.
 - [ ] Task 15: Flip STATE.md to `STATUS: DONE` / `PR_READY: true`
 
 ## NEXT UP
-**Task 2: Implement extension allow-list `supported_extension(input: &Path) -> Option<&'static str>`.**
-- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 2.
-- Pure function — case-insensitive ext match, returns canonical kind name.
-- Supported kinds (locked): docx, xlsx, pptx, html, htm→html, epub, csv, json, xml, txt, md, markdown→md, png, jpg, jpeg→jpg, gif, bmp, tiff, tif→tiff, webp, heic, mp3, wav, m4a, flac, ogg, opus.
-- PDF explicitly rejected (returns None) — decision #4 in STATE.
-- TDD: write failing tests first, run, implement, re-run, commit.
+**Task 3: Implement `require_markitdown()` preflight helper.**
+- Modify `src-tauri/src/pdf/polyglot.rs` per plan § Task 3 (line 192+).
+- Mirror `pdf::ocr::require_binary` pattern: run `markitdown --version` (or similar) via `std::process::Command`, map missing binary to `PdfError::Other("markitdown not found on PATH … pipx install 'markitdown[all]'")`.
+- Also add `markitdown_available() -> bool` helper for gating live tests (mirror `ocr::tesseract_available`).
+- TDD: write failing test that exercises the "not on PATH" branch (mock by checking a known-bogus binary name), implement, re-run.
 - Quality gates: fmt + clippy + test --lib must pass before commit.
-- Commit message: `feat(polyglot): extension allow-list with case-insensitive dispatch`.
+- Commit message: `feat(polyglot): require_markitdown preflight + markitdown_available helper`.
 
-Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 2 (line 85 onwards).
+Exact code in `docs/plans/2026-05-16-v0.8.1-polyglot.md` § Task 3 (line 192 onwards).
 
 ## BLOCKERS
 None.
 
 ## NOTES FROM PRIOR SESSIONS
 - 2026-05-16 16:43 (Cake/cron): Task 1 done. Scaffold compiled clean, clippy clean, 81 tests pass. Pushed `708531d`. No surprises. The patch tool warned about a "sibling subagent" having modified `pdf.rs` — false alarm, that was the earlier bootstrap session's edit; confirmed file state by reading before commit.
+- 2026-05-16 17:00 (Cake/cron): Task 2 done. Pure-fn allow-list + 3 tests. Plan code worked verbatim. fmt/clippy clean, full suite 84 pass (81→84). Pushed `c66167c`. Dependabot surfaced 5 vulns on default branch (4 mod, 1 low) at push time — unrelated to this branch, note for future cleanup.
 
 ## QUICK REFERENCE
 - Quality gates (must all pass before commit):
