@@ -2,6 +2,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { idle, basename, type Status } from "$lib/types";
   import { analyzeSlides, type SlideReport, type SlidePage } from "$lib/slides";
+  import PresenterOverlay from "$lib/components/PresenterOverlay.svelte";
 
   // ---------- State ----------
   let inputPath = $state<string | null>(null);
@@ -10,6 +11,7 @@
   let activePage = $state<number | null>(null);
   let layout = $state<"grid" | "list">("grid");
   let showOnlyNoted = $state(false);
+  let presenting = $state(false);
 
   async function pickInput() {
     const picked = await open({
@@ -177,6 +179,14 @@
         <input type="checkbox" bind:checked={showOnlyNoted} />
         Only pages with notes
       </label>
+      <button
+        class="primary"
+        onclick={() => (presenting = true)}
+        disabled={!inputPath || report.page_count === 0}
+        title="Start presenter mode"
+      >
+        ▷ Present from {activePage ?? 1}
+      </button>
       {#if !report.is_slides}
         <div class="hint">
           Heuristic says this isn't a deck — but you can still use the grid view if you want.
@@ -244,6 +254,15 @@
     </div>
   {/if}
 </section>
+
+{#if presenting && inputPath && report}
+  <PresenterOverlay
+    inputPath={inputPath}
+    pages={report.pages}
+    startPage={activePage ?? 1}
+    onClose={() => (presenting = false)}
+  />
+{/if}
 
 <style>
   .picker-row {
@@ -528,6 +547,23 @@
   .ghost:hover {
     background: var(--surface-hover);
     color: var(--text-1);
+  }
+  .primary {
+    padding: 6px 12px;
+    border-radius: var(--r-md);
+    border: 1px solid rgb(99, 102, 241);
+    background: rgb(99, 102, 241);
+    color: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .primary:hover {
+    background: rgb(79, 82, 221);
+  }
+  .primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   @media (max-width: 860px) {
     .page-area {
