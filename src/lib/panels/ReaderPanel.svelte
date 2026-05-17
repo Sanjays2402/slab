@@ -10,6 +10,7 @@
   import OutlineEditor from "$lib/OutlineEditor.svelte";
   import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
   import DecryptModal from "$lib/components/DecryptModal.svelte";
+  import BeaconSelectionBubble from "$lib/components/BeaconSelectionBubble.svelte";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -1153,6 +1154,11 @@
     {#if ocrStatus}
       <div class="ocr-toast" class:err={ocrStatus.startsWith("✗")}>{ocrStatus}</div>
     {/if}
+
+    <!-- Beacon selection bubble: floats above any text selection inside the
+         PDF viewer. Mounted at the panel level so absolute positioning works
+         relative to the page, not constrained by the viewer's overflow. -->
+    <BeaconSelectionBubble host={containerEl ?? null} />
 
     {#if dropActive}
       <div class="drop-overlay">
