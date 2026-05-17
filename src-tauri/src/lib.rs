@@ -19,6 +19,9 @@ use ai::pii::{
     find_pii as do_find_pii, CustomPattern as PiiCustomPattern, PiiError, PiiHit, PiiKind, PiiOpts,
     PiiSummary,
 };
+use ai::selection_action::{
+    run_selection_action as do_selection_action, SelectionAction, SelectionActionReply,
+};
 use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
 use ai::{ChatMessage, ChatRole};
 
@@ -766,6 +769,40 @@ fn slab_beacon_pii_redact(
     }
 }
 
+/// Beacon Selection Action — run one of five quick LLM transforms
+/// (Translate / Explain / Define / Rewrite / Summarize) on a snippet
+/// the user highlighted in the PDF reader.
+///
+/// Lightweight by design: no PDF context loading, just the snippet.
+/// Uses the same provider as chat/summary (resolved from `~/.slab/config.toml`).
+/// `target_lang` is only consulted for the Translate action; ignored otherwise.
+#[tauri::command]
+async fn slab_beacon_selection_action(
+    text: String,
+    action: SelectionAction,
+    target_lang: Option<String>,
+) -> CmdResult<SelectionActionReply> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    do_selection_action(provider, &text, action, target_lang)
+        .await
+        .into()
+}
+
 #[tauri::command]
 fn slab_export_annotations_md(
     input: PathBuf,
@@ -847,6 +884,7 @@ pub fn run() {
             slab_beacon_index_forget,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
+            slab_beacon_selection_action,
             slab_export_annotations_md,
         ])
         .run(tauri::generate_context!())

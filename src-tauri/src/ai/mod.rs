@@ -21,6 +21,7 @@ pub mod embedding_index;
 pub mod ollama;
 pub mod openai_compat;
 pub mod pii;
+pub mod selection_action;
 pub mod summary;
 
 use async_trait::async_trait;
