@@ -41,6 +41,11 @@
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
   import VimIndicator from "$lib/vim/VimIndicator.svelte";
+  import VimController from "$lib/vim/VimController.svelte";
+  import { runReaderVim } from "$lib/vim/reader-adapter";
+  import { runLibraryVim, registerLibraryNav, type LibraryVimResult } from "$lib/vim/library-adapter";
+  import { vimSearchQuery, resetVim } from "$lib/vim/mode";
+  import type { VimAction } from "$lib/vim/types";
   import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
   import { openPanelWindow, closePanelWindow, focusPanelWindow, listPanelWindows, type WindowState } from "$lib/windows";
@@ -252,6 +257,38 @@
   /** Called by ReaderPanel after a successful load. Updates the tab label. */
   function onTabTitleChange(id: string, title: string) {
     tabs = tabs.map((t) => (t.id === id ? { ...t, title } : t));
+  }
+
+  // ---------- Glass II Vim adapter dispatch (v1.2.0 Slice 2 + 3) ----------
+  //
+  // VimController emits `action` events with the high-level `VimAction`
+  // produced by the keymap reducer. We route each action through the
+  // panel-appropriate adapter. Reader and Library are the only panels
+  // wrapped right now — every other panel uses native shortcuts.
+
+  function onReaderVimAction(e: CustomEvent<VimAction>) {
+    const action = e.detail;
+    const pending = $vimSearchQuery;
+    const res = runReaderVim(action, pending);
+    if (res.closeTab) {
+      closeTab(activeTabId);
+      resetVim();
+    }
+    if (res.gotoTab !== undefined) {
+      const idx = res.gotoTab - 1;
+      if (idx >= 0 && idx < tabs.length) setActiveTab(tabs[idx].id);
+    }
+  }
+
+  function onLibraryVimAction(e: CustomEvent<VimAction>) {
+    const action = e.detail;
+    const res: LibraryVimResult = runLibraryVim(action);
+    // `o` (detach into new window) is plan-future — keymap currently routes it
+    // through Insert mode. When that's panel-specialised in a later slice,
+    // res.detachActive will fire here.
+    if (res.detachActive) {
+      detachActive("library");
+    }
   }
 
   async function pickAndOpenInNewTab() {
@@ -615,22 +652,26 @@
     <!-- Render every tab; only the active one is visible. Keeping the
          hidden tabs mounted preserves their pdfjs viewer state (current
          page, zoom, find state, outline) across switches. -->
-    <div class="reader-stack">
-      {#each tabs as t (t.id)}
-        <div class="reader-slot" class:active={t.id === activeTabId}>
-          <ReaderPanel
-            tabId={t.id}
-            active={t.id === activeTabId}
-            initialPath={t.initialPath}
-            onTitleChange={(title) => onTabTitleChange(t.id, title)}
-          />
-        </div>
-      {/each}
-    </div>
+    <VimController panel="reader" on:action={onReaderVimAction as unknown as (e: Event) => void}>
+      <div class="reader-stack">
+        {#each tabs as t (t.id)}
+          <div class="reader-slot" class:active={t.id === activeTabId}>
+            <ReaderPanel
+              tabId={t.id}
+              active={t.id === activeTabId}
+              initialPath={t.initialPath}
+              onTitleChange={(title) => onTabTitleChange(t.id, title)}
+            />
+          </div>
+        {/each}
+      </div>
+    </VimController>
   {:else if active === "beacon"}
     <BeaconChatPanel />
   {:else if active === "library"}
-    <LibraryPanel />
+    <VimController panel="library" on:action={onLibraryVimAction as unknown as (e: Event) => void}>
+      <LibraryPanel />
+    </VimController>
   {:else if active === "search"}
     <BeaconSearchPanel />
   {:else if active === "pii"}
