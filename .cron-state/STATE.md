@@ -5,13 +5,27 @@
 
 ---
 
-## STATUS: RELEASE_PENDING — v0.10.0
+## STATUS: ACTIVE — v0.11.0 Lathe
 
-**RELEASE_PENDING: v0.10.0** (merged + tagged + pushed this tick; CI run `25984334503` queued).
+**v0.10.0 RELEASED** 2026-05-17 08:03 UTC — all 6 installers on GH Releases, latest.
+**RELEASE_PENDING cleared.**
 
-**Active dev branch:** none — next tick should:
-1. MODE B finalize v0.10.0 once CI succeeds (download 6 artifacts, `gh release create`)
-2. Then MODE C start v0.11.0 "Lathe" branch from main (edit mode — spec in `.cron-state/proposals/roadmap-to-v1.0.md` § v0.11.0)
+**Active dev branch:** `feature/v0.11.0-lathe`
+
+**Lathe progress (4 / 8 slices done):**
+- ✅ Slice 1: `duplicate_pages` kernel + Tauri (commit `e95c0ef`)
+- ✅ Slice 2: `split_by_pattern` chapter splitter backend (commit `d0635a7`)
+- ✅ Slice 3 backend: `pages_build` composite kernel — handles permutations + duplicates + blank inserts + per-cell rotation in one Tauri round-trip; 14 unit tests; 206→220 lib tests (commit `3e93038`)
+- ✅ Slice 3 UI: `PagesVisualPanel.svelte` drag-reorder grid, multi-select, right-click ctx menu (Rotate/Duplicate/Insert Blank/Delete), Apply via `slab_pages_build`. Sidebar nav `▦ Pages` (visual default) + `≣ Pages (list)` for the renamed PagesListPanel (commit `5807fe4`)
+- ✅ Slice 4: `SplitPatternPanel.svelte` regex+outline split UI with 5 presets, live preview, friendly errors; new `slab_outline_starts` Tauri command (commit `3393697`)
+
+**Remaining:**
+- Slice 5: Multi-PDF tabs in main shell (cmd+T / cmd+W / cmd+1..9) — pure frontend, big-bang layout change
+- Slice 6: In-place text editing — backend `pdf::edit_text` content-stream rewrite via lopdf
+- Slice 7: TextEdit overlay in ReaderPanel (click-to-edit on text-layer spans)
+- Slice 8: Release prep — version bump 0.10.0 → 0.11.0, release notes, mark DONE
+
+**Next tick:** MODE C on `feature/v0.11.0-lathe` — Slice 5 (multi-tab shell) is the obvious next big vertical slice; it's a pure frontend rearrangement of `+page.svelte` and `ReaderPanel`'s state, so should fit cleanly in one tick.
 
 ---
 
@@ -174,3 +188,4 @@ git -c user.email='51058514+Sanjays2402@users.noreply.github.com' -c user.name='
 - **2026-05-16 22:45 (Cake/cron): 🚀 TRIPLE-SLICE TICK — Beacon Slices 3+4+5 in one tick.** (a) Slice 3 backend `ai/chat.rs` — page-aware context builder + citation extractor + `beacon_chat()` + 7 tests via in-memory MockProvider + Tauri `slab_beacon_chat` command (commit `cc5a6ea`). (b) Slice 4 frontend `BeaconChatPanel.svelte` — conversation view, citation chips that dispatch goto-page events, sample-prompt grid, friendly-error mapping, Enter-to-send composer; nav entry "✦ Beacon AI" between Reader and Merge (commit `9abc425`). (c) Slice 5 summary — `ai/summary.rs` with Tldr/Short/Long enum + low-temp prompts + 5 tests; Tauri `slab_beacon_summary`; 3 quick-action chips in chat panel that push results as assistant turns (commit `21960ce`). Total: 121→133 lib tests (+12), 1 new module + 1 new component + 2 new Tauri commands. All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check). Pushed to `feature/v0.10.0-beacon`. v0.10.0 is now 50% shipped (5 of 10 slices done).
 - **2026-05-16 23:50 (Cake/cron): 🚀 Beacon Slice 9 — Selection Actions vertical slice in 2 commits.** Backend `ai::selection_action` module (5 actions: Translate/Explain/Define/Rewrite/Summarize, per-action prompts pinned in tests, low temp 0.2, per-action max_tokens 80-500, 8K-char selection cap with user-grade error) + Tauri command `slab_beacon_selection_action` (commit `14b6e7d`, 13 new tests via in-memory MockProvider). Frontend `BeaconSelectionBubble.svelte` (~620 LOC) — floats above the PDF.js text-layer selection on `mouseup`, 5-button action grid + emoji + tooltips, inline Translate target-language picker (15 languages), busy/error/result states with Copy button, friendly-error mapping for Ollama-down + 429, Esc dismiss, mounted inside ReaderPanel as a sibling of pdfjs-container (commit `4825c93`). 173→186 lib tests (+13). All quality gates green (fmt, clippy `-D warnings`, lib tests, svelte-check 0 errors). v0.10.0 is now 90% shipped (9 of 10 slices). Slice 10 (release prep + version bump + DONE flag for next-tick merge) is the only remaining work.
 - **2026-05-17 00:09 (Cake/cron): 🚀 v0.10.0 "Beacon" MERGED TO MAIN.** MODE A tick: re-ran all 4 quality gates on `feature/v0.10.0-beacon` (fmt, clippy `-D warnings`, 186 lib tests, svelte-check 0 errors) — all green. Pulled main (it had moved with a dependabot svelte 5.55.5→5.55.7 security bump in `pnpm-lock.yaml`). `git merge --no-ff` hit a conflict in the lockfile — resolved by taking feature-branch lockfile then `pnpm update svelte@latest` to re-pick-up the security bump; svelte-check still 0 errors. Committed with descriptive merge message at merge SHA `f91b374`. Tagged `v0.10.0`. Pushed both `main` and the tag via gh-token credential helper. CI run `25984335488` + `25984335509` (dependabot) + `25984334503` (build) all queued. STATE.md now `RELEASE_PENDING: v0.10.0` for next tick's MODE B finalize.
+- **2026-05-17 01:20 (Cake/cron): 🚀 BIG LATHE TICK — Slice 3 (backend+UI) + Slice 4 in 3 commits.** Picked up uncommitted scaffold of PagesVisualPanel from a prior tick that hadn't merged. (a) Slice 3 backend `pdf::pages_build` composite kernel — `PagesBuildOpts { cells: Vec<PageCell>, blank: Option<BlankSize> }` handles arbitrary permutations + duplicates + blank inserts + per-cell rotation in ONE Tauri call by composing `extract_pages_to → insert(blank) → rotate_pages`. 14 unit tests covering pure reorder / deletion / duplicates / blanks-at-start-middle-multiple / rotation / combo / custom A4 blank size / 4 validation paths. New Tauri commands: `slab_pages_build`, `slab_outline_starts`. 206→220 lib tests (+14). Commit `3e93038`. (b) Slice 3 UI: rewrote PagesVisualPanel `applyChanges` from a 100-line chained-Tauri-calls mess (with apologetic "this won't work for duplicates/blanks until v0.11.1" caveats) to a single 30-line `slab_pages_build` call. Removed all the artificial restrictions; users now get the full visual feature on day one. Sidebar nav: `▦ Pages` is now the visual panel by default, `≣ Pages (list)` is the old PagesPanel (renamed PagesListPanel). Commit `5807fe4`. (c) Slice 4 `SplitPatternPanel.svelte` (~370 LOC) — chapter-aware splitting UI for the backend shipped last tick (Slice 2). Two-tab mode (regex / outline), 5 one-click presets, live "Preview" that shows match pages as chips (with a "p1 (cover)" pill when the first match isn't page 1), friendly regex error mapping. Sidebar nav `✂ Split by Chapter`. Commit `3393697`. All 4 quality gates green (fmt, clippy `-D warnings`, 220 lib tests, svelte-check 0 errors). v0.11.0 is now 50% shipped (4 of 8 slices done — though Slice 3 was effectively two slices worth).
