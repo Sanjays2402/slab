@@ -41,6 +41,7 @@
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
   import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
+  import { openPanelWindow } from "$lib/windows";
   import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
   import type { RecentFile } from "$lib/recent";
@@ -112,6 +113,40 @@
     if (!id) return "Slab";
     const feat = features.find((f) => f.id === id);
     return feat ? feat.label : "Slab";
+  }
+
+  /**
+   * Panels that have a useful "detach into its own window" experience.
+   * One-shot wizards (Encrypt, Compress, Merge, Split, etc.) aren't here:
+   * detaching them adds nothing because you close them immediately after
+   * running the action. The set here is the durable, "lives next to your
+   * reader" set — chat with the doc, browse the library, search, etc.
+   */
+  const DETACHABLE_PANELS = new Set<string>([
+    "reader",
+    "library",
+    "beacon",
+    "search",
+    "pii",
+    "pages",
+    "pages-list",
+    "diff",
+    "slides",
+    "tables",
+    "markdown",
+  ]);
+
+  function supportsDetach(id: string): boolean {
+    return DETACHABLE_PANELS.has(id);
+  }
+
+  /**
+   * Fire-and-forget detach from the sidebar. We swallow the Promise here
+   * because the call already logs on failure and never throws; surfacing
+   * a toast on success is Slice 7's job.
+   */
+  function detachActive(id: string): void {
+    void openPanelWindow(id);
   }
 
   // ---------- Reader tabs (Lathe Slice 5) ----------
@@ -371,17 +406,31 @@
 
   <nav>
     {#each features as f (f.id)}
-      <button
-        class="nav-item"
-        class:active={active === f.id}
-        class:locked={!f.ready}
-        disabled={!f.ready}
-        onclick={() => (active = f.id)}
-      >
-        <span class="nav-icon">{f.icon}</span>
-        <span class="nav-label">{f.label}</span>
-        {#if !f.ready}<span class="badge">soon</span>{/if}
-      </button>
+      <div class="nav-row" class:active={active === f.id}>
+        <button
+          class="nav-item"
+          class:active={active === f.id}
+          class:locked={!f.ready}
+          disabled={!f.ready}
+          onclick={() => (active = f.id)}
+        >
+          <span class="nav-icon">{f.icon}</span>
+          <span class="nav-label">{f.label}</span>
+          {#if !f.ready}<span class="badge">soon</span>{/if}
+        </button>
+        {#if active === f.id && f.ready && supportsDetach(f.id) && isInTauri()}
+          <button
+            class="detach-btn"
+            type="button"
+            title="Open {f.label} in a new window"
+            aria-label="Open {f.label} in a new window"
+            onclick={(e) => {
+              e.stopPropagation();
+              detachActive(f.id);
+            }}
+          >⤢</button>
+        {/if}
+      </div>
     {/each}
   </nav>
 
@@ -630,6 +679,49 @@
     padding: 2px 5px;
     border-radius: 4px;
     letter-spacing: 0.5px;
+  }
+
+  /* ---------- Cabinet (v1.1.0) — detach button ---------- */
+  .nav-row {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    position: relative;
+  }
+  .nav-row > .nav-item {
+    flex: 1;
+    min-width: 0;
+  }
+  .detach-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 26px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-3);
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: var(--r-sm);
+    padding: 0;
+    line-height: 1;
+    transition:
+      background 80ms ease-out,
+      color 80ms ease-out,
+      border-color 80ms ease-out;
+  }
+  .detach-btn:hover {
+    background: var(--bg);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .detach-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .detach-btn:active {
+    transform: translateY(1px);
   }
 
   .palette-trigger {
