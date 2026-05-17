@@ -12,7 +12,12 @@
 //! ## External binaries
 //!
 //! * `pdftotext` (poppler) — XHTML word-bbox output. Probed at call
-//!   time with a friendly install hint if missing.
+//!   time with a friendly install hint if missing. Note the **xpdf**
+//!   flavor of `pdftotext` (Glyph & Cog) is also commonly on PATH —
+//!   particularly on Windows — and does **not** support
+//!   `-bbox-layout`. We detect this by sniffing `pdftotext -h` for the
+//!   string `-bbox-layout`; if absent the user gets a friendly error
+//!   pointing them at a Poppler install.
 
 use crate::pdf::PdfError;
 use serde::{Deserialize, Serialize};
@@ -118,14 +123,40 @@ pub fn to_csv(t: &Table) -> String {
 // ---------- pdftotext invocation ----------
 
 fn require_pdftotext() -> Result<(), PdfError> {
-    match Command::new("pdftotext").arg("-v").output() {
-        Ok(_) => Ok(()),
-        Err(e) => Err(PdfError::Other(format!(
+    // Step 1: is there any `pdftotext` binary on PATH at all?
+    let version_probe = Command::new("pdftotext").arg("-v").output();
+    if let Err(e) = version_probe {
+        return Err(PdfError::Other(format!(
             "pdftotext not found on PATH ({e}). \
              On macOS: `brew install poppler`. \
-             On Debian/Ubuntu: `sudo apt install poppler-utils`."
-        ))),
+             On Debian/Ubuntu: `sudo apt install poppler-utils`. \
+             On Windows: install Poppler (e.g. via scoop: `scoop install poppler`)."
+        )));
     }
+    // Step 2: is it the right flavor? xpdf's `pdftotext` (Glyph & Cog)
+    // is also on PATH on many Windows hosts and rejects
+    // `-bbox-layout`. Sniff the help text — Poppler lists
+    // `-bbox-layout` explicitly, xpdf does not. Some flavors print help
+    // on stderr, others on stdout, so we union both.
+    let help = Command::new("pdftotext")
+        .arg("-h")
+        .output()
+        .map_err(|e| PdfError::Other(format!("probe pdftotext -h: {e}")))?;
+    let mut blob = Vec::with_capacity(help.stdout.len() + help.stderr.len());
+    blob.extend_from_slice(&help.stdout);
+    blob.extend_from_slice(&help.stderr);
+    let txt = String::from_utf8_lossy(&blob);
+    if !txt.contains("-bbox-layout") {
+        return Err(PdfError::Other(
+            "pdftotext on PATH does not support -bbox-layout (looks like the xpdf flavor). \
+             Slab needs Poppler's pdftotext. \
+             On macOS: `brew install poppler`. \
+             On Debian/Ubuntu: `sudo apt install poppler-utils`. \
+             On Windows: install Poppler (e.g. via scoop: `scoop install poppler`)."
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn run_pdftotext_bbox(input: &Path, page: u32) -> Result<Vec<Word>, PdfError> {
@@ -547,7 +578,45 @@ mod tests {
     }
 
     fn pdftotext_available() -> bool {
-        Command::new("pdftotext").arg("-v").output().is_ok()
+        // Match the production capability check: only Poppler-flavored
+        // pdftotext (which advertises `-bbox-layout` in its help text)
+        // is supported. xpdf's `pdftotext` is also a thing and lives
+        // on Windows GH runners — it must not be considered "available".
+        let Ok(version) = Command::new("pdftotext").arg("-v").output() else {
+            return false;
+        };
+        let _ = version;
+        let Ok(help) = Command::new("pdftotext").arg("-h").output() else {
+            return false;
+        };
+        let mut blob = Vec::with_capacity(help.stdout.len() + help.stderr.len());
+        blob.extend_from_slice(&help.stdout);
+        blob.extend_from_slice(&help.stderr);
+        String::from_utf8_lossy(&blob).contains("-bbox-layout")
+    }
+
+    /// Test the production capability check directly. We can't shim
+    /// `Command::new` cheaply, but we *can* assert that
+    /// `require_pdftotext()` agrees with our local availability probe:
+    /// they should both succeed or both fail on the same host.
+    #[test]
+    fn require_pdftotext_agrees_with_local_probe() {
+        let avail = pdftotext_available();
+        let req = require_pdftotext();
+        match (avail, req.as_ref()) {
+            (true, Ok(())) => {} // Poppler installed locally — both happy
+            (false, Err(_)) => {
+                // No Poppler (or xpdf-only) — both correctly refuse.
+                // Sanity-check the error message is actionable.
+                let msg = format!("{:?}", req.unwrap_err());
+                assert!(
+                    msg.contains("poppler") || msg.contains("Poppler") || msg.contains("pdftotext"),
+                    "error should mention pdftotext/poppler: {msg}"
+                );
+            }
+            (true, Err(e)) => panic!("probe says available but require failed: {e:?}"),
+            (false, Ok(())) => panic!("probe says unavailable but require succeeded"),
+        }
     }
 
     #[test]
