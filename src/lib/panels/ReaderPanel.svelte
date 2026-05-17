@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { readFile } from "@tauri-apps/plugin-fs";
+  import { readFile, writeFile } from "@tauri-apps/plugin-fs";
   import { invoke } from "@tauri-apps/api/core";
-  import { basename, formatBytes } from "$lib/types";
+  import { join, tempDir } from "@tauri-apps/api/path";
+  import { basename, formatBytes, stripExt } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, type RecentFile } from "$lib/recent";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -90,16 +91,110 @@
   // ---------- File loading ----------
   // isInTauri is imported from $lib/tauri
 
+  // Extensions accepted by the v0.8.1 polyglot bridge — must stay in sync
+  // with `pdf::polyglot::supported_extension` in the Rust crate. PDF is
+  // intentionally absent from here (handled directly, not via markitdown).
+  const POLYGLOT_EXTS = [
+    "docx", "pptx", "xlsx", "xls",
+    "html", "htm", "epub",
+    "csv", "json", "xml", "rtf", "odt",
+    "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp",
+    "wav", "mp3", "m4a", "flac", "ogg",
+  ];
+  const POLYGLOT_LABEL =
+    "Documents (PDF, Office, HTML, EPUB, CSV, JSON, XML, RTF, ODT)";
+
+  function extOf(path: string): string {
+    const i = path.lastIndexOf(".");
+    return i >= 0 ? path.slice(i + 1).toLowerCase() : "";
+  }
+
+  function isPdfPath(path: string): boolean {
+    return extOf(path) === "pdf";
+  }
+
+  function isPolyglotPath(path: string): boolean {
+    return POLYGLOT_EXTS.includes(extOf(path));
+  }
+
+  /// Compute a stable temp path for the converted PDF. Uses Tauri's
+  /// `tempDir()` so we land in OS-temp without poking user folders, and
+  /// includes a millisecond timestamp so re-opening the same source
+  /// doesn't clobber a previous (possibly still-open) PDF.
+  async function polyglotTmpOutput(input: string): Promise<string> {
+    const base = stripExt(basename(input)) || "slab-polyglot";
+    const stamp = Date.now().toString(36);
+    const safe = base.replace(/[^A-Za-z0-9._-]/g, "_");
+    const dir = await tempDir();
+    return await join(dir, `slab-polyglot-${safe}-${stamp}.pdf`);
+  }
+
+  /// Convert a markitdown-error string into something a human can act on.
+  /// Mirrors how `runOcr` surfaces missing-binary failures, keyed on the
+  /// canonical phrases produced by `pdf::polyglot::require_markitdown`.
+  function friendlyPolyglotError(raw: string): string {
+    if (raw.includes("markitdown not found")) {
+      return (
+        "markitdown isn’t installed. Run " +
+        "`pipx install 'markitdown[all]'` and try again."
+      );
+    }
+    if (raw.includes("unsupported polyglot input")) {
+      return "This file type isn’t supported yet.";
+    }
+    if (raw.includes("empty document")) {
+      return "markitdown couldn’t extract any text from this file.";
+    }
+    return raw;
+  }
+
+  /// Branch on extension: PDFs open directly, polyglot inputs are
+  /// converted via the `slab_polyglot` Tauri command and then opened.
+  async function openAny(path: string) {
+    if (isPdfPath(path)) {
+      await loadPath(path);
+      return;
+    }
+    if (!isPolyglotPath(path)) {
+      loadError = `Unsupported file type: ${basename(path)}`;
+      return;
+    }
+    loading = true;
+    loadError = null;
+    ocrStatus = `Converting ${basename(path)}…`;
+    try {
+      const out = await polyglotTmpOutput(path);
+      await invoke("slab_polyglot", {
+        input: path,
+        output: out,
+        opts: { page_size: "A4" },
+      });
+      ocrStatus = `✓ Converted ${basename(path)}`;
+      setTimeout(() => (ocrStatus = ""), 3000);
+      await loadPath(out);
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      loadError = friendlyPolyglotError(raw);
+      ocrStatus = "";
+    } finally {
+      loading = false;
+    }
+  }
+
   async function pickFile() {
     if (isInTauri()) {
       const picked = await open({
         multiple: false,
-        filters: [{ name: "PDF", extensions: ["pdf"] }],
+        filters: [
+          { name: POLYGLOT_LABEL, extensions: ["pdf", ...POLYGLOT_EXTS] },
+          { name: "PDF only", extensions: ["pdf"] },
+        ],
       });
       if (typeof picked !== "string") return;
-      await loadPath(picked);
+      await openAny(picked);
     } else {
-      // Browser dev fallback — uses the native file input
+      // Browser dev fallback — uses the native file input. Note: the
+      // browser fallback only handles PDF (no Tauri = no `slab_polyglot`).
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "application/pdf,.pdf";
@@ -624,13 +719,37 @@
       dropActive = false;
       const file = e.dataTransfer?.files?.[0];
       if (!file) return;
-      if (!file.name.toLowerCase().endsWith(".pdf")) {
-        ocrStatus = `✗ Not a PDF: ${file.name}`;
+      const lower = file.name.toLowerCase();
+      const ext = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
+      if (ext === "pdf") {
+        const buf = await file.arrayBuffer();
+        await loadBytes(file.name, new Uint8Array(buf), file.size);
+        return;
+      }
+      if (!POLYGLOT_EXTS.includes(ext)) {
+        ocrStatus = `✗ Unsupported file: ${file.name}`;
         setTimeout(() => (ocrStatus = ""), 3000);
         return;
       }
-      const buf = await file.arrayBuffer();
-      await loadBytes(file.name, new Uint8Array(buf), file.size);
+      // Polyglot path needs a filesystem path for `slab_polyglot`. The
+      // dropped File only gives us bytes, so we round-trip via Tauri tempDir.
+      if (!isInTauri()) {
+        ocrStatus = `✗ Polyglot drop requires the desktop app`;
+        setTimeout(() => (ocrStatus = ""), 3000);
+        return;
+      }
+      try {
+        const buf = await file.arrayBuffer();
+        const safe = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        const stamp = Date.now().toString(36);
+        const dir = await tempDir();
+        const tmpIn = await join(dir, `slab-polyglot-in-${stamp}-${safe}`);
+        await writeFile(tmpIn, new Uint8Array(buf));
+        await openAny(tmpIn);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        loadError = friendlyPolyglotError(raw);
+      }
     };
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("dragleave", onDragLeave);
@@ -730,7 +849,7 @@
     {#if doc}
       {basename(doc.path)} · {doc.pageCount} page{doc.pageCount === 1 ? "" : "s"}
     {:else}
-      Open any PDF — read, search, zoom. Files stay on your machine.
+      Open any PDF — or drop in Office, HTML, EPUB, CSV, images. Files stay on your machine.
     {/if}
   </p>
 </header>
@@ -739,8 +858,8 @@
   <section class="panel">
     <button class="dropzone" onclick={pickFile} disabled={loading}>
       <span class="dz-icon">+</span>
-      <span class="dz-title">{loading ? "Loading…" : "Open a PDF"}</span>
-      <span class="dz-hint">Single click, anywhere on your machine. <span class="dz-kbd">⌘K</span> to jump anywhere.</span>
+      <span class="dz-title">{loading ? "Loading…" : "Open a document"}</span>
+      <span class="dz-hint">PDF, Office, HTML, EPUB & more — drop or click. <span class="dz-kbd">⌘K</span> to jump anywhere.</span>
     </button>
     {#if loadError}
       <div class="status err">✕ {loadError}</div>
