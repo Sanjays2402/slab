@@ -31,6 +31,7 @@ pub mod selection_action;
 pub mod sm2;
 pub mod stt;
 pub mod stt_recorder;
+pub mod stt_session;
 pub mod study;
 pub mod study_store;
 pub mod summary;
