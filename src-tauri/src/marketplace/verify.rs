@@ -26,18 +26,23 @@ use thiserror::Error;
 
 /// Slab's maintainer Ed25519 public key (32 bytes).
 ///
-/// **This is a placeholder of all-zero bytes for the v1.4 development
-/// branch.** Slice 2 will generate the real maintainer key pair, at
-/// which point this constant gets replaced with the real public key
-/// and the index gets re-signed.
+/// Generated 2026-05-17 (v1.4.0 Slice 2) — the matching private key
+/// lives at `~/.slab-maintainer-key` on the maintainer's machine and
+/// is **never** committed to the repo. See [`SIGNING.md`](../../../SIGNING.md)
+/// for the rotation procedure if the key is ever compromised.
 ///
-/// A real signature against this placeholder key is impossible (the
-/// all-zero point is the identity element on Ed25519, which
-/// `ed25519-dalek` correctly refuses to verify). That's deliberate —
-/// it means a v1.4.0-bench-slice-1 build will reject every
-/// marketplace entry until the real key lands. That's safer than
-/// failing-open during development.
-pub const MAINTAINER_PUBLIC_KEY: [u8; 32] = [0u8; 32];
+/// The maintainer signing tool (`cargo run --bin slab-sign-plugin`)
+/// reads the private key from `~/.slab-maintainer-key` and emits
+/// signed [`IndexEntry`] JSON ready to paste into the marketplace
+/// `index.json`. Any signature produced by that tool will verify
+/// against this constant.
+///
+/// Encoded as a hex literal for review-friendliness — easy to compare
+/// against the `slab-sign-plugin --print-public-key` output.
+pub const MAINTAINER_PUBLIC_KEY: [u8; 32] = [
+    0x17, 0xf3, 0x8d, 0x92, 0xdb, 0x3a, 0xf9, 0x64, 0x2f, 0x0c, 0xf3, 0x5d, 0xd0, 0x3e, 0xdb, 0x8c,
+    0x7e, 0x26, 0xe5, 0xe1, 0x18, 0xf2, 0x26, 0x45, 0xd1, 0x9b, 0xb5, 0x2f, 0x8c, 0xad, 0x7b, 0x27,
+];
 
 /// Identifier embedded in `Index::signing_key_id`. Keeps room for
 /// future key rotation without breaking older clients.
@@ -91,8 +96,9 @@ pub fn verify_entry(entry: &IndexEntry, public_key: &[u8; 32]) -> Result<(), Ver
 
 /// Convenience: verify against the baked-in maintainer key.
 ///
-/// During v1.4 development this will always fail because the baked-in
-/// key is a placeholder — see [`MAINTAINER_PUBLIC_KEY`] doc-comment.
+/// Returns `Ok(())` iff the entry was signed by the holder of the
+/// private key matching [`MAINTAINER_PUBLIC_KEY`]. This is the
+/// production entry point that the fetch + install pipeline calls.
 pub fn verify_with_maintainer_key(entry: &IndexEntry) -> Result<(), VerifyError> {
     verify_entry(entry, &MAINTAINER_PUBLIC_KEY)
 }
@@ -196,18 +202,31 @@ mod tests {
     }
 
     #[test]
-    fn maintainer_placeholder_key_rejects_everything() {
-        // The all-zero placeholder must never accept a signature.
-        // This is a regression test for the "develop branch ships
-        // failing-closed" property.
-        let sk = SigningKey::from_bytes(&[1u8; 32]);
+    fn maintainer_key_verifies_known_signature() {
+        // Regression fixture: the IndexEntry fields in `fixture_entry()`
+        // signed with the Slab maintainer private key
+        // (~/.slab-maintainer-key, generated 2026-05-17) produce this
+        // exact base64 signature. If `MAINTAINER_PUBLIC_KEY` is ever
+        // changed without rotating the matching private key, this
+        // test breaks loudly — that's the point.
+        //
+        // To regenerate: run
+        //   cargo run -q --bin slab-sign-plugin -- \
+        //     --print-fixture-signature
+        // (added in Slice 2) and paste the new b64 here.
         let mut e = fixture_entry();
-        e.signature = sign(&e, &sk);
+        e.signature = "moFLWn76JK9odPF1iXgW6BnaVOyacRyDnaudSruwOPumfOEGNijnPAUNRx33stgEYLYLQ5MxSYCnzPfCMTFLBw==".into();
+        verify_with_maintainer_key(&e)
+            .expect("known-good signature must verify against baked-in maintainer key");
+    }
+
+    #[test]
+    fn maintainer_key_rejects_tampered_known_signature() {
+        // Same as above but with the description mutated — must fail.
+        let mut e = fixture_entry();
+        e.description = "Tampered description".into();
+        e.signature = "moFLWn76JK9odPF1iXgW6BnaVOyacRyDnaudSruwOPumfOEGNijnPAUNRx33stgEYLYLQ5MxSYCnzPfCMTFLBw==".into();
         let err = verify_with_maintainer_key(&e).unwrap_err();
-        // Either BadPublicKey or BadSignature both indicate fail-closed.
-        assert!(matches!(
-            err,
-            VerifyError::BadPublicKey | VerifyError::BadSignature
-        ));
+        assert!(matches!(err, VerifyError::BadSignature));
     }
 }
