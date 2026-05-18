@@ -22,6 +22,7 @@ pub mod diff_summary;
 pub mod embedding_index;
 pub mod ollama;
 pub mod openai_compat;
+pub mod outline;
 pub mod pii;
 pub mod selection_action;
 pub mod summary;
