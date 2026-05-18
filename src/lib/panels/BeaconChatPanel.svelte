@@ -58,6 +58,22 @@
 
   type SummaryLength = "tldr" | "short" | "long";
 
+  // ---------- Voice Mode: Listen (v1.9.1 STT) types ----------
+  type SttEngineCapability = {
+    id: string;
+    installed: boolean;
+    binary_path?: string;
+  };
+  type SttCapabilities = {
+    engines: SttEngineCapability[];
+    recorder_available: boolean;
+  };
+  type Transcript = {
+    text: string;
+    language?: string;
+    duration_ms: number;
+  };
+
   let pdfPath = $state<string | null>(null);
   let pdfPages = $state<number | null>(null);
   let question = $state("");
@@ -72,6 +88,108 @@
 
   let scrollContainer: HTMLDivElement | null = null;
   let inputEl: HTMLTextAreaElement | null = null;
+
+  // ---------- Voice Mode: Listen (v1.9.1 STT) ----------
+  //
+  // Two-state mic button next to the Send button.
+  //
+  //   idle      → click starts recording. Mic icon, neutral colour.
+  //   recording → click stops + transcribes. Pulses red. The returned
+  //               transcript is appended to whatever's already in the
+  //               textarea (so the user can pre-type a stem like
+  //               "Summarise: " and dictate the rest).
+  //
+  // `sttCapable` gates the button entirely — if whisper-cli isn't on
+  // PATH or no recorder is available, the mic is hidden rather than
+  // shown as a broken affordance. The hint surfaces in BeaconVoicePanel
+  // settings instead.
+  let isRecording = $state(false);
+  let isTranscribing = $state(false);
+  let sttCapable = $state(false);
+  let sttHint = $state<string | null>(null);
+
+  async function probeStt() {
+    try {
+      const caps = await invoke<SttCapabilities>(
+        "slab_beacon_voice_stt_capabilities",
+      );
+      const engineInstalled =
+        caps.engines.length > 0 && caps.engines[0].installed;
+      sttCapable = engineInstalled && caps.recorder_available;
+      if (!engineInstalled) {
+        sttHint =
+          "whisper-cli not installed — `brew install whisper-cpp` (macOS) or `apt install whisper-cpp` (Linux).";
+      } else if (!caps.recorder_available) {
+        sttHint =
+          "No microphone recorder found — `brew install sox` (macOS) / `apt install alsa-utils` (Linux).";
+      } else {
+        sttHint = null;
+      }
+    } catch {
+      sttCapable = false;
+      sttHint = null;
+    }
+  }
+
+  async function toggleMic() {
+    if (isTranscribing) return; // race-guard
+    if (isRecording) {
+      // STOP path: transcribe + insert text into the prompt.
+      isRecording = false;
+      isTranscribing = true;
+      status = { kind: "working", msg: "Transcribing…" };
+      try {
+        const res = await invoke<CmdResult<Transcript>>(
+          "slab_beacon_voice_stt_stop",
+        );
+        if (res.kind === "ok") {
+          // Append transcript to textarea. If the user already typed a
+          // stem ("Summarise this:"), pad with a space so the result
+          // flows naturally.
+          const cleaned = res.value.text.trim();
+          if (cleaned) {
+            question = question
+              ? `${question.trimEnd()} ${cleaned}`
+              : cleaned;
+          }
+          const dur = (res.value.duration_ms / 1000).toFixed(1);
+          status = cleaned
+            ? { kind: "ok", msg: `Heard ${dur}s — ready to send.` }
+            : { kind: "err", msg: "Couldn't hear anything." };
+          // Focus the textarea so the user can keep typing or hit Enter.
+          await tick();
+          inputEl?.focus();
+          // Place caret at the end of the now-extended text.
+          if (inputEl) {
+            const len = inputEl.value.length;
+            inputEl.setSelectionRange(len, len);
+          }
+        } else {
+          status = { kind: "err", msg: res.message };
+        }
+      } catch (e) {
+        status = { kind: "err", msg: `${e}` };
+      } finally {
+        isTranscribing = false;
+      }
+    } else {
+      // START path: spawn the recorder.
+      try {
+        const res = await invoke<CmdResult<null>>(
+          "slab_beacon_voice_stt_start",
+          { engine: null },
+        );
+        if (res.kind === "ok") {
+          isRecording = true;
+          status = { kind: "working", msg: "Recording… click mic to stop." };
+        } else {
+          status = { kind: "err", msg: res.message };
+        }
+      } catch (e) {
+        status = { kind: "err", msg: `${e}` };
+      }
+    }
+  }
 
   // Subscribe to the same recent-file channel the Reader uses, so opening a
   // PDF from the command palette can also pre-fill Beacon.
@@ -91,6 +209,9 @@
     window.addEventListener("slab:vim-beacon:blur-input", onVimBlurInput);
     window.addEventListener("slab:vim-beacon:reset-chat", onVimResetChat);
     const unregister = registerBeaconNav();
+    // v1.9.1 — probe STT capabilities so we know whether to show the
+    // mic button. Cheap (a few $PATH stat calls) and fire-and-forget.
+    probeStt();
     return () => {
       window.removeEventListener("slab:open-recent", onOpenRecent);
       window.removeEventListener("slab:beacon-vision-rect", onVisionRect);
@@ -680,6 +801,27 @@
         placeholder="Ask about this PDF… (Enter to send, Shift+Enter for newline)"
         disabled={status.kind === "working"}
       ></textarea>
+      {#if sttCapable}
+        <button
+          type="button"
+          class="mic"
+          class:recording={isRecording}
+          onclick={toggleMic}
+          disabled={isTranscribing}
+          title={isRecording
+            ? "Stop recording (transcribes via whisper.cpp)"
+            : "Dictate your question (whisper.cpp, on-device)"}
+          aria-label={isRecording ? "Stop recording" : "Start dictation"}
+        >
+          {#if isTranscribing}
+            ⏳
+          {:else if isRecording}
+            ◼
+          {:else}
+            🎙
+          {/if}
+        </button>
+      {/if}
       <button
         class="primary"
         onclick={send}
@@ -1035,5 +1177,48 @@
   .composer .primary {
     align-self: stretch;
     padding: 0 18px;
+  }
+  /* v1.9.1 — Voice Mode: Listen. The mic button sits between the
+     textarea and the Send button. Idle: ghost-style icon. Recording:
+     red fill with a subtle pulse so the user has constant feedback
+     that audio is still being captured. */
+  .composer .mic {
+    align-self: stretch;
+    padding: 0 12px;
+    min-width: 42px;
+    font-size: 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm, 6px);
+    color: var(--text-2);
+    cursor: pointer;
+    transition:
+      background 100ms ease,
+      border-color 100ms ease,
+      color 100ms ease;
+  }
+  .composer .mic:hover:not(:disabled) {
+    background: var(--bg-3);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .composer .mic:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .composer .mic.recording {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: white;
+    animation: mic-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes mic-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
+    }
+    50% {
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    }
   }
 </style>
