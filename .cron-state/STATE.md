@@ -5,43 +5,37 @@
 
 ---
 
-## STATUS: 🩹 v1.3.1 "Foundry Patch" MERGED + TAGGED — release pending CI
+## STATUS: 🪑 v1.4.0 "Bench" Slice 1 IN PROGRESS — feature/v1.4.0-bench
 
 **Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch' — cross-platform test fixes (Linux + Windows CI)`
-**Pre-merge HEAD**: `e10fcbd` — `Merge v1.3.0 'Foundry'` (CI: failed)
-**Tag**: `v1.3.1` → `9f0fd6f` (pushed to origin)
-**Feature branch HEAD**: `df13d68` — `chore(release): v1.3.1 "Foundry Patch"`
+**Active feature branch**: `feature/v1.4.0-bench` @ `6ad9fb0` — Slice 1: marketplace index + Ed25519 verifier (4 commits)
+**Latest release**: v1.3.1 → https://github.com/Sanjays2402/slab/releases/tag/v1.3.1 — all 6 assets uploaded ✓
 
-**Quality gates green on main HEAD (9f0fd6f):**
+**Quality gates green on feature/v1.4.0-bench HEAD:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (**539 passed**, was 538/539 on Linux pre-fix)
+- `cargo test --lib` ✓ (**551 passed**, +12 new marketplace tests over v1.3.1 baseline of 539)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
-
-**RELEASE_PENDING: v1.3.1 — merge SHA `9f0fd6f`, tag `v1.3.1`, CI run `26012655931`**
-- Run URL: https://github.com/Sanjays2402/slab/actions/runs/26012655931
-- Status as of 20:56 PT: `in_progress`
-- Next tick: MODE B — poll CI; if green, `gh run download 26012655931 --dir /tmp/slab-release-v1.3.1`, curate 6 best (macos arm64 + x64 dmgs, linux x64 deb + AppImage, windows msi + nsis), create GH release with `docs/release-notes/v1.3.1.md` as notes.
-
-**v1.3.0**: tagged but CI failed — superseded by v1.3.1. No release artifacts for v1.3.0 (we will NOT publish v1.3.0 — it has been re-tagged to v1.3.1 which is functionally identical aside from three test fixes).
-**v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
 
 ---
 
-## TICK 2026-05-17 20:50 PT — v1.3.1 hotfix tick (4 commits, merged + tagged + pushed)
+## TICK 2026-05-17 21:13 PT — v1.3.1 finalized + v1.4.0 Slice 1 in one tick (4 commits)
 
-**v1.3.0 CI (run 26011887503) failed on Linux + Windows:**
-- Linux: `shell_timeout_kills_long_running` took 10s (timeout fired, but stale grandchild held pipes open, blocking `read_to_string`)
-- Windows: `read_asset_rejects_absolute_path` + `rejects_absolute_path` — `Path::is_absolute("/etc/passwd")` is `false` on Windows
-- macOS: green throughout
+**MODE B finalize v1.3.1:**
+- CI run 26012655931 went green at 04:11 UTC (Windows bundle finished while I was investigating).
+- `gh release create v1.3.1` with `docs/release-notes/v1.3.1.md` + all 6 assets:
+  - macos-arm64 dmg, macos-x64 dmg, linux deb + AppImage, windows msi + nsis.
+- v1.3.1 RELEASED.
 
-**Fixes (4 commits on `feature/v1.3.1-foundry-patch`):**
-1. `13e1bf0` — fix(plugins): don't block on stale pipes after shell-command timeout — drop pipe handles on timeout path. Local: 10.0s → 0.32s.
-2. `ab722c3` — test(plugins): use platform-appropriate absolute paths — `#[cfg(windows)]` picks `C:\Windows\System32\drivers\etc\hosts`.
-3. `df13d68` — chore(release): v1.3.1 "Foundry Patch" — version bump (1.3.0 → 1.3.1) across `package.json`, `Cargo.toml`, `tauri.conf.json`, `Cargo.lock` + `docs/release-notes/v1.3.1.md` + plan doc.
-4. `9f0fd6f` — Merge v1.3.1 'Foundry Patch' (merge commit on `main`)
+**MODE C develop v1.4.0 "Bench" Slice 1:** (on `feature/v1.4.0-bench`)
+1. `daa10d9` — chore(deps): add ed25519-dalek (pure-Rust, std features only)
+2. `6f2a7fe` — feat(marketplace): scaffold module + define Index/IndexEntry schema (4 tests)
+3. `f5552f4` — feat(marketplace): Ed25519 signature verifier (8 tests, covers tampering / wrong-key / bad-base64 / placeholder fail-closed)
+4. `6ad9fb0` — docs(plans): v1.4.0 proposal (11 slices) + Slice 1 implementation plan
 
-**Tagged + pushed `v1.3.1` → `9f0fd6f`. CI run `26012655931` in flight.**
+**Slice 1 done locally. 12/12 marketplace tests green; all quality gates green.**
+
+Will push the branch next tick after one more sanity polish + plan Slice 2.
 
 ---
 
@@ -61,7 +55,8 @@
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
 ### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
-### v1.3.1 "Foundry Patch" 🩹 — **MERGED + TAGGED 2026-05-17, AWAITING CI 26012655931**
+### v1.3.1 "Foundry Patch" 🩹 — **RELEASED 2026-05-17** ✓
+### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slice 1/11 local-done; 12 new tests; not yet pushed)
 
 ---
 
@@ -76,52 +71,48 @@
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE B finalize v1.3.1
+## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench
 
-1. **Poll CI**: `gh run view 26012655931` — if still in_progress, write a one-line status and exit silently. If failed (would be a surprise — we ran the gates locally and fixed the only platform-specific tests that broke v1.3.0), write `RELEASE_FAILED:` + run_id + failing job, and forward-fix on a v1.3.2 patch branch.
-2. **If CI green**:
-   - `gh run download 26012655931 --dir /tmp/slab-release-v1.3.1`
-   - Inspect the artifact tree. We expect:
-     - macos-arm64 dmg
-     - macos-x64 dmg
-     - linux x64 deb + AppImage
-     - windows msi + nsis
-   - `gh release create v1.3.1 --title 'v1.3.1 — Foundry Patch 🩹' --notes-file docs/release-notes/v1.3.1.md /tmp/slab-release-v1.3.1/<asset1> /tmp/slab-release-v1.3.1/<asset2> ...`
-   - Verify on the GH release page (6 assets, notes rendered).
-3. **Remove `RELEASE_PENDING:` from STATE.md** + flip v1.3.1 in the roadmap to "RELEASED 2026-05-17".
-4. Then start the next version. See "POST-v1.3 ROADMAP" below.
+1. **Push the v1.4.0-bench branch** (Slice 1 commits) with the gh-auth credential helper:
+   ```
+   TOK=$(gh auth token)
+   git -c credential.helper="!f() { printf 'username=x-access-token\npassword=%s\n' '$TOK'; }; f" \
+       push -u origin feature/v1.4.0-bench
+   ```
+2. **Ship Slice 2** — maintainer signing tool `tools/sign-plugin/src/main.rs`:
+   - CLI that takes a tarball + private key file
+   - Emits JSON entry ready to paste into `index.json`
+   - Generates a real Ed25519 key pair (the maintainer's), bakes the
+     public key into `marketplace::verify::MAINTAINER_PUBLIC_KEY`
+   - Private key goes into `~/.slab-maintainer-key` (out of tree, NOT committed)
+3. **Ship Slice 3** — `marketplace/fetch.rs` HTTP GET + offline cache:
+   - reqwest GET of the curated `index.json`
+   - Cache to `~/.slab/marketplace-cache.json`
+   - Stale-cache fallback on network failure
+4. End the tick by pushing all of Slices 2+3 together (≥6 commits in one push).
+5. Update STATE.md with what shipped.
 
 ---
 
-## POST-v1.3 ROADMAP REMINDERS
+## v1.4.0 "Bench" Slice plan summary (full spec in `.cron-state/proposals/v1.4.0-bench.md`)
 
-After v1.3.1 ships, candidate next versions:
+1. ✅ Marketplace index schema + Ed25519 verifier (this tick)
+2. Maintainer signing tool (`tools/sign-plugin/`)
+3. `marketplace/fetch.rs` — HTTP + offline cache
+4. `marketplace/install.rs` — download, sha256 verify, atomic extract
+5. Tauri commands `slab_marketplace_*`
+6. Frontend `src/lib/marketplace.ts` store
+7. Frontend Browse tab + plugin cards
+8. Frontend install modal + update-available badges
+9. Uninstall flow
+10. Docs + seed `slab-plugins` repo with 3 example plugins
+11. Release — version bump 1.3.1 → 1.4.0 + notes + merge + tag + push
 
-**Option A — v1.4.0 "Bench" (plugin marketplace + signed manifests)**
-- A read-only marketplace UI inside Settings → Plugins showing a
-  curated GitHub-hosted index (JSON list of plugins).
-- Signed-manifest install flow: each plugin in the index has a
-  `manifest.sig` we verify against a hardcoded public key.
-- One-click install: download tarball into `~/.slab/plugins/<id>/`.
-- Persists in `~/.slab/plugins-index.json` for offline.
-- Probably 8–10 slices. Backend: HTTP client + sigverify. Frontend:
-  Marketplace tab in PluginsPanel + install confirmation modal.
+---
 
-**Option B — Beacon Bonus Slices (`.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`)**
-- Smart Outline, Citations, Study Mode, Glossary, Voice Mode — five
-  AI features riding the existing Beacon infra. Quick wins.
+## POST-v1.4 ROADMAP REMINDERS
 
-**Option C — v1.4.0 "TypeScript Plugins"** — a `script.js`
-contribution kind running in an embedded V8/QuickJS sandbox. Bigger
-project; would let plugins do real frontend work (custom panels).
-Risk: sandbox security is hard.
-
-My recommendation: **Option A (Bench)** next. It completes the
-Foundry story (you can now distribute plugins, not just write them)
-and re-uses everything we just shipped.
-
-Other parked items:
-- AI provider hook-up of plugin-contributed providers through Beacon's
-  runtime (planned v1.3.x patch — currently they appear in the
-  palette + boot log but aren't yet selectable in chat)
-- Slab CLI `slab plugin install <url>` command (post-Bench)
+- v1.5.0 "TypeScript Plugins" — V8/QuickJS sandbox for `script.js` contribs (bigger lift; security-heavy)
+- v1.5.x — AI provider hook-up of plugin-contributed providers through Beacon's runtime
+- v1.5.x — Slab CLI `slab plugin install <url>` command
+- Beacon Bonus Slices (`.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`) — Smart Outline, Citations, Study Mode, Glossary, Voice Mode
