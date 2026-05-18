@@ -26,6 +26,7 @@ pub mod openai_compat;
 pub mod outline;
 pub mod pii;
 pub mod selection_action;
+pub mod sm2;
 pub mod study;
 pub mod summary;
 pub mod vision;
