@@ -5,16 +5,16 @@
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Rust tests](https://img.shields.io/badge/rust%20tests-539%20passing-brightgreen.svg)](src-tauri)
+[![Rust tests](https://img.shields.io/badge/rust%20tests-581%20passing-brightgreen.svg)](src-tauri)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
 
 Every other PDF tool wants you to upload your taxes, your contracts, your medical records to a server you've never heard of, then watch a 30‑second ad, then pay $9.99 to remove the watermark. Slab does the opposite: **everything runs locally on your machine.** No accounts. No uploads. No subscriptions. No nonsense.
 
 ![Slab Reader with the PDF 1.7 spec open](docs/screenshots/00-hero-reader.png)
 
-## What's in v1.3.0 "Foundry"
+## What's in v1.3.1 "Foundry Patch"
 
-A real Adobe‑Acrobat‑replacing toolkit, shipped in 19 honest releases. Eight pillars, all local:
+A real Adobe‑Acrobat‑replacing toolkit, shipped in **20 honest releases**. Eight pillars, all local:
 
 | Pillar | What it does | Highlight versions |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ A real Adobe‑Acrobat‑replacing toolkit, shipped in 19 honest releases. Eight
 | **Reach** | **Vim mode** · WCAG‑level a11y audit + fixes · i18n foundation | v1.2 |
 | **Extensible** | **Foundry** — declarative plugin system (themes, locales, commands, AI providers, PDF actions) via TOML manifest | v1.3 |
 
-**539 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
+**581 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
 
 ## Why Slab?
 
@@ -211,25 +211,39 @@ v0.9.1 also adds a **decrypt‑on‑open** prompt so password‑protected PDFs u
 
 ### Beacon — local AI you actually own *(v0.10.0)*
 
-Three AI features that run **entirely on your machine**. No API keys, no cloud, no telemetry — the same air‑gap promise as every other Slab tool.
+Six AI features that run **entirely on your machine** by default. No API keys, no cloud, no telemetry — the same air‑gap promise as every other Slab tool.
 
 - **Beacon Chat** — Q&A against the open PDF. Citations point back to exact pages.
 - **Beacon Summary** — TL;DR / Short / Long summaries on demand.
 - **Beacon Search** — semantic search across every PDF you've opened, ranked by meaning instead of keyword.
+- **Beacon PII Redact** — one‑click prep for safe sharing: AI finds names, emails, addresses, account numbers, etc. and proposes redactions.
+- **Selection Actions** — floating LLM bubble appears on text highlight (Explain · Simplify · Translate · Define · custom).
+- **Pluggable AI provider** — Ollama is the default; any OpenAI‑compatible endpoint is a config away (LM Studio, vLLM, a remote host, or a Foundry plugin in v1.3).
 
 Powered by local embeddings + an on‑device chat model (configurable). The first model download is the only thing that hits the network; after that, Beacon works offline.
 
-### Lathe — Edit Text *(v0.11.0)*
+### Lathe — Edit Text, Multi-tabs, Chapter Split *(v0.11.0)*
 
-In‑place PDF text editing. Click a word, change it, save. Slab rewrites the content stream while preserving fonts, positioning, and surrounding layout. Plus a visual Pages panel with drag‑reorder, duplicate, blank inserts, and rotate.
+- **Edit Text** — in‑place PDF text editing. Click a word, change it, save. Slab rewrites the content stream while preserving fonts, positioning, and surrounding layout.
+- **Pages (visual)** — drag‑reorder, duplicate, blank inserts (A4/Letter/Legal), rotate.
+- **Split by Chapter** — regex‑driven or outline‑driven chapter splitting; one PDF in, one PDF per chapter out.
+- **Multi‑PDF tabs** in the Reader — open several documents side‑by‑side, switch with `Cmd-1..9`.
 
 ### Atlas — the PDF Library *(v0.12.0)*
 
 A browsable library view across every PDF you've imported. Folders, tags, search‑within‑library, thumbnail grid, and a watched‑folder mode that auto‑indexes new files as they appear. The recents grid grew up.
 
-### Lens — OCR, tables, language packs *(v0.13.0–v0.13.1)*
+### Lens — OCR, Vision, Tables, Auto-tag *(v0.13.0–v0.13.1)*
 
-Beyond the v0.8 OCR baseline: a full **Lens** panel for batch OCR jobs, **table extraction** that recognizes ruled and unruled grids, downloadable **language packs**, and a `slab lens preflight` CLI to diagnose missing dependencies. v0.13.1 also fixes the Windows `pdftotext` flavor detection.
+Beyond the v0.8 OCR baseline, Lens is Slab's full visual‑intelligence layer:
+
+- **Batch OCR** with a real job queue (`slab lens ocr-queue`)
+- **Table extraction** — ruled and unruled grid detection, export to CSV (`slab lens tables`)
+- **Vision Q&A in Beacon** — ask questions about figures, charts, and scanned pages (uses any vision‑capable AI provider).
+- **AI Auto‑tag** — per‑card and bulk auto‑tagging across the library (`slab lens auto-tag`).
+- **Language packs** — downloadable Tesseract language data, managed in‑app.
+- **Audit + preflight** — `slab lens audit` reports which docs are searchable; `slab lens preflight` diagnoses missing dependencies.
+- v0.13.1 fixes Windows `pdftotext` flavor detection.
 
 ### Stack — text diff for PDFs *(v0.14.0)*
 
@@ -237,11 +251,11 @@ Line‑level text diff between any two PDFs, with optional Beacon‑powered "Exp
 
 ### Theater — presenter mode *(v0.15.0)*
 
-Turn any PDF into a deck. Full‑screen slideshow, speaker notes view, live annotation on top of slides, and a remote keyboard shortcut layout. Great for decks that started life as a PDF export.
+Turn any PDF into a deck. Full‑screen slideshow, speaker notes view, **live annotation on top of slides**, **save the annotated deck back out as a new PDF**, and a remote keyboard shortcut layout. Great for decks that started life as a PDF export.
 
 ### Glass — settings & shortcuts *(v1.0.0)*
 
-The 1.0 polish layer: a proper Settings system with theme + accent color + density (compact / cozy / comfortable), a customizable keymap, an MRU‑sorted command palette, and a `?` shortcut overlay that lists every keybinding in the app.
+The 1.0 polish layer: a proper Settings system with theme + accent color + density (compact / cozy / comfortable), a customizable keymap, an MRU‑sorted command palette, a `?` shortcut overlay that lists every keybinding, **global toast notifications**, **pinned recent files**, and a **first‑launch onboarding tour**.
 
 ### Cabinet — detachable panels *(v1.1.0)*
 
@@ -254,6 +268,28 @@ A modal **Vim mode** built from a clean pure state machine — `gg`/`G`/`j`/`k`/
 An **accessibility audit** (`pnpm a11y:audit`, zero deps) flags icon buttons missing labels, unlabelled form inputs, and images without alt. Baseline ran clean across every Svelte file in the tree; the strict variant runs in CI on every push. Plus a global `:focus-visible` ring tied to your accent color, `prefers-reduced-motion` overrides, `prefers-contrast: more` border thickening, and proper `<nav aria-label="Primary">` + `aria-current` on the sidebar.
 
 An **i18n foundation**: every string in the UI passes through a `t(key)` function backed by JSON locale files. English ships today; community translations welcome.
+
+### Foundry — declarative plugin system *(v1.3.0)*
+
+**Slab becomes extensible.** Drop a folder containing a `plugin.toml` manifest into `~/.slab/plugins/`, restart, done. No Rust compile, no native code. Five contribution kinds:
+
+| Kind | What it does | Backed by |
+| --- | --- | --- |
+| **Theme** | Override CSS variables to restyle Slab. | CSS file in `themes/`. |
+| **Locale** | Add or override an interface language. | JSON file in `locales/`. |
+| **Command** | Run a shell command or open a URL from the palette. | TOML entry; quoting‑aware tokenizer. |
+| **AI provider** | Register any OpenAI‑compatible endpoint. Appears in Beacon. | TOML entry; Chat Completions wire format. |
+| **PDF action** | Reader toolbar dropdown that pipes the open PDF through a CLI. | TOML with `{in}` / `{out}` placeholders. |
+
+A **Settings → Plugins** panel lists every plugin with toggle, version, author, contribution counts, expandable drilldown, raw manifest errors, plus a **📁 Open plugins directory** button. Example `hello-slab` plugin ships in `examples/plugins/` exercising all five kinds.
+
+**Honest security framing**: Foundry plugins run with Slab's permissions — there's no sandbox. Treat a plugin like a `bash` script you downloaded. Read the manifest before enabling; the panel shows the on‑disk path so you can `cat` it first. A signed‑marketplace flow is on the roadmap.
+
+📖 [Author guide: `docs/PLUGINS.md`](docs/PLUGINS.md)
+
+### v1.3.1 — Foundry Patch *(latest)*
+
+Three flaky test fixes: Linux shell‑timeout race in `plugins::command_runner`, Windows absolute‑path validation in `plugins::contributions::read_asset` and `plugins::locale_loader`. No user‑facing changes.
 
 ## Install
 
@@ -291,7 +327,7 @@ pnpm tauri build        # produce an installer / app bundle for your platform
 ## Tests
 
 ```bash
-cd src-tauri && cargo test          # 468 tests
+cd src-tauri && cargo test          # 581 tests
 cargo clippy --all-targets -- -D warnings
 cd .. && pnpm exec svelte-check     # type-check the UI
 ```
