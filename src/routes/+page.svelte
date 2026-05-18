@@ -613,7 +613,7 @@
         {/each}
       </div>
     {/if}
-    <span class="version">v1.2.0</span>
+    <span class="version">v{__APP_VERSION__}</span>
   </div>
 </aside>
 
