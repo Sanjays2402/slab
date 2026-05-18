@@ -248,6 +248,17 @@
       run: () => onSelectPanel("keymap"),
       keywords: "shortcuts keymap rebind customize keys hotkeys bindings",
     });
+    // Foundry Slice 10: jump to the plugins manager.
+    out.push({
+      id: "settings:plugins",
+      title: t("plugins.cmdOpen"),
+      subtitle: t("plugins.subtitle"),
+      icon: "🧩",
+      group: "Settings",
+      run: () => onSelectPanel("plugins"),
+      keywords:
+        "plugins extensions themes locales commands ai providers manifest foundry install uninstall enable disable reload",
+    });
     // Glass II Slice 1: toggle Vim modal bindings
     out.push({
       id: "settings:toggle-vim",
