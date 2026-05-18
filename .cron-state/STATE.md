@@ -5,70 +5,97 @@
 
 ---
 
-## STATUS: 🛠 v1.3.0 "Foundry" — Slice 9 plan written (planning tick, no code)
+## STATUS: 🛠 v1.3.0 "Foundry" — Slice 9 COMPLETE (frontend wired end-to-end, 9/12 slices done)
 
 **Main HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
 **v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.3.0-foundry` (13 commits ahead of main)
-**Branch HEAD**: see latest `docs(plans): …slice-9` commit
-**Slice 9 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slice-9.md` (8 tasks, ~600 LOC TS/Svelte expected)
+**Active branch**: `feature/v1.3.0-foundry` (21 commits ahead of main)
+**Branch HEAD**: `7ee6ba4` — `feat(plugins-frontend): Reader toolbar dropdown for plugin PDF actions`
+**Slice 9 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slice-9.md` — all 8 tasks shipped this tick
 
 **Quality gates green on branch HEAD:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (538 passed — +22 new tests this tick: 10 locale + 9 command runner + 8 header injection + 5 materialiser, minus dedup)
-- `pnpm check` ✓ (0 errors / 23 warnings)
+- `cargo test --lib` ✓ (538 passed — unchanged from previous tick, no Rust touched)
+- `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
-**NO RELEASE_PENDING** — Foundry has 4 more slices before merge.
+**NO RELEASE_PENDING** — Foundry has 3 more slices before merge.
 
 ---
 
-## TICK 2026-05-17 18:33 PT — Foundry MEGA-TICK: Slices 5+7+8 (3 commits, 22 new tests, ~30KB backend)
+## TICK 2026-05-17 19:22 PT — Foundry Slice 9 MEGA-TICK: 8 commits, ~600 LOC TS/Svelte
 
-Backend is now COMPLETE for the plugin system. All five contribution kinds
-(themes, locales, pdf_actions, commands, ai_providers) have Tauri commands,
-runners/loaders, and full test coverage. Only Svelte UI work remains.
+Frontend now consumes the entire v1.3.0 plugin backend end-to-end.
+Every contribution kind shipped in Slices 1-8 has at least one
+visible UI surface — themes & commands & AI providers in the palette,
+locales merged into i18n at boot, PDF actions in the Reader toolbar.
 
-### MODE C — v1.3.0 Foundry sprint
+### MODE C — v1.3.0 Foundry sprint (frontend pass)
 
-**Slice 5 — Locale bundle loader** (commit `d23cd27`)
-- `plugins/locale_loader.rs` with `load_locale_bundle(plugin_dir, bundle_path)`
-- Validates flat JSON `Record<string,string>` shape: rejects arrays,
-  nested objects, numbers, non-strings; passes empty objects
-- Inherits `read_asset` path-traversal guard (canonicalize + starts_with)
-- Tauri cmd `slab_plugins_load_locale_bundle(plugin_id, locale)` returns
-  `HashMap<String,String>` ready for the frontend i18n merge
-- 10 tests covering all the rejection paths + happy path + traversal
+**Task 1 — `src/lib/plugins.ts`** (commit `352054a`)
+- 254-line TypeScript adapter: type mirrors of every Serde shape,
+  Svelte writable `pluginsStore`, `refreshPlugins()` /
+  `setPluginEnabled()` / `reloadPlugins()` / `pluginsDir()` /
+  `readPluginAsset()` / `loadPluginLocaleBundle()` /
+  `validatePluginAiProvider()` / `runPluginCommand()` /
+  `runPluginPdfAction()`, plus `currentPlugins()` sync accessor
+  and `logActiveAiProviders()` discoverability helper.
 
-**Slice 7 — Command runner** (commit `e9fe2c0`)
-- `plugins/command_runner.rs` with `run_command(active_command)`
-- Two outcome variants: `Shell(ShellReport)` (status, stdout, stderr,
-  duration) and `Url { url }` (frontend dispatches via opener plugin)
-- `/bin/sh -c` on Unix, `cmd /C` on Windows
-- 30s wall-clock timeout via try_wait polling (SIGKILL before reading
-  pipes — avoids blocking on still-alive child)
-- `CommandStatus`: Ok, NonZeroExit, Timeout, SpawnFailed
-- Tauri cmd `slab_plugins_run_command(plugin_id, command_id)`
-- 9 tests (shell echo, stderr capture, non-zero exit, spawn fail,
-  timeout, url variant, validation of shell/url exclusivity)
+**Task 2 — boot in root layout** (commit `60c143e`)
+- `+layout.svelte` calls `void refreshPlugins().then(() =>
+  logActiveAiProviders())` inside `onMount`, after `bootKeymap()`.
 
-**Slice 8 — Plugin-contributed AI providers** (commit `3247d75`)
-- `OpenAiCompatibleProvider::with_headers(HashMap<String,String>)` builder
-- `resolve_header_value()` — bare values pass through, `$VAR_NAME` reads
-  from env at request time (errors on missing/empty)
-- `apply_extra_headers()` helper called by both `chat()` and `embed()`
-- `chat()`/`embed()` now skip `bearer_auth` when api_key is empty
-  (plugin providers default to header-only auth)
-- New module `plugins/ai_materialize.rs` with
-  `materialize_active(active)` and `materialize_contribution(c)`
-- Tauri cmd `slab_plugins_validate_ai_provider(plugin_id, provider_id)`
-  — Settings UI uses this to mark misconfigured providers
-- 13 new tests: header injection happy path (chat + embed), env var
-  expansion at request time, missing/empty env var errors, materialiser
-  happy path, unknown kind rejection, end-to-end mocked HTTP
+**Task 3 — i18n merge** (commit `07698ff`)
+- New `mergePluginBundle(id, bundle, pluginId)` mutates BUNDLES in
+  place + re-emits the `locale` store to repaint `$tStore`-bound UI.
+- `bootI18n()` now subscribes to `pluginsStore` (lazy bundle fetch
+  with a `lastSeen` Set short-circuit) AND to `locale` (re-merge on
+  language switch).
+
+**Task 4 — `BUILT_IN_THEMES` extracted** (commit `cdb384d`)
+- Moved the three hard-coded built-in themes from CommandPalette's
+  inline array to a typed `BUILT_IN_THEMES` export in `theme.ts`.
+- Zero behaviour change; just prep work so plugin themes can append
+  to the same loop.
+
+**Task 5 — plugin themes + CSS injection** (commit `b742e92`)
+- New `$lib/pluginThemes` owns a runtime `<style id="slab-plugin-theme">`
+  tag (singleton). `applyPluginTheme()` reads CSS via
+  `slab_plugins_read_asset` and swaps it in via `textContent` (NOT
+  innerHTML — defence in depth).
+- `setUiConfig()` calls `clearPluginTheme()` whenever the user picks
+  a built-in theme, so "back to default" actually goes back.
+- CommandPalette renders one entry per active plugin theme under the
+  Appearance group.
+
+**Task 6 — plugin commands in palette** (commit `8d7e892`)
+- Each `ActiveCommand` becomes a palette entry under "Plugin
+  commands" group, alphabetised by label.
+- `dispatchPluginCommand()` handles both outcome kinds: URL outcomes
+  open via `@tauri-apps/plugin-opener`'s `openUrl`, shell outcomes
+  show status-keyed toasts (success / warning / error / timeout)
+  with truncated stdout/stderr.
+
+**Task 7 — plugin AI providers** (commit `08a4f68`)
+- Informational surface only (full hook-up = v1.3.x): each active
+  AI provider appears in "Plugin AI providers" palette group; running
+  copies the base_url to clipboard with an info toast.
+- `logActiveAiProviders()` (defined in plugins.ts since Task 1) is
+  now actually called from layout boot for console discoverability.
+
+**Task 8 — Reader toolbar dropdown** (commit `7ee6ba4`)
+- "✦ Plugin" button next to Find/Info — hidden entirely when zero
+  active PDF actions (no empty dropdown).
+- Click opens menu listing each action by label + plugin id; click
+  prompts for output path via Tauri save dialog, runs
+  `slab_plugins_run_pdf_action`, and toasts the ActionReport status.
+- Click-outside captured handler dismisses the menu.
+- Styles reuse theme vars (--bg-2/--bg-3/--border/--text) so it
+  follows light/dark/accent.
 
 ### Plan doc
-`docs/plans/2026-05-17-v1.3.0-foundry-slices-5-7-8.md` (committed in `d23cd27`)
+`docs/plans/2026-05-17-v1.3.0-foundry-slice-9.md` (written previous tick,
+fully executed this tick).
 
 ---
 
@@ -87,26 +114,26 @@ runners/loaders, and full test coverage. Only Svelte UI work remains.
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
-### v1.3.0 "Foundry" 🛠 — IN PROGRESS (8/12 slices done, all backend complete ✓)
+### v1.3.0 "Foundry" 🛠 — IN PROGRESS (9/12 slices done, all backend + frontend wiring complete ✓)
 
 ### v1.3.0 Slice ledger
 - ✅ Slice 1 — manifest schema + parser + validation
 - ✅ Slice 2 — plugin registry + discovery loop
 - ✅ Slice 3 — Tauri commands (list/enable/disable/reload)
 - ✅ Slice 4 — theme contribution + asset reader
-- ✅ Slice 5 — locale contribution + bundle loader (this tick)
+- ✅ Slice 5 — locale contribution + bundle loader
 - ✅ Slice 6 — pdf_action contribution + CLI runner
-- ✅ Slice 7 — command contribution + shell/url runner (this tick)
-- ✅ Slice 8 — ai_provider contribution + materialiser (this tick)
-- ⏳ Slice 9 — frontend wiring (theme picker reads active_themes,
-  i18n merges plugin bundles, palette inserts active_commands,
-  Settings AI tab reads active_ai_providers)
+- ✅ Slice 7 — command contribution + shell/url runner
+- ✅ Slice 8 — ai_provider contribution + materialiser
+- ✅ Slice 9 — frontend wiring (this tick — 8 commits)
 - ⏳ Slice 10 — Settings → Plugins panel UI (enable/disable, list
   contributions, show errors, "open plugins dir" button)
-- ⏳ Slice 11 — example plugin demonstrating all five kinds + PLUGINS.md
+- ⏳ Slice 11 — example plugin demonstrating all five kinds +
+  PLUGINS.md
 - ⏳ Slice 12 — version bump + release notes + merge + tag + push
 
-**Note**: All backend is complete. Slices 9-12 are pure frontend/docs.
+**Note**: After Slice 10 + 11, Foundry will be feature-complete and
+ready to release.
 
 ---
 
@@ -121,56 +148,50 @@ runners/loaders, and full test coverage. Only Svelte UI work remains.
 
 ---
 
-## NEXT TICK PLAYBOOK — Slice 9 frontend wiring
+## NEXT TICK PLAYBOOK — Slice 10 Settings → Plugins panel
 
-Goal: wire the plugin backend into the running UI so plugins actually
-DO something visible (no Settings panel yet — that's Slice 10).
+Goal: dedicated control surface for plugins. Currently they're
+discoverable via the palette but you can't see/enable/disable them
+without dropping files into `~/.slab/plugins` and reloading.
 
-1. **Create `src/lib/plugins.ts`** — thin TypeScript wrapper over the
-   Tauri commands. Type definitions matching the Serde shapes:
-   `Plugin`, `ActiveTheme`, `ActiveLocale`, `ActiveCommand`,
-   `ActiveAiProvider`, `ActivePdfAction`, `CommandOutcome`.
-   Exported `pluginsStore` (Svelte writable) populated on boot.
+1. **`src/lib/panels/PluginsPanel.svelte`** — new Settings sub-panel
+   (or add as a tab to existing SettingsPanel.svelte; check existing
+   layout first). Lists every `Plugin` from `pluginsStore.plugins`
+   with:
+   - name + version + author + description (from manifest)
+   - enabled toggle (calls `setPluginEnabled`)
+   - error chip when `plugin.error != null` (red, expandable to show
+     the parse/validation message)
+   - contribution counts ("3 themes · 1 locale · 2 commands")
 
-2. **i18n merge** — extend `src/lib/i18n.ts`:
-   - On boot, after `bootI18n()`, call `slab_plugins_active_locales`
-     and for each one that matches the current locale call
-     `slab_plugins_load_locale_bundle(plugin_id, locale)`.
-   - Merge into the in-memory `BUNDLES[locale]` map (plugin overrides
-     win over built-in, plugin loaded later wins over earlier — but
-     warn in console on collision).
-   - Re-run on locale change.
+2. **"Open plugins directory" button** — `tauri_plugin_opener`'s
+   `revealItemInDir(path)` so users can drop plugins in without
+   knowing the path. Wrap with `pluginsDir()` to get the actual
+   directory.
 
-3. **Theme picker integration** — wherever `ThemeContribution`s are
-   meant to show up. Read CSS via `slab_plugins_read_asset` and inject
-   into a `<style>` tag whose id is `plugin-theme-${plugin_id}-${id}`.
-   Activation removes other plugin themes, restores built-in on
-   "default". Built-in themes still ship in `src/lib/themes.ts`.
+3. **"Reload plugins" button** — calls `reloadPlugins()` and shows
+   an info toast with the new count. Also calls `refreshPlugins()`
+   under the hood so all UI surfaces refresh.
 
-4. **Command palette merge** — append `active_commands` entries to the
-   palette source so `Cmd-K` shows plugin commands alphabetically.
-   On selection, call `slab_plugins_run_command`; on `CommandOutcome::Url`,
-   open via `tauri_plugin_opener`; on `CommandOutcome::Shell`, show a
-   toast with exit status + (truncated) stdout.
+4. **Per-plugin contribution drilldown** — clicking a row expands to
+   show all themes/locales/etc the plugin contributes. Useful for
+   debugging "why isn't my theme showing up".
 
-5. **AI provider list in Settings → Beacon** — when v0.10.0 Beacon's
-   "provider" dropdown is open, prepend "from plugins" group sourced
-   from `slab_plugins_active_ai_providers`. Selecting one would call
-   `slab_plugins_validate_ai_provider` first and surface any error.
-   (Actual hook-up of materialised provider through `make_provider` is
-   a v1.3.x follow-up — Slice 9 is just UI surface.)
+5. **Empty state** — if 0 plugins, big card explaining what plugins
+   are + the plugins dir path + a link to PLUGINS.md (which lands in
+   Slice 11).
 
-6. **PDF action menu** — add a "Plugin actions" submenu in the PDF view's
-   context menu, populated from `slab_plugins_active_pdf_actions`. On
-   click, call `slab_plugins_run_pdf_action` with a chosen output path.
+6. **Register the panel** in `+page.svelte`'s `PANELS` list with a
+   sensible icon (✦? or 🧩) and `ready: true`.
 
-7. Tests for `plugins.ts` are challenging without a Tauri runtime —
-   ship unit tests for any pure helpers (e.g. theme-CSS injection),
-   skip e2e for now.
+7. **Add a palette entry** — "Open Settings → Plugins" so the
+   panel is keyboard-reachable.
 
-8. Quality gates as usual; commit per touchpoint (i18n / themes /
-   palette / AI / pdf-actions); push branch.
+8. **Tests** — same shape as Slice 9: pure helpers if any, skip e2e.
+   Visual smoke check via `pnpm dev` if possible (not in cron).
 
-Slice 9 estimate: 5-6 commits, similar scope to this tick's backend
-mega-tick but in TypeScript/Svelte. Then Slices 10-12 are smaller and
-should fit in 1-2 more ticks before merge.
+9. Quality gates as usual; commit per touchpoint; push branch.
+
+Slice 10 estimate: 3-5 commits in TS/Svelte. Then Slice 11 (example
+plugin + PLUGINS.md) + Slice 12 (release). Foundry should ship in
+the next 2-3 ticks.
