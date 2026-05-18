@@ -371,6 +371,278 @@ pub fn scan_candidates(pages: &[String]) -> Vec<Candidate> {
     out
 }
 
+// ---------------- LLM definition extraction (Task 3) ----------------
+
+use super::chunker::chunk_pages;
+use super::{AiError, AiProvider, ChatMessage, ChatOpts, ChatRole};
+use std::path::Path;
+use std::sync::Arc;
+
+const SYSTEM_PROMPT: &str = "You are Beacon, a domain-glossary extractor. \
+The user shows you a list of candidate terms from a technical document, \
+each with the page it first appears on and a short surrounding snippet. \
+Reply with JSON ONLY, no prose, no markdown fences:\n\
+{\"entries\":[{\"term\":\"...\",\"definition\":\"...\",\"page\":N,\
+\"confidence\":0.0-1.0,\"kind\":\"acronym|defined-on-first-use|italicised|capitalised-phrase\"}]}\n\
+Rules:\n\
+- definition: 1-3 sentences, plain English, grounded in the snippet. \
+Never invent facts not in the snippet.\n\
+- If the term is a common-English word with no domain-specific meaning \
+here (e.g. \"the\", \"figure\", \"section\"), OMIT it entirely.\n\
+- If the snippet doesn't actually define the term, set confidence <= 0.4 \
+and keep your definition very tentative — the caller will drop low-\
+confidence entries.\n\
+- term: keep the canonical casing the user passed in.\n\
+- page: echo the page from the input candidate.\n\
+- kind: echo from the input candidate.";
+
+/// Wire-shape returned by the LLM. Liberal — all fields optional.
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct LlmGlossaryWire {
+    #[serde(default)]
+    pub(super) entries: Vec<LlmGlossaryEntryWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct LlmGlossaryEntryWire {
+    #[serde(default)]
+    pub(super) term: Option<String>,
+    #[serde(default)]
+    pub(super) definition: Option<String>,
+    #[serde(default)]
+    pub(super) page: Option<u32>,
+    #[serde(default)]
+    pub(super) confidence: Option<f32>,
+    #[serde(default)]
+    pub(super) kind: Option<String>,
+}
+
+/// Liberal JSON parser — mirrors `citations::parse_llm_references`.
+pub(super) fn parse_llm_glossary(raw: &str) -> Option<LlmGlossaryWire> {
+    let s = raw.trim();
+    let body = if let Some(rest) = s.strip_prefix("```json") {
+        rest.trim_end_matches("```").trim()
+    } else if let Some(rest) = s.strip_prefix("```") {
+        rest.trim_end_matches("```").trim()
+    } else {
+        s
+    };
+    let start = body.find('{')?;
+    let end = body.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str(&body[start..=end]).ok()
+}
+
+fn parse_kind(s: &str) -> Option<CandidateKind> {
+    match s.trim().to_lowercase().as_str() {
+        "acronym" => Some(CandidateKind::Acronym),
+        "defined-on-first-use" | "defined_on_first_use" => Some(CandidateKind::DefinedOnFirstUse),
+        "italicised" | "italicized" => Some(CandidateKind::Italicised),
+        "capitalised-phrase" | "capitalized-phrase" | "capitalised_phrase" => {
+            Some(CandidateKind::CapitalisedPhrase)
+        }
+        _ => None,
+    }
+}
+
+/// Validate / dedupe / cap raw LLM entries. Returns the final list +
+/// rejection count.
+///
+/// Rules:
+/// - term must be 1-80 chars, non-empty after trim.
+/// - definition must be ≥ 8 chars.
+/// - page must be 1..=total_pages.
+/// - confidence < 0.4 → drop.
+/// - kind defaults to Acronym if missing/unknown.
+/// - dedupe by case-folded term, first occurrence wins.
+/// - cap at `MAX_GLOSSARY_ENTRIES`.
+pub(super) fn validate_entries(
+    raw: Vec<LlmGlossaryEntryWire>,
+    candidates: &[Candidate],
+    total_pages: u32,
+) -> (Vec<GlossaryEntry>, u32) {
+    let snippets: HashMap<String, &Candidate> =
+        candidates.iter().map(|c| (norm(&c.term), c)).collect();
+    let mut seen: HashMap<String, ()> = HashMap::new();
+    let mut out: Vec<GlossaryEntry> = Vec::new();
+    let mut rejected = 0u32;
+    for e in raw {
+        let term = e.term.unwrap_or_default().trim().to_string();
+        if term.is_empty() || term.len() > 80 {
+            rejected += 1;
+            continue;
+        }
+        let definition = e.definition.unwrap_or_default().trim().to_string();
+        if definition.len() < 8 {
+            rejected += 1;
+            continue;
+        }
+        let page = match e.page {
+            Some(p) if p >= 1 && p <= total_pages => p,
+            _ => {
+                rejected += 1;
+                continue;
+            }
+        };
+        let confidence = e.confidence.unwrap_or(0.0).clamp(0.0, 1.0);
+        if confidence < 0.4 {
+            rejected += 1;
+            continue;
+        }
+        let kind = e
+            .kind
+            .as_deref()
+            .and_then(parse_kind)
+            .unwrap_or(CandidateKind::Acronym);
+        let key = norm(&term);
+        if seen.contains_key(&key) {
+            rejected += 1;
+            continue;
+        }
+        seen.insert(key.clone(), ());
+        let source_snippet = snippets
+            .get(&key)
+            .map(|c| c.snippet.clone())
+            .unwrap_or_default();
+        out.push(GlossaryEntry {
+            term,
+            definition,
+            page,
+            confidence,
+            kind,
+            source_snippet,
+        });
+        if out.len() >= MAX_GLOSSARY_ENTRIES {
+            break;
+        }
+    }
+    // Alphabetical sort (case-insensitive). Stable so dupes-by-folding
+    // keep their relative order.
+    out.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+    (out, rejected)
+}
+
+/// Build the summary footer from the validated entries.
+pub(super) fn build_summary(
+    candidates_total: u32,
+    entries: &[GlossaryEntry],
+    rejected: u32,
+) -> GlossarySummary {
+    let mut s = GlossarySummary {
+        candidates_total,
+        accepted: entries.len() as u32,
+        rejected,
+        ..GlossarySummary::default()
+    };
+    for e in entries {
+        match e.kind {
+            CandidateKind::Acronym => s.kept_acronyms += 1,
+            CandidateKind::DefinedOnFirstUse => s.kept_defined_first_use += 1,
+            CandidateKind::Italicised => s.kept_italicised += 1,
+            CandidateKind::CapitalisedPhrase => s.kept_capitalised_phrase += 1,
+        }
+    }
+    s
+}
+
+/// Pack candidates into a budget-bounded user prompt.
+fn build_glossary_messages(
+    candidates: &[Candidate],
+    max_chars: usize,
+    max_count: usize,
+) -> Vec<ChatMessage> {
+    let mut buf = String::from("Candidates:\n");
+    let mut count = 0usize;
+    for c in candidates.iter().take(max_count) {
+        let kind_str = match c.kind {
+            CandidateKind::Acronym => "acronym",
+            CandidateKind::DefinedOnFirstUse => "defined-on-first-use",
+            CandidateKind::Italicised => "italicised",
+            CandidateKind::CapitalisedPhrase => "capitalised-phrase",
+        };
+        let line = format!(
+            "- term={:?} page={} kind={} snippet={:?}\n",
+            c.term, c.page, kind_str, c.snippet
+        );
+        if buf.len() + line.len() > max_chars {
+            break;
+        }
+        buf.push_str(&line);
+        count += 1;
+    }
+    let user = format!(
+        "Below are {count} candidate terms mined from a PDF. Reply with \
+         JSON only as instructed.\n{buf}"
+    );
+    vec![
+        ChatMessage {
+            role: ChatRole::System,
+            content: SYSTEM_PROMPT.to_string(),
+        },
+        ChatMessage {
+            role: ChatRole::User,
+            content: user,
+        },
+    ]
+}
+
+/// Top-level: run the full glossary pipeline against pre-extracted pages.
+pub async fn build_glossary(
+    provider: Arc<dyn AiProvider>,
+    pages: &[String],
+    opts: &GlossaryOpts,
+) -> Result<GlossaryReport, AiError> {
+    // Pre-flight chunker (fail fast on truly empty docs).
+    let _chunks = chunk_pages(pages);
+
+    let candidates = scan_candidates(pages);
+    let candidates_total = candidates.len() as u32;
+    let mut entries: Vec<GlossaryEntry> = Vec::new();
+    let mut model = String::new();
+    let mut rejected = 0u32;
+
+    if opts.include_llm_pass && !candidates.is_empty() {
+        let msgs = build_glossary_messages(
+            &candidates,
+            opts.max_context_chars as usize,
+            opts.max_candidates as usize,
+        );
+        let chat_opts = ChatOpts {
+            temperature: Some(0.1),
+            max_tokens: Some(8_000),
+            ..Default::default()
+        };
+        let resp = provider.chat(&msgs, &chat_opts).await?;
+        model = resp.model;
+        let wire = parse_llm_glossary(&resp.content).unwrap_or(LlmGlossaryWire {
+            entries: Vec::new(),
+        });
+        let (validated, rej) = validate_entries(wire.entries, &candidates, pages.len() as u32);
+        entries = validated;
+        rejected = rej;
+    }
+
+    let summary = build_summary(candidates_total, &entries, rejected);
+    Ok(GlossaryReport {
+        entries,
+        summary,
+        model,
+    })
+}
+
+/// Convenience: read PDF text from disk, then run `build_glossary`.
+pub async fn build_glossary_from_path(
+    provider: Arc<dyn AiProvider>,
+    pdf_path: &Path,
+    opts: &GlossaryOpts,
+) -> Result<GlossaryReport, AiError> {
+    let pages = crate::pdf::extract::extract_text(pdf_path)
+        .map_err(|e| AiError::InvalidResponse(format!("reading {}: {e}", pdf_path.display())))?;
+    build_glossary(provider, &pages, opts).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +738,97 @@ mod tests {
         let cs = scan_candidates(&pages);
         // First entry should be DefinedOnFirstUse.
         assert!(matches!(cs[0].kind, CandidateKind::DefinedOnFirstUse));
+    }
+
+    #[test]
+    fn parse_llm_glossary_accepts_fenced_response() {
+        let raw = "```json\n{\"entries\":[{\"term\":\"RAG\",\"definition\":\"Retrieval-augmented generation.\",\"page\":3,\"confidence\":0.95,\"kind\":\"acronym\"}]}\n```";
+        let w = parse_llm_glossary(raw).expect("must parse");
+        assert_eq!(w.entries.len(), 1);
+        assert_eq!(w.entries[0].term.as_deref(), Some("RAG"));
+    }
+
+    #[test]
+    fn parse_llm_glossary_tolerates_trailing_chatter() {
+        let raw = "Here is the JSON you requested:\n{\"entries\":[{\"term\":\"X\",\"definition\":\"a longer definition that passes\",\"page\":1,\"confidence\":0.9}]}\nlet me know if you need more.";
+        let w = parse_llm_glossary(raw).expect("must parse");
+        assert_eq!(w.entries.len(), 1);
+    }
+
+    #[test]
+    fn validate_drops_low_confidence_short_def_and_bad_page() {
+        let cands = vec![Candidate {
+            term: "Good".into(),
+            page: 1,
+            kind: CandidateKind::Acronym,
+            snippet: "Good is good".into(),
+        }];
+        let raw = vec![
+            LlmGlossaryEntryWire {
+                term: Some("Good".into()),
+                definition: Some("A solid term with a long enough definition.".into()),
+                page: Some(1),
+                confidence: Some(0.9),
+                kind: Some("acronym".into()),
+            },
+            LlmGlossaryEntryWire {
+                term: Some("LowConf".into()),
+                definition: Some("Some definition that passes length.".into()),
+                page: Some(1),
+                confidence: Some(0.3),
+                kind: Some("acronym".into()),
+            },
+            LlmGlossaryEntryWire {
+                term: Some("Short".into()),
+                definition: Some("nope".into()),
+                page: Some(1),
+                confidence: Some(0.9),
+                kind: Some("acronym".into()),
+            },
+            LlmGlossaryEntryWire {
+                term: Some("BadPage".into()),
+                definition: Some("This definition is long enough.".into()),
+                page: Some(99),
+                confidence: Some(0.9),
+                kind: Some("acronym".into()),
+            },
+        ];
+        let (out, rej) = validate_entries(raw, &cands, 10);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].term, "Good");
+        assert_eq!(rej, 3);
+    }
+
+    #[test]
+    fn validate_dedupes_by_lowercased_term_and_sorts_alpha() {
+        let cands: Vec<Candidate> = Vec::new();
+        let raw = vec![
+            LlmGlossaryEntryWire {
+                term: Some("Zebra".into()),
+                definition: Some("striped equid common in Africa.".into()),
+                page: Some(1),
+                confidence: Some(0.8),
+                kind: Some("capitalised-phrase".into()),
+            },
+            LlmGlossaryEntryWire {
+                term: Some("apple".into()),
+                definition: Some("fruit grown on a tree.".into()),
+                page: Some(1),
+                confidence: Some(0.8),
+                kind: Some("capitalised-phrase".into()),
+            },
+            LlmGlossaryEntryWire {
+                term: Some("APPLE".into()), // dupe of "apple" case-folded
+                definition: Some("the trademarked computer co.".into()),
+                page: Some(2),
+                confidence: Some(0.8),
+                kind: Some("capitalised-phrase".into()),
+            },
+        ];
+        let (out, rej) = validate_entries(raw, &cands, 10);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].term, "apple"); // alphabetical
+        assert_eq!(out[1].term, "Zebra");
+        assert_eq!(rej, 1);
     }
 }
