@@ -878,9 +878,7 @@ async fn slab_beacon_build_glossary(
 /// hit, `None` on a miss / version-mismatch / corrupted file. The UI
 /// uses this to populate the panel without re-hitting the LLM.
 #[tauri::command]
-async fn slab_beacon_load_glossary_cache(
-    pdf_path: PathBuf,
-) -> CmdResult<Option<GlossaryReport>> {
+async fn slab_beacon_load_glossary_cache(pdf_path: PathBuf) -> CmdResult<Option<GlossaryReport>> {
     let hash = match hash_pdf_path(&pdf_path) {
         Ok(h) => h,
         Err(e) => {
