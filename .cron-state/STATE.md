@@ -5,131 +5,95 @@
 
 ---
 
-## STATUS: 🚀 v1.2.0 "Glass II" 🪟² MERGED + TAGGED + PUSHED — CI running
+## STATUS: 🛠 v1.3.0 "Foundry" — Slices 10+11 COMPLETE, Slice 12 (release) NEXT TICK (11/12 done)
 
-**Main HEAD**: `ea2939d` — `Merge v1.2.0 'Glass II' 🪟² — Vim + a11y + i18n foundation`
-**Tag**: `v1.2.0` (pushed)
-**CI**: run `26006878376` (in_progress, started 00:15 UTC, branch=main, sha=`ea2939d`)
-
-**Quality gates green on `main` HEAD before tag push:**
-- `cargo fmt --all -- --check` ✓
-- `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (468 passed)
-- `pnpm exec svelte-check` ✓ (0 errors / 23 warnings)
-- `pnpm a11y:audit:strict` ✓ (0 issues)
-
-**RELEASE_PENDING**: v1.2.0 — merge SHA `ea2939d`, tag `v1.2.0`, CI run `26006878376`
-
-**Next tick**: MODE B — poll CI run `26006878376`. If success:
-- `gh run download 26006878376 -R Sanjays2402/slab -D /tmp/slab-v1.2.0-release/`
-- Curate 6 assets into `assets/v1.2.0/` (mac arm64 dmg, mac x64 dmg renamed `_x64_macos.dmg`, linux deb + AppImage, windows msi + setup.exe).
-- `gh release create v1.2.0 --title 'v1.2.0 — Glass II 🪟²' --notes-file docs/releases/v1.2.0.md assets/v1.2.0/*` (AppImage upload as follow-up `gh release upload` to dodge 60s timeout).
-- Clear RELEASE_PENDING.
-
----
-
-## TICK 2026-05-17 ~17:10 PT — v1.2.0 Glass II Slices 5-RTL + 7 + MERGE + TAG + PUSH (3 commits + merge)
-
-Sanjay's "ship BIG things every tick" + the existing Slice 5 work already
-shipped last tick → this tick's job was: finish the i18n RTL CSS scaffold,
-do the version bump (Slice 7), MERGE to main, tag, push. All done.
-
-### Sub-task A — Slice 5 wrap-up: RTL scaffold (`aa629a6`)
-
-Last tick's i18n work shipped en/es/fr/ar bundles and the `applyLocaleToHtml`
-helper that flips `<html dir="rtl">` for Arabic, but the global stylesheet
-had no `:dir(rtl)` rules, so the UI didn't mirror. Added a ~60-line block
-in `src/app.css`:
-
-- Sidebar moves to right edge via `border-left` swap.
-- `.nav-icon` + `.detach-btn` flip via `scaleX(-1)` so directional glyphs
-  (← → ⤢ ↺ ▷) render the right way.
-- `code`, `pre`, `.pdf-viewer`, `.findbar input`, `.output-list li` forced
-  back to LTR because source code + PDF canvases should always be LTR.
-- Used `:dir(rtl)` pseudo-class, NOT `[dir="rtl"]` attribute selector,
-  so nested subtrees can opt back into LTR without explicit `dir=` overrides.
-
-### Sub-task B — Slice 7: version bump 1.1.0 → 1.2.0 + release notes (`2b09a46`)
-
-Lockstep version bump across:
-- `package.json` (1.1.0 → 1.2.0)
-- `src-tauri/Cargo.toml` (1.1.0 → 1.2.0)
-- `src-tauri/Cargo.lock` (workspace member entry refreshed via `cargo update --workspace --offline`)
-- `src-tauri/tauri.conf.json` (1.1.0 → 1.2.0)
-- `src/routes/+page.svelte` sidebar pill (`v1.1.0` → `v1.2.0`)
-
-Plus `docs/releases/v1.2.0.md` — ~7.5 KB release notes structured as
-"three pillars" (Vim, a11y, i18n), with tables for keybindings, locales,
-and audit baseline numbers. Quality bar section, upgrade notes, renewed
-stability promise.
-
-### Sub-task C — MODE A merge to main + tag + push
-
-- `git checkout main && git pull` — already up to date.
-- `git merge --no-ff feature/v1.2.0-glass-ii -m "Merge v1.2.0 'Glass II' 🪟² — Vim + a11y + i18n foundation"`.
-- 4 quality gates ran on `ea2939d` (main HEAD post-merge): all green.
-- `git tag v1.2.0`.
-- `git push origin main --follow-tags` (main pushed, tag pushed via second
-  follow-up since first `--follow-tags` only pushed branch).
-- `git push origin feature/v1.2.0-glass-ii` to keep the dev branch in sync
-  with the two new commits.
-
-### CI
-
-Run `26006878376` started immediately on push at 00:15 UTC. Still
-in_progress at end of tick. Will be finalized next tick (MODE B).
-
-### Commits this tick
-
-- `aa629a6` — feat(i18n): RTL scaffold in app.css for Arabic locale (Slice 5 wrap-up)
-- `2b09a46` — chore(release): v1.2.0 "Glass II" — version bump + release notes (Slice 7)
-- `ea2939d` — Merge v1.2.0 'Glass II' 🪟² — Vim + a11y + i18n foundation (merge commit)
-- Tag `v1.2.0` pushed.
-
-### Glass II completion ledger — ALL SLICES SHIPPED ✓
-
-- ✅ Slice 1 — pure Vim state machine + keymap
-- ✅ Slice 1.5 — VimController + VimIndicator + Settings/Palette toggles
-- ✅ Slice 2 — Reader Vim adapter + panel wiring
-- ✅ Slice 3 first half — Library Vim adapter
-- ✅ Slice 3 second half — Beacon Vim adapter
-- ✅ Slice 4 — a11y audit script + focus-visible ring + aria-current
-- ✅ Slice 4 pass 2 — input-label fixes across 15 panels
-- ✅ Slice 5 — i18n module + en/es/fr/ar bundles + Settings/Palette pickers
-- ✅ Slice 5 wrap-up — RTL CSS scaffold (this tick)
-- ✅ Slice 6 — prefers-reduced-motion + prefers-contrast
-- ✅ Slice 7 — version bump + release notes + tag + push (this tick)
-
-### Velocity
-
-| Tick | Slices shipped                          | Commits | Cumulative |
-|------|----------------------------------------|---------|------------|
-| 1    | Slice 1 + 1.5                          | 2       | 2          |
-| 2    | Slice 2 + 3 first half                 | 3       | 5          |
-| 3    | Slice 3-2nd + 4 (×2) + 6               | 4       | 9          |
-| 4    | Slice 5 (i18n core+ar+es+fr)           | 5       | 14         |
-| 5    | Slice 5-RTL + 7 + merge + tag (TODAY)  | 3 + merge | 17 + merge |
-
-**5 ticks total for v1.2.0 Glass II** (~10 hours of clock time). Bigger than
-Cabinet (3 ticks) but Glass II shipped three foundational layers — Vim,
-a11y, i18n — that each justify a full release.
-
----
-
-## PRIOR TICK STATE (kept for reference)
-
-## STATUS-PRIOR: 🚀 v1.2.0 "Glass II" Slices 3-2nd-half + 4 + 6 shipped (5 commits this tick)
-
-**Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
-**v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.2.0-glass-ii` (10 commits ahead of main as of last tick)
-**Branch HEAD**: `e4478db` — `a11y: honour prefers-reduced-motion and prefers-contrast (Slice 6)`
+**Main HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
+**v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
+**Active branch**: `feature/v1.3.0-foundry` (29 commits ahead of main)
+**Branch HEAD**: `0b505b7` — `docs(README): mention plugin system + link to PLUGINS.md`
+**Slice 10+11 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slices-10-11.md`
 
 **Quality gates green on branch HEAD:**
-- pnpm exec svelte-check → 0 errors / 23 warnings (down from 28)
-- cargo fmt --check ✓
-- cargo clippy --all-targets -D warnings ✓
-- cargo test --lib → 468 passed
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓
+- `cargo test --lib` ✓ (**539 passed** — +1 over previous, new `example_hello_slab_manifest_parses`)
+- `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
+
+**NO RELEASE_PENDING** — Foundry needs Slice 12 (release prep) before merge.
+
+---
+
+## TICK 2026-05-17 20:05 PT — Foundry Slices 10+11 MEGA-TICK (8 commits)
+
+Two slices in one tick. Foundry is now **feature-complete** —
+Slice 12 (version bump + release notes + merge + tag + push) lands
+cleanly next tick.
+
+### MODE C — v1.3.0 Foundry sprint (control surface + docs)
+
+**Slice 10 — Settings → Plugins control surface**
+
+Task 1 (commit `e651c62`) — 22 new i18n keys × 4 locales (en/es/fr/ar)
+covering feature label, title, subtitle, empty state, contribution
+count labels, enable/disable toggle text, error chip, expand/collapse,
+toolbar buttons, palette command label. Appended-only diff for
+reviewability.
+
+Task 2 (commit `bb2d6e8`) — `src/lib/panels/PluginsPanel.svelte` (506
+lines). Every discovered plugin renders as a row with:
+- name + version + author + plugin id + description from manifest
+- segmented enable/disable toggle (calls `setPluginEnabled`,
+  optimistically refreshed via the `pluginsStore` subscription)
+- red "Manifest error" chip + collapsible `<details>` with raw parse
+  error + the plugin's on-disk dir when the manifest is malformed
+- contribution count chips ("3 themes · 1 locale · 2 commands")
+- per-plugin expandable drilldown listing every theme/locale/
+  command/ai-provider/pdf-action by ID + label (debugging aid)
+Toolbar: "📁 Open plugins directory" (revealItemInDir) + "↻ Reload"
+(`reloadPlugins` + toast). Empty state: dashed-border card with the
+absolute plugins-dir path + open-dir CTA. Footer-row: dir path when
+list is non-empty.
+
+Task 3 (commit `d6b37a2`) — Registered in `+page.svelte` features
+array (`{ id: "plugins", label: "Plugins", icon: "🧩", ready: true }`,
+slotted next to Settings), wired the conditional render, added
+`"plugins"` to `DETACHABLE_PANELS`.
+
+Task 4 (commit `2f19ab2`) — Palette entry "Open Settings → Plugins"
+in the Settings group with wide keyword coverage (plugins, extensions,
+themes, locales, commands, ai, install, enable, etc.).
+
+**Slice 11 — example plugin + author docs**
+
+Task 1 (commit `16e94db`) — `examples/plugins/hello-slab/` (4 files):
+- `plugin.toml` — manifest exercising **all five contribution kinds**:
+  Midnight theme, partial Japanese locale, URL command (open github),
+  shell command (echo hello), Ollama AI provider (openai_compat),
+  qpdf-linearize PDF action with `{in}`/`{out}` placeholders
+- `themes/midnight.css` — deep-blue dark theme CSS variable overrides
+- `locales/jp.json` — 40-key Japanese bundle covering most-visible UI
+- `README.md` — install + contribution table + try-it-out walkthrough
+- Plus a new unit test `example_hello_slab_manifest_parses` that loads
+  the shipped manifest via `Manifest::from_toml` and asserts every
+  contribution count. **If we ever break the manifest schema, this
+  test fires and forces an example update — keeping docs honest.**
+
+Task 2 (commit `17bdc9c`) — `docs/PLUGINS.md` (253 lines) — the
+canonical author guide. Sections: TL;DR, directory layout, full
+manifest reference, every contribution kind with worked TOML
+examples, permissions semantics (declarative not sandboxed —
+honest framing), validation cheat-sheet, enabled-state persistence,
+security model, distribution, troubleshooting table, schema
+stability policy. Linked from PluginsPanel's empty state and from
+hello-slab's README.
+
+Task 3 (commit `0b505b7`) — Added "## Extending Slab (plugins)"
+section to README.md between Tests and Under the hood, pointing
+to PLUGINS.md + the hello-slab example.
+
+### Plan doc
+`docs/plans/2026-05-17-v1.3.0-foundry-slices-10-11.md` (written + fully
+executed this tick — `fb87bbc`).
 
 ---
 
@@ -147,12 +111,22 @@ a11y, i18n — that each justify a full release.
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
-### v1.2.0 "Glass II" — MERGED + TAGGED 2026-05-17 🪟² — CI running, release pending
+### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
+### v1.3.0 "Foundry" 🛠 — IN PROGRESS (**11/12** slices done — FEATURE-COMPLETE, Slice 12 = release)
 
-### v1.3.0 "Foundry" (next)
-- Plugin API, community-extensible
-- Built on the a11y + i18n + Vim foundations from Glass II
-- See `.cron-state/proposals/` for spec (to be drafted)
+### v1.3.0 Slice ledger
+- ✅ Slice 1 — manifest schema + parser + validation
+- ✅ Slice 2 — plugin registry + discovery loop
+- ✅ Slice 3 — Tauri commands (list/enable/disable/reload)
+- ✅ Slice 4 — theme contribution + asset reader
+- ✅ Slice 5 — locale contribution + bundle loader
+- ✅ Slice 6 — pdf_action contribution + CLI runner
+- ✅ Slice 7 — command contribution + shell/url runner
+- ✅ Slice 8 — ai_provider contribution + materialiser
+- ✅ Slice 9 — frontend wiring (8 commits previous tick)
+- ✅ Slice 10 — Settings → Plugins panel UI (this tick — 4 commits)
+- ✅ Slice 11 — example plugin + PLUGINS.md (this tick — 3 commits)
+- ⏳ Slice 12 — version bump + release notes + merge + tag + push
 
 ---
 
@@ -164,3 +138,61 @@ a11y, i18n — that each justify a full release.
 3. RELEASE_PENDING in STATE.md + CI run → MODE B (poll CI; if green, download + create GH release)
 4. No pending release, no DONE branch → MODE C (DEVELOP — ship a vertical slice)
 ```
+
+---
+
+## NEXT TICK PLAYBOOK — Slice 12 = ship v1.3.0 Foundry
+
+This is mechanical. Order matters.
+
+1. **Bump version everywhere it appears:**
+   - `package.json`: `"version": "1.3.0"`
+   - `src-tauri/Cargo.toml`: `version = "1.3.0"` (currently `1.2.0`)
+   - `src-tauri/tauri.conf.json`: `"version": "1.3.0"`
+   - Verify with `grep -rE '\"version\": ?\"1\.' package.json src-tauri/tauri.conf.json && grep '^version' src-tauri/Cargo.toml`.
+   - Run `cd src-tauri && cargo check` so `Cargo.lock` updates.
+
+2. **Write release notes** at `docs/release-notes/v1.3.0.md` covering:
+   - What Foundry is (declarative plugin system — themes, locales,
+     commands, AI providers, PDF actions via TOML manifest).
+   - Headline UX: Settings → Plugins panel, Cmd-K integration,
+     Reader toolbar dropdown, hello-slab example.
+   - Backend: 5 contribution kinds, 13 Tauri commands, 539 tests.
+   - Permissions / security framing (declarative, not sandboxed).
+   - Pointer to docs/PLUGINS.md.
+   - "Bonus changes" if any (none expected).
+
+3. **Update README** if it pins a version anywhere.
+
+4. **Commit** version bump + release notes:
+   ```
+   chore(release): v1.3.0 "Foundry" — declarative plugin system
+   ```
+
+5. **Quality gates** on feature branch one last time
+   (fmt/clippy/test --lib/pnpm check).
+
+6. **STATUS: DONE marker** — write it into STATE.md so the *next-next*
+   tick (which will be MODE A) merges + tags. OR (preferred) flip
+   into MODE A inline this tick after the version bump:
+   - `git checkout main && git pull`
+   - `git merge --no-ff feature/v1.3.0-foundry -m "Merge v1.3.0 'Foundry' — declarative plugin system"`
+   - Run quality gates on main.
+   - `git tag v1.3.0`
+   - `git push origin main --follow-tags` (with the auth dance).
+   - Record `RELEASE_PENDING: v1.3.0 — merge SHA <hash>, tag v1.3.0, CI run <id>` in STATE.md.
+   - Find the CI run with `gh run list --branch main --limit 3`.
+   - Next tick lands in MODE B to download + create the GH release.
+
+Slice 12 should land in ONE tick. Don't fragment it.
+
+---
+
+## POST-v1.3 ROADMAP REMINDERS
+
+After Foundry ships, the proposals on disk for the next versions:
+- `.cron-state/proposals/v0.10.0-beacon-bonus-slices.md` — Slices 11-15
+  (Smart Outline, Citations, Study Mode, Glossary, Voice Mode)
+- Plugin marketplace UI + signed-manifest install flow (post-v1.3 idea)
+- AI provider hook-up of plugin-contributed providers through Beacon's
+  runtime (planned v1.3.x patch)

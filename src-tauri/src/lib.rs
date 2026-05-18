@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod keymap;
 pub mod pdf;
+pub mod plugins;
 pub mod windows;
 
 use ai::auto_tag::AutoTagOpts;
@@ -1495,6 +1496,214 @@ async fn slab_library_auto_tag_many(
     CmdResult::Ok { value: res }
 }
 
+// ---------- Foundry (v1.3.0) — plugin Tauri commands ----------
+
+/// List all known plugins (active + broken + disabled). UI calls this
+/// to populate the plugin panel.
+#[tauri::command]
+fn slab_plugins_list(reg: tauri::State<'_, plugins::PluginRegistry>) -> Vec<plugins::Plugin> {
+    reg.list()
+}
+
+/// Flip a plugin's enabled flag and persist the new state to
+/// `~/.slab/plugin-state.toml`. Returns `false` if the ID is unknown.
+#[tauri::command]
+fn slab_plugins_set_enabled(
+    id: String,
+    enabled: bool,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<bool, String> {
+    if !reg.set_enabled(&id, enabled) {
+        return Ok(false);
+    }
+    if let Some(p) = plugins::default_state_path() {
+        let snap = reg.enabled_state();
+        if let Err(e) = plugins::write_enabled_state(&p, &snap) {
+            return Err(format!("could not persist plugin state: {e}"));
+        }
+    }
+    Ok(true)
+}
+
+/// Re-scan the plugins directory (`~/.slab/plugins`). UI calls this
+/// after the user drops a new plugin in. Returns the fresh list.
+#[tauri::command]
+fn slab_plugins_reload(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<Vec<plugins::Plugin>, String> {
+    let state_path = plugins::default_state_path();
+    let enabled = state_path
+        .as_deref()
+        .map(plugins::read_enabled_state)
+        .unwrap_or_default();
+    let root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    reg.discover(&root, &enabled);
+    Ok(reg.list())
+}
+
+/// Return the on-disk path of `~/.slab/plugins` (creating it if it
+/// doesn't exist). The frontend uses this with `tauri-plugin-opener` to
+/// reveal the directory in Finder/Explorer/Files.
+#[tauri::command]
+fn slab_plugins_dir() -> Result<String, String> {
+    let root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    if let Err(e) = std::fs::create_dir_all(&root) {
+        return Err(format!("could not create plugins dir: {e}"));
+    }
+    Ok(root.to_string_lossy().to_string())
+}
+
+/// List themes contributed by enabled plugins. Frontend calls this on
+/// boot to populate the theme picker. Each entry carries the plugin's
+/// dir so the frontend can `slab_plugins_read_asset` the CSS file.
+#[tauri::command]
+fn slab_plugins_active_themes(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveTheme> {
+    plugins::active_themes(&reg)
+}
+
+/// List locale bundles contributed by enabled plugins.
+#[tauri::command]
+fn slab_plugins_active_locales(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveLocale> {
+    plugins::active_locales(&reg)
+}
+
+/// List custom commands (palette entries) contributed by enabled plugins.
+#[tauri::command]
+fn slab_plugins_active_commands(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveCommand> {
+    plugins::active_commands(&reg)
+}
+
+/// List AI providers contributed by enabled plugins.
+#[tauri::command]
+fn slab_plugins_active_ai_providers(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveAiProvider> {
+    plugins::active_ai_providers(&reg)
+}
+
+/// List PDF actions contributed by enabled plugins. (CLI runner lands
+/// in Slice 6; this just exposes the catalog.)
+#[tauri::command]
+fn slab_plugins_active_pdf_actions(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActivePdfAction> {
+    plugins::active_pdf_actions(&reg)
+}
+
+/// Read a relative asset file (theme CSS, locale JSON, icon) from a
+/// plugin's directory. Path-traversal is rejected at the Rust layer —
+/// the resolved path must stay inside the plugin's directory.
+#[tauri::command]
+fn slab_plugins_read_asset(
+    plugin_id: String,
+    relative: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<String, String> {
+    let p = reg
+        .get(&plugin_id)
+        .ok_or_else(|| format!("unknown plugin {plugin_id:?}"))?;
+    plugins::read_asset(&p.dir, &relative)
+}
+
+/// Run a plugin PDF action against `input` and write the result to
+/// `output`. Returns an [`ActionReport`] with status + stdout/stderr;
+/// the frontend surfaces this so users can see what the external CLI
+/// said. Errors here are reserved for setup failures (missing input,
+/// tempfile failures) — CLI exit codes go in the report status.
+#[tauri::command]
+fn slab_plugins_run_pdf_action(
+    plugin_id: String,
+    action_id: String,
+    input: String,
+    output: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<plugins::ActionReport, String> {
+    let actions = plugins::active_pdf_actions(&reg);
+    let action = actions
+        .into_iter()
+        .find(|a| a.plugin_id == plugin_id && a.action.id == action_id)
+        .ok_or_else(|| format!("no active pdf_action {action_id:?} on plugin {plugin_id:?}"))?;
+    plugins::run_pdf_action(
+        &action,
+        std::path::Path::new(&input),
+        std::path::Path::new(&output),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Load a plugin-contributed locale bundle as a flat `key -> translation`
+/// map. The frontend i18n layer merges these into its in-memory bundles
+/// at boot (and on plugin enable/disable) without going through a file
+/// read on the JS side.
+///
+/// Errors when:
+/// - the plugin or locale is not active,
+/// - the JSON is malformed,
+/// - any value is not a string.
+#[tauri::command]
+fn slab_plugins_load_locale_bundle(
+    plugin_id: String,
+    locale: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let locales = plugins::active_locales(&reg);
+    let entry = locales
+        .into_iter()
+        .find(|l| l.plugin_id == plugin_id && l.locale.locale == locale)
+        .ok_or_else(|| format!("no active locale {locale:?} on plugin {plugin_id:?}"))?;
+    plugins::load_locale_bundle(&entry.plugin_dir, &entry.locale.bundle)
+}
+
+/// Run a plugin-contributed command. Shell commands spawn `/bin/sh -c`
+/// (Windows: `cmd /C`) under a 30s default timeout and return captured
+/// stdout/stderr. URL commands return an outcome carrying the URL so
+/// the frontend can dispatch through `tauri_plugin_opener`.
+#[tauri::command]
+fn slab_plugins_run_command(
+    plugin_id: String,
+    command_id: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<plugins::CommandOutcome, String> {
+    let cmds = plugins::active_commands(&reg);
+    let entry = cmds
+        .into_iter()
+        .find(|c| c.plugin_id == plugin_id && c.command.id == command_id)
+        .ok_or_else(|| format!("no active command {command_id:?} on plugin {plugin_id:?}"))?;
+    plugins::run_command(&entry).map_err(|e| e.to_string())
+}
+
+/// Validate a plugin-contributed AI provider by running the
+/// materialiser (Foundry Slice 8). On success returns `Ok(())` — this
+/// only checks that the contribution's `kind` is supported and that
+/// the constructor accepts the manifest fields. It does **not** make
+/// an HTTP call: header `$VAR` expansion is deferred to request time.
+///
+/// Used by the Settings → Plugins UI to surface a "misconfigured"
+/// chip next to providers whose manifest is rejected.
+#[tauri::command]
+fn slab_plugins_validate_ai_provider(
+    plugin_id: String,
+    provider_id: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<(), String> {
+    let providers = plugins::active_ai_providers(&reg);
+    let entry = providers
+        .into_iter()
+        .find(|p| p.plugin_id == plugin_id && p.provider.id == provider_id)
+        .ok_or_else(|| format!("no active ai_provider {provider_id:?} on plugin {plugin_id:?}"))?;
+    plugins::materialize_active(&entry)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1502,11 +1711,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(windows::WindowRegistry::new())
+        .manage(plugins::PluginRegistry::new())
         .setup(|app| {
             // Cabinet (v1.1.0): restore last session's detached windows
             // from ~/.slab/windows.json. Quiet on error.
             let handle = tauri::Manager::app_handle(app).clone();
             windows::restore_windows(&handle);
+
+            // Foundry (v1.3.0): discover plugins under ~/.slab/plugins
+            // at boot. Quiet on error — if HOME is unset or the dir is
+            // missing, registry stays empty and the UI shows an empty
+            // panel rather than crashing.
+            if let Some(root) = plugins::default_plugins_root() {
+                let enabled = plugins::default_state_path()
+                    .as_deref()
+                    .map(plugins::read_enabled_state)
+                    .unwrap_or_default();
+                if let Some(reg) = tauri::Manager::try_state::<plugins::PluginRegistry>(app) {
+                    reg.discover(&root, &enabled);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1602,6 +1826,20 @@ pub fn run() {
             windows::slab_window_close,
             windows::slab_window_list,
             slab_request_open_in_main,
+            slab_plugins_list,
+            slab_plugins_set_enabled,
+            slab_plugins_reload,
+            slab_plugins_dir,
+            slab_plugins_active_themes,
+            slab_plugins_active_locales,
+            slab_plugins_active_commands,
+            slab_plugins_active_ai_providers,
+            slab_plugins_active_pdf_actions,
+            slab_plugins_read_asset,
+            slab_plugins_run_pdf_action,
+            slab_plugins_load_locale_bundle,
+            slab_plugins_run_command,
+            slab_plugins_validate_ai_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

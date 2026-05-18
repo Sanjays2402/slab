@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
-  import { setUiConfig, ACCENT_COLORS, type ThemeMode, type Density } from "$lib/theme";
+  import { setUiConfig, ACCENT_COLORS, BUILT_IN_THEMES, type Density } from "$lib/theme";
   import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
   import { openPanelWindow } from "$lib/windows";
   import { isInTauri } from "$lib/tauri";
   import { vimEnabled } from "$lib/vim/mode";
   import { LOCALES, setLocale, t } from "$lib/i18n";
+  import { pluginsStore, runPluginCommand, type CommandOutcome } from "$lib/plugins";
+  import { applyPluginTheme } from "$lib/pluginThemes";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { notify } from "$lib/notify";
   import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
@@ -63,12 +67,51 @@
   let recents = $state<RecentFile[]>([]);
   // Glass Slice 5: MRU ranks for actions (id → rank, lower = more recent).
   let mru = $state<Record<string, number>>({});
+  // Foundry Slice 9: live snapshot of plugin contributions. Subscribed so
+  // the palette re-derives when a plugin is enabled / disabled.
+  let pluginsSnap = $state(get(pluginsStore));
+  const unsubPlugins = pluginsStore.subscribe((s) => (pluginsSnap = s));
 
   function refreshRecents() {
     recents = listRecent();
   }
   function refreshMru() {
     mru = mruRanks();
+  }
+
+  // Foundry Slice 9 — dispatch a plugin command. For URL outcomes,
+  // open via tauri opener plugin; for shell outcomes, surface a toast
+  // with status + truncated stdout/stderr so the user knows it ran.
+  async function dispatchPluginCommand(
+    pluginId: string,
+    commandId: string,
+    label: string,
+  ): Promise<void> {
+    try {
+      const outcome: CommandOutcome = await runPluginCommand(pluginId, commandId);
+      if (outcome.kind === "url") {
+        await openUrl(outcome.url);
+        notify.info(label, { detail: `Opened ${outcome.url}` });
+        return;
+      }
+      const stdoutShort = outcome.stdout.trim().slice(0, 200);
+      const stderrShort = outcome.stderr.trim().slice(0, 200);
+      if (outcome.status === "ok") {
+        notify.success(label, {
+          detail: stdoutShort || `exit 0 · ${outcome.duration_ms}ms`,
+        });
+      } else if (outcome.status === "nonzeroexit") {
+        notify.warning(label, {
+          detail: `${stderrShort || stdoutShort || "non-zero exit"} · exit ≠ 0`,
+        });
+      } else if (outcome.status === "timeout") {
+        notify.error(label, { detail: "Command timed out (30s)" });
+      } else {
+        notify.error(label, { detail: stderrShort || "Failed to spawn" });
+      }
+    } catch (e) {
+      notify.error(label, { detail: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   $effect(() => {
@@ -129,20 +172,33 @@
       });
     }
     // Theme quick actions
-    const themes: { id: ThemeMode; label: string; icon: string }[] = [
-      { id: "auto", label: "Auto (match system)", icon: "◐" },
-      { id: "light", label: "Light", icon: "☀" },
-      { id: "dark", label: "Dark", icon: "☾" },
-    ];
-    for (const t of themes) {
+    for (const th of BUILT_IN_THEMES) {
       out.push({
-        id: `theme:${t.id}`,
-        title: `Theme: ${t.label}`,
+        id: `theme:${th.id}`,
+        title: `Theme: ${th.label}`,
         subtitle: "Switch appearance",
-        icon: t.icon,
+        icon: th.icon,
         group: "Appearance",
-        run: () => void setUiConfig({ theme: t.id }),
-        keywords: `theme appearance ${t.id} ${t.label} light dark auto`,
+        run: () => void setUiConfig({ theme: th.id }),
+        keywords: `theme appearance ${th.id} ${th.label} light dark auto`,
+      });
+    }
+    // Foundry Slice 9 — plugin-contributed themes. Activating one swaps
+    // a runtime style tag; picking any built-in clears it via
+    // clearPluginTheme inside setUiConfig.
+    for (const th of pluginsSnap.themes) {
+      out.push({
+        id: `plugin-theme:${th.plugin_id}:${th.id}`,
+        title: `Theme: ${th.label}`,
+        subtitle: `From plugin ${th.plugin_id}${th.dark ? " · dark" : ""}`,
+        icon: "◇",
+        group: "Appearance",
+        run: () => {
+          void applyPluginTheme(th.plugin_id, th.id, th.css).catch((e) => {
+            console.warn("[slab] applyPluginTheme failed", e);
+          });
+        },
+        keywords: `theme appearance ${th.id} ${th.label} ${th.plugin_id} plugin custom`,
       });
     }
     for (const a of ACCENT_COLORS) {
@@ -192,6 +248,17 @@
       run: () => onSelectPanel("keymap"),
       keywords: "shortcuts keymap rebind customize keys hotkeys bindings",
     });
+    // Foundry Slice 10: jump to the plugins manager.
+    out.push({
+      id: "settings:plugins",
+      title: t("plugins.cmdOpen"),
+      subtitle: t("plugins.subtitle"),
+      icon: "🧩",
+      group: "Settings",
+      run: () => onSelectPanel("plugins"),
+      keywords:
+        "plugins extensions themes locales commands ai providers manifest foundry install uninstall enable disable reload",
+    });
     // Glass II Slice 1: toggle Vim modal bindings
     out.push({
       id: "settings:toggle-vim",
@@ -229,6 +296,43 @@
       },
       keywords: "onboarding tour welcome walkthrough tutorial intro first launch",
     });
+    // Foundry Slice 9 — plugin-contributed commands. Alphabetised by
+    // label so the order stays predictable across plugins.
+    const pluginCmds = [...pluginsSnap.commands].sort((a, b) => a.label.localeCompare(b.label));
+    for (const c of pluginCmds) {
+      out.push({
+        id: `plugin-cmd:${c.plugin_id}:${c.id}`,
+        title: c.label,
+        subtitle: `From plugin ${c.plugin_id}`,
+        icon: c.url ? "↗" : "⌘",
+        group: "Plugin commands",
+        run: () => void dispatchPluginCommand(c.plugin_id, c.id, c.label),
+        keywords: `plugin ${c.plugin_id} ${c.id} ${c.label} ${c.url ? "url link open" : "shell command"}`,
+      });
+    }
+    // Foundry Slice 9 — informational surface for plugin AI providers.
+    // Hook-up of materialised provider through Beacon's runtime is a
+    // v1.3.x follow-up. For now: running the action copies the base
+    // URL so users can paste it into curl / Settings, plus a discovery
+    // toast.
+    for (const p of pluginsSnap.aiProviders) {
+      out.push({
+        id: `plugin-ai:${p.plugin_id}:${p.id}`,
+        title: `AI provider: ${p.label}`,
+        subtitle: `${p.kind} · ${p.base_url}`,
+        icon: "✦",
+        group: "Plugin AI providers",
+        run: async () => {
+          try {
+            await navigator.clipboard.writeText(p.base_url);
+            notify.info(p.label, { detail: `${p.base_url} copied to clipboard` });
+          } catch {
+            notify.info(p.label, { detail: p.base_url });
+          }
+        },
+        keywords: `plugin ai provider llm ${p.plugin_id} ${p.id} ${p.label} ${p.kind} ${p.base_url}`,
+      });
+    }
     // Glass Slice 5: MRU management
     if (Object.keys(mru).length > 0) {
       out.push({
@@ -363,6 +467,7 @@
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
+    unsubPlugins();
   });
 </script>
 

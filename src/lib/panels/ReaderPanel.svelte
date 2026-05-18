@@ -8,6 +8,7 @@
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
   import { notify } from "$lib/notify";
+  import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
   import AnnotateLayer, { type AnnotMode } from "$lib/AnnotateLayer.svelte";
   import DecryptModal from "$lib/components/DecryptModal.svelte";
@@ -111,6 +112,12 @@
   let cheatsheetOpen = $state(false);
   let invert = $state(false);
   let dropActive = $state(false);
+
+  // Foundry Slice 9 — plugin-contributed PDF actions. Live snapshot of
+  // the active list + the open/close flag for the toolbar dropdown.
+  let pluginActions = $state<ActivePdfAction[]>([]);
+  let pluginActionsOpen = $state(false);
+  const unsubPluginActions = pluginsStore.subscribe((s) => (pluginActions = s.pdfActions));
 
   // Locked-PDF flow — when pdf.js refuses to open an encrypted file we
   // surface a DecryptModal. `decryptPending` holds the original (encrypted)
@@ -987,7 +994,60 @@
       window.removeEventListener("dragleave", dnd.onDragLeave);
       window.removeEventListener("drop", dnd.onDrop);
     }
+    unsubPluginActions();
     tearDownDoc();
+  });
+
+  // Foundry Slice 9 — run a plugin-contributed PDF action against the
+  // currently-open doc. Prompts for an output path via the Tauri save
+  // dialog (suggesting a sensible default near the input), then invokes
+  // `slab_plugins_run_pdf_action` and surfaces a toast keyed by status.
+  async function dispatchPluginAction(a: ActivePdfAction): Promise<void> {
+    if (!doc?.path) {
+      notify.warning(a.label, { detail: "Open a PDF first." });
+      return;
+    }
+    const out = await saveDialog({
+      defaultPath: doc.path.replace(/\.pdf$/i, `.${a.id}.pdf`),
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!out) {
+      pluginActionsOpen = false;
+      return;
+    }
+    try {
+      const rep = await runPluginPdfAction(a.plugin_id, a.id, doc.path, out);
+      if (rep.status === "ok") {
+        notify.success(a.label, { detail: `Wrote ${out} · ${rep.duration_ms}ms` });
+      } else if (rep.status === "nonzeroexit") {
+        notify.warning(a.label, {
+          detail: rep.stderr.trim().slice(0, 200) || "Non-zero exit",
+        });
+      } else if (rep.status === "timeout") {
+        notify.error(a.label, { detail: "Action timed out" });
+      } else {
+        notify.error(a.label, {
+          detail: rep.stderr.trim().slice(0, 200) || "Failed to spawn",
+        });
+      }
+    } catch (e) {
+      notify.error(a.label, { detail: e instanceof Error ? e.message : String(e) });
+    } finally {
+      pluginActionsOpen = false;
+    }
+  }
+
+  // Foundry Slice 9 — click-outside dismissal for the plugin actions
+  // dropdown. Captures so it fires even when the click target is inside
+  // a stopPropagation-y handler somewhere else in the toolbar.
+  $effect(() => {
+    if (!pluginActionsOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (!target?.closest(".plugin-actions-wrap")) pluginActionsOpen = false;
+    };
+    window.addEventListener("click", handler, true);
+    return () => window.removeEventListener("click", handler, true);
   });
 
   function onOpenRecentEvent(e: CustomEvent<RecentFile>) {
@@ -1230,6 +1290,31 @@
         title="Toggle dark mode invert (whites→darks)"
       >🌙 Invert</button>
       <button class="tb-btn" class:active={findOpen} disabled={!doc} onclick={toggleFind} title="Find (⌘F)">🔍 Find</button>
+      {#if pluginActions.length > 0}
+        <div class="plugin-actions-wrap">
+          <button
+            class="tb-btn"
+            class:active={pluginActionsOpen}
+            disabled={!doc}
+            onclick={() => (pluginActionsOpen = !pluginActionsOpen)}
+            title="Plugin PDF actions"
+          >✦ Plugin</button>
+          {#if pluginActionsOpen}
+            <div class="plugin-actions-menu" role="menu">
+              {#each pluginActions as a (`${a.plugin_id}:${a.id}`)}
+                <button
+                  class="plugin-action-item"
+                  onclick={() => dispatchPluginAction(a)}
+                  title={`${a.plugin_id}: ${a.cli}`}
+                >
+                  <span class="plugin-action-label">{a.label}</span>
+                  <span class="plugin-action-from">{a.plugin_id}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
       <button class="tb-btn" class:active={infoOpen} disabled={!doc} onclick={() => (infoOpen = !infoOpen)} title="Document info">ⓘ Info</button>
       <button class="tb-btn" onclick={() => (cheatsheetOpen = true)} title="Keyboard shortcuts (?)">?</button>
     </div>
@@ -1566,6 +1651,42 @@
     border-color: var(--border);
   }
   .tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Foundry Slice 9 — plugin PDF actions dropdown. */
+  .plugin-actions-wrap { position: relative; display: inline-block; }
+  .plugin-actions-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    min-width: 220px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    padding: 4px;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+  }
+  .plugin-action-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 8px 10px;
+    background: transparent;
+    border: 0;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    text-align: left;
+  }
+  .plugin-action-item:hover { background: var(--bg-3); }
+  .plugin-action-label { font-size: 13px; color: var(--text); }
+  .plugin-action-from {
+    font-size: 11px;
+    color: var(--text-2);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  }
 
   .tb-pg {
     display: inline-flex;

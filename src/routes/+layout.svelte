@@ -4,6 +4,7 @@
   import { bootTheme, uiConfig } from "$lib/theme";
   import { bootKeymap } from "$lib/keymap";
   import { bootI18n } from "$lib/i18n";
+  import { refreshPlugins, logActiveAiProviders } from "$lib/plugins";
   import ToastStack from "$lib/ToastStack.svelte";
   import OnboardingTour from "$lib/OnboardingTour.svelte";
 
@@ -40,6 +41,12 @@
     // must complete before the first keystroke for the customised
     // bindings to take effect. Idempotent + silent on failure.
     void bootKeymap();
+
+    // v1.3.0 "Foundry" Slice 9 — populate the plugin snapshot.
+    // Downstream subscribers (i18n locale merge, command palette
+    // theme/cmd entries, Reader plugin-actions menu) watch the
+    // `pluginsStore` and re-render when this lands. Fire-and-forget.
+    void refreshPlugins().then(() => logActiveAiProviders());
 
     // Listen for the global custom event so Settings + Command Palette
     // can re-open the tour without importing this layout.

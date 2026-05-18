@@ -1,0 +1,21 @@
+/* Midnight — deep blue plugin theme for Slab.
+ *
+ * Override the same CSS variables Slab's built-in themes set.
+ * See src/lib/theme.ts for the canonical list of variables Slab
+ * consumes; missing ones fall back to whatever the current built-in
+ * theme had active before the plugin theme was applied.
+ */
+:root {
+  --bg: #0b0f1a;
+  --bg-2: #111726;
+  --bg-3: #1a2238;
+  --text: #e6edf6;
+  --text-2: #a3b1c6;
+  --text-3: #6b7a93;
+  --border: #243049;
+  --border-strong: #354864;
+  --accent: #6aa9ff;
+  --accent-2: #4f8cff;
+  --danger: #ff8080;
+  --success: #4ade80;
+}

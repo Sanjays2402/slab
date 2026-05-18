@@ -1,0 +1,36 @@
+id = "com.example.full"
+name = "Full"
+version = "0.1.0"
+slab_compat = ">=1.3.0"
+description = "Exercises every contribution kind."
+author = "Cake"
+permissions = ["fs", "spawn"]
+
+[[contributions.themes]]
+id = "dim"
+label = "Dim"
+css = "themes/dim.css"
+dark = true
+
+[[contributions.locales]]
+locale = "ja"
+bundle = "locales/ja.json"
+
+[[contributions.pdf_actions]]
+id = "qpdf-linearize"
+label = "Linearize with qpdf"
+cli = "qpdf"
+args = ["--linearize", "{in}", "{out}"]
+timeout_ms = 60000
+
+[[contributions.commands]]
+id = "open-docs"
+label = "Open docs site"
+url = "https://example.com/docs"
+
+[[contributions.ai_providers]]
+id = "local-llamacpp"
+label = "Local llama.cpp"
+kind = "openai_compat"
+base_url = "http://127.0.0.1:8080/v1"
+default_model = "qwen2.5"
