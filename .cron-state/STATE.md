@@ -5,107 +5,53 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" Slices 1–8 SHIPPED — feature/v1.4.0-bench
+## STATUS: 🪑 v1.4.0 "Bench" Slices 9+10 shipped — Slice 11 (release) next
 
-**Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch'`
-**Active feature branch**: `feature/v1.4.0-bench` @ `7087c5d` — Slices 1–8 done, pushed to origin (backend + Tauri cmds + TS store + Browse UI + plugin detail drawer + install progress modal + cross-tab update badge)
-**Latest release**: v1.3.1 → https://github.com/Sanjays2402/slab/releases/tag/v1.3.1
+**Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch'` (released)
+**Active dev branch**: `feature/v1.4.0-bench` @ `6bc227a` (Slices 1-10 done)
+**Rolled into rollup from**: `feature/v1.4.0-bench-slices-9-10` @ `1ce0d41` (3 commits this tick)
 
-**Quality gates green on feature/v1.4.0-bench HEAD (`7087c5d`):**
+**Quality gates green on feature/v1.4.0-bench:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ **581 passed** (no backend changes in Slice 8)
+- `cargo test --lib` ✓ (581 passed)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
-**Marketplace test breakdown (42):**
-- index.rs: 4 (roundtrip, to_unsigned, field order, real-world JSON)
-- verify.rs: 9 (correct/tampered/wrong-key/bad-b64/short/long sig, maintainer fixture verify + reject)
-- fetch.rs: 14 (parse envelope checks, mockito 200/500, cache fresh/stale/failed/corrupt paths, default_cache_path, default_client, FetchOutcome accessors)
-- install.rs: 16 (happy path, sha256 mismatch, oversize, traversal/abs sanitizer, replace existing, uninstall+idempotent, validate_plugin_id battery, zip-bomb cap, uppercase sha256, sha256 vector, sanitize curdir/empty, ct_eq)
+**v1.3.1 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.3.1 — all 6 assets uploaded ✓ (auto-created by tauri-action during CI run 26012655931, no manual `gh release create` needed)
+
+**v1.4.0 status**: 10/11 slices shipped. Backend complete (5 modules,
+42 unit tests). UX complete (Browse tab, install/uninstall modals,
+update badges, drawer). Docs complete (MARKETPLACE.md + seed). Only
+Slice 11 = release pipeline remains.
 
 ---
 
-## TICK 2026-05-17 21:13 PT — v1.3.1 finalized + v1.4.0 Slice 1
+## TICK 2026-05-17 23:10 PT — v1.3.1 finalized + Bench Slices 9+10 (3 commits)
 
-(History — first tick on Bench.)
+**MODE B closeout — v1.3.1 released:**
+- CI 26012655931 finished green between ticks
+- All 6 artifacts already uploaded by tauri-action (no manual upload needed)
+- Release notes rendered from `docs/release-notes/v1.3.1.md`
 
----
+**MODE C develop — v1.4.0 Bench Slices 9+10:**
 
-## TICK 2026-05-17 22:39 PT — v1.4.0 Slice 8 (drawer + install modal + update badge) in one tick
+1. `0185360` — feat(marketplace): uninstall confirmation modal (Slice 9)
+   - New `UninstallConfirmModal.svelte` (mirrors DecryptModal style)
+   - PluginsPanel refactor: `onUninstall` opens modal, `confirmUninstall` runs
+     the destructive call; both card + drawer call sites pick this up
+     automatically since they already route through `onUninstall`
+   - 7 new i18n keys × 4 locales
+   - Closes drawer if showing the just-removed plugin
 
-**MODE C develop v1.4.0 "Bench":** (on `feature/v1.4.0-bench`)
+2. `1ce0d41` — docs(marketplace): submission guide + seed slab-plugins repo (Slice 10)
+   - `docs/MARKETPLACE.md` — 340-line maintainer/author guide
+   - `docs/marketplace-seed/{README.md,index.json.example}` — drop-in
+     payload for the future `Sanjays2402/slab-plugins` GH repo
+   - `docs/PLUGINS.md` — one bullet pointing to MARKETPLACE.md
 
-1. `7087c5d` — feat(marketplace): plugin detail drawer + install modal + update badges (Slice 8)
-   - New `PluginDetailDrawer.svelte` — right-side 420px slide-in with full description, identity, install state, size, compat, SHA-256, signature, download URL, contextual action button. ESC+backdrop close.
-   - New `InstallProgressModal.svelte` — centered modal with phased status (verifying → downloading → extracting → done|error), CSS-only indeterminate progress bar (respects prefers-reduced-motion), success auto-dismiss (1.8s), errors stick with detail + Close.
-   - Cross-tab update badge: `availableUpdates` $derived map; amber pill on Installed-tab rows when marketplace has a newer version; one-click jump to Browse + drawer at matching entry.
-   - `onMount` opportunistically refreshes the marketplace index when any plugins are installed, so badges populate without requiring Browse-tab visit.
-   - Wiring: cards become role=button + tabindex=0 + Enter/Space handlers; .market-card-actions stops click propagation to prevent double-fire; drawer & modal mount outside <section> so backdrops cover whole panel.
-   - i18n: 16 new keys × 4 locales (en, es, fr, ar) under `plugins.detail.*`, `plugins.install.*`, `plugins.installed.*`.
-   - Plan: `docs/plans/2026-05-17-v1.4.0-bench-slice-8.md`.
+3. `6bc227a` — Merge --no-ff on `feature/v1.4.0-bench`
 
-**Pushed `7087c5d` to origin/feature/v1.4.0-bench. All gates green.** 581 tests still pass (Slice 8 is 100% frontend).
-
----
-
-## TICK 2026-05-17 22:21 PT — v1.4.0 Slices 5 + 6 + 7 in one tick (3 commits)
-
-**MODE C develop v1.4.0 "Bench":** (on `feature/v1.4.0-bench`)
-
-1. `80f08e5` — feat(marketplace): Tauri commands — fetch/install/uninstall (Slice 5)
-   - 3 commands in `src-tauri/src/lib.rs`: `slab_marketplace_index`, `slab_marketplace_install`, `slab_marketplace_uninstall`.
-   - `MarketplaceFetchResult` flat struct (is_fresh/is_stale/index/error) — never throws, errors flow through `error` field.
-   - Install verifies signature pre-network (defence in depth), then atomic install, then triggers `PluginRegistry::discover` for auto-refresh.
-   - Uninstall is sync + idempotent (returns false if dir absent).
-
-2. `9f104fc` — feat(marketplace): TypeScript store + types (Slice 6)
-   - New 253-line `src/lib/marketplace.ts`: types, `marketplaceStore` writable, `refreshMarketplace()`, `installPlugin(entry)`, `uninstallPluginById(id)`, `compareSemver` (semver + pre-release aware), `formatBytes`.
-   - Browser-mode short-circuits everywhere via `isInTauri()` so `pnpm dev` outside Tauri shell still works.
-   - Per-id busy flags in store so each card spins independently.
-
-3. `c826248` — feat(marketplace): Browse tab + 4-locale i18n (Slice 7)
-   - PluginsPanel.svelte: tab strip (Installed | Browse) using existing `.seg` aesthetic.
-   - Browse states: loading, error+retry, empty, stale-banner, responsive grid (1→2 cols).
-   - Per-card statuses: install / installed (accent border) / update (amber glow), driven by `compareSemver`.
-   - i18n: 23 new keys × 4 locales (en, es, fr, ar).
-   - +170 lines of scoped styles, line-clamp polyfilled.
-   - Plan: `docs/plans/2026-05-17-v1.4.0-bench-slices-5-7.md`.
-
-**Pushed `c826248` to origin/feature/v1.4.0-bench. All gates green.**
-
----
-
-## TICK 2026-05-17 21:43 PT — v1.4.0 Slices 2 + 3 + 4 in one tick (5 commits)
-
-**MODE C develop v1.4.0 "Bench":** (on `feature/v1.4.0-bench`)
-
-1. `c14fd44` — feat(marketplace): bake real Ed25519 maintainer public key into verifier
-   - Replaced all-zero placeholder with real key (hex `17f38d92db3af964…7b27`).
-   - Private key generated locally + saved to `~/.slab-maintainer-key` (chmod 600, NOT committed).
-   - Regression test pins a known-good fixture signature so any future key drift breaks loudly.
-
-2. `ad0c23c` — feat(marketplace): slab-sign-plugin CLI for maintainer signing (Slice 2)
-   - New `[[bin]]` in `src-tauri/Cargo.toml` → `cargo run --bin slab-sign-plugin`.
-   - Reads private key file (base64 32-byte seed, `#` comments stripped), computes tarball sha256, signs canonical IndexEntryUnsigned, prints pretty JSON.
-   - `--print-public-key` / `--print-fixture-signature` utility modes.
-   - 14 unit tests + verified end-to-end against a real test tarball.
-
-3. `337c0d5` — feat(marketplace): HTTP fetch + offline cache (Slice 3)
-   - `fetch_index` (pure HTTP+parse), `fetch_index_with_cache` (network-first, stale fallback).
-   - Envelope validation: schema_version ≤ CURRENT, signing_key_id == MAINTAINER_KEY_ID.
-   - `default_client` mirrors Ollama config (3s connect, 30s total).
-   - 14 unit tests via mockito + tempfile — fully offline.
-
-4. `017bc1a` — feat(marketplace): atomic install pipeline (Slice 4)
-   - `install_from_bytes` / `install_from_entry` / `uninstall_plugin`.
-   - Staging-then-rename atomicity; replace existing via `.trash/<id>-<ts>`.
-   - Hardening: plugin-id validation, path sanitizer (no `..`/abs/empty), symlink target containment, type allowlist, MAX_TARBALL_BYTES (5 MiB) + MAX_UNCOMPRESSED_BYTES (50 MiB) caps.
-   - New deps: `flate2 = "1"` (rust_backend), `tar = "0.4"`.
-   - 16 unit tests including a real zip-bomb gzip → uncompressed-cap defense.
-
-5. `2afc228` — chore(marketplace): polish — rustfmt, clippy clean, README test count 539→581.
-
-**Pushed `2afc228` to origin/feature/v1.4.0-bench. All gates green.**
+**Sanjay's WIP preserved**: `stash@{0}: On main: WIP from Sanjay: screenshot refresh + dynamic version`. Recover with `git stash pop` on main.
 
 ---
 
@@ -125,8 +71,8 @@
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
 ### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
-### v1.3.1 "Foundry Patch" 🩹 — RELEASED 2026-05-17 ✓
-### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slices 1–8/11 shipped & pushed; backend + Tauri cmds + TS store + Browse UI + drawer + install modal + update badges done; uninstall polish + docs + release next)
+### v1.3.1 "Foundry Patch" 🩹 — RELEASED 2026-05-17
+### v1.4.0 "Bench" 🪑 — **Slices 1-10 done, Slice 11 (release) next tick**
 
 ---
 
@@ -141,58 +87,73 @@
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench (Slice 9 → 11: uninstall polish + docs + release)
+## NEXT TICK PLAYBOOK — v1.4.0 Bench Slice 11 (release)
 
-Slices 1–8 are done. Remaining work:
+This is the close-out tick for Bench. MODE C → MODE A.
 
-1. **Slice 9 — Uninstall flow polish** (smaller — good single-tick or combined-with-10 target):
-   - Confirmation dialog ("Uninstall <name>? This removes its plugin files.").
-   - Move-to-trash semantics already exist in backend; surface a "Trashed (restore?)" toast for 5 seconds.
-   - Auto-deselect if active plugin (active AI provider, current theme, etc.) is uninstalled — refresh selectors gracefully.
+1. **Lockstep version bump** on `feature/v1.4.0-bench`:
+   - `package.json`: 1.3.1 → 1.4.0
+   - `src-tauri/Cargo.toml`: 1.3.1 → 1.4.0 (both top + `[package]`)
+   - `src-tauri/tauri.conf.json`: productVersion → 1.4.0
+   - `Cargo.lock`: regenerate via `cargo update -p slab-app`
 
-2. **Slice 10 — Docs + seed `slab-plugins` repo**:
-   - Public repo with 3 example plugins signed by maintainer key.
-   - Generate `index.json` via `slab-sign-plugin` + commit to repo.
-   - Host via GitHub Pages or raw.githubusercontent.
-   - Add `MARKETPLACE.md` to slab repo documenting authorship/signing/publishing.
+2. **Release notes**: `docs/release-notes/v1.4.0.md`
+   - Headline: 🪑 marketplace
+   - Sections: Marketplace, Uninstall safety, Schema reference, Docs
 
-3. **Slice 11 — Release ceremony**:
-   - Bump `package.json` + `Cargo.toml` + `tauri.conf.json` to 1.4.0.
-   - Release notes from Slice 1–8 tick history.
-   - Merge feature/v1.4.0-bench → main (--no-ff).
-   - Tag v1.4.0, push, wait for CI, GH release with artifacts.
+3. **README front-door refresh** to v1.4.0 (test count stays 581 unless gates change)
 
-Suggested batching:
-- **Next tick:** Slice 9 + 10 together (uninstall polish + docs + maybe seed repo). Both are smaller pieces.
-- **Tick after:** Slice 11 ship ceremony.
+4. **Quality gates** (all four):
+   - `cargo fmt --all -- --check`
+   - `cargo clippy --all-targets -- -D warnings`
+   - `cargo test --lib`
+   - `pnpm check`
 
----
+5. **Mark STATUS: DONE** on the feature branch.
 
-## (Previous playbook — Slice 8 — superseded above; kept for history)
+6. **MODE A in same tick**:
+   - `git checkout main && git pull`
+   - **Stash Sanjay's WIP if dirty** (`git stash list` to check)
+   - `git merge --no-ff feature/v1.4.0-bench -m "Merge v1.4.0 'Bench' — plugin marketplace + signed manifests"`
+   - Re-run gates on the merge commit
+   - `git tag v1.4.0 && git push origin main --follow-tags` (with auth helper)
+   - Record `RELEASE_PENDING: v1.4.0 — merge SHA <…>, tag v1.4.0, CI run <…>` here
 
-(Slice 8 completed in TICK 2026-05-17 22:39 PT — see history section above.)
-
----
-
-## v1.4.0 "Bench" Slice plan summary (full spec in `.cron-state/proposals/v1.4.0-bench.md`)
-
-1. ✅ Marketplace index schema + Ed25519 verifier (Tick 1, 12 tests)
-2. ✅ Maintainer signing tool (Tick 2, 14 tests + real key bake-in)
-3. ✅ `marketplace/fetch.rs` — HTTP + offline cache (Tick 2, 14 tests)
-4. ✅ `marketplace/install.rs` — atomic extract with hardening (Tick 2, 16 tests)
-5. ✅ Tauri commands `slab_marketplace_*` (Tick 3, `80f08e5`)
-6. ✅ Frontend `src/lib/marketplace.ts` store (Tick 3, `9f104fc`)
-7. ✅ Frontend Browse tab + plugin cards + 4-locale i18n (Tick 3, `c826248`)
-8. ✅ Frontend install modal + update-available badges + plugin detail drawer (Tick 4, `7087c5d`)
-9. Uninstall flow polish (NEXT TICK)
-10. Docs + seed `slab-plugins` repo with 3 example plugins
-11. Release — version bump 1.3.1 → 1.4.0 + notes + merge + tag + push
+7. **MODE B finalize** next tick after CI completes.
 
 ---
 
 ## POST-v1.4 ROADMAP REMINDERS
 
-- v1.5.0 "TypeScript Plugins" — V8/QuickJS sandbox for `script.js` contribs (bigger lift; security-heavy)
-- v1.5.x — AI provider hook-up of plugin-contributed providers through Beacon's runtime
-- v1.5.x — Slab CLI `slab plugin install <url>` command
-- Beacon Bonus Slices (`.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`) — Smart Outline, Citations, Study Mode, Glossary, Voice Mode
+After v1.4.0 ships, candidate next versions:
+
+**Option A — v1.4.1 "Bench seed" (one-time external)**
+- Sanjay creates `Sanjays2402/slab-plugins` GH repo, drops the seed
+  files from `docs/marketplace-seed/` into it. Maintainer-side: sign
+  the hello-slab plugin and post the first real `index.json`. This
+  is a Sanjay action, not a Cake one.
+
+**Option B — Beacon Bonus Slices (`.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`)**
+- Smart Outline, Citations, Study Mode, Glossary, Voice Mode — five
+  AI features riding the existing Beacon infra. Quick wins.
+
+**Option C — v1.5.0 "TypeScript Plugins"** — a `script.js`
+contribution kind running in an embedded V8/QuickJS sandbox. Bigger
+project; would let plugins do real frontend work (custom panels).
+Risk: sandbox security is hard.
+
+**Option D — v1.5.0 "Forge" (author-controlled signing)**
+- Lets plugin authors sign their own releases with their own keys
+  instead of routing through the maintainer. Bigger trust model
+  shift; want at least 10 plugins in the curated index before
+  considering this.
+
+My recommendation: **Option B (Beacon Bonus Slices)** next. Quick
+wins riding the existing Beacon infra — Smart Outline + Citations
+are 2-3 ticks each and visibly bump the AI experience.
+
+Other parked items:
+- AI provider hook-up of plugin-contributed providers through Beacon's
+  runtime (planned v1.3.x patch — currently they appear in the
+  palette + boot log but aren't yet selectable in chat)
+- Slab CLI `slab plugin install <url>` command (post-Bench)
