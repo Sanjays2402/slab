@@ -227,6 +227,34 @@ pub(super) fn validate_references(
     out
 }
 
+/// Count how many inline cites have a matching reference (by lowercased key)
+/// vs. how many are orphans.
+pub(super) fn count_links(inline: &[InlineCite], refs: &[Reference]) -> (u32, u32) {
+    use std::collections::HashSet;
+    let ref_keys: HashSet<&str> = refs.iter().map(|r| r.key.as_str()).collect();
+    let mut linked = 0u32;
+    let mut orphans = 0u32;
+    for c in inline {
+        if ref_keys.contains(c.key.as_str()) {
+            linked += 1;
+        } else {
+            orphans += 1;
+        }
+    }
+    (linked, orphans)
+}
+
+/// Build a `CitationSummary` from already-validated components.
+pub(super) fn build_summary(inline: &[InlineCite], refs: &[Reference]) -> CitationSummary {
+    let (linked, orphans) = count_links(inline, refs);
+    CitationSummary {
+        inline_total: inline.len() as u32,
+        references_total: refs.len() as u32,
+        linked,
+        orphans,
+    }
+}
+
 /// Lazily-compiled regexes shared across calls.
 fn re_author_year() -> &'static Regex {
     // Matches "(Smith 2024)", "(Smith, 2024)", "(Smith and Jones 2024)",
@@ -543,5 +571,58 @@ mod tests {
             .collect();
         let refs = validate_references(entries, 100);
         assert_eq!(refs.len(), MAX_REFERENCES);
+    }
+
+    #[test]
+    fn links_inline_to_references_by_key() {
+        let inline = vec![
+            InlineCite {
+                page: 1,
+                text: "(Smith 2024)".into(),
+                key: "smith2024".into(),
+                authors_hint: "smith".into(),
+                year_hint: "2024".into(),
+            },
+            InlineCite {
+                page: 2,
+                text: "(Jones 2023)".into(),
+                key: "jones2023".into(),
+                authors_hint: "jones".into(),
+                year_hint: "2023".into(),
+            },
+        ];
+        let refs = vec![Reference {
+            key: "smith2024".into(),
+            authors: "Smith".into(),
+            year: "2024".into(),
+            title: "T".into(),
+            page_in_doc: 80,
+        }];
+        let (linked, orphans) = count_links(&inline, &refs);
+        assert_eq!(linked, 1);
+        assert_eq!(orphans, 1);
+    }
+
+    #[test]
+    fn summary_from_components_is_consistent() {
+        let inline = vec![InlineCite {
+            page: 1,
+            text: "[12]".into(),
+            key: "12".into(),
+            authors_hint: String::new(),
+            year_hint: String::new(),
+        }];
+        let refs = vec![Reference {
+            key: "12".into(),
+            authors: "X".into(),
+            year: "2024".into(),
+            title: "T".into(),
+            page_in_doc: 80,
+        }];
+        let s = build_summary(&inline, &refs);
+        assert_eq!(s.inline_total, 1);
+        assert_eq!(s.references_total, 1);
+        assert_eq!(s.linked, 1);
+        assert_eq!(s.orphans, 0);
     }
 }
