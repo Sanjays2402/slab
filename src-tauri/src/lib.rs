@@ -21,6 +21,10 @@ use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
     IndexReport, IndexStats, SearchHit,
 };
+use ai::outline::{
+    propose_outline_from_path as do_beacon_propose_outline, ProposedOutline,
+    DEFAULT_OUTLINE_MAX_CHARS,
+};
 use ai::pii::{
     find_pii as do_find_pii, CustomPattern as PiiCustomPattern, PiiError, PiiHit, PiiKind, PiiOpts,
     PiiSummary,
@@ -740,6 +744,39 @@ async fn slab_beacon_summary(
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_MAX_CONTEXT_CHARS);
     do_beacon_summary(provider, &pdf_path, length, budget)
+        .await
+        .into()
+}
+
+/// Beacon "Smart Outline" — propose a hierarchical TOC for an opened PDF.
+/// Returns a `ProposedOutline` whose `nodes` field is shaped exactly like
+/// what `slab_write_outline` expects, so the frontend can pipe an accepted
+/// proposal straight into the existing save path with zero translation.
+#[tauri::command]
+async fn slab_beacon_propose_outline(
+    pdf_path: PathBuf,
+    max_context_chars: Option<u32>,
+) -> CmdResult<ProposedOutline> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let budget = max_context_chars
+        .map(|n| n as usize)
+        .unwrap_or(DEFAULT_OUTLINE_MAX_CHARS);
+    do_beacon_propose_outline(provider, &pdf_path, budget)
         .await
         .into()
 }
@@ -1918,6 +1955,7 @@ pub fn run() {
             slab_beacon_provider_kinds,
             slab_beacon_chat,
             slab_beacon_summary,
+            slab_beacon_propose_outline,
             slab_beacon_diff_summary,
             slab_beacon_index_pdf,
             slab_beacon_search,
