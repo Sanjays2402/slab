@@ -25,6 +25,7 @@ import en from "./i18n/en.json";
 import es from "./i18n/es.json";
 import fr from "./i18n/fr.json";
 import ar from "./i18n/ar.json";
+import { pluginsStore, loadPluginLocaleBundle, currentPlugins } from "$lib/plugins";
 
 export type LocaleId = "en" | "es" | "fr" | "ar";
 export type Bundle = Record<string, string>;
@@ -131,10 +132,83 @@ export function setLocale(id: LocaleId): void {
 }
 
 /**
+ * Merge a plugin-contributed bundle into the in-memory bundle for `id`.
+ * Logs an info line on every key that overrides a built-in entry so plugin
+ * authors notice clashes during dev. Idempotent — calling with the same
+ * bundle is harmless; the last writer wins. After mutation, re-emits the
+ * `locale` store so anything subscribed to `$tStore` repaints.
+ */
+export function mergePluginBundle(id: LocaleId, bundle: Bundle, pluginId: string): void {
+	const target = BUNDLES[id];
+	if (!target) return;
+	let changed = false;
+	for (const [key, value] of Object.entries(bundle)) {
+		if (typeof value !== "string") continue;
+		if (key in target && target[key] !== value) {
+			console.info(`[slab i18n] plugin ${pluginId} overrides "${key}" in ${id}`);
+		}
+		if (target[key] !== value) {
+			target[key] = value;
+			changed = true;
+		}
+	}
+	if (changed) {
+		// Force `tStore` to re-emit so any component watching `$tStore` repaints.
+		locale.set(get(locale));
+	}
+}
+
+/**
  * Boot the i18n system. Called once from +layout.svelte's `onMount`
  * alongside `bootTheme()`. Idempotent. Synchronously applies the
- * persisted locale so there's no flash of the wrong language.
+ * persisted locale so there's no flash of the wrong language. Also
+ * subscribes to the plugin snapshot (populated by
+ * +layout.svelte's `refreshPlugins()` call) to merge plugin locales
+ * whenever the snapshot changes or the active locale flips.
  */
 export function bootI18n(): void {
 	applyLocaleToHtml(get(locale));
+
+	// Track which (plugin_id, bundle) pairs we've already merged so we
+	// don't refetch on every store emit. Resets on locale switch via the
+	// `locale.subscribe` below.
+	let lastSeen = new Set<string>();
+	let lastLocale: LocaleId = get(locale);
+
+	pluginsStore.subscribe(async (snap) => {
+		const id = get(locale);
+		const targets = snap.locales.filter((l) => l.locale === id);
+		const seen = new Set(targets.map((l) => `${l.plugin_id}::${l.bundle}`));
+		// Skip if nothing relevant changed.
+		if (seen.size === lastSeen.size && [...seen].every((k) => lastSeen.has(k))) return;
+		lastSeen = seen;
+		for (const t of targets) {
+			try {
+				const bundle = await loadPluginLocaleBundle(t.plugin_id, t.locale);
+				mergePluginBundle(id, bundle, t.plugin_id);
+			} catch (e) {
+				console.warn(`[slab i18n] failed to load bundle from ${t.plugin_id}`, e);
+			}
+		}
+	});
+
+	// Re-merge on locale switch.
+	locale.subscribe((id) => {
+		if (id === lastLocale) return;
+		lastLocale = id;
+		lastSeen = new Set();
+		applyLocaleToHtml(id);
+		const snap = currentPlugins();
+		const targets = snap.locales.filter((l) => l.locale === id);
+		for (const t of targets) {
+			loadPluginLocaleBundle(t.plugin_id, t.locale)
+				.then((b) => {
+					mergePluginBundle(id, b, t.plugin_id);
+					lastSeen.add(`${t.plugin_id}::${t.bundle}`);
+				})
+				.catch((e) =>
+					console.warn(`[slab i18n] reload bundle on locale switch failed`, e),
+				);
+		}
+	});
 }
