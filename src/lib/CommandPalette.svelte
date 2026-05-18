@@ -5,6 +5,9 @@
   import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
   import { openPanelWindow } from "$lib/windows";
   import { isInTauri } from "$lib/tauri";
+  import { vimEnabled } from "$lib/vim/mode";
+  import { LOCALES, setLocale, t } from "$lib/i18n";
+  import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
   // native window. Must stay in sync with `DETACHABLE_PANELS` in
@@ -189,6 +192,31 @@
       run: () => onSelectPanel("keymap"),
       keywords: "shortcuts keymap rebind customize keys hotkeys bindings",
     });
+    // Glass II Slice 1: toggle Vim modal bindings
+    out.push({
+      id: "settings:toggle-vim",
+      title: get(vimEnabled) ? "Disable Vim bindings" : "Enable Vim bindings",
+      subtitle: "Modal keyboard navigation across Reader, Library, Beacon",
+      icon: "⌨",
+      group: "Settings",
+      run: () => vimEnabled.set(!get(vimEnabled)),
+      keywords: "vim bindings modal keyboard normal insert visual hjkl",
+    });
+    // Glass II Slice 5: switch UI language. One entry per locale so the
+    // palette behaves like Settings → Language but with keyboard-first.
+    // Each title is bilingual ("Español (Spanish)") for discoverability
+    // regardless of the user's current language.
+    for (const loc of LOCALES) {
+      out.push({
+        id: `settings:lang:${loc.id}`,
+        title: `Switch language: ${loc.label}`,
+        subtitle: t("settings.language.desc"),
+        icon: "⌘",
+        group: "Language",
+        run: () => setLocale(loc.id),
+        keywords: `language locale i18n translate ${loc.label} ${loc.id} english español spanish français french arabic عربية`,
+      });
+    }
     // Glass Slice 6: re-trigger the onboarding tour
     out.push({
       id: "help:onboarding",
@@ -347,6 +375,7 @@
         bind:this={inputEl}
         bind:value={query}
         placeholder="Jump to anything…"
+        aria-label="Command palette search"
         autocomplete="off"
         spellcheck="false"
       />

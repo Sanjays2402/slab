@@ -285,6 +285,7 @@
                     class="span-input"
                     type="text"
                     value={currentValue}
+                    aria-label="Edit text for span on page {span.page}"
                     oninput={(e) => setEdit(span.id, (e.currentTarget as HTMLInputElement).value, span.text)}
                     spellcheck="false"
                     autocapitalize="off"

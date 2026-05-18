@@ -5,7 +5,280 @@
 
 ---
 
-## STATUS: 🚀 v1.1.0 "Cabinet" MERGED + TAGGED + PUSHED — CI running
+## STATUS: 🚀 v1.2.0 "Glass II" Slices 3-2nd-half + 4 + 6 shipped (5 commits this tick)
+
+**Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
+**v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
+**Active branch**: `feature/v1.2.0-glass-ii` (10 commits ahead of main as of this tick)
+**Branch HEAD**: `e4478db` — `a11y: honour prefers-reduced-motion and prefers-contrast (Slice 6)`
+
+**Quality gates green on branch HEAD:**
+- pnpm exec svelte-check → 0 errors / 23 warnings (down from 28)
+- cargo fmt --check ✓
+- cargo clippy --all-targets -D warnings ✓
+- cargo test --lib → 468 passed
+
+**Glass II completion ledger:**
+- ✅ Slice 1 — pure Vim state machine + keymap
+- ✅ Slice 1.5 — VimController + VimIndicator + Settings/Palette toggles
+- ✅ Slice 2 — Reader Vim adapter + panel wiring
+- ✅ Slice 3 first half — Library Vim adapter
+- ✅ Slice 3 second half — Beacon Vim adapter (this tick)
+- ✅ Slice 4 — a11y audit script + focus-visible ring + aria-current (this tick)
+- ✅ Slice 4 pass 2 — input-label fixes across 15 panels (this tick)
+- ✅ Slice 6 — prefers-reduced-motion + prefers-contrast (this tick)
+- ⏳ Slice 5 — i18n scaffolding (NEXT TICK)
+- ⏳ Slice 7 — version bump + release notes + tag + release
+
+**Next tick — MODE C — Slice 5 (i18n) + maybe release prep**:
+- Lay down `src/lib/i18n.ts` with a minimal `t(key, vars?)` function
+- Extract ~15 most-visible English strings into `src/lib/i18n/en.json`
+- Wire `<html lang>` updates + LTR/RTL data attribute
+- Skeleton for one additional locale (es.json or fr.json) just to prove the mechanism
+- If time: version bump + release notes draft
+
+---
+
+## TICK 2026-05-17 ~16:25 PT — v1.2.0 Glass II Slice 3-2nd-half + 4 + 6 (5 commits)
+
+Three slices shipped in one off-hours tick: Beacon Vim adapter
+(closing out the Vim trilogy), the a11y audit + global focus ring +
+input labels (Slice 4 in two passes), and the reduced-motion +
+high-contrast CSS (Slice 6).
+
+### Slice 3 second half — Beacon Vim adapter (`72a9156`)
+
+**New module**: `src/lib/vim/beacon-adapter.ts` (118 lines).
+Five window CustomEvents: scroll (j/k/half-page/full-page with count
+prefixes), scroll-edge (gg/G), focus-input (i / a), blur-input (Esc),
+reset-chat (dd). Gated on `registerBeaconNav()` so non-Beacon views
+are silent no-ops.
+
+**BeaconChatPanel wiring**: onMount listeners + onDestroy cleanup +
+5 handlers. Scroll step sizes match Reader/Library tactile feel
+(line=80px, half=max(120, h*0.5), full=max(200, h-40)).
+
+**+page.svelte**: `<VimController panel="beacon">` wrapper +
+`onBeaconVimAction` dispatch.
+
+### Slice 4 pass 1 — a11y audit + focus rings + aria-current (`0d23aa3`)
+
+**New script**: `scripts/audit-a11y.mjs` (~7 KB). Plain Node,
+zero deps. Three heuristic checks across all 51 .svelte files:
+1. Icon-only buttons missing aria-label/title.
+2. inputs/selects/textareas missing labels (handles `aria-label`,
+   `aria-labelledby`, `<label for>`, `<label>…</label>` wraps,
+   mustache content).
+3. `<img>` tags missing alt=.
+
+Flags: `--json`, `--strict` (exit 1 on issues). Added scripts to
+`package.json`: `a11y:audit` + `a11y:audit:strict`.
+
+Audit baseline: 0 icon-button, 40 input-label, 0 img-alt. Pass 1
+also added the **global focus-visible ring** in `src/app.css` (using
+`--accent` so it auto-themes) + `<nav aria-label="Primary">` and
+`aria-current={active === f.id ? "page" : undefined}` on the
+sidebar items.
+
+### Slice 4 pass 2 — input-label fixes across 15 panels (`631d235`)
+
+Resolved all 40 input-label issues. Touched 15 files (RedactPanel,
+PageLabelsPanel, NupPanel, GrayscalePanel, MarkdownPanel,
+AutoRedactPanel, BeaconChatPanel textareas, BeaconSearchPanel,
+ConvertPanel, EditTextPanel, LibraryPanel, ReaderPanel, SignPanel,
+OutlineEditor, CommandPalette). Strategy: aria-label for inputs
+with adjacent visible labels, `id` + `for=` for `<label>`-wrapped
+patterns. Index-aware labels for repeated rows. Audit is now CLEAN.
+
+### Slice 6 — prefers-reduced-motion + prefers-contrast (`e4478db`)
+
+Two new global blocks in `src/app.css`:
+
+- **prefers-reduced-motion**: `*, *::before, *::after` with
+  `animation-duration: 0.001ms !important` + matching transition +
+  `scroll-behavior: auto`. !important because many transitions
+  live in component `<style>` blocks with higher specificity.
+- **prefers-contrast: more**: Stronger `--border` and `--muted`
+  via `color-mix()`, focus ring outline-width 2px → 3px, control
+  borders 1px → 2px. We deliberately do NOT override `--accent`.
+
+### Commits this tick
+
+- `72a9156` — feat(vim): Beacon adapter + panel wiring (Slice 3 — second half)
+- `0d23aa3` — a11y: audit script + global focus-visible ring + aria-current on nav (Slice 4)
+- `631d235` — a11y: associate labels with every flagged input (Slice 4 — pass 2)
+- `e4478db` — a11y: honour prefers-reduced-motion and prefers-contrast (Slice 6)
+
+### Velocity
+
+| Tick | Slices ships                          | Commits | Cumulative |
+|------|---------------------------------------|---------|------------|
+| 1    | Slice 1 + 1.5                         | 2       | 2          |
+| 2    | Slice 2 + 3 first half                | 3       | 5          |
+| 3    | Slice 3-2nd + 4 (×2) + 6 (TODAY)      | 4       | 9          |
+
+**Remaining**: Slice 5 (i18n) + Slice 7 (release). At current
+velocity, Glass II ships in 1-2 more ticks.
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🚀 v1.2.0 "Glass II" Slices 2 + 3 (first half) shipped (3 commits)
+
+**Main HEAD**: `ef037e3` — `chore(cron): v1.1.0 Cabinet merged + tagged, RELEASE_PENDING set`
+**v1.1.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.1.0 — all 6 assets uploaded ✓
+**Active branch**: `feature/v1.2.0-glass-ii` (pushed, 5 commits ahead of main)
+**Branch HEAD**: `c93c45f` — `feat(vim): wire VimController around Reader + Library shells`
+
+**Quality gates green on branch HEAD:**
+- pnpm exec svelte-check → 0 errors / 28 baseline warnings (unchanged)
+- cargo fmt --check (no Rust touched this tick)
+
+**Next tick — MODE C — Slice 4 (a11y pass 1) OR Slice 5 (i18n)**:
+Slice 3 second-half (Beacon) is small (4 mappings). Ship that + start Slice 4 in the next tick. Suggested batching:
+- Beacon Vim adapter (j/k scroll history, i enter chat, /search filter, dd delete last message)
+- a11y audit script (`scripts/audit-a11y.mjs`)
+- Fix top 20-30 missing aria-labels (likely buttons on toolbars)
+- `:focus-visible` ring rule in `src/app.css`
+
+After Slices 4+5+6, Slice 7 = release.
+
+---
+
+## TICK 2026-05-17 ~15:45 PT — v1.2.0 Glass II Slices 2 + 3-first-half (3 commits)
+
+Ship the **end-to-end Vim experience** in one tick: Reader bindings actually
+work now (j/k scroll, gg/G, /search, :42, :q), Library bindings actually
+work (j/k card nav, Enter open, dd remove, accent-ring focus). The
+controller was already in place from last tick — this tick wires the
+adapters and the panels around it.
+
+### Slice 2 — Reader Vim adapter (`2989e3e`)
+
+**New module**: `src/lib/vim/reader-adapter.ts` (123 lines).
+Pure function `runReaderVim(action, pendingSearchQuery)` returns a
+`ReaderVimResult` with `closeTab` + `gotoTab` hints for the shell, and
+fires window CustomEvents (`slab:vim-reader:*`) for everything else:
+page, goto, scroll, find-open, find-set, find-next.
+
+**ReaderPanel wiring**: six `onVim*` handler functions added next to
+`nextPage`/`prevPage`. Each gates on `active === true` so only the
+visible tab reacts (hidden tabs still subscribe so unregister works
+cleanly in `onDestroy`). Scroll uses `containerEl.scrollBy({behavior:
+"smooth"})`. `onVimFindOpen` opens the existing find toolbar via
+`toggleFind()`; `onVimFindSet` pushes the Vim search buffer into
+`findQuery` and re-runs `runFind`.
+
+The PDF.js viewer already exposes `currentPageNumber` setter via
+`jumpTo()`, so `gg` / `G` / `:42<CR>` all collapse to a single call.
+
+### Slice 3 first half — Library Vim adapter (`94f7086`)
+
+**New module**: `src/lib/vim/library-adapter.ts` (96 lines).
+Same shape as Reader adapter, but emits `slab:vim-library:*` events
+and uses `registerLibraryNav()` to gate emission — events only fire
+when LibraryPanel is mounted, so the adapter is a graceful no-op in
+non-Library views.
+
+**LibraryPanel wiring**:
+- `vimFocusIdx` state, `cardEls[]` bindings on each card.
+- Five handler functions (move / first / last / open / remove).
+- `class:vim-focused={i === vimFocusIdx}` on each card.
+- New CSS rule: `.card.vim-focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }`.
+- `scrollFocusIntoView()` with `behavior: "smooth", block: "nearest"`
+  keeps the focused card visible during long traversals.
+
+### Slice 2/3 — shell glue (`c93c45f`)
+
+`+page.svelte` now wraps the Reader stack and Library panel with
+`<VimController panel="..." on:action={...}>`. The two action handlers
+(`onReaderVimAction` / `onLibraryVimAction`) route through the new
+adapters and react to shell-side hints:
+- `closeTab: true` → `closeTab(activeTabId)` + `resetVim()`.
+- `gotoTab: n` → `setActiveTab(tabs[n-1].id)`.
+
+### What works end-to-end now (manual smoke check items for next launch)
+
+- Vim ON via Settings or Command Palette.
+- In Reader: `gg`, `G`, `[`, `]`, `Ctrl-d`, `/foo<CR>`, `n`, `:42<CR>`, `:q<CR>`.
+- In Library: `j`, `k`, `l`, `h`, `gg`, `G`, `<CR>` (open card), `dd` (remove).
+- Cmd/Ctrl shortcuts continue to belong to the app — controller skips them.
+- Typing in any `<input>` / `<textarea>` lets the input win (Insert-mode passthrough rule).
+
+### Commits this tick
+
+- `2989e3e` — feat(vim): Reader adapter + panel wiring (Slice 2)
+- `94f7086` — feat(vim): Library adapter + panel wiring (Slice 3 — first half)
+- `c93c45f` — feat(vim): wire VimController around Reader + Library shells
+
+### Velocity
+
+| Tick | Slices ships              | Commits | Cumulative |
+|------|---------------------------|---------|------------|
+| 1    | Slice 1 + 1.5             | 2       | 2          |
+| 2    | Slice 2 + 3 first half    | 3       | 5          |
+
+At this pace, Glass II ships in ~4 more ticks (Slice 3 second half + 4 + 5 + 6 + release).
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🚀 v1.1.0 RELEASED + v1.2.0 "Glass II" Slice 1 + 1.5 shipped
+
+---
+
+## TICK 2026-05-17 ~15:15 PT — v1.1.0 finalize + v1.2.0 Slice 1+1.5 (3 commits)
+
+Big two-mode tick: MODE B finalize for v1.1.0 → MODE C kickoff for v1.2.0.
+
+### MODE B — v1.1.0 Cabinet release
+- CI run `26003858536` polled → success (completed 22:14 UTC).
+- Downloaded all 6 artifacts to `/tmp/slab-v1.1.0-release/`.
+- Curated to `assets/v1.1.0/` with mac x64 rename to `_x64_macos.dmg`.
+- `gh release create v1.1.0 --title 'v1.1.0 — Cabinet 🗄' --notes-file docs/releases/v1.1.0.md` with 5 assets (held back AppImage to dodge 60s timeout).
+- Background uploaded AppImage via `gh release upload` (79 MB, completed cleanly).
+- Final asset list: 6/6 — verified via `gh release view v1.1.0 --json assets`.
+
+### MODE C — v1.2.0 Glass II launch
+Sanjay's "ship BIG things every tick" directive: instead of just finalizing v1.1.0 and stopping, kicked off v1.2.0 with two slices in the same tick.
+
+**Slice 1 — pure Vim state machine** (`9104ab9..f4e83b1`... commit `<sha1>` previous to current HEAD):
+- `src/lib/vim/types.ts` — `Mode` enum, `VimAction` discriminated union (12 variants), `VimPending`.
+- `src/lib/vim/keymap.ts` — pure `dispatchKey(state, ev) -> {state', action}` reducer. hjkl, gg/G, Ctrl-d/u/f/b, n/N, /, ?, :, i/I/a/A/o/O, v/V, dd, yy, count prefixes, [/], }/{ for page nav.
+- `src/lib/vim/mode.ts` — Svelte stores (`vimState`, `vimMode`, `vimEnabled`, `vimSearchQuery`, `vimCommandLine`) + `dispatch()` + `resetVim()`. `vimEnabled` persisted to localStorage.
+
+**Slice 1.5 — user-facing surface**:
+- `VimController.svelte` — reusable wrapper; capture-phase keydown; passthrough in Insert mode; Cmd/Ctrl reserved for the app.
+- `VimIndicator.svelte` — fixed pill bottom-left, colour-coded per mode, only renders when enabled.
+- Settings panel: Vim Off/On segmented control row.
+- Command Palette: "Enable/Disable Vim bindings" entry (group: Settings, keywords: vim modal hjkl).
+- `<VimIndicator />` mounted globally in `+page.svelte`.
+
+### Commits this tick
+
+- `<v1.1.0 finalize done via gh CLI, no commits>` — MODE B is artifact-side only
+- `feat(vim): modal state machine + keymap interpreter (Slice 1)` — pure logic + types + store
+- `feat(vim): VimController wrapper, VimIndicator pill, Settings + Palette toggles` — UI surface
+
+### Cabinet release verification
+
+```
+$ gh release view v1.1.0 --json assets --jq '.assets[].name'
+Slab_1.1.0_aarch64.dmg
+Slab_1.1.0_amd64.AppImage
+Slab_1.1.0_amd64.deb
+Slab_1.1.0_x64-setup.exe
+Slab_1.1.0_x64_en-US.msi
+Slab_1.1.0_x64_macos.dmg
+```
+
+---
+
+## PRIOR TICK STATE (kept for reference)
+
+## STATUS-PRIOR: 🚀 v1.1.0 "Cabinet" MERGED + TAGGED + PUSHED — CI running
 
 **Main HEAD**: `4c13e1d` — `Merge v1.1.0 "Cabinet" 🗄 — Multi-window detach for 11 panels`
 **Tag**: `v1.1.0` (pushed)
@@ -213,10 +486,8 @@ Glass on 2026-05-17 — 14 versions in 36 hours).
 ### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
 ### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
-### v1.1.0 "Cabinet" — TAGGED 2026-05-17, CI run `26003858536` running 🗄
-
-### v1.2.0 "Glass II" (later)
-- Vim bindings, a11y, i18n
+### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
+### v1.2.0 "Glass II" — Slice 1+1.5 DONE on `feature/v1.2.0-glass-ii` (Vim core)
 
 ### v1.3.0 "Foundry" (much later)
 - Plugin API, community-extensible

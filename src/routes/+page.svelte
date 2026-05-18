@@ -40,12 +40,20 @@
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
+  import VimIndicator from "$lib/vim/VimIndicator.svelte";
+  import VimController from "$lib/vim/VimController.svelte";
+  import { runReaderVim } from "$lib/vim/reader-adapter";
+  import { runLibraryVim, registerLibraryNav, type LibraryVimResult } from "$lib/vim/library-adapter";
+  import { runBeaconVim } from "$lib/vim/beacon-adapter";
+  import { vimSearchQuery, resetVim } from "$lib/vim/mode";
+  import type { VimAction } from "$lib/vim/types";
   import DetachedShell from "$lib/components/DetachedShell.svelte";
   import { isInTauri } from "$lib/tauri";
   import { openPanelWindow, closePanelWindow, focusPanelWindow, listPanelWindows, type WindowState } from "$lib/windows";
   import { matches } from "$lib/keymap";
   import { basename } from "$lib/types";
   import { notify } from "$lib/notify";
+  import { t, tStore } from "$lib/i18n";
   import type { RecentFile } from "$lib/recent";
 
   type Feature = {
@@ -110,11 +118,10 @@
   let detachedWindowId = $state<string | null>(null);
   let detachedDoc = $state<string | null>(null);
 
-  /** Pretty label for the DetachedShell titlebar (uses `features` list). */
+  /** Pretty label for the DetachedShell titlebar (uses i18n bundle). */
   function titleForPanel(id: string | null): string {
     if (!id) return "Slab";
-    const feat = features.find((f) => f.id === id);
-    return feat ? feat.label : "Slab";
+    return t(`features.${id}`);
   }
 
   /**
@@ -150,7 +157,8 @@
   function detachActive(id: string): void {
     void openPanelWindow(id).then((label) => {
       if (label) {
-        notify.info(`Detached ${features.find((f) => f.id === id)?.label ?? id}`);
+        const featLabel = t(`features.${id}`);
+        notify.info(t("toast.detached", { panel: featLabel }));
         // Optimistic refresh so the Windows menu shows the new entry
         // immediately rather than waiting for the next 2s poll.
         void refreshOpenWindows();
@@ -179,13 +187,12 @@
 
   async function closeWindow(label: string): Promise<void> {
     await closePanelWindow(label);
-    notify.info(`Closed detached window`);
+    notify.info(t("toast.closedDetached"));
     void refreshOpenWindows();
   }
 
   function prettyWindowLabel(w: WindowState): string {
-    const feat = features.find((f) => f.id === w.panelId);
-    const name = feat ? feat.label : w.panelId;
+    const name = t(`features.${w.panelId}`);
     if (w.targetDoc) {
       // Show just the file's basename, not the absolute path.
       const base = w.targetDoc.split(/[/\\]/).pop() ?? w.targetDoc;
@@ -251,6 +258,42 @@
   /** Called by ReaderPanel after a successful load. Updates the tab label. */
   function onTabTitleChange(id: string, title: string) {
     tabs = tabs.map((t) => (t.id === id ? { ...t, title } : t));
+  }
+
+  // ---------- Glass II Vim adapter dispatch (v1.2.0 Slice 2 + 3) ----------
+  //
+  // VimController emits `action` events with the high-level `VimAction`
+  // produced by the keymap reducer. We route each action through the
+  // panel-appropriate adapter. Reader and Library are the only panels
+  // wrapped right now — every other panel uses native shortcuts.
+
+  function onReaderVimAction(e: CustomEvent<VimAction>) {
+    const action = e.detail;
+    const pending = $vimSearchQuery;
+    const res = runReaderVim(action, pending);
+    if (res.closeTab) {
+      closeTab(activeTabId);
+      resetVim();
+    }
+    if (res.gotoTab !== undefined) {
+      const idx = res.gotoTab - 1;
+      if (idx >= 0 && idx < tabs.length) setActiveTab(tabs[idx].id);
+    }
+  }
+
+  function onLibraryVimAction(e: CustomEvent<VimAction>) {
+    const action = e.detail;
+    const res: LibraryVimResult = runLibraryVim(action);
+    // `o` (detach into new window) is plan-future — keymap currently routes it
+    // through Insert mode. When that's panel-specialised in a later slice,
+    // res.detachActive will fire here.
+    if (res.detachActive) {
+      detachActive("library");
+    }
+  }
+
+  function onBeaconVimAction(e: CustomEvent<VimAction>) {
+    runBeaconVim(e.detail);
   }
 
   async function pickAndOpenInNewTab() {
@@ -506,7 +549,7 @@
     <span class="brand-tag">local · offline · free</span>
   </div>
 
-  <nav>
+  <nav aria-label="Primary">
     {#each features as f (f.id)}
       <div class="nav-row" class:active={active === f.id}>
         <button
@@ -514,18 +557,19 @@
           class:active={active === f.id}
           class:locked={!f.ready}
           disabled={!f.ready}
+          aria-current={active === f.id ? "page" : undefined}
           onclick={() => (active = f.id)}
         >
           <span class="nav-icon">{f.icon}</span>
-          <span class="nav-label">{f.label}</span>
+          <span class="nav-label">{$tStore(`features.${f.id}`)}</span>
           {#if !f.ready}<span class="badge">soon</span>{/if}
         </button>
         {#if active === f.id && f.ready && supportsDetach(f.id) && isInTauri()}
           <button
             class="detach-btn"
             type="button"
-            title="Open {f.label} in a new window"
-            aria-label="Open {f.label} in a new window"
+            title="Open {$tStore(`features.${f.id}`)} in a new window"
+            aria-label="Open {$tStore(`features.${f.id}`)} in a new window"
             onclick={(e) => {
               e.stopPropagation();
               detachActive(f.id);
@@ -566,7 +610,7 @@
         {/each}
       </div>
     {/if}
-    <span class="version">v1.1.0</span>
+    <span class="version">v1.2.0</span>
   </div>
 </aside>
 
@@ -614,22 +658,28 @@
     <!-- Render every tab; only the active one is visible. Keeping the
          hidden tabs mounted preserves their pdfjs viewer state (current
          page, zoom, find state, outline) across switches. -->
-    <div class="reader-stack">
-      {#each tabs as t (t.id)}
-        <div class="reader-slot" class:active={t.id === activeTabId}>
-          <ReaderPanel
-            tabId={t.id}
-            active={t.id === activeTabId}
-            initialPath={t.initialPath}
-            onTitleChange={(title) => onTabTitleChange(t.id, title)}
-          />
-        </div>
-      {/each}
-    </div>
+    <VimController panel="reader" on:action={onReaderVimAction as unknown as (e: Event) => void}>
+      <div class="reader-stack">
+        {#each tabs as t (t.id)}
+          <div class="reader-slot" class:active={t.id === activeTabId}>
+            <ReaderPanel
+              tabId={t.id}
+              active={t.id === activeTabId}
+              initialPath={t.initialPath}
+              onTitleChange={(title) => onTabTitleChange(t.id, title)}
+            />
+          </div>
+        {/each}
+      </div>
+    </VimController>
   {:else if active === "beacon"}
-    <BeaconChatPanel />
+    <VimController panel="beacon" on:action={onBeaconVimAction as unknown as (e: Event) => void}>
+      <BeaconChatPanel />
+    </VimController>
   {:else if active === "library"}
-    <LibraryPanel />
+    <VimController panel="library" on:action={onLibraryVimAction as unknown as (e: Event) => void}>
+      <LibraryPanel />
+    </VimController>
   {:else if active === "search"}
     <BeaconSearchPanel />
   {:else if active === "pii"}
@@ -719,6 +769,8 @@
 />
 
 <ShortcutsOverlay bind:open={shortcutsOpen} onClose={() => (shortcutsOpen = false)} />
+
+<VimIndicator />
 
 {/if}
 

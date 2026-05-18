@@ -1,6 +1,6 @@
 {
   "name": "slab",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "a11y:audit": "node scripts/audit-a11y.mjs",
+    "a11y:audit:strict": "node scripts/audit-a11y.mjs --strict",
+    "i18n:test": "node scripts/i18n-test.mjs",
     "tauri": "tauri"
   },
   "license": "MIT",

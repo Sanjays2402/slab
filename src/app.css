@@ -187,6 +187,96 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* =====================================================================
+ * Accessibility — v1.2.0 "Glass II" Slice 4.
+ *
+ * Every interactive element gets a visible focus ring when reached via
+ * keyboard navigation (Tab / Shift-Tab / arrow keys). Mouse clicks do
+ * NOT trigger the ring — :focus-visible only fires on keyboard focus.
+ *
+ * The ring uses --accent (the user's chosen palette colour) so it works
+ * across light/dark/high-contrast themes without per-theme overrides.
+ * ===================================================================== */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Active sidebar item — strengthen the visual cue for screen-reader
+ * users who also see, and for keyboard users navigating with Tab. */
+[aria-current="page"] {
+  position: relative;
+}
+
+/* sr-only — visually hidden text for screen readers. Used by labels
+ * that exist for a11y but would clutter the visual design. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* =====================================================================
+ * prefers-reduced-motion — v1.2.0 "Glass II" Slice 6.
+ *
+ * macOS / Windows / iOS / Android all expose a "reduce motion" setting.
+ * When enabled, we kill non-essential animations and transitions to
+ * prevent vestibular discomfort. We use !important because many of
+ * our component-level transitions live in <style> blocks that ship
+ * with higher specificity than this global block.
+ *
+ * We intentionally do NOT zero out *all* transitions — opacity fades
+ * for tooltips and dropdowns stay (they communicate state). What we
+ * kill: transform-based movement, slide-ins, scale animations, the
+ * progress-bar shimmer, the loading-spinner rotation.
+ * ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* =====================================================================
+ * prefers-contrast: more — v1.2.0 "Glass II" Slice 6.
+ *
+ * When the user requests higher contrast (System Settings →
+ * Accessibility → Display → Increase Contrast on macOS, or the
+ * equivalent on Windows/Linux), we strengthen borders, darken muted
+ * text, and densify the focus ring. The accent palette stays the
+ * same — we don't override --accent because user-picked colours
+ * already imply intent.
+ * ===================================================================== */
+@media (prefers-contrast: more) {
+  :root {
+    --border: color-mix(in srgb, var(--text) 50%, transparent);
+    --muted: color-mix(in srgb, var(--text) 80%, transparent);
+  }
+
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline-width: 3px;
+    outline-offset: 3px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    border-width: 2px;
+  }
+}
+
 input[type="text"] {
   font-family: inherit;
   font-size: inherit;
@@ -412,4 +502,65 @@ input[type="text"]:focus {
 }
 .output-list li {
   margin: 2px 0;
+}
+
+/* =====================================================================
+ * Right-to-left scaffold — v1.2.0 "Glass II" Slice 5.
+ *
+ * Slab ships an Arabic locale (ar) in the i18n bundle, primarily as a
+ * proof-of-mechanism for the upcoming community-translation push but
+ * also for early-access RTL users. The bundle alone isn't enough — the
+ * shell has to mirror so the sidebar lives on the right, controls
+ * read right-to-left, and arrow icons flip.
+ *
+ * Strategy: use logical properties (start/end) where possible in the
+ * component styles going forward, and patch the rest with `:dir(rtl)`
+ * here. We intentionally do NOT use `[dir="rtl"]` selectors because
+ * the `dir` attribute is set on <html> globally; `:dir()` follows the
+ * computed direction even if a subtree opts back into LTR, which is
+ * exactly what we want for things like code blocks and PDF preview
+ * canvases (they should always render LTR regardless of UI locale).
+ *
+ * What this block does today:
+ *   1. Default text alignment becomes right.
+ *   2. Sidebar slides to the right edge — its `border-right` becomes
+ *      a `border-left` and the main content takes the left half.
+ *   3. Detach button (`⤢`) and any other directional glyphs mirror
+ *      horizontally via `scaleX(-1)`.
+ *
+ * What this block does NOT do (left for future translators / a11y
+ * pass): bidi-aware tab order, mirror the PDF page numbering, mirror
+ * the find toolbar's previous/next arrows. Those need per-component
+ * fixes once we have actual Arabic speakers using Slab.
+ * ===================================================================== */
+:dir(rtl) {
+  text-align: start;
+}
+
+:dir(rtl) .sidebar {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+:dir(rtl) .nav-icon {
+  /* Most icons are non-directional emoji; only the explicitly directional
+   * arrow set need mirroring. We err on the safe side — emoji that
+   * already have intrinsic LTR/RTL handling will stay correct, and the
+   * arrows that we use (← → ⤢ ↺ ▷) flip as expected. */
+  transform: scaleX(-1);
+}
+
+:dir(rtl) .detach-btn {
+  transform: scaleX(-1);
+}
+
+/* Code, terminal output, and PDF.js canvases should always be LTR
+ * regardless of UI direction — code reads LTR universally. */
+:dir(rtl) code,
+:dir(rtl) pre,
+:dir(rtl) .pdf-viewer,
+:dir(rtl) .findbar input,
+:dir(rtl) .output-list li {
+  direction: ltr;
+  text-align: start;
 }

@@ -69,7 +69,7 @@
   <div class="row">
     <label>Input PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
+      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
@@ -77,14 +77,14 @@
   <div class="row">
     <label>Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/grayscale.pdf" />
+      <input type="text" bind:value={outputPath} placeholder="/path/to/grayscale.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
 
   <div class="row">
-    <label>Pages (1-based, comma-separated — empty = all)</label>
-    <input type="text" bind:value={pagesText} placeholder="e.g. 1,2,5  (or leave blank for every page)" />
+    <label for="gs-pages">Pages (1-based, comma-separated — empty = all)</label>
+    <input id="gs-pages" type="text" bind:value={pagesText} placeholder="e.g. 1,2,5  (or leave blank for every page)" />
   </div>
 
   <div class="actions">

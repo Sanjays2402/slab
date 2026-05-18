@@ -71,7 +71,7 @@
   <div class="row">
     <label>Input PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
+      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
@@ -79,7 +79,7 @@
   <div class="row">
     <label>Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/nup.pdf" />
+      <input type="text" bind:value={outputPath} placeholder="/path/to/nup.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
@@ -101,12 +101,12 @@
 
   <div class="grid-2">
     <div class="row">
-      <label>Gap (pt)</label>
-      <input type="number" min="0" max="60" step="1" bind:value={gap} />
+      <label for="nup-gap">Gap (pt)</label>
+      <input id="nup-gap" type="number" min="0" max="60" step="1" bind:value={gap} />
     </div>
     <div class="row">
-      <label>Margin (pt)</label>
-      <input type="number" min="0" max="60" step="1" bind:value={margin} />
+      <label for="nup-margin">Margin (pt)</label>
+      <input id="nup-margin" type="number" min="0" max="60" step="1" bind:value={margin} />
     </div>
   </div>
 

@@ -73,7 +73,7 @@
   <div class="row">
     <span class="row-label">Input PDF</span>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" />
+      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
@@ -81,7 +81,7 @@
   <div class="row">
     <span class="row-label">Output PDF</span>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/redacted.pdf" />
+      <input type="text" bind:value={outputPath} placeholder="/path/to/redacted.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
@@ -93,23 +93,23 @@
         <div class="rect-row">
           <div class="field">
             <span class="lbl">Page</span>
-            <input type="number" min="1" bind:value={r.page} />
+            <input type="number" min="1" bind:value={r.page} aria-label="Page number for rectangle {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">X %</span>
-            <input type="number" min="0" max="100" step="0.5" bind:value={r.x} />
+            <input type="number" min="0" max="100" step="0.5" bind:value={r.x} aria-label="X percent for rectangle {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">Y %</span>
-            <input type="number" min="0" max="100" step="0.5" bind:value={r.y} />
+            <input type="number" min="0" max="100" step="0.5" bind:value={r.y} aria-label="Y percent for rectangle {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">W %</span>
-            <input type="number" min="0" max="100" step="0.5" bind:value={r.w} />
+            <input type="number" min="0" max="100" step="0.5" bind:value={r.w} aria-label="Width percent for rectangle {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">H %</span>
-            <input type="number" min="0" max="100" step="0.5" bind:value={r.h} />
+            <input type="number" min="0" max="100" step="0.5" bind:value={r.h} aria-label="Height percent for rectangle {i + 1}" />
           </div>
           <button class="del" onclick={() => removeRect(i)} title="Remove">✕</button>
         </div>

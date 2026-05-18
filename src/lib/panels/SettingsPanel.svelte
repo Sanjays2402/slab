@@ -16,6 +16,35 @@
   import { uiConfig, setUiConfig, ACCENT_COLORS } from "$lib/theme";
   import type { ThemeMode, AccentColor, Density } from "$lib/theme";
   import { notify } from "$lib/notify";
+  import { vimEnabled } from "$lib/vim/mode";
+  import { LOCALES, locale, setLocale, t, tStore, type LocaleId } from "$lib/i18n";
+
+  // Local mirror of the current locale so the segmented control re-renders.
+  let currentLocale = $state<LocaleId>("en");
+  $effect(() => {
+    const unsub = locale.subscribe((v) => (currentLocale = v));
+    return unsub;
+  });
+  function chooseLocale(id: LocaleId) {
+    setLocale(id);
+    const label = LOCALES.find((l) => l.id === id)?.label ?? id;
+    // Use t() (one-shot, reads get(locale)) so the toast is already
+    // in the newly-selected language.
+    notify.success(t("toast.localeChanged", { label }));
+  }
+
+  // Local mirror of the vim-enabled store so the segmented control reflects it.
+  let vimOn = $state(false);
+  $effect(() => {
+    const unsub = vimEnabled.subscribe((v) => (vimOn = v));
+    return unsub;
+  });
+  function setVimEnabled(on: boolean) {
+    vimEnabled.set(on);
+    notify.success(on ? t("vim.enabled") : t("vim.disabled"), {
+      detail: on ? t("vim.enabled.detail") : undefined,
+    });
+  }
 
   // Mirror the store into local state so Svelte 5 reactivity picks up
   // changes from `bootTheme` racing the panel mount.
@@ -66,18 +95,42 @@
 
 <section class="panel settings-panel">
   <div class="content-header">
-    <h1>Settings</h1>
-    <p class="subtitle">Make Slab look like home. Changes apply instantly.</p>
+    <h1>{$tStore("settings.title")}</h1>
+    <p class="subtitle">{$tStore("settings.subtitle")}</p>
+  </div>
+
+  <!-- Language (Glass II Slice 5) -->
+  <div class="row">
+    <div class="row-info">
+      <h2>{$tStore("settings.language.title")}</h2>
+      <p class="row-desc">{$tStore("settings.language.desc")}</p>
+    </div>
+    <div class="row-control">
+      <div class="seg" role="radiogroup" aria-label={$tStore("settings.language.title")}>
+        {#each LOCALES as opt (opt.id)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={currentLocale === opt.id}
+            class:tab-active={currentLocale === opt.id}
+            lang={opt.id}
+            onclick={() => chooseLocale(opt.id)}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
   </div>
 
   <!-- Theme -->
   <div class="row">
     <div class="row-info">
-      <h2>Theme</h2>
-      <p class="row-desc">Choose Slab's appearance. Auto follows your operating system's day/night setting.</p>
+      <h2>{$tStore("settings.theme.title")}</h2>
+      <p class="row-desc">{$tStore("settings.theme.desc")}</p>
     </div>
     <div class="row-control">
-      <div class="seg" role="radiogroup" aria-label="Theme">
+      <div class="seg" role="radiogroup" aria-label={$tStore("settings.theme.title")}>
         {#each THEME_OPTIONS as opt (opt.id)}
           <button
             type="button"
@@ -97,11 +150,11 @@
   <!-- Accent -->
   <div class="row">
     <div class="row-info">
-      <h2>Accent</h2>
-      <p class="row-desc">Highlight colour for buttons, links, and the current-page indicator.</p>
+      <h2>{$tStore("settings.accent.title")}</h2>
+      <p class="row-desc">{$tStore("settings.accent.desc")}</p>
     </div>
     <div class="row-control">
-      <div class="swatches" role="radiogroup" aria-label="Accent colour">
+      <div class="swatches" role="radiogroup" aria-label={$tStore("settings.accent.title")}>
         {#each ACCENT_COLORS as swatch (swatch.id)}
           <button
             type="button"
@@ -125,11 +178,11 @@
   <!-- Density -->
   <div class="row">
     <div class="row-info">
-      <h2>Density</h2>
-      <p class="row-desc">Spacing throughout the shell. Pick Compact on small screens or when you want more on the page.</p>
+      <h2>{$tStore("settings.density.title")}</h2>
+      <p class="row-desc">{$tStore("settings.density.desc")}</p>
     </div>
     <div class="row-control">
-      <div class="seg" role="radiogroup" aria-label="Density">
+      <div class="seg" role="radiogroup" aria-label={$tStore("settings.density.title")}>
         {#each DENSITY_OPTIONS as opt (opt.id)}
           <button
             type="button"
@@ -146,11 +199,37 @@
     </div>
   </div>
 
+  <!-- Vim bindings (Glass II Slice 1) -->
+  <div class="row">
+    <div class="row-info">
+      <h2>{$tStore("settings.vim.title")}</h2>
+      <p class="row-desc">{$tStore("settings.vim.desc")}</p>
+    </div>
+    <div class="row-control">
+      <div class="seg" role="radiogroup" aria-label={$tStore("settings.vim.title")}>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!vimOn}
+          class:tab-active={!vimOn}
+          onclick={() => setVimEnabled(false)}
+        >{$tStore("settings.toggle.off")}</button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={vimOn}
+          class:tab-active={vimOn}
+          onclick={() => setVimEnabled(true)}
+        >{$tStore("settings.toggle.on")}</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Help & onboarding (Glass Slice 6) -->
   <div class="row">
     <div class="row-info">
-      <h2>Onboarding</h2>
-      <p class="row-desc">Replay the welcome tour. Useful after an update or to show a colleague what Slab does.</p>
+      <h2>{$tStore("settings.onboarding.title")}</h2>
+      <p class="row-desc">{$tStore("settings.onboarding.desc")}</p>
     </div>
     <div class="row-control">
       <button
@@ -158,25 +237,25 @@
         class="ghost"
         onclick={() => window.dispatchEvent(new CustomEvent("slab:show-onboarding"))}
       >
-        Show tour
+        {$tStore("settings.onboarding.cta")}
       </button>
     </div>
   </div>
 
   <!-- Reset + status -->
   <div class="footer-row">
-    <button class="ghost" onclick={reset} type="button">Reset to defaults</button>
+    <button class="ghost" onclick={reset} type="button">{$tStore("settings.reset")}</button>
     {#if saving === "saved"}
-      <span class="status ok">Saved ✓</span>
+      <span class="status ok">{$tStore("settings.status.saved")}</span>
     {:else if saving === "saving"}
-      <span class="status saving">Saving…</span>
+      <span class="status saving">{$tStore("settings.status.saving")}</span>
     {:else if saving === "error"}
-      <span class="status err">Couldn't save: {lastError ?? "unknown error"}</span>
+      <span class="status err">{$tStore("settings.status.error", { detail: lastError ?? "unknown error" })}</span>
     {/if}
   </div>
 
   <p class="config-path">
-    Stored at <code>~/.slab/config.toml</code> under <code>[ui]</code>. Hand-editable.
+    {$tStore("settings.config.storedAt")} <code>~/.slab/config.toml</code> · <code>[ui]</code>
   </p>
 </section>
 
