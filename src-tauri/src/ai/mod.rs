@@ -33,6 +33,7 @@ pub mod study;
 pub mod study_store;
 pub mod summary;
 pub mod vision;
+pub mod voice;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
