@@ -322,8 +322,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let reg = make_registry_with_full_plugin(&tmp);
         let p = reg.get("com.example.full").unwrap();
-        let err = read_asset(&p.dir, "/etc/passwd").unwrap_err();
-        assert!(err.contains("relative"));
+        #[cfg(unix)]
+        let absolute = "/etc/passwd";
+        #[cfg(windows)]
+        let absolute = r"C:\Windows\System32\drivers\etc\hosts";
+        let err = read_asset(&p.dir, absolute).unwrap_err();
+        assert!(err.contains("relative"), "got: {err}");
     }
 
     #[test]
