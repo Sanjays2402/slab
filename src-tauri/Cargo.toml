@@ -16,6 +16,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "slab"
 path = "src/bin/slab.rs"
 
+# Maintainer signing tool (v1.4.0 Bench Slice 2). Reads
+# ~/.slab-maintainer-key and emits a signed marketplace IndexEntry.
+# Never shipped to end-users — built from-source by the maintainer.
+[[bin]]
+name = "slab-sign-plugin"
+path = "src/bin/sign_plugin.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
