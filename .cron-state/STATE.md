@@ -5,97 +5,95 @@
 
 ---
 
-## STATUS: 🛠 v1.3.0 "Foundry" — Slice 9 COMPLETE (frontend wired end-to-end, 9/12 slices done)
+## STATUS: 🛠 v1.3.0 "Foundry" — Slices 10+11 COMPLETE, Slice 12 (release) NEXT TICK (11/12 done)
 
 **Main HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
 **v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.3.0-foundry` (21 commits ahead of main)
-**Branch HEAD**: `7ee6ba4` — `feat(plugins-frontend): Reader toolbar dropdown for plugin PDF actions`
-**Slice 9 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slice-9.md` — all 8 tasks shipped this tick
+**Active branch**: `feature/v1.3.0-foundry` (29 commits ahead of main)
+**Branch HEAD**: `0b505b7` — `docs(README): mention plugin system + link to PLUGINS.md`
+**Slice 10+11 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slices-10-11.md`
 
 **Quality gates green on branch HEAD:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (538 passed — unchanged from previous tick, no Rust touched)
+- `cargo test --lib` ✓ (**539 passed** — +1 over previous, new `example_hello_slab_manifest_parses`)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
-**NO RELEASE_PENDING** — Foundry has 3 more slices before merge.
+**NO RELEASE_PENDING** — Foundry needs Slice 12 (release prep) before merge.
 
 ---
 
-## TICK 2026-05-17 19:22 PT — Foundry Slice 9 MEGA-TICK: 8 commits, ~600 LOC TS/Svelte
+## TICK 2026-05-17 20:05 PT — Foundry Slices 10+11 MEGA-TICK (8 commits)
 
-Frontend now consumes the entire v1.3.0 plugin backend end-to-end.
-Every contribution kind shipped in Slices 1-8 has at least one
-visible UI surface — themes & commands & AI providers in the palette,
-locales merged into i18n at boot, PDF actions in the Reader toolbar.
+Two slices in one tick. Foundry is now **feature-complete** —
+Slice 12 (version bump + release notes + merge + tag + push) lands
+cleanly next tick.
 
-### MODE C — v1.3.0 Foundry sprint (frontend pass)
+### MODE C — v1.3.0 Foundry sprint (control surface + docs)
 
-**Task 1 — `src/lib/plugins.ts`** (commit `352054a`)
-- 254-line TypeScript adapter: type mirrors of every Serde shape,
-  Svelte writable `pluginsStore`, `refreshPlugins()` /
-  `setPluginEnabled()` / `reloadPlugins()` / `pluginsDir()` /
-  `readPluginAsset()` / `loadPluginLocaleBundle()` /
-  `validatePluginAiProvider()` / `runPluginCommand()` /
-  `runPluginPdfAction()`, plus `currentPlugins()` sync accessor
-  and `logActiveAiProviders()` discoverability helper.
+**Slice 10 — Settings → Plugins control surface**
 
-**Task 2 — boot in root layout** (commit `60c143e`)
-- `+layout.svelte` calls `void refreshPlugins().then(() =>
-  logActiveAiProviders())` inside `onMount`, after `bootKeymap()`.
+Task 1 (commit `e651c62`) — 22 new i18n keys × 4 locales (en/es/fr/ar)
+covering feature label, title, subtitle, empty state, contribution
+count labels, enable/disable toggle text, error chip, expand/collapse,
+toolbar buttons, palette command label. Appended-only diff for
+reviewability.
 
-**Task 3 — i18n merge** (commit `07698ff`)
-- New `mergePluginBundle(id, bundle, pluginId)` mutates BUNDLES in
-  place + re-emits the `locale` store to repaint `$tStore`-bound UI.
-- `bootI18n()` now subscribes to `pluginsStore` (lazy bundle fetch
-  with a `lastSeen` Set short-circuit) AND to `locale` (re-merge on
-  language switch).
+Task 2 (commit `bb2d6e8`) — `src/lib/panels/PluginsPanel.svelte` (506
+lines). Every discovered plugin renders as a row with:
+- name + version + author + plugin id + description from manifest
+- segmented enable/disable toggle (calls `setPluginEnabled`,
+  optimistically refreshed via the `pluginsStore` subscription)
+- red "Manifest error" chip + collapsible `<details>` with raw parse
+  error + the plugin's on-disk dir when the manifest is malformed
+- contribution count chips ("3 themes · 1 locale · 2 commands")
+- per-plugin expandable drilldown listing every theme/locale/
+  command/ai-provider/pdf-action by ID + label (debugging aid)
+Toolbar: "📁 Open plugins directory" (revealItemInDir) + "↻ Reload"
+(`reloadPlugins` + toast). Empty state: dashed-border card with the
+absolute plugins-dir path + open-dir CTA. Footer-row: dir path when
+list is non-empty.
 
-**Task 4 — `BUILT_IN_THEMES` extracted** (commit `cdb384d`)
-- Moved the three hard-coded built-in themes from CommandPalette's
-  inline array to a typed `BUILT_IN_THEMES` export in `theme.ts`.
-- Zero behaviour change; just prep work so plugin themes can append
-  to the same loop.
+Task 3 (commit `d6b37a2`) — Registered in `+page.svelte` features
+array (`{ id: "plugins", label: "Plugins", icon: "🧩", ready: true }`,
+slotted next to Settings), wired the conditional render, added
+`"plugins"` to `DETACHABLE_PANELS`.
 
-**Task 5 — plugin themes + CSS injection** (commit `b742e92`)
-- New `$lib/pluginThemes` owns a runtime `<style id="slab-plugin-theme">`
-  tag (singleton). `applyPluginTheme()` reads CSS via
-  `slab_plugins_read_asset` and swaps it in via `textContent` (NOT
-  innerHTML — defence in depth).
-- `setUiConfig()` calls `clearPluginTheme()` whenever the user picks
-  a built-in theme, so "back to default" actually goes back.
-- CommandPalette renders one entry per active plugin theme under the
-  Appearance group.
+Task 4 (commit `2f19ab2`) — Palette entry "Open Settings → Plugins"
+in the Settings group with wide keyword coverage (plugins, extensions,
+themes, locales, commands, ai, install, enable, etc.).
 
-**Task 6 — plugin commands in palette** (commit `8d7e892`)
-- Each `ActiveCommand` becomes a palette entry under "Plugin
-  commands" group, alphabetised by label.
-- `dispatchPluginCommand()` handles both outcome kinds: URL outcomes
-  open via `@tauri-apps/plugin-opener`'s `openUrl`, shell outcomes
-  show status-keyed toasts (success / warning / error / timeout)
-  with truncated stdout/stderr.
+**Slice 11 — example plugin + author docs**
 
-**Task 7 — plugin AI providers** (commit `08a4f68`)
-- Informational surface only (full hook-up = v1.3.x): each active
-  AI provider appears in "Plugin AI providers" palette group; running
-  copies the base_url to clipboard with an info toast.
-- `logActiveAiProviders()` (defined in plugins.ts since Task 1) is
-  now actually called from layout boot for console discoverability.
+Task 1 (commit `16e94db`) — `examples/plugins/hello-slab/` (4 files):
+- `plugin.toml` — manifest exercising **all five contribution kinds**:
+  Midnight theme, partial Japanese locale, URL command (open github),
+  shell command (echo hello), Ollama AI provider (openai_compat),
+  qpdf-linearize PDF action with `{in}`/`{out}` placeholders
+- `themes/midnight.css` — deep-blue dark theme CSS variable overrides
+- `locales/jp.json` — 40-key Japanese bundle covering most-visible UI
+- `README.md` — install + contribution table + try-it-out walkthrough
+- Plus a new unit test `example_hello_slab_manifest_parses` that loads
+  the shipped manifest via `Manifest::from_toml` and asserts every
+  contribution count. **If we ever break the manifest schema, this
+  test fires and forces an example update — keeping docs honest.**
 
-**Task 8 — Reader toolbar dropdown** (commit `7ee6ba4`)
-- "✦ Plugin" button next to Find/Info — hidden entirely when zero
-  active PDF actions (no empty dropdown).
-- Click opens menu listing each action by label + plugin id; click
-  prompts for output path via Tauri save dialog, runs
-  `slab_plugins_run_pdf_action`, and toasts the ActionReport status.
-- Click-outside captured handler dismisses the menu.
-- Styles reuse theme vars (--bg-2/--bg-3/--border/--text) so it
-  follows light/dark/accent.
+Task 2 (commit `17bdc9c`) — `docs/PLUGINS.md` (253 lines) — the
+canonical author guide. Sections: TL;DR, directory layout, full
+manifest reference, every contribution kind with worked TOML
+examples, permissions semantics (declarative not sandboxed —
+honest framing), validation cheat-sheet, enabled-state persistence,
+security model, distribution, troubleshooting table, schema
+stability policy. Linked from PluginsPanel's empty state and from
+hello-slab's README.
+
+Task 3 (commit `0b505b7`) — Added "## Extending Slab (plugins)"
+section to README.md between Tests and Under the hood, pointing
+to PLUGINS.md + the hello-slab example.
 
 ### Plan doc
-`docs/plans/2026-05-17-v1.3.0-foundry-slice-9.md` (written previous tick,
-fully executed this tick).
+`docs/plans/2026-05-17-v1.3.0-foundry-slices-10-11.md` (written + fully
+executed this tick — `fb87bbc`).
 
 ---
 
@@ -114,7 +112,7 @@ fully executed this tick).
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
-### v1.3.0 "Foundry" 🛠 — IN PROGRESS (9/12 slices done, all backend + frontend wiring complete ✓)
+### v1.3.0 "Foundry" 🛠 — IN PROGRESS (**11/12** slices done — FEATURE-COMPLETE, Slice 12 = release)
 
 ### v1.3.0 Slice ledger
 - ✅ Slice 1 — manifest schema + parser + validation
@@ -125,15 +123,10 @@ fully executed this tick).
 - ✅ Slice 6 — pdf_action contribution + CLI runner
 - ✅ Slice 7 — command contribution + shell/url runner
 - ✅ Slice 8 — ai_provider contribution + materialiser
-- ✅ Slice 9 — frontend wiring (this tick — 8 commits)
-- ⏳ Slice 10 — Settings → Plugins panel UI (enable/disable, list
-  contributions, show errors, "open plugins dir" button)
-- ⏳ Slice 11 — example plugin demonstrating all five kinds +
-  PLUGINS.md
+- ✅ Slice 9 — frontend wiring (8 commits previous tick)
+- ✅ Slice 10 — Settings → Plugins panel UI (this tick — 4 commits)
+- ✅ Slice 11 — example plugin + PLUGINS.md (this tick — 3 commits)
 - ⏳ Slice 12 — version bump + release notes + merge + tag + push
-
-**Note**: After Slice 10 + 11, Foundry will be feature-complete and
-ready to release.
 
 ---
 
@@ -148,50 +141,58 @@ ready to release.
 
 ---
 
-## NEXT TICK PLAYBOOK — Slice 10 Settings → Plugins panel
+## NEXT TICK PLAYBOOK — Slice 12 = ship v1.3.0 Foundry
 
-Goal: dedicated control surface for plugins. Currently they're
-discoverable via the palette but you can't see/enable/disable them
-without dropping files into `~/.slab/plugins` and reloading.
+This is mechanical. Order matters.
 
-1. **`src/lib/panels/PluginsPanel.svelte`** — new Settings sub-panel
-   (or add as a tab to existing SettingsPanel.svelte; check existing
-   layout first). Lists every `Plugin` from `pluginsStore.plugins`
-   with:
-   - name + version + author + description (from manifest)
-   - enabled toggle (calls `setPluginEnabled`)
-   - error chip when `plugin.error != null` (red, expandable to show
-     the parse/validation message)
-   - contribution counts ("3 themes · 1 locale · 2 commands")
+1. **Bump version everywhere it appears:**
+   - `package.json`: `"version": "1.3.0"`
+   - `src-tauri/Cargo.toml`: `version = "1.3.0"` (currently `1.2.0`)
+   - `src-tauri/tauri.conf.json`: `"version": "1.3.0"`
+   - Verify with `grep -rE '\"version\": ?\"1\.' package.json src-tauri/tauri.conf.json && grep '^version' src-tauri/Cargo.toml`.
+   - Run `cd src-tauri && cargo check` so `Cargo.lock` updates.
 
-2. **"Open plugins directory" button** — `tauri_plugin_opener`'s
-   `revealItemInDir(path)` so users can drop plugins in without
-   knowing the path. Wrap with `pluginsDir()` to get the actual
-   directory.
+2. **Write release notes** at `docs/release-notes/v1.3.0.md` covering:
+   - What Foundry is (declarative plugin system — themes, locales,
+     commands, AI providers, PDF actions via TOML manifest).
+   - Headline UX: Settings → Plugins panel, Cmd-K integration,
+     Reader toolbar dropdown, hello-slab example.
+   - Backend: 5 contribution kinds, 13 Tauri commands, 539 tests.
+   - Permissions / security framing (declarative, not sandboxed).
+   - Pointer to docs/PLUGINS.md.
+   - "Bonus changes" if any (none expected).
 
-3. **"Reload plugins" button** — calls `reloadPlugins()` and shows
-   an info toast with the new count. Also calls `refreshPlugins()`
-   under the hood so all UI surfaces refresh.
+3. **Update README** if it pins a version anywhere.
 
-4. **Per-plugin contribution drilldown** — clicking a row expands to
-   show all themes/locales/etc the plugin contributes. Useful for
-   debugging "why isn't my theme showing up".
+4. **Commit** version bump + release notes:
+   ```
+   chore(release): v1.3.0 "Foundry" — declarative plugin system
+   ```
 
-5. **Empty state** — if 0 plugins, big card explaining what plugins
-   are + the plugins dir path + a link to PLUGINS.md (which lands in
-   Slice 11).
+5. **Quality gates** on feature branch one last time
+   (fmt/clippy/test --lib/pnpm check).
 
-6. **Register the panel** in `+page.svelte`'s `PANELS` list with a
-   sensible icon (✦? or 🧩) and `ready: true`.
+6. **STATUS: DONE marker** — write it into STATE.md so the *next-next*
+   tick (which will be MODE A) merges + tags. OR (preferred) flip
+   into MODE A inline this tick after the version bump:
+   - `git checkout main && git pull`
+   - `git merge --no-ff feature/v1.3.0-foundry -m "Merge v1.3.0 'Foundry' — declarative plugin system"`
+   - Run quality gates on main.
+   - `git tag v1.3.0`
+   - `git push origin main --follow-tags` (with the auth dance).
+   - Record `RELEASE_PENDING: v1.3.0 — merge SHA <hash>, tag v1.3.0, CI run <id>` in STATE.md.
+   - Find the CI run with `gh run list --branch main --limit 3`.
+   - Next tick lands in MODE B to download + create the GH release.
 
-7. **Add a palette entry** — "Open Settings → Plugins" so the
-   panel is keyboard-reachable.
+Slice 12 should land in ONE tick. Don't fragment it.
 
-8. **Tests** — same shape as Slice 9: pure helpers if any, skip e2e.
-   Visual smoke check via `pnpm dev` if possible (not in cron).
+---
 
-9. Quality gates as usual; commit per touchpoint; push branch.
+## POST-v1.3 ROADMAP REMINDERS
 
-Slice 10 estimate: 3-5 commits in TS/Svelte. Then Slice 11 (example
-plugin + PLUGINS.md) + Slice 12 (release). Foundry should ship in
-the next 2-3 ticks.
+After Foundry ships, the proposals on disk for the next versions:
+- `.cron-state/proposals/v0.10.0-beacon-bonus-slices.md` — Slices 11-15
+  (Smart Outline, Citations, Study Mode, Glossary, Voice Mode)
+- Plugin marketplace UI + signed-manifest install flow (post-v1.3 idea)
+- AI provider hook-up of plugin-contributed providers through Beacon's
+  runtime (planned v1.3.x patch)
