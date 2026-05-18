@@ -10,12 +10,17 @@
 //! Module layout:
 //! - [`index`] — JSON schema (`Index`, `IndexEntry`)
 //! - [`verify`] — Ed25519 signature verification
-//! - `fetch` (Slice 3) — HTTP client + offline cache
+//! - [`fetch`] — HTTP client + offline cache (Slice 3)
 //! - `install` (Slice 4) — download, sha256 verify, atomic extract
 
+pub mod fetch;
 pub mod index;
 pub mod verify;
 
+pub use fetch::{
+    default_cache_path, default_client, fetch_index, fetch_index_with_cache, parse_index,
+    FetchError, FetchOutcome, CACHE_FILE_NAME, DEFAULT_INDEX_URL,
+};
 pub use index::{Index, IndexEntry, IndexEntryUnsigned, CURRENT_SCHEMA_VERSION, MAX_TARBALL_BYTES};
 pub use verify::{
     verify_entry, verify_with_maintainer_key, VerifyError, MAINTAINER_KEY_ID, MAINTAINER_PUBLIC_KEY,
