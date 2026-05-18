@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod keymap;
+pub mod marketplace;
 pub mod pdf;
 pub mod plugins;
 pub mod windows;
