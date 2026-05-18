@@ -29,6 +29,7 @@
     "slides",
     "tables",
     "markdown",
+    "voice",
   ]);
 
   type Action = {

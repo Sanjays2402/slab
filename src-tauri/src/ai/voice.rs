@@ -266,9 +266,7 @@ pub fn sanitise_text(input: &str, max_chars: usize) -> String {
         if out.chars().count() >= max_chars {
             break;
         }
-        if ch == '\n' || ch == '\t' {
-            out.push(' ');
-        } else if ch.is_control() {
+        if ch == '\n' || ch == '\t' || ch.is_control() {
             out.push(' ');
         } else {
             out.push(ch);
@@ -346,22 +344,13 @@ pub fn list_voices(eng: TtsEngine) -> Result<Vec<Voice>, VoiceError> {
 }
 
 /// Tunable parameters for a single speak call.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SpeakOpts {
     /// Voice id (engine-specific). `None` → engine default voice.
     pub voice: Option<String>,
     /// Words-per-minute. `None` → engine default (~175wpm). Engines
     /// clamp out-of-range values internally; we don't second-guess.
     pub rate_wpm: Option<u32>,
-}
-
-impl Default for SpeakOpts {
-    fn default() -> Self {
-        Self {
-            voice: None,
-            rate_wpm: None,
-        }
-    }
 }
 
 /// Spawn the engine's speak process and return its `Child` handle. The
