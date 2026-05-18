@@ -35,6 +35,11 @@ use ai::pii::{
 use ai::selection_action::{
     run_selection_action as do_selection_action, SelectionAction, SelectionActionReply,
 };
+use ai::sm2::Ease;
+use ai::study::{generate_deck_from_path as do_beacon_generate_deck, DeckOpts, DeckReport};
+use ai::study_store::{
+    default_db_path as default_study_db_path, StoredCard, StudyError, StudyStats, StudyStore,
+};
 use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
 use ai::{ChatMessage, ChatRole};
 
@@ -813,6 +818,153 @@ async fn slab_beacon_find_citations(
     do_beacon_find_citations(provider, &pdf_path, &opts)
         .await
         .into()
+}
+
+impl<T: Serialize> From<Result<T, StudyError>> for CmdResult<T> {
+    fn from(r: Result<T, StudyError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// SHA-256 of a PDF file's contents, used to scope Study Mode cards
+/// per file (so renames/moves don't fork the deck). Re-uses the same
+/// helper that the embedding index uses for its `pdf_hash` column.
+fn hash_pdf_path(p: &std::path::Path) -> Result<String, std::io::Error> {
+    ai::embedding_index::EmbeddingIndex::hash_file(p)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+}
+
+/// Beacon Study — generate a deck of Q&A flashcards from a PDF and
+/// persist them in `~/.slab/study.sqlite` (UNIQUE(pdf_hash, q_norm)
+/// dedupes across re-runs). Returns the freshly-generated deck (NOT
+/// the full stored deck — UI uses `slab_beacon_study_due` next).
+/// v1.7.0 Beacon Bonus Slice 13.
+#[tauri::command]
+async fn slab_beacon_generate_deck(
+    pdf_path: PathBuf,
+    opts: Option<DeckOpts>,
+) -> CmdResult<DeckReport> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let opts = opts.unwrap_or_default();
+    let report = match do_beacon_generate_deck(provider, &pdf_path, &opts).await {
+        Ok(r) => r,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    // Persist (best-effort path — open store, insert. Returns the report
+    // even if no new cards were inserted because of dedupe.)
+    let hash = match hash_pdf_path(&pdf_path) {
+        Ok(h) => h,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("hashing pdf: {e}"),
+            }
+        }
+    };
+    match StudyStore::open(&default_study_db_path()) {
+        Ok(mut store) => {
+            let _ = store.insert_deck(&hash, &report.cards);
+        }
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("opening study store: {e}"),
+            }
+        }
+    }
+    CmdResult::Ok { value: report }
+}
+
+/// Beacon Study — fetch cards due for review. If `pdf_path` is given,
+/// scope to that PDF; otherwise return cross-document due cards.
+#[tauri::command]
+async fn slab_beacon_study_due(
+    pdf_path: Option<PathBuf>,
+    limit: Option<u32>,
+) -> CmdResult<Vec<StoredCard>> {
+    let store = match StudyStore::open(&default_study_db_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let hash_owned: Option<String> = match pdf_path.as_ref() {
+        Some(p) => match hash_pdf_path(p) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                return CmdResult::Err {
+                    message: format!("hashing pdf: {e}"),
+                }
+            }
+        },
+        None => None,
+    };
+    store
+        .due_cards(hash_owned.as_deref(), limit.unwrap_or(50))
+        .into()
+}
+
+/// Beacon Study — record a review and return the updated card.
+#[tauri::command]
+async fn slab_beacon_study_review(card_id: i64, ease: Ease) -> CmdResult<StoredCard> {
+    let mut store = match StudyStore::open(&default_study_db_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    store.review(card_id, ease).into()
+}
+
+/// Beacon Study — counters for the footer.
+#[tauri::command]
+async fn slab_beacon_study_stats(pdf_path: Option<PathBuf>) -> CmdResult<StudyStats> {
+    let store = match StudyStore::open(&default_study_db_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let hash_owned: Option<String> = match pdf_path.as_ref() {
+        Some(p) => match hash_pdf_path(p) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                return CmdResult::Err {
+                    message: format!("hashing pdf: {e}"),
+                }
+            }
+        },
+        None => None,
+    };
+    store.stats(hash_owned.as_deref()).into()
 }
 
 /// Beacon "what changed?" — natural-language summary of a DocDiff. Re-runs
@@ -1991,6 +2143,10 @@ pub fn run() {
             slab_beacon_summary,
             slab_beacon_propose_outline,
             slab_beacon_find_citations,
+            slab_beacon_generate_deck,
+            slab_beacon_study_due,
+            slab_beacon_study_review,
+            slab_beacon_study_stats,
             slab_beacon_diff_summary,
             slab_beacon_index_pdf,
             slab_beacon_search,
