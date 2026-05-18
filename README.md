@@ -5,16 +5,16 @@
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![Rust tests](https://img.shields.io/badge/rust%20tests-468%20passing-brightgreen.svg)](src-tauri)
+[![Rust tests](https://img.shields.io/badge/rust%20tests-539%20passing-brightgreen.svg)](src-tauri)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
 
 Every other PDF tool wants you to upload your taxes, your contracts, your medical records to a server you've never heard of, then watch a 30‑second ad, then pay $9.99 to remove the watermark. Slab does the opposite: **everything runs locally on your machine.** No accounts. No uploads. No subscriptions. No nonsense.
 
 ![Slab Reader with the PDF 1.7 spec open](docs/screenshots/00-hero-reader.png)
 
-## What's in v1.2.0 "Glass II"
+## What's in v1.3.0 "Foundry"
 
-A real Adobe‑Acrobat‑replacing toolkit, shipped in 18 honest releases. Seven pillars, all local:
+A real Adobe‑Acrobat‑replacing toolkit, shipped in 19 honest releases. Eight pillars, all local:
 
 | Pillar | What it does | Highlight versions |
 | --- | --- | --- |
@@ -25,8 +25,9 @@ A real Adobe‑Acrobat‑replacing toolkit, shipped in 18 honest releases. Seven
 | **AI (local)** | **Beacon** — Chat / Summary / Semantic Search across the open PDF, on‑device only | v0.10 |
 | **Productivity** | **Atlas** PDF Library · **Stack** line‑level diff · **Theater** present mode · **Glass** settings + keyboard shortcuts · **Cabinet** detachable panels | v0.12, v0.14, v0.15, v1.0, v1.1 |
 | **Reach** | **Vim mode** · WCAG‑level a11y audit + fixes · i18n foundation | v1.2 |
+| **Extensible** | **Foundry** — declarative plugin system (themes, locales, commands, AI providers, PDF actions) via TOML manifest | v1.3 |
 
-**468 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
+**539 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
 
 ## Why Slab?
 
