@@ -17,6 +17,7 @@
 pub mod auto_tag;
 pub mod chat;
 pub mod chunker;
+pub mod citations;
 pub mod config;
 pub mod diff_summary;
 pub mod embedding_index;
