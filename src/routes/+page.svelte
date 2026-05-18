@@ -38,6 +38,7 @@
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
+  import PluginsPanel from "$lib/panels/PluginsPanel.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ShortcutsOverlay.svelte";
   import VimIndicator from "$lib/vim/VimIndicator.svelte";
@@ -100,6 +101,7 @@
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
     { id: "settings", label: "Settings", icon: "⚙", ready: true },
+    { id: "plugins", label: "Plugins", icon: "🧩", ready: true },
     { id: "keymap", label: "Shortcuts", icon: "⌨", ready: true },
   ];
 
@@ -143,6 +145,7 @@
     "slides",
     "tables",
     "markdown",
+    "plugins",
   ]);
 
   function supportsDetach(id: string): boolean {
@@ -744,6 +747,8 @@
     <SlidesPanel />
   {:else if active === "settings"}
     <SettingsPanel />
+  {:else if active === "plugins"}
+    <PluginsPanel />
   {:else if active === "keymap"}
     <KeymapPanel />
   {/if}
