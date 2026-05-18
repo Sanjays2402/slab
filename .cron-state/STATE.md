@@ -5,58 +5,43 @@
 
 ---
 
-## STATUS: 🚢 v1.3.0 "Foundry" MERGED + TAGGED — release pending CI
+## STATUS: 🩹 v1.3.1 "Foundry Patch" MERGED + TAGGED — release pending CI
 
-**Main HEAD**: `e10fcbd` — `Merge v1.3.0 'Foundry' — declarative plugin system`
-**Pre-merge HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
-**Tag**: `v1.3.0` → `e10fcbd` (pushed to origin)
-**Feature branch HEAD**: `8703bf3` — `chore(release): v1.3.0 "Foundry" — declarative plugin system`
+**Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch' — cross-platform test fixes (Linux + Windows CI)`
+**Pre-merge HEAD**: `e10fcbd` — `Merge v1.3.0 'Foundry'` (CI: failed)
+**Tag**: `v1.3.1` → `9f0fd6f` (pushed to origin)
+**Feature branch HEAD**: `df13d68` — `chore(release): v1.3.1 "Foundry Patch"`
 
-**Quality gates green on main HEAD (e10fcbd):**
+**Quality gates green on main HEAD (9f0fd6f):**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (**539 passed**)
+- `cargo test --lib` ✓ (**539 passed**, was 538/539 on Linux pre-fix)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
-**RELEASE_PENDING: v1.3.0 — merge SHA `e10fcbd`, tag `v1.3.0`, CI run `26011887503`**
-- Run URL: https://github.com/Sanjays2402/slab/actions/runs/26011887503
-- Status as of 20:28 PT: `in_progress`
-- Next tick: MODE B — poll CI; if green, download artifacts (`gh run download 26011887503 --dir /tmp/slab-release-v1.3.0`), curate 6 best (macos arm64 + x64 dmgs, linux x64 deb + AppImage, windows msi + nsis), create GH release with `docs/release-notes/v1.3.0.md` as notes.
+**RELEASE_PENDING: v1.3.1 — merge SHA `9f0fd6f`, tag `v1.3.1`, CI run `26012655931`**
+- Run URL: https://github.com/Sanjays2402/slab/actions/runs/26012655931
+- Status as of 20:56 PT: `in_progress`
+- Next tick: MODE B — poll CI; if green, `gh run download 26012655931 --dir /tmp/slab-release-v1.3.1`, curate 6 best (macos arm64 + x64 dmgs, linux x64 deb + AppImage, windows msi + nsis), create GH release with `docs/release-notes/v1.3.1.md` as notes.
 
+**v1.3.0**: tagged but CI failed — superseded by v1.3.1. No release artifacts for v1.3.0 (we will NOT publish v1.3.0 — it has been re-tagged to v1.3.1 which is functionally identical aside from three test fixes).
 **v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
 
 ---
 
-## TICK 2026-05-17 20:28 PT — Foundry Slice 12 = ship v1.3.0 (1 commit + merge + tag + push)
+## TICK 2026-05-17 20:50 PT — v1.3.1 hotfix tick (4 commits, merged + tagged + pushed)
 
-**Slice 12 / 12 — version bump + release notes + merge + tag + push.**
-Foundry is now feature-complete AND tagged. CI is the only gate left
-before the release is live.
+**v1.3.0 CI (run 26011887503) failed on Linux + Windows:**
+- Linux: `shell_timeout_kills_long_running` took 10s (timeout fired, but stale grandchild held pipes open, blocking `read_to_string`)
+- Windows: `read_asset_rejects_absolute_path` + `rejects_absolute_path` — `Path::is_absolute("/etc/passwd")` is `false` on Windows
+- macOS: green throughout
 
-### What shipped this tick
-1. **Version bump** across `package.json`, `src-tauri/Cargo.toml`,
-   `src-tauri/tauri.conf.json` → 1.3.0. `cargo check` refreshed
-   `Cargo.lock`.
-2. **README**: heading "What's in v1.3.0 Foundry" + 8th pillar
-   ("Extensible — Foundry — declarative plugin system…") + test
-   badge 468 → 539.
-3. **`docs/release-notes/v1.3.0.md`** — full Foundry shipping notes:
-   the 5 contribution kinds with worked semantics, control surface
-   (Settings → Plugins), hello-slab example, the honest security
-   framing (declarative, NOT sandboxed), numbers table
-   (468→539 tests, +13 Tauri commands, +88 i18n strings), and a
-   "what's NOT in here for v1.3.x" section (marketplace, AI
-   hot-swap, JS plugins).
-4. **Quality gates** green on feature branch THEN on main after
-   merge: fmt + clippy + 539 lib tests + pnpm-check (0 errors).
-5. **Merged** `feature/v1.3.0-foundry` → `main` with `--no-ff` →
-   merge commit `e10fcbd`.
-6. **Tagged** `v1.3.0` on `e10fcbd`.
-7. **Pushed** main + tag + feature branch (auth-helper dance).
+**Fixes (4 commits on `feature/v1.3.1-foundry-patch`):**
+1. `13e1bf0` — fix(plugins): don't block on stale pipes after shell-command timeout — drop pipe handles on timeout path. Local: 10.0s → 0.32s.
+2. `ab722c3` — test(plugins): use platform-appropriate absolute paths — `#[cfg(windows)]` picks `C:\Windows\System32\drivers\etc\hosts`.
+3. `df13d68` — chore(release): v1.3.1 "Foundry Patch" — version bump (1.3.0 → 1.3.1) across `package.json`, `Cargo.toml`, `tauri.conf.json`, `Cargo.lock` + `docs/release-notes/v1.3.1.md` + plan doc.
+4. `9f0fd6f` — Merge v1.3.1 'Foundry Patch' (merge commit on `main`)
 
-### Commits
-- `8703bf3` — chore(release): v1.3.0 "Foundry" — declarative plugin system
-- `e10fcbd` — Merge v1.3.0 'Foundry' — declarative plugin system
+**Tagged + pushed `v1.3.1` → `9f0fd6f`. CI run `26012655931` in flight.**
 
 ---
 
@@ -75,21 +60,8 @@ before the release is live.
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
-### v1.3.0 "Foundry" 🛠 — **MERGED + TAGGED 2026-05-17, AWAITING CI** (12/12 slices done)
-
-### v1.3.0 Slice ledger — ALL ✅
-- ✅ Slice 1 — manifest schema + parser + validation
-- ✅ Slice 2 — plugin registry + discovery loop
-- ✅ Slice 3 — Tauri commands (list/enable/disable/reload)
-- ✅ Slice 4 — theme contribution + asset reader
-- ✅ Slice 5 — locale contribution + bundle loader
-- ✅ Slice 6 — pdf_action contribution + CLI runner
-- ✅ Slice 7 — command contribution + shell/url runner
-- ✅ Slice 8 — ai_provider contribution + materialiser
-- ✅ Slice 9 — frontend wiring (8 commits)
-- ✅ Slice 10 — Settings → Plugins panel UI (4 commits)
-- ✅ Slice 11 — example plugin + PLUGINS.md (3 commits)
-- ✅ Slice 12 — version bump + release notes + merge + tag + push (this tick)
+### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
+### v1.3.1 "Foundry Patch" 🩹 — **MERGED + TAGGED 2026-05-17, AWAITING CI 26012655931**
 
 ---
 
@@ -104,26 +76,26 @@ before the release is live.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE B finalize v1.3.0
+## NEXT TICK PLAYBOOK — MODE B finalize v1.3.1
 
-1. **Poll CI**: `gh run view 26011887503` — if still in_progress, write a one-line status and exit silently (or just say "CI still running"). If failed, write `RELEASE_FAILED:` + run_id + failing job, and consider revert vs forward-fix.
+1. **Poll CI**: `gh run view 26012655931` — if still in_progress, write a one-line status and exit silently. If failed (would be a surprise — we ran the gates locally and fixed the only platform-specific tests that broke v1.3.0), write `RELEASE_FAILED:` + run_id + failing job, and forward-fix on a v1.3.2 patch branch.
 2. **If CI green**:
-   - `gh run download 26011887503 --dir /tmp/slab-release-v1.3.0`
+   - `gh run download 26012655931 --dir /tmp/slab-release-v1.3.1`
    - Inspect the artifact tree. We expect:
      - macos-arm64 dmg
      - macos-x64 dmg
      - linux x64 deb + AppImage
      - windows msi + nsis
-   - `gh release create v1.3.0 --title 'v1.3.0 — Foundry 🛠' --notes-file docs/release-notes/v1.3.0.md /tmp/slab-release-v1.3.0/<asset1> /tmp/slab-release-v1.3.0/<asset2> ...`
+   - `gh release create v1.3.1 --title 'v1.3.1 — Foundry Patch 🩹' --notes-file docs/release-notes/v1.3.1.md /tmp/slab-release-v1.3.1/<asset1> /tmp/slab-release-v1.3.1/<asset2> ...`
    - Verify on the GH release page (6 assets, notes rendered).
-3. **Remove `RELEASE_PENDING:` from STATE.md** + flip v1.3.0 in the roadmap to "RELEASED 2026-05-17".
+3. **Remove `RELEASE_PENDING:` from STATE.md** + flip v1.3.1 in the roadmap to "RELEASED 2026-05-17".
 4. Then start the next version. See "POST-v1.3 ROADMAP" below.
 
 ---
 
 ## POST-v1.3 ROADMAP REMINDERS
 
-After v1.3.0 ships, candidate next versions:
+After v1.3.1 ships, candidate next versions:
 
 **Option A — v1.4.0 "Bench" (plugin marketplace + signed manifests)**
 - A read-only marketplace UI inside Settings → Plugins showing a
