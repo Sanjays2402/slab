@@ -1639,6 +1639,29 @@ fn slab_plugins_run_pdf_action(
     .map_err(|e| e.to_string())
 }
 
+/// Load a plugin-contributed locale bundle as a flat `key -> translation`
+/// map. The frontend i18n layer merges these into its in-memory bundles
+/// at boot (and on plugin enable/disable) without going through a file
+/// read on the JS side.
+///
+/// Errors when:
+/// - the plugin or locale is not active,
+/// - the JSON is malformed,
+/// - any value is not a string.
+#[tauri::command]
+fn slab_plugins_load_locale_bundle(
+    plugin_id: String,
+    locale: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let locales = plugins::active_locales(&reg);
+    let entry = locales
+        .into_iter()
+        .find(|l| l.plugin_id == plugin_id && l.locale.locale == locale)
+        .ok_or_else(|| format!("no active locale {locale:?} on plugin {plugin_id:?}"))?;
+    plugins::load_locale_bundle(&entry.plugin_dir, &entry.locale.bundle)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1772,6 +1795,7 @@ pub fn run() {
             slab_plugins_active_pdf_actions,
             slab_plugins_read_asset,
             slab_plugins_run_pdf_action,
+            slab_plugins_load_locale_bundle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

@@ -7,6 +7,7 @@
 //! for the active-list views that feature code consumes.
 
 pub mod contributions;
+pub mod locale_loader;
 pub mod manifest;
 pub mod registry;
 pub mod runner;
@@ -15,6 +16,7 @@ pub use contributions::{
     active_ai_providers, active_commands, active_locales, active_pdf_actions, active_themes,
     read_asset, ActiveAiProvider, ActiveCommand, ActiveLocale, ActivePdfAction, ActiveTheme,
 };
+pub use locale_loader::load_locale_bundle;
 pub use manifest::{
     AiProviderContribution, CommandContribution, Contributions, LocaleContribution, Manifest,
     ManifestError, PdfActionContribution, Permission, ThemeContribution,
