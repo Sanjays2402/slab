@@ -7,8 +7,10 @@
   import { isInTauri } from "$lib/tauri";
   import { vimEnabled } from "$lib/vim/mode";
   import { LOCALES, setLocale, t } from "$lib/i18n";
-  import { pluginsStore } from "$lib/plugins";
+  import { pluginsStore, runPluginCommand, type CommandOutcome } from "$lib/plugins";
   import { applyPluginTheme } from "$lib/pluginThemes";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { notify } from "$lib/notify";
   import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
@@ -75,6 +77,41 @@
   }
   function refreshMru() {
     mru = mruRanks();
+  }
+
+  // Foundry Slice 9 — dispatch a plugin command. For URL outcomes,
+  // open via tauri opener plugin; for shell outcomes, surface a toast
+  // with status + truncated stdout/stderr so the user knows it ran.
+  async function dispatchPluginCommand(
+    pluginId: string,
+    commandId: string,
+    label: string,
+  ): Promise<void> {
+    try {
+      const outcome: CommandOutcome = await runPluginCommand(pluginId, commandId);
+      if (outcome.kind === "url") {
+        await openUrl(outcome.url);
+        notify.info(label, { detail: `Opened ${outcome.url}` });
+        return;
+      }
+      const stdoutShort = outcome.stdout.trim().slice(0, 200);
+      const stderrShort = outcome.stderr.trim().slice(0, 200);
+      if (outcome.status === "ok") {
+        notify.success(label, {
+          detail: stdoutShort || `exit 0 · ${outcome.duration_ms}ms`,
+        });
+      } else if (outcome.status === "nonzeroexit") {
+        notify.warning(label, {
+          detail: `${stderrShort || stdoutShort || "non-zero exit"} · exit ≠ 0`,
+        });
+      } else if (outcome.status === "timeout") {
+        notify.error(label, { detail: "Command timed out (30s)" });
+      } else {
+        notify.error(label, { detail: stderrShort || "Failed to spawn" });
+      }
+    } catch (e) {
+      notify.error(label, { detail: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   $effect(() => {
@@ -248,6 +285,20 @@
       },
       keywords: "onboarding tour welcome walkthrough tutorial intro first launch",
     });
+    // Foundry Slice 9 — plugin-contributed commands. Alphabetised by
+    // label so the order stays predictable across plugins.
+    const pluginCmds = [...pluginsSnap.commands].sort((a, b) => a.label.localeCompare(b.label));
+    for (const c of pluginCmds) {
+      out.push({
+        id: `plugin-cmd:${c.plugin_id}:${c.id}`,
+        title: c.label,
+        subtitle: `From plugin ${c.plugin_id}`,
+        icon: c.url ? "↗" : "⌘",
+        group: "Plugin commands",
+        run: () => void dispatchPluginCommand(c.plugin_id, c.id, c.label),
+        keywords: `plugin ${c.plugin_id} ${c.id} ${c.label} ${c.url ? "url link open" : "shell command"}`,
+      });
+    }
     // Glass Slice 5: MRU management
     if (Object.keys(mru).length > 0) {
       out.push({
