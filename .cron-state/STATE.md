@@ -5,61 +5,74 @@
 
 ---
 
-## STATUS: ✦ v1.8.0 "Glossary" 📖 RELEASE_PENDING + v1.9.0 "Voice Mode" 🔊 RELEASE_PENDING
+## STATUS: ✦ v1.8.0 + v1.9.0 RELEASE_PENDING (CI in flight) + v1.9.1 DONE on branch (ready for MODE A merge)
 
 **Main HEAD**: `3ed93c0` (Merge v1.9.0 'Voice Mode' 🔊)
 **Latest published release**: **v1.7.0 "Study Mode" 🎓** — https://github.com/Sanjays2402/slab/releases/tag/v1.7.0
+
 **Pending releases (need MODE B)**:
-- **v1.8.0** "Glossary" 📖 — merge SHA `41c6a37`, tag `v1.8.0`, CI run `26037405085` (in_progress at end of this tick)
-- **v1.9.0** "Voice Mode" 🔊 — merge SHA `3ed93c0`, tag `v1.9.0`, CI run `26038422918` (queued at end of this tick)
+- **v1.8.0** "Glossary" 📖 — merge SHA `41c6a37`, tag `v1.8.0`, CI run `26037405085`
+- **v1.9.0** "Voice Mode" 🔊 — merge SHA `3ed93c0`, tag `v1.9.0`, CI run `26038422918`
+
+**Ready for MODE A merge**:
+- **v1.9.1** "Beacon Voice Mode: Listen" 🎙 — branch `feature/v1.9.1-beacon-voice-stt` — STATUS: DONE — all 6 tasks shipped
 
 ---
 
-## TICK 2026-05-18 06:59 PT — MODE A (v1.8.0 merge) + MODE C (ship v1.9.0)
+## TICK 2026-05-18 07:57 PT — MODE C (ship v1.9.1 Tasks 4–6)
 
-**MODE A — v1.8.0 "Glossary" 📖 merged to main, tagged, pushed:**
-- Merge `--no-ff` of `feature/v1.8.0-beacon-bonus-14-glossary` into main.
-- Version bump 1.7.0 → 1.8.0 across package.json, src-tauri/Cargo.{toml,lock}, tauri.conf.json.
-- Release notes at `docs/release-notes/v1.8.0.md`.
-- Quality gates all green on main.
-- Tag `v1.8.0`, push origin main --follow-tags via gh token credential helper.
-- CI run id `26037405085`. RELEASE_PENDING.
+**Plan**: `docs/plans/2026-05-18-v1.9.1-voice-stt.md` (466 lines)
 
-**MODE C — v1.9.0 "Voice Mode" 🔊 Slice 15 (TTS-first) shipped end-to-end:**
-Branch `feature/v1.9.0-beacon-bonus-15-voice-mode` (5 commits, merged):
-- Voice scaffold + cross-platform TTS engines (say / espeak-ng / PowerShell) + 20 tests
-- Single-slot VoiceSession with kill-prev-on-speak + 5 tests
-- Tauri command surface (6 commands) + VoiceConfig persistence + 5 config tests
-- `8e7d0f3` Frontend BeaconVoicePanel.svelte + nav + i18n + clippy cleanup
-- `a080fc5` chore(release): v1.9.0 "Voice Mode" 🔊 (version bump + release notes)
-- Merged into main as `3ed93c0` with --no-ff.
-- Tag `v1.9.0` pushed. CI run id `26038422918`. RELEASE_PENDING.
+**Tasks 1–3 (backend)** were already complete pre-tick on branch `feature/v1.9.1-beacon-voice-stt`:
+- `4ed4b74` SttEngine + Transcript + capability probe
+- `15e0ecf` WAV recorder shell-out (sox/arecord/PowerShell)
+- `270464c` SttSession single-slot recorder + transcribe
 
-**Quality gates on main after both merges (v1.8.0 then v1.9.0):**
+**This tick shipped Tasks 4–6**:
+- `1f39bc2` feat(beacon/voice): Tauri command surface for STT (4 commands)
+  - `slab_beacon_voice_stt_capabilities` / `_start(engine?)` / `_stop` (CmdResult<Transcript>) / `_is_recording`
+  - `Arc<SttSession>` managed state alongside existing `VoiceSession`
+- `8224b86` feat(beacon/voice): mic button + Listen settings (frontend)
+  - `BeaconChatPanel.svelte`: pulsing red mic button between composer + Send. Transcript appends with space-pad to existing question; caret to end; focus restored. Mic hidden entirely when sttCapable=false.
+  - `BeaconVoicePanel.svelte`: new 🎙 Listen fieldset with engine/recorder status badges + privacy callout + per-OS install hints (`brew install whisper-cpp` etc.).
+- (pending commit this tick): chore(release): v1.9.1 — Beacon Voice Mode: Listen
+  - Version bump 1.9.0 → 1.9.1 across `package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`
+  - Release notes at `docs/release-notes/v1.9.1.md`
+
+**Quality gates on `feature/v1.9.1-beacon-voice-stt`:**
 - `cargo fmt --all -- --check` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
-- `cargo test --lib` — **682 passed; 0 failed** (+30 voice tests vs v1.8.0)
-- `pnpm check` — 0 errors, 23 pre-existing warnings
+- `cargo test --lib` — **711 passed; 0 failed** (+29 vs v1.9.0)
+- `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
 
 **Key decisions:**
-- TTS-first slice; STT (mic + whisper.cpp) deferred to **v1.9.1** — impossible to validate STT in CI without audio HW + external binaries.
-- TTS via shell-out to native engines (no audio crate bindings) for portability + CI-friendly unit-tests of command builders.
-- `[beacon.voice]` config section uses `skip_serializing_if = is_empty` so existing user configs are not perturbed.
+- Two independent session slots (`Arc<SttSession>` + `Arc<VoiceSession>`) — user can dictate input while TTS is speaking output without collision.
+- `slab_beacon_voice_stt_start(engine: Option<String>)` — `None` → `SttEngine::platform_default()`. Unknown id → user-grade error, no panic.
+- Mic button **hidden** when not capable (rather than disabled-with-tooltip) — no broken affordances; install hints live in settings panel only.
+- Transcript **appends** to existing composer text with space-pad — supports "Summarise: <dictated>" workflow.
+- Pulsing red `mic-pulse` 1.4s keyframe — constant feedback that recording is live.
+- Audio bytes never persist beyond transcription call — WAV unlinked unconditionally even on error paths.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE B x2 (finalize v1.8.0 + v1.9.0)
+## NEXT TICK PLAYBOOK — MODE A (merge v1.9.1) + MODE B x2 (finalize v1.8.0 + v1.9.0)
 
-Both releases pending. Next tick should:
+1. **MODE A — merge v1.9.1 to main**:
+   - `git fetch origin && git checkout main && git pull`
+   - `git merge --no-ff feature/v1.9.1-beacon-voice-stt -m "Merge v1.9.1 'Beacon Voice Mode: Listen' 🎙 — on-device STT via whisper.cpp"`
+   - Run quality gates on main (fmt/clippy/test --lib/pnpm check)
+   - `git tag v1.9.1` then push: `git push origin main --follow-tags`
+   - Record CI run id in STATE.md as RELEASE_PENDING for v1.9.1
 
-1. `gh run view 26037405085` — if green, download artifacts, `gh release create v1.8.0` with 6 curated artifacts + notes from `docs/release-notes/v1.8.0.md`. Remove v1.8.0 from RELEASE_PENDING.
-2. `gh run view 26038422918` — if green, download artifacts, `gh release create v1.9.0` with 6 curated artifacts + notes from `docs/release-notes/v1.9.0.md`. Remove v1.9.0 from RELEASE_PENDING.
-3. If either CI fails, write `RELEASE_FAILED:` line with run id + failing job; consider revert or fix-forward on a follow-up branch.
-4. After both releases are public, MODE C: open `feature/v1.9.1-beacon-voice-stt` and start mic-input + whisper.cpp integration. STT spec scratch:
-   - whisper.cpp CLI bundled per-platform (small.en model, 39MB)
-   - `slab_beacon_voice_record_start/stop` Tauri commands
-   - Inline mic button on BeaconChatPanel
-   - Privacy-first: never persist audio bytes, never network
+2. **MODE B — finalize v1.8.0**:
+   - `gh run view 26037405085` — if green, download artifacts, `gh release create v1.8.0` with notes from `docs/release-notes/v1.8.0.md` + 6 curated artifacts. Remove from RELEASE_PENDING.
+
+3. **MODE B — finalize v1.9.0**:
+   - `gh run view 26038422918` — if green, download artifacts, `gh release create v1.9.0` with notes from `docs/release-notes/v1.9.0.md` + 6 curated artifacts. Remove from RELEASE_PENDING.
+
+4. After all three are published, MODE C: pick next slice. Candidates:
+   - **v1.9.2** "Voice Mode: Polish" — native Windows STT, recording-cancel affordance, voice-driven Beacon commands (dictate → auto-send)
+   - **v2.0.0** — TypeScript Plugins vs Forge (signing)
 
 ---
 
@@ -69,7 +82,8 @@ Both releases pending. Next tick should:
 ### v1.7.0 "Study Mode" 🎓 — **RELEASED 2026-05-18**
 ### v1.8.0 "Glossary" 📖 — **MERGED + TAGGED + CI in flight (run 26037405085)**
 ### v1.9.0 "Voice Mode" 🔊 (TTS-first) — **MERGED + TAGGED + CI queued (run 26038422918)**
-### v1.9.1 "Voice Mode: Listen" 🎙️ — next: STT + mic + whisper.cpp
+### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **DONE on feature branch, ready for MODE A merge**
+### v1.9.2 "Voice Mode: Polish" — Windows STT, cancel-affordance, voice→send
 ### v2.0.0 — TBD (TypeScript Plugins vs. Forge signing)
 
 ---
@@ -87,11 +101,11 @@ Both releases pending. Next tick should:
 
 ## POST-v1.9 ROADMAP REMINDERS
 
-**Slice 15.1 — Voice Mode STT** 🎙️ (v1.9.1)
-- whisper.cpp CLI bundled per-platform (small.en, ~39MB)
-- New `slab_beacon_voice_record_*` Tauri commands
-- Inline mic button on BeaconChatPanel
-- Never persist audio, never network
+**Slice 15.2 — Voice Mode Polish** 🎙 (v1.9.2)
+- Native Windows STT (whisper.cpp + WASAPI recorder)
+- Mid-recording cancel/discard affordance (not just stop+transcribe)
+- Voice-driven Beacon commands: dictate → auto-send when keyword detected
+- Voice selection UI for STT models (small vs base vs medium)
 
 **v2.0.0 candidates:**
 
