@@ -7,6 +7,8 @@
   import { isInTauri } from "$lib/tauri";
   import { vimEnabled } from "$lib/vim/mode";
   import { LOCALES, setLocale, t } from "$lib/i18n";
+  import { pluginsStore } from "$lib/plugins";
+  import { applyPluginTheme } from "$lib/pluginThemes";
   import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
@@ -63,6 +65,10 @@
   let recents = $state<RecentFile[]>([]);
   // Glass Slice 5: MRU ranks for actions (id → rank, lower = more recent).
   let mru = $state<Record<string, number>>({});
+  // Foundry Slice 9: live snapshot of plugin contributions. Subscribed so
+  // the palette re-derives when a plugin is enabled / disabled.
+  let pluginsSnap = $state(get(pluginsStore));
+  const unsubPlugins = pluginsStore.subscribe((s) => (pluginsSnap = s));
 
   function refreshRecents() {
     recents = listRecent();
@@ -138,6 +144,24 @@
         group: "Appearance",
         run: () => void setUiConfig({ theme: th.id }),
         keywords: `theme appearance ${th.id} ${th.label} light dark auto`,
+      });
+    }
+    // Foundry Slice 9 — plugin-contributed themes. Activating one swaps
+    // a runtime style tag; picking any built-in clears it via
+    // clearPluginTheme inside setUiConfig.
+    for (const th of pluginsSnap.themes) {
+      out.push({
+        id: `plugin-theme:${th.plugin_id}:${th.id}`,
+        title: `Theme: ${th.label}`,
+        subtitle: `From plugin ${th.plugin_id}${th.dark ? " · dark" : ""}`,
+        icon: "◇",
+        group: "Appearance",
+        run: () => {
+          void applyPluginTheme(th.plugin_id, th.id, th.css).catch((e) => {
+            console.warn("[slab] applyPluginTheme failed", e);
+          });
+        },
+        keywords: `theme appearance ${th.id} ${th.label} ${th.plugin_id} plugin custom`,
       });
     }
     for (const a of ACCENT_COLORS) {
@@ -358,6 +382,7 @@
   });
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
+    unsubPlugins();
   });
 </script>
 

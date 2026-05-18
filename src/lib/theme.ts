@@ -19,6 +19,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writable, get } from "svelte/store";
 import { isInTauri } from "$lib/tauri";
+import { clearPluginTheme } from "$lib/pluginThemes";
 
 export type ThemeMode = "auto" | "light" | "dark";
 export type AccentColor = "orange" | "blue" | "purple" | "green" | "pink";
@@ -148,7 +149,14 @@ async function readPersisted(): Promise<UiConfig> {
 
 /** Persist + apply. Idempotent; safe to call repeatedly. */
 export async function setUiConfig(next: Partial<UiConfig>): Promise<void> {
-  const merged: UiConfig = { ...get(uiConfig), ...next };
+  const prev = get(uiConfig);
+  const merged: UiConfig = { ...prev, ...next };
+  // v1.3.0 Foundry Slice 9 — if the user picks a built-in theme, drop
+  // the plugin theme `<style>` tag so the regular app.css rules win
+  // again. We only clear when the theme actually changed.
+  if (next.theme && next.theme !== prev.theme) {
+    clearPluginTheme();
+  }
   uiConfig.set(merged);
   applyConfig(merged);
   hookOsThemeWatcher(merged);
