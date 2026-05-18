@@ -836,7 +836,7 @@ impl<T: Serialize> From<Result<T, StudyError>> for CmdResult<T> {
 /// helper that the embedding index uses for its `pdf_hash` column.
 fn hash_pdf_path(p: &std::path::Path) -> Result<String, std::io::Error> {
     ai::embedding_index::EmbeddingIndex::hash_file(p)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
 /// Beacon Study — generate a deck of Q&A flashcards from a PDF and
