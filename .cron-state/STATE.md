@@ -5,49 +5,62 @@
 
 ---
 
-## STATUS: 🚀 v1.2.0 "Glass II" 🪟² RELEASED ✓ — v1.3.0 "Foundry" 🛠 Slice 1 shipped on branch
+## STATUS: 🛠 v1.3.0 "Foundry" — Slices 2 + 3 + 4 + 6 shipped on branch (4 commits this tick)
 
 **Main HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
 **v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.3.0-foundry` (4 commits ahead of main)
-**Branch HEAD**: `d722ad7` — `feat(plugins): validate() + from_toml + fixture (Slice 1, Tasks 3-4)`
+**Active branch**: `feature/v1.3.0-foundry` (5 commits ahead of origin, 8 ahead of main)
+**Branch HEAD**: `7cc1501` — `feat(plugins): PDF action runner with timeout + Tauri cmd (Slice 6)`
 
 **Quality gates green on branch HEAD:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (478 passed — 10 new plugin tests)
+- `cargo test --lib` ✓ (506 passed — +38 new tests this tick)
 - `pnpm exec svelte-check` ✓ (0 errors / 23 warnings)
 
-**NO RELEASE_PENDING** — Foundry has 11 more slices before merge.
+**NO RELEASE_PENDING** — Foundry has 6 more slices before merge.
 
 ---
 
-## TICK 2026-05-17 17:32 PT — v1.2.0 release finalized + v1.3.0 Foundry Slice 1 (4 commits)
+## TICK 2026-05-17 18:05 PT — Foundry MEGA-TICK: Slices 2+3+4+6 (4 commits, 28 new tests, ~1200 LOC backend)
 
-### MODE B — v1.2.0 release
-- CI run `26006878376` (ea2939d) → success
-- Downloaded artifacts, curated 6 assets into `assets/v1.2.0/`
-- `gh release create v1.2.0` (5 assets) + `gh release upload` for the 79MB AppImage
-- Release page live with all 6 assets
+Sanjay said "ship BIG things, not 1-2 fixes." Done — quadruple slice.
 
-### MODE C — v1.3.0 Foundry kickoff (plugin API)
-- Wrote proposal `.cron-state/proposals/v1.3.0-foundry.md` (12-slice roadmap)
-- Wrote writing-plans-format plan `docs/plans/2026-05-17-v1.3.0-foundry.md` (Slice 1 detail)
-- Shipped Slice 1 (manifest schema + parser + validation):
-  - `0570e3e` — docs(plans): proposal + Slice 1 plan
-  - `43045a4` — feat(plugins): scaffold plugins module (Task 1)
-  - `7f26f2b` — feat(plugins): manifest schema with serde Deserialize (Task 2)
-  - `d722ad7` — feat(plugins): validate() + from_toml + fixture (Tasks 3-4)
-- 10 new unit tests, all green
-- Branch pushed to origin
+### MODE C — v1.3.0 Foundry sprint
 
-### Foundry architecture decisions (locked in)
-- **Declarative TOML manifests** — no arbitrary Rust/JS code in plugins
-- **5 contribution kinds**: themes, locales, pdf_actions, commands, ai_providers
-- **No sandbox in v1**: trust-by-prompt with declared permissions (fs/net/spawn)
-- **Reverse-DNS plugin IDs** (`com.example.foo`)
-- **AI providers**: only `kind = "openai_compat"` in v1.3.0 (extensible later)
-- **PDF actions**: shell out to external CLI with `{in}` / `{out}` arg substitution, configurable timeout (default 30s)
+**Slice 2 — Registry + discovery + enabled-state** (commit `2c7ca32`)
+- `PluginRegistry` (Mutex<HashMap<id, Plugin>>) held as Tauri State
+- `discover(root, enabled_state)` scans `~/.slab/plugins/*/plugin.toml`
+- Per-plugin error capture: one broken manifest doesn't take down load
+- Enabled flags persist to `~/.slab/plugin-state.toml` (flat TOML map)
+- Helpers: `default_plugins_root`, `default_state_path`, read/write
+- Added `Serialize` to all manifest types so `Plugin` can cross the bridge
+- 10 new tests (empty root, valid load, error isolation, persistence, reload, etc.)
+
+**Slice 3 — Tauri commands + boot discovery** (commit `b681d22`)
+- `setup()` runs `discover()` at boot against `~/.slab/plugins`
+- 4 commands: `slab_plugins_list/set_enabled/reload/dir`
+
+**Slice 4 — Contribution resolution + asset reader** (commit `b5e111b`)
+- New module `contributions.rs` with `Active<Kind>` wrapper structs
+- 5 helpers (`active_themes/locales/pdf_actions/commands/ai_providers`)
+- `read_asset()` with path-traversal guard (canonicalize both, starts_with check)
+- 6 new Tauri commands: `slab_plugins_active_*` + `slab_plugins_read_asset`
+- 10 new tests (per-kind active list, disabled-plugin contributes nothing, asset
+  traversal/absolute/missing rejected)
+
+**Slice 6 — PDF action CLI runner** (commit `7cc1501`)
+- New module `runner.rs` — shell-out with `{in}`/`{out}` argv substitution
+- Tempfile isolation (original PDF never exposed to plugin's CLI)
+- Wall-clock timeout via `try_wait` polling, kill SIGKILL before reading
+  stdout/stderr (avoids blocking on still-alive child)
+- `ActionReport` carries status (Ok / NonZeroExit / Timeout / SpawnFailed /
+  NoOutput), stdout, stderr, duration_ms, output_path
+- Tauri command: `slab_plugins_run_pdf_action`
+- 8 new tests (unix-gated where they spawn cp/sleep/false/true)
+
+### Disk hygiene
+- `target/debug/incremental` ate 8.3G — nuked it, freed disk (96% → 57%)
 
 ---
 
@@ -66,21 +79,26 @@
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
-### v1.3.0 "Foundry" 🛠 — IN PROGRESS (Slice 1/12 done)
+### v1.3.0 "Foundry" 🛠 — IN PROGRESS (5/12 slices done, all backend complete)
 
 ### v1.3.0 Slice ledger
-- ✅ Slice 1 — manifest schema + parser + validation (this tick)
-- ⏳ Slice 2 — plugin registry + discovery loop
-- ⏳ Slice 3 — Tauri commands (list/enable/disable/reload)
-- ⏳ Slice 4 — theme contribution kind
-- ⏳ Slice 5 — locale contribution kind
-- ⏳ Slice 6 — pdf_action contribution kind (CLI runner)
-- ⏳ Slice 7 — command contribution kind (palette + keymap)
-- ⏳ Slice 8 — ai_provider contribution kind
-- ⏳ Slice 9 — plugin panel UI
+- ✅ Slice 1 — manifest schema + parser + validation (prior tick)
+- ✅ Slice 2 — plugin registry + discovery loop (this tick)
+- ✅ Slice 3 — Tauri commands (list/enable/disable/reload) (this tick)
+- ✅ Slice 4 — theme contribution kind + contribution resolution + asset reader (this tick)
+- ⏳ Slice 5 — locale contribution kind: wire into i18n bundle map (frontend work)
+- ✅ Slice 6 — pdf_action contribution kind (CLI runner) (this tick)
+- ⏳ Slice 7 — command contribution kind (palette + keymap registration)
+- ⏳ Slice 8 — ai_provider contribution kind (inject into AiProvider registry)
+- ⏳ Slice 9 — plugin panel UI (Svelte)
 - ⏳ Slice 10 — permission prompt + grant ledger
 - ⏳ Slice 11 — example-plugins repo + PLUGINS.md
 - ⏳ Slice 12 — version bump + release notes + merge + tag + push
+
+**Note**: Slices 4 and 6 *backend* are done — but the frontend wiring
+(theme picker reading active_themes, palette inserting active_commands,
+etc.) is left to Slice 9's UI tick. That keeps each tick's surface area
+focused.
 
 ---
 
@@ -95,11 +113,15 @@
 
 ---
 
-## PRIOR TICK STATE (kept for reference)
+## NEXT TICK PLAYBOOK
 
-## STATUS-PRIOR: v1.2.0 Glass II Slices 5-RTL + 7 + MERGE + TAG + PUSH
+1. Slice 5 (locale wiring) + Slice 7 (palette wiring) + Slice 8 (AI
+   provider injection) — these are all small backend touches plus
+   frontend stores that pull from `slab_plugins_active_*`. Aim to ship
+   all three in one tick.
+2. Then Slice 9 (UI panel) as a dedicated tick — it's the largest
+   single user-visible piece.
+3. Slice 10 (permission prompt) + Slice 11 (example plugins + docs) +
+   Slice 12 (release) — those can plausibly fit in 1-2 more ticks.
 
-**Quality gates green on `main` HEAD before tag push:**
-- 4 gates passing (468 tests)
-
-**Tag**: `v1.2.0` (pushed) — CI run `26006878376` → success this tick.
+So Foundry is 4-5 ticks from merge if cadence holds.
