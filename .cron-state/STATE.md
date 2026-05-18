@@ -5,18 +5,39 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" merged + tagged — MODE B (await CI, then `gh release create`)
+## STATUS: 🪑 v1.4.0 "Bench" SHIPPED ✓ — Slice 11 plan staged for next dev tick
 
-**Main HEAD**: `9060763` — `Merge v1.4.0 'Bench' 🪑 — signed plugin marketplace`
-**Tag pushed**: `v1.4.0` → `9060763`
-**CI run**: `26018215033` (status: in_progress as of tick close)
-**RELEASE_PENDING**: v1.4.0 — merge SHA 9060763, tag v1.4.0, CI run 26018215033
+**Main HEAD**: `b4dfd6d` — `docs(plans): Beacon Slice 11 — Smart Outline implementation plan`
+**Latest release**: [v1.4.0](https://github.com/Sanjays2402/slab/releases/tag/v1.4.0) — 6 platform assets attached
+**Next mode**: MODE C — execute `docs/plans/2026-05-18-beacon-slice-11-smart-outline.md`
 
-**Quality gates green on merge commit:**
-- `cargo fmt --all -- --check` ✓
-- `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (581 passed)
-- `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
+---
+
+## TICK 2026-05-18 00:15 PT — wrote Slice 11 plan + finalized v1.4.0 release
+
+Two things shipped this tick:
+
+1. **MODE B finalize for v1.4.0** — CI run 26018215033 turned green
+   mid-tick (all 7 jobs success: cargo-test × 3 platforms + bundle × 4
+   platforms). Downloaded artifacts, curated the standard 6 (macos-arm64
+   dmg, macos-x64 dmg, linux deb + AppImage, windows msi + nsis), ran
+   `gh release create v1.4.0 --notes-file docs/release-notes/v1.4.0.md`
+   with all six files. Release URL:
+   https://github.com/Sanjays2402/slab/releases/tag/v1.4.0
+   RELEASE_PENDING removed.
+
+2. **MODE C planning** — Sanjay's instruction was "ship big features each
+   tick", so used the writing-plans skill to author a full TDD-structured
+   implementation plan for the next big feature: Beacon Bonus Slice 11
+   (Smart Outline — propose hierarchical TOC from PDF content). Saved to
+   `docs/plans/2026-05-18-beacon-slice-11-smart-outline.md` (commit
+   `b4dfd6d` on main). Eight tasks, ~12 unit tests planned, ~50 minutes
+   of focused work — a clean handoff for next tick to execute.
+
+**Disk-space note**: `/tmp` was at 100% capacity when the artifact
+download started — had to delete old `/tmp/slab-v*-release/` dirs from
+v1.0/1.1/1.2/1.3.1 to free ~1.7G. Cleanup is now part of the MODE B
+workflow muscle memory. Final state: 2.4G free on `/tmp`.
 
 ---
 
