@@ -125,6 +125,48 @@ impl Default for CitationOpts {
 
 use regex::Regex;
 
+/// Wire shape we ask the LLM to emit. Liberal: every field optional, we
+/// validate in `validate_references` next.
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct LlmRefsWire {
+    #[serde(default)]
+    pub(super) entries: Vec<LlmRefEntryWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct LlmRefEntryWire {
+    #[serde(default)]
+    pub(super) key: Option<String>,
+    #[serde(default)]
+    pub(super) authors: Option<String>,
+    #[serde(default)]
+    pub(super) year: Option<String>,
+    #[serde(default)]
+    pub(super) title: Option<String>,
+    #[serde(default)]
+    pub(super) page: Option<u32>,
+}
+
+/// Liberal JSON parser for the references payload. Same shape as
+/// `outline::parse_llm_outline` — strip fence, find outermost braces,
+/// serde_json::from_str.
+pub(super) fn parse_llm_references(raw: &str) -> Option<LlmRefsWire> {
+    let s = raw.trim();
+    let body = if let Some(rest) = s.strip_prefix("```json") {
+        rest.trim_end_matches("```").trim()
+    } else if let Some(rest) = s.strip_prefix("```") {
+        rest.trim_end_matches("```").trim()
+    } else {
+        s
+    };
+    let start = body.find('{')?;
+    let end = body.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str(&body[start..=end]).ok()
+}
+
 /// Lazily-compiled regexes shared across calls.
 fn re_author_year() -> &'static Regex {
     // Matches "(Smith 2024)", "(Smith, 2024)", "(Smith and Jones 2024)",
@@ -365,5 +407,28 @@ mod tests {
         let pages = vec![blob];
         let cites = scan_inline_citations(&pages);
         assert_eq!(cites.len(), MAX_INLINE_CITES);
+    }
+
+    #[test]
+    fn parses_plain_references_json() {
+        let raw = r#"{"entries":[{"key":"smith2024","authors":"Smith, J.","year":"2024","title":"On X","page":42}]}"#;
+        let w = parse_llm_references(raw).expect("should parse");
+        assert_eq!(w.entries.len(), 1);
+        assert_eq!(w.entries[0].key.as_deref(), Some("smith2024"));
+        assert_eq!(w.entries[0].page, Some(42));
+    }
+
+    #[test]
+    fn parses_references_with_fence_and_chatter() {
+        let raw = "Sure! ```json\n{\"entries\":[{\"key\":\"j25\",\"authors\":\"Jones\",\"year\":\"2025\",\"title\":\"Y\",\"page\":7}]}\n```\nhope that helps";
+        let w = parse_llm_references(raw).expect("should parse");
+        assert_eq!(w.entries.len(), 1);
+        assert_eq!(w.entries[0].year.as_deref(), Some("2025"));
+    }
+
+    #[test]
+    fn refs_returns_none_on_garbage() {
+        assert!(parse_llm_references("not json at all").is_none());
+        assert!(parse_llm_references("").is_none());
     }
 }
