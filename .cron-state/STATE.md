@@ -5,82 +5,91 @@
 
 ---
 
-## STATUS: ✦ v1.7.0 Beacon Bonus Slice 13 "Study Mode" 🎓 DONE on feature/v1.7.0-beacon-bonus-13-study-mode — MERGE next tick
+## STATUS: ✦ v1.7.0 "Study Mode" 🎓 merged + tagged + pushed — RELEASE_PENDING (CI building)
 
-**Main HEAD**: `5306b3e` (unchanged)
-**Feature branch HEAD**: `fa32144` — `fix(beacon/study): use std::io::Error::other (clippy 1.95)`
-**Plan executed**: `docs/plans/2026-05-18-beacon-slice-13-study-mode.md` (8 tasks, all green)
+**Main HEAD**: `521f8ec` (chore(release): v1.7.0 "Study Mode" 🎓)
+**Merge SHA**: `da53f84` (Merge v1.7.0 'Study Mode' 🎓 — Q&A flashcards with SM-2 spaced repetition)
+**Tag**: `v1.7.0` → pushed to origin
+**CI run**: `26034343468` (in_progress at tick end, all-platforms matrix build)
 **Latest release**: v1.6.0 "Citations" 📑 — https://github.com/Sanjays2402/slab/releases/tag/v1.6.0
 
----
-
-## TICK 2026-05-18 05:26 PT — Slice 13 "Study Mode" 🎓 shipped end-to-end
-
-Beacon Bonus Slice 13 landed in one tick: 9 commits (8 from the plan + 1
-clippy fix), the full vertical slice (ai::study + ai::study_store +
-ai::sm2 + 4 Tauri commands + BeaconStudyPanel.svelte + sidebar nav).
-Each layer TDD'd against existing patterns:
-
-- **ai::sm2** — pure scheduler (8 tests covering ease ladder + EF
-  floor/cap). `Ease::{Again,Hard,Good,Easy}` enum with snake_case serde.
-- **ai::study_store** — sqlite at ~/.slab/study.sqlite, schema-versioned
-  via `PRAGMA user_version`, modelled on `pdf::library::registry`
-  (6 tests, in-memory harness via `:memory:` connection).
-- **ai::study** — generate_deck pipeline (extract → chunk → LLM Q&A →
-  parse → validate → insert; 9 tests for parser + validator + dedupe
-  + caps + budget).
-- **4 Tauri commands**: `slab_beacon_generate_deck`, `slab_beacon_study_due`,
-  `slab_beacon_study_review`, `slab_beacon_study_stats` — all hashed
-  per-PDF via reused `EmbeddingIndex::hash_file`.
-- **BeaconStudyPanel.svelte** — Svelte 5 ($state runes), pick PDF +
-  generate + review-one-at-a-time UI with 4-button ease scale,
-  reveal-then-rate flow, footer stats, jump-to-page event dispatch.
-- **Sidebar nav + detach support** — both main and detached-window
-  branches of `+page.svelte`, added to `DETACHABLE_PANELS`.
-
-Quality gates: all four green (fmt clean, clippy -D warnings clean
-after fixing one `io_other_error` lint, `cargo test --lib` 634/634,
-`pnpm check` 0 errors / 23 pre-existing warnings).
-
-**Commits** (oldest first):
-- `0fb046b` feat(beacon/study): scaffold ai::study module + Flashcard type
-- `5c1fee8` feat(beacon/sm2): SM-2-lite spaced-repetition scheduler
-- `0021dc8` feat(beacon/study-store): sqlite store for flashcards + review log
-- `5328bc6` feat(beacon/study): card generation pipeline + validator
-- `a0b5c12` feat(beacon/study): expose 4 Tauri commands for Study Mode
-- `cbfcf6b` feat(beacon/study-ui): BeaconStudyPanel — pick PDF, generate, review
-- `5a3342a` feat(beacon/study-nav): Study panel sidebar entry + detach support
-- `fa32144` fix(beacon/study): use std::io::Error::other (clippy 1.95)
-
-Branch pushed: `feature/v1.7.0-beacon-bonus-13-study-mode` is up on origin.
+**RELEASE_PENDING: v1.7.0 — merge SHA da53f84, release commit 521f8ec, tag v1.7.0, CI run 26034343468**
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE A merge + tag v1.7.0
+## TICK 2026-05-18 05:42 PT — MODE A complete (merge + tag + push)
 
-1. `git fetch origin && git checkout main && git pull --ff-only`
-2. `git merge --no-ff feature/v1.7.0-beacon-bonus-13-study-mode -m "Merge v1.7.0 'Study Mode' 🎓 — Q&A flashcards with SM-2 spaced repetition"`
-3. Bump version to 1.7.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `package.json` + add CHANGELOG entry. Commit:
-   `chore(release): v1.7.0 "Study Mode"`
-4. Run all 4 quality gates on main:
-   - `cd src-tauri && cargo fmt --all -- --check`
-   - `cd src-tauri && cargo clippy --all-targets -- -D warnings`
-   - `cd src-tauri && cargo test --lib`
-   - `pnpm check` (from repo root)
-5. If gates pass → `git tag v1.7.0` then push:
-   `git push origin main --follow-tags` (use credential helper).
-6. Find CI run id via `gh run list --branch main --limit 1`.
-7. Record in STATE.md: `RELEASE_PENDING: v1.7.0 — merge SHA <hash>, tag v1.7.0, CI run <id>`
-8. Tick after that: MODE B finalize (`gh release create v1.7.0 ...` with curated artifacts).
+Picked up Slice 13 "Study Mode" 🎓 sitting DONE on
+`feature/v1.7.0-beacon-bonus-13-study-mode` from the prior tick (5:26 PT)
+and executed the full MODE A playbook in one pass:
+
+1. `git checkout main && git pull --ff-only` — main was at 5306b3e, clean.
+2. `git merge --no-ff feature/v1.7.0-beacon-bonus-13-study-mode` — clean
+   merge via 'ort' strategy, 8 files changed, 1584 insertions. Merge
+   commit `da53f84`.
+3. Version bump 1.6.0 → 1.7.0 across `package.json`,
+   `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and
+   `src-tauri/Cargo.lock` (regenerated via `cargo update -p slab-app
+   --offline`).
+4. Wrote `docs/release-notes/v1.7.0.md` — modelled on the v1.6.0
+   template, covers Study Mode sidebar entry, SM-2-lite scheduler,
+   sqlite store, generation pipeline, 4 Tauri commands, and the
+   Svelte panel.
+5. Commit `521f8ec` — `chore(release): v1.7.0 "Study Mode" 🎓`.
+6. Quality gates on main (all four green, batched once):
+   - `cargo fmt --all -- --check` — clean
+   - `cargo clippy --all-targets -- -D warnings` — clean
+   - `cargo test --lib` — **634 passed; 0 failed**
+   - `pnpm check` — 0 errors, 23 pre-existing warnings
+7. `git tag -a v1.7.0` then pushed: `git push origin main --follow-tags`
+   via gh-token credential helper. Both main + tag landed on origin.
+8. CI run `26034343468` triggered automatically by the push; in
+   progress at tick end (all three platforms — macos-arm64, linux-x64,
+   windows-x64 — in the matrix).
+
+Next tick: **MODE B finalize** — poll the CI run, download all 6
+curated artifacts when green, and `gh release create v1.7.0` with the
+release notes. If CI red, diagnose and either fix on a follow-up branch
+or revert.
 
 ---
 
+## NEXT TICK PLAYBOOK — MODE B finalize v1.7.0
+
+1. `cd /Users/sanjay/Projects/slab && gh run view 26034343468`
+2. If still in_progress → skip to MODE C (likely Slice 14 "Glossary" prep) and
+   re-check next tick.
+3. If completed success:
+   ```bash
+   gh run download 26034343468 --dir /tmp/slab-release-v1.7.0
+   ls /tmp/slab-release-v1.7.0/
+   ```
+   Curate the 6 best artifacts: macos-arm64 dmg, macos-x64 dmg, linux
+   x64 deb + AppImage, windows msi + nsis. (Match the platform table in
+   `docs/release-notes/v1.7.0.md`.)
+4. ```bash
+   gh release create v1.7.0 \
+     --title 'v1.7.0 — Study Mode 🎓' \
+     --notes-file docs/release-notes/v1.7.0.md \
+     /tmp/slab-release-v1.7.0/<artifact1> /tmp/slab-release-v1.7.0/<artifact2> ...
+   ```
+5. Remove the `RELEASE_PENDING` line from STATE.md.
+6. If CI failed → write `RELEASE_FAILED:` to STATE.md with run_id +
+   failing job, fix on a follow-up branch, no revert needed (the v1.6.0
+   release is fine and main builds locally).
+7. Begin authoring **Slice 14 "Glossary"** plan at
+   `docs/plans/2026-05-18-beacon-slice-14-glossary.md` in MODE C of the
+   same tick.
+
+---
 
 ## ROADMAP
 
 ### v0.8.1 → v1.5.0 — RELEASED (see git history)
-### v1.6.0 "Citations" 📑 — **RELEASED 2026-05-18** (this tick)
-### v1.7.0 "Study Mode" 🎓 — plan staged, executing next tick
+### v1.6.0 "Citations" 📑 — **RELEASED 2026-05-18**
+### v1.7.0 "Study Mode" 🎓 — **TAGGED 2026-05-18**, CI building, MODE B next tick
+### v1.8.0 "Glossary" 📖 — proposal: LLM-extracted domain terms with hover linking
+### v1.9.0 "Voice Mode" 🔊 — proposal: TTS + STT for hands-free Beacon
 
 ---
 
@@ -99,9 +108,12 @@ Branch pushed: `feature/v1.7.0-beacon-bonus-13-study-mode` is up on origin.
 
 After Study Mode lands, the Bonus track continues:
 
-**Slice 14 — Glossary**
+**Slice 14 — Glossary** (next up after MODE B finalises v1.7.0)
 - LLM extracts domain-specific terms and definitions from the doc, builds
   a sidebar glossary, links inline mentions on hover.
+- Reuse pattern: `ai::glossary` module mirroring `ai::outline` / `ai::citations`
+  (regex scanner for term candidates → LLM definition extraction → liberal
+  JSON → validate → link → cache). Sqlite or JSON cache TBD.
 
 **Slice 15 — Voice Mode**
 - TTS playback of Beacon answers + STT for asking questions. Provider-
