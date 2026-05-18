@@ -295,6 +295,14 @@ cargo clippy --all-targets -- -D warnings
 cd .. && pnpm exec svelte-check     # type-check the UI
 ```
 
+## Extending Slab (plugins)
+
+Slab v1.3.0 "Foundry" introduces a declarative plugin system. Drop a folder into `~/.slab/plugins/` containing a `plugin.toml` manifest and Slab can pick up custom themes, additional UI languages, shell/URL commands, OpenAI-compatible AI providers, and CLI-backed PDF actions — no compilation, no native code.
+
+- **Author guide:** [`docs/PLUGINS.md`](docs/PLUGINS.md) — full manifest reference, contribution kinds, troubleshooting.
+- **Working example:** [`examples/plugins/hello-slab/`](examples/plugins/hello-slab/) — copy-paste-edit reference plugin that exercises all five contribution kinds.
+- **Manage plugins:** Settings → Plugins (or `Cmd-K` → "Open Settings → Plugins").
+
 ## Under the hood
 
 - **Shell:** [Tauri 2](https://tauri.app) — system webview, ~15–25 MB binaries, native menus.
