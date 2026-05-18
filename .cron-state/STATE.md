@@ -5,74 +5,85 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" Slices 9+10 shipped — Slice 11 (release) next
+## STATUS: 🪑 v1.4.0 "Bench" merged + tagged — MODE B (await CI, then `gh release create`)
 
-**Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch'` (released)
-**Active dev branch**: `feature/v1.4.0-bench` @ `6bc227a` (Slices 1-10 done)
-**Rolled into rollup from**: `feature/v1.4.0-bench-slices-9-10` @ `1ce0d41` (3 commits this tick)
+**Main HEAD**: `9060763` — `Merge v1.4.0 'Bench' 🪑 — signed plugin marketplace`
+**Tag pushed**: `v1.4.0` → `9060763`
+**CI run**: `26018215033` (status: in_progress as of tick close)
+**RELEASE_PENDING**: v1.4.0 — merge SHA 9060763, tag v1.4.0, CI run 26018215033
 
-**Quality gates green on feature/v1.4.0-bench:**
+**Quality gates green on merge commit:**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
 - `cargo test --lib` ✓ (581 passed)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
-**v1.3.1 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.3.1 — all 6 assets uploaded ✓ (auto-created by tauri-action during CI run 26012655931, no manual `gh release create` needed)
+---
 
-**v1.4.0 status**: 10/11 slices shipped. Backend complete (5 modules,
-42 unit tests). UX complete (Browse tab, install/uninstall modals,
-update badges, drawer). Docs complete (MARKETPLACE.md + seed). Only
-Slice 11 = release pipeline remains.
+## TICK 2026-05-17 23:55 PT — v1.4.0 release pipeline executed
+
+**Bigger story than expected.** Sanjay had pushed `8166f40` to main
+between ticks — a deliberate README rewrite (generic framing, no
+version anchors, no codenames, 42 fresh screenshots) PLUS the same
+`__APP_VERSION__` work that was sitting in his WIP stash on the
+feature branch. The stash conflict + README direction conflict
+forced a recovery dance:
+
+1. Started with feature/v1.4.0-bench at 179b074. Popped Sanjay's
+   stash (`vite.config.js`, `src/routes/+page.svelte`, `src/app.d.ts`
+   completion of `__APP_VERSION__`) and committed.
+2. Did the four-file version bump + wrote `docs/release-notes/v1.4.0.md`
+   + updated README v1.4 front-door. Committed.
+3. Switched to main → pulled `8166f40` which contains a *contradictory*
+   README rewrite + duplicate version-injection plumbing.
+4. **Reset feature branch to 179b074** to drop the redundant commits.
+5. Merged origin/main into feature/v1.4.0-bench. README conflict
+   resolved by taking origin/main wholesale (Sanjay's design intent
+   wins — README stays version-agnostic, no per-version sections).
+6. Re-did version bump as a single clean commit on top of the merge.
+7. Pushed feature branch (force-with-lease, because step 4 rewrote).
+8. Merged --no-ff into main, tagged v1.4.0, pushed main --follow-tags.
+
+**Final commits on main this tick:**
+- `e9b878f` — Merge remote-tracking branch 'origin/main' into feature/v1.4.0-bench
+- `61d95ea` — chore(release): bump to v1.4.0 "Bench" 🪑
+- `9060763` — Merge v1.4.0 'Bench' 🪑 — signed plugin marketplace
+
+**Lesson learned**: `git pull` on main BEFORE touching the feature
+branch next time. Sanjay edits between ticks; assume main moves.
 
 ---
 
-## TICK 2026-05-17 23:10 PT — v1.3.1 finalized + Bench Slices 9+10 (3 commits)
+## NEXT TICK PLAYBOOK — MODE B finalize v1.4.0
 
-**MODE B closeout — v1.3.1 released:**
-- CI 26012655931 finished green between ticks
-- All 6 artifacts already uploaded by tauri-action (no manual upload needed)
-- Release notes rendered from `docs/release-notes/v1.3.1.md`
+1. Poll CI: `gh run view 26018215033` — if in_progress, skip to MODE C.
+2. If CI green:
+   - Download artifacts: `gh run download 26018215033 --dir /tmp/slab-release-v1.4.0`
+   - Curate 6 best assets:
+     - macos-arm64 `.dmg`
+     - macos-x64 `.dmg`
+     - linux-x64 `.deb`
+     - linux-x64 `.AppImage`
+     - windows-x64 `.msi`
+     - windows-x64 setup `.exe` (nsis)
+   - `gh release create v1.4.0 --title 'v1.4.0 — Bench 🪑' --notes-file docs/release-notes/v1.4.0.md <6 asset paths>`
+   - Remove `RELEASE_PENDING` line from STATE.md.
+3. If CI failed:
+   - `RELEASE_FAILED: v1.4.0 — run 26018215033, job <name>`
+   - Decide: fix on `feature/v1.4.0-bench-hotfix` or revert merge.
 
-**MODE C develop — v1.4.0 Bench Slices 9+10:**
-
-1. `0185360` — feat(marketplace): uninstall confirmation modal (Slice 9)
-   - New `UninstallConfirmModal.svelte` (mirrors DecryptModal style)
-   - PluginsPanel refactor: `onUninstall` opens modal, `confirmUninstall` runs
-     the destructive call; both card + drawer call sites pick this up
-     automatically since they already route through `onUninstall`
-   - 7 new i18n keys × 4 locales
-   - Closes drawer if showing the just-removed plugin
-
-2. `1ce0d41` — docs(marketplace): submission guide + seed slab-plugins repo (Slice 10)
-   - `docs/MARKETPLACE.md` — 340-line maintainer/author guide
-   - `docs/marketplace-seed/{README.md,index.json.example}` — drop-in
-     payload for the future `Sanjays2402/slab-plugins` GH repo
-   - `docs/PLUGINS.md` — one bullet pointing to MARKETPLACE.md
-
-3. `6bc227a` — Merge --no-ff on `feature/v1.4.0-bench`
-
-**Sanjay's WIP preserved**: `stash@{0}: On main: WIP from Sanjay: screenshot refresh + dynamic version`. Recover with `git stash pop` on main.
+**Note on the workflow**: `build.yml` triggers on push to main +
+PRs only. **It does NOT auto-create GH releases on tag push.** STATE
+note from v1.3.1 saying "tauri-action auto-created release" was
+wrong — that release was created manually. MODE B must run
+`gh release create` explicitly.
 
 ---
 
 ## ROADMAP
 
-### v0.8.1 "Polyglot" — RELEASED 2026-05-16
-### v0.9.0 "Toolkit" — RELEASED 2026-05-16
-### v0.9.1 "Toolkit UX" — RELEASED 2026-05-16
-### v0.10.0 "Beacon" — RELEASED 2026-05-17
-### v0.11.0 "Lathe" — RELEASED 2026-05-17
-### v0.12.0 "Atlas" — TAGGED, NOT RELEASED (CI artifacts skipped)
-### v0.13.0 "Lens" — TAGGED, NOT RELEASED (Windows pdftotext bug)
-### v0.13.1 "Lens Patch" — RELEASED 2026-05-17
-### v0.14.0 "Stack" — RELEASED 2026-05-17 (diff & compare)
-### v0.15.0 "Theater" — RELEASED 2026-05-17 (presenter mode)
-### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
-### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
-### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
-### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
-### v1.3.1 "Foundry Patch" 🩹 — RELEASED 2026-05-17
-### v1.4.0 "Bench" 🪑 — **Slices 1-10 done, Slice 11 (release) next tick**
+### v0.8.1 → v1.3.1 — RELEASED (see git history)
+### v1.4.0 "Bench" 🪑 — **MERGED + TAGGED, awaiting CI for MODE B finalize**
 
 ---
 
@@ -80,46 +91,10 @@ Slice 11 = release pipeline remains.
 
 ```
 1. Read STATE.md
-2. Any feature/* branch with STATUS: DONE → MODE A (merge to main + tag + push)
-3. RELEASE_PENDING in STATE.md + CI run → MODE B (poll CI; if green, download + create GH release)
+2. RELEASE_PENDING in STATE.md + CI run → MODE B (poll CI; if green, gh release create)
+3. Any feature/* branch with STATUS: DONE → MODE A (merge to main + tag + push)
 4. No pending release, no DONE branch → MODE C (DEVELOP — ship a vertical slice)
 ```
-
----
-
-## NEXT TICK PLAYBOOK — v1.4.0 Bench Slice 11 (release)
-
-This is the close-out tick for Bench. MODE C → MODE A.
-
-1. **Lockstep version bump** on `feature/v1.4.0-bench`:
-   - `package.json`: 1.3.1 → 1.4.0
-   - `src-tauri/Cargo.toml`: 1.3.1 → 1.4.0 (both top + `[package]`)
-   - `src-tauri/tauri.conf.json`: productVersion → 1.4.0
-   - `Cargo.lock`: regenerate via `cargo update -p slab-app`
-
-2. **Release notes**: `docs/release-notes/v1.4.0.md`
-   - Headline: 🪑 marketplace
-   - Sections: Marketplace, Uninstall safety, Schema reference, Docs
-
-3. **README front-door refresh** to v1.4.0 (test count stays 581 unless gates change)
-
-4. **Quality gates** (all four):
-   - `cargo fmt --all -- --check`
-   - `cargo clippy --all-targets -- -D warnings`
-   - `cargo test --lib`
-   - `pnpm check`
-
-5. **Mark STATUS: DONE** on the feature branch.
-
-6. **MODE A in same tick**:
-   - `git checkout main && git pull`
-   - **Stash Sanjay's WIP if dirty** (`git stash list` to check)
-   - `git merge --no-ff feature/v1.4.0-bench -m "Merge v1.4.0 'Bench' — plugin marketplace + signed manifests"`
-   - Re-run gates on the merge commit
-   - `git tag v1.4.0 && git push origin main --follow-tags` (with auth helper)
-   - Record `RELEASE_PENDING: v1.4.0 — merge SHA <…>, tag v1.4.0, CI run <…>` here
-
-7. **MODE B finalize** next tick after CI completes.
 
 ---
 
@@ -157,3 +132,7 @@ Other parked items:
   runtime (planned v1.3.x patch — currently they appear in the
   palette + boot log but aren't yet selectable in chat)
 - Slab CLI `slab plugin install <url>` command (post-Bench)
+- The leftover `docs/screenshots-v1.3.1/` directory in repo root is
+  Sanjay's intermediate working copy; Sanjay's commit `8166f40`
+  already shipped fresh screenshots into `docs/screenshots/`. The
+  legacy dir is untracked and harmless; Sanjay can `rm -rf` it.
