@@ -5,10 +5,10 @@
 //! and re-used by the registry loader (Slice 2) and the example-plugins
 //! repo's CI lint.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Manifest {
     pub id: String,
     pub name: String,
@@ -27,7 +27,7 @@ pub struct Manifest {
     pub contributions: Contributions,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Permission {
     Fs,
@@ -35,7 +35,7 @@ pub enum Permission {
     Spawn,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Contributions {
     #[serde(default)]
     pub themes: Vec<ThemeContribution>,
@@ -49,7 +49,7 @@ pub struct Contributions {
     pub ai_providers: Vec<AiProviderContribution>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ThemeContribution {
     pub id: String,
     pub label: String,
@@ -59,14 +59,14 @@ pub struct ThemeContribution {
     pub dark: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocaleContribution {
     pub locale: String,
     /// JSON file with the same shape as `src/lib/i18n/en.json`.
     pub bundle: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PdfActionContribution {
     pub id: String,
     pub label: String,
@@ -81,7 +81,7 @@ fn default_timeout_ms() -> u64 {
     30_000
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommandContribution {
     pub id: String,
     pub label: String,
@@ -95,7 +95,7 @@ pub struct CommandContribution {
     pub default_keymap: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AiProviderContribution {
     pub id: String,
     pub label: String,
