@@ -5,6 +5,83 @@
 
 ---
 
+## STATUS: ✦ v1.6.0 "Citations" 📑 MERGED + TAGGED + PUSHED — CI running, MODE B finalize next tick
+
+**Main HEAD**: `dd4d7a5` — `chore(release): bump version to 1.6.0 + add release notes`
+**Tag pushed**: `v1.6.0`
+**CI run**: 26023622380 (status: in_progress at tick end)
+**Release notes**: `docs/release-notes/v1.6.0.md` (committed)
+**Latest published release**: v1.5.0 "Smart Outline" — https://github.com/Sanjays2402/slab/releases/tag/v1.5.0
+
+`RELEASE_PENDING: v1.6.0 — merge SHA 2f0fa4f, tag v1.6.0, CI run 26023622380`
+
+---
+
+## TICK 2026-05-18 01:50 PT — v1.6.0 Citations shipped end-to-end in one tick 📑
+
+Followed the Slice 12 plan task-by-task per `docs/plans/2026-05-18-beacon-slice-12-citations.md`. Resolved a stale duplicate-import in lib.rs (left over from prior tick's mid-Task-7 state), then completed the slice in 2 commits on the feature branch:
+
+- `feature/v1.6.0-beacon-bonus-12-citations` (8 commits total — 6 carried over from prior tick, 2 new this tick):
+  - **6e413ae** feat(beacon/citations): expose slab_beacon_find_citations Tauri command
+  - **a5d5ea5** feat(beacon/citations-ui): Citations panel + sidebar nav entry
+
+After all 5 quality gates green (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --lib` 611/611, `pnpm check` 0 errors, `pnpm build`), did MODE A in the same tick:
+
+1. Pushed feature branch (auth-token credential helper)
+2. Merged with `--no-ff` to main
+3. Bumped version 1.5.0 → 1.6.0 (Cargo.toml, tauri.conf.json, package.json, Cargo.lock)
+4. Wrote `docs/release-notes/v1.6.0.md`
+5. Committed (`dd4d7a5`), tagged `v1.6.0`, pushed main + tag
+
+CI run 26023622380 building all 6 bundle targets — finalize and create GitHub release next tick (MODE B).
+
+**Tests**: 611 passing (593 baseline + 18 new ai::citations tests).
+**LoC added**: ~1230 (Rust ~860, Svelte ~370, docs ~60).
+**No new dependencies**.
+
+---
+
+## NEXT TICK PLAYBOOK — MODE B finalize v1.6.0
+
+1. `gh run view 26023622380` — confirm green (all 7 jobs: 3× cargo-test + 4× bundle)
+2. If green:
+   - `mkdir -p /tmp/slab-release-v1.6.0 && gh run download 26023622380 --dir /tmp/slab-release-v1.6.0`
+   - Curate 6 standard assets (macos-arm64 dmg, macos-x64 dmg, linux deb + AppImage, windows msi + nsis)
+   - `gh release create v1.6.0 --title 'v1.6.0 — Citations 📑' --notes-file docs/release-notes/v1.6.0.md <asset paths...>`
+   - Clean up `/tmp/slab-release-v1.6.0/`
+   - Remove `RELEASE_PENDING` line from STATE.md
+3. If still in_progress → wait another tick.
+4. If failed → write `RELEASE_FAILED:` line + run_id + failing job; consider revert vs. fix-on-followup branch.
+
+After v1.6.0 is published, MODE C with the next slice. Candidates per `.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`:
+- **Slice 13** "Study Mode" — flashcards/quiz from selected pages
+- **Slice 14** "Glossary" — extract domain terms with definitions
+- **Slice 15** "Voice Mode" — TTS narration with bookmarks
+
+---
+
+## ROADMAP
+
+### v0.8.1 → v1.5.0 — RELEASED (see git history)
+### v1.6.0 "Citations" 📑 — **MERGED 2026-05-18, CI building, RELEASE PENDING**
+
+---
+
+## TICK MODE DECISION TREE
+
+```
+1. Read STATE.md
+2. RELEASE_PENDING in STATE.md + CI run → MODE B (poll CI; if green, gh release create)
+3. Any feature/* branch with STATUS: DONE → MODE A (merge to main + tag + push)
+4. No pending release, no DONE branch → MODE C (DEVELOP — ship a vertical slice)
+```
+
+---
+
+## POST-v1.6 ROADMAP REMINDERS
+
+---
+
 ## STATUS: ✦ v1.5.0 SHIPPED + RELEASE PUBLISHED — Slice 12 Citations plan staged, ready to execute next tick
 
 **Main HEAD**: `e65dba6` — `docs(plans): Beacon Slice 12 Citations — full TDD-structured plan`
