@@ -84,6 +84,12 @@ base64 = "0.22"
 # Used only at user-trigger time so it stays out of the hot render path.
 similar = "2.6"
 
+# Bench (v1.4.0) — Ed25519 signature verification for marketplace
+# index entries. Pure-Rust, no openssl, no native deps; Slab's
+# maintainer key is hard-coded as a const byte array in
+# `marketplace::verify`.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+
 [dev-dependencies]
 tempfile = "3"
 # Beacon mock HTTP server for provider unit tests (no real Ollama in CI).
