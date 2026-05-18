@@ -503,3 +503,64 @@ input[type="text"]:focus {
 .output-list li {
   margin: 2px 0;
 }
+
+/* =====================================================================
+ * Right-to-left scaffold — v1.2.0 "Glass II" Slice 5.
+ *
+ * Slab ships an Arabic locale (ar) in the i18n bundle, primarily as a
+ * proof-of-mechanism for the upcoming community-translation push but
+ * also for early-access RTL users. The bundle alone isn't enough — the
+ * shell has to mirror so the sidebar lives on the right, controls
+ * read right-to-left, and arrow icons flip.
+ *
+ * Strategy: use logical properties (start/end) where possible in the
+ * component styles going forward, and patch the rest with `:dir(rtl)`
+ * here. We intentionally do NOT use `[dir="rtl"]` selectors because
+ * the `dir` attribute is set on <html> globally; `:dir()` follows the
+ * computed direction even if a subtree opts back into LTR, which is
+ * exactly what we want for things like code blocks and PDF preview
+ * canvases (they should always render LTR regardless of UI locale).
+ *
+ * What this block does today:
+ *   1. Default text alignment becomes right.
+ *   2. Sidebar slides to the right edge — its `border-right` becomes
+ *      a `border-left` and the main content takes the left half.
+ *   3. Detach button (`⤢`) and any other directional glyphs mirror
+ *      horizontally via `scaleX(-1)`.
+ *
+ * What this block does NOT do (left for future translators / a11y
+ * pass): bidi-aware tab order, mirror the PDF page numbering, mirror
+ * the find toolbar's previous/next arrows. Those need per-component
+ * fixes once we have actual Arabic speakers using Slab.
+ * ===================================================================== */
+:dir(rtl) {
+  text-align: start;
+}
+
+:dir(rtl) .sidebar {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+:dir(rtl) .nav-icon {
+  /* Most icons are non-directional emoji; only the explicitly directional
+   * arrow set need mirroring. We err on the safe side — emoji that
+   * already have intrinsic LTR/RTL handling will stay correct, and the
+   * arrows that we use (← → ⤢ ↺ ▷) flip as expected. */
+  transform: scaleX(-1);
+}
+
+:dir(rtl) .detach-btn {
+  transform: scaleX(-1);
+}
+
+/* Code, terminal output, and PDF.js canvases should always be LTR
+ * regardless of UI direction — code reads LTR universally. */
+:dir(rtl) code,
+:dir(rtl) pre,
+:dir(rtl) .pdf-viewer,
+:dir(rtl) .findbar input,
+:dir(rtl) .output-list li {
+  direction: ltr;
+  text-align: start;
+}
