@@ -134,5 +134,13 @@
   "plugins.install.failed": "Échec de l'installation",
 
   "plugins.installed.updateAvailable": "Mise à jour disponible",
-  "plugins.installed.updateBadge": "Mise à jour disponible — v{version}"
+  "plugins.installed.updateBadge": "Mise à jour disponible — v{version}",
+
+  "plugins.uninstallConfirm.title": "Désinstaller {name} ?",
+  "plugins.uninstallConfirm.body": "Cela supprime les fichiers du plugin de votre machine. Vous pouvez le réinstaller depuis le marché à tout moment.",
+  "plugins.uninstallConfirm.path": "Installé dans",
+  "plugins.uninstallConfirm.version": "Version",
+  "plugins.uninstallConfirm.cancel": "Annuler",
+  "plugins.uninstallConfirm.confirm": "Désinstaller",
+  "plugins.uninstallConfirm.working": "Désinstallation…"
 }

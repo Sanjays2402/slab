@@ -8,6 +8,7 @@
 2. Every plugin is a folder. The manifest lists which assets you contribute, the asset files (CSS / JSON) live next to the manifest.
 3. Open Slab → **Settings → Plugins** → click **↻ Reload** to discover new plugins, or enable/disable existing ones.
 4. There's a working example at [`examples/plugins/hello-slab/`](../examples/plugins/hello-slab/) — copy that folder and edit.
+5. Want to distribute your plugin? See [`docs/MARKETPLACE.md`](MARKETPLACE.md) — Slab v1.4.0 "Bench" adds a curated index so users can one-click install signed plugins from inside the app.
 
 ---
 

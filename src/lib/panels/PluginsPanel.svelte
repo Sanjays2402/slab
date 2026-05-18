@@ -37,6 +37,7 @@
   import { tStore, t } from "$lib/i18n";
   import PluginDetailDrawer from "$lib/components/PluginDetailDrawer.svelte";
   import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
+  import UninstallConfirmModal from "$lib/components/UninstallConfirmModal.svelte";
 
   // ---------------- Installed-tab state (unchanged from Foundry) ----
   // Local mirror of the store so we can render reactively.
@@ -86,6 +87,22 @@
     error: string | null;
   } | null;
   let installModal = $state<InstallModalState>(null);
+
+  /**
+   * Slice 9 — uninstall confirmation modal state. When set, render the
+   * UninstallConfirmModal. `busy` flips true while the backend uninstall
+   * call is in flight so the modal can disable its buttons + show a
+   * "Uninstalling…" label. The modal stays mounted until the call
+   * either succeeds (clear state + show success toast) or fails
+   * (clear state + show error toast), so the user gets clear feedback
+   * either way.
+   */
+  type UninstallModalState = {
+    entry: IndexEntry;
+    installedVersion: string;
+    busy: boolean;
+  } | null;
+  let uninstallModal = $state<UninstallModalState>(null);
 
   $effect(() => {
     const unsubPlugins = pluginsStore.subscribe((v) => (snap = v));
@@ -240,15 +257,53 @@
     installModal = null;
   }
 
+  /**
+   * Slice 9 — open the uninstall confirmation modal instead of firing
+   * the destructive call immediately. Resolves the currently-installed
+   * version (which may differ from `entry.version` if there's an
+   * update pending) so the modal can show what's actually on disk.
+   */
   async function onUninstall(entry: IndexEntry) {
     if (!marketplaceAvailable()) return;
+    const shown = installedVersion[entry.id] ?? entry.version;
+    uninstallModal = { entry, installedVersion: shown, busy: false };
+  }
+
+  /**
+   * Slice 9 — backdrop click / Cancel / Esc on the modal. Refuses to
+   * close while the uninstall is in flight so the user can't strand a
+   * half-finished filesystem op.
+   */
+  function dismissUninstallModal() {
+    if (uninstallModal?.busy) return;
+    uninstallModal = null;
+  }
+
+  /**
+   * Slice 9 — the user pressed "Uninstall". Run the backend call,
+   * surface success / failure via toast + close the modal.
+   */
+  async function confirmUninstall() {
+    if (!uninstallModal || uninstallModal.busy) return;
+    const entry = uninstallModal.entry;
+    uninstallModal = { ...uninstallModal, busy: true };
     try {
       const removed = await uninstallPluginById(entry.id);
       if (removed) {
         await refreshPlugins();
         notify.success(t("plugins.notify.uninstallOk", { name: entry.name }));
       }
+      // Close the detail drawer if it was showing the now-removed plugin.
+      // Otherwise the user is staring at a drawer for a plugin that no
+      // longer exists on disk, and the Uninstall button there would
+      // pop a confirmation for a non-installed plugin (status flips to
+      // "available" but the drawer caches the old `status` until close).
+      if (drawerEntry?.id === entry.id) {
+        drawerEntry = null;
+      }
+      uninstallModal = null;
     } catch (e) {
+      uninstallModal = null;
       notify.error(t("plugins.notify.uninstallFailed"), {
         detail: e instanceof Error ? e.message : String(e),
       });
@@ -638,6 +693,17 @@
     phase={installModal.phase}
     error={installModal.error}
     onDismiss={dismissInstallModal}
+  />
+{/if}
+
+{#if uninstallModal}
+  <UninstallConfirmModal
+    name={uninstallModal.entry.name}
+    version={uninstallModal.installedVersion}
+    id={uninstallModal.entry.id}
+    busy={uninstallModal.busy}
+    onConfirm={confirmUninstall}
+    onCancel={dismissUninstallModal}
   />
 {/if}
 

@@ -134,5 +134,13 @@
   "plugins.install.failed": "Falló la instalación",
 
   "plugins.installed.updateAvailable": "Actualización disponible",
-  "plugins.installed.updateBadge": "Actualización disponible — v{version}"
+  "plugins.installed.updateBadge": "Actualización disponible — v{version}",
+
+  "plugins.uninstallConfirm.title": "¿Desinstalar {name}?",
+  "plugins.uninstallConfirm.body": "Esto eliminará los archivos del plugin de tu equipo. Podrás reinstalarlo desde el mercado en cualquier momento.",
+  "plugins.uninstallConfirm.path": "Instalado en",
+  "plugins.uninstallConfirm.version": "Versión",
+  "plugins.uninstallConfirm.cancel": "Cancelar",
+  "plugins.uninstallConfirm.confirm": "Desinstalar",
+  "plugins.uninstallConfirm.working": "Desinstalando…"
 }

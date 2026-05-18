@@ -134,5 +134,13 @@
   "plugins.install.failed": "فشل التثبيت",
 
   "plugins.installed.updateAvailable": "تحديث متاح",
-  "plugins.installed.updateBadge": "تحديث متاح — v{version}"
+  "plugins.installed.updateBadge": "تحديث متاح — v{version}",
+
+  "plugins.uninstallConfirm.title": "إزالة {name}؟",
+  "plugins.uninstallConfirm.body": "سيؤدي ذلك إلى حذف ملفات الإضافة من جهازك. يمكنك إعادة تثبيتها من السوق في أي وقت.",
+  "plugins.uninstallConfirm.path": "مثبت في",
+  "plugins.uninstallConfirm.version": "الإصدار",
+  "plugins.uninstallConfirm.cancel": "إلغاء",
+  "plugins.uninstallConfirm.confirm": "إزالة",
+  "plugins.uninstallConfirm.working": "جاري الإزالة…"
 }

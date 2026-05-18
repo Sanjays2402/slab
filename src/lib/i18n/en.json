@@ -134,5 +134,13 @@
   "plugins.install.failed": "Install failed",
 
   "plugins.installed.updateAvailable": "Update available",
-  "plugins.installed.updateBadge": "Update available — v{version}"
+  "plugins.installed.updateBadge": "Update available — v{version}",
+
+  "plugins.uninstallConfirm.title": "Uninstall {name}?",
+  "plugins.uninstallConfirm.body": "This removes the plugin files from your machine. You can reinstall it from the marketplace at any time.",
+  "plugins.uninstallConfirm.path": "Installed at",
+  "plugins.uninstallConfirm.version": "Version",
+  "plugins.uninstallConfirm.cancel": "Cancel",
+  "plugins.uninstallConfirm.confirm": "Uninstall",
+  "plugins.uninstallConfirm.working": "Uninstalling…"
 }
