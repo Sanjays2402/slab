@@ -520,7 +520,7 @@ pub(super) fn validate_entries(
     }
     // Alphabetical sort (case-insensitive). Stable so dupes-by-folding
     // keep their relative order.
-    out.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+    out.sort_by_key(|a| a.term.to_lowercase());
     (out, rejected)
 }
 
