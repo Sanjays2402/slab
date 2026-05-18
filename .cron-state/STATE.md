@@ -5,95 +5,58 @@
 
 ---
 
-## STATUS: 🛠 v1.3.0 "Foundry" — Slices 10+11 COMPLETE, Slice 12 (release) NEXT TICK (11/12 done)
+## STATUS: 🚢 v1.3.0 "Foundry" MERGED + TAGGED — release pending CI
 
-**Main HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
-**v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.3.0-foundry` (29 commits ahead of main)
-**Branch HEAD**: `0b505b7` — `docs(README): mention plugin system + link to PLUGINS.md`
-**Slice 10+11 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slices-10-11.md`
+**Main HEAD**: `e10fcbd` — `Merge v1.3.0 'Foundry' — declarative plugin system`
+**Pre-merge HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
+**Tag**: `v1.3.0` → `e10fcbd` (pushed to origin)
+**Feature branch HEAD**: `8703bf3` — `chore(release): v1.3.0 "Foundry" — declarative plugin system`
 
-**Quality gates green on branch HEAD:**
+**Quality gates green on main HEAD (e10fcbd):**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (**539 passed** — +1 over previous, new `example_hello_slab_manifest_parses`)
+- `cargo test --lib` ✓ (**539 passed**)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
-**NO RELEASE_PENDING** — Foundry needs Slice 12 (release prep) before merge.
+**RELEASE_PENDING: v1.3.0 — merge SHA `e10fcbd`, tag `v1.3.0`, CI run `26011887503`**
+- Run URL: https://github.com/Sanjays2402/slab/actions/runs/26011887503
+- Status as of 20:28 PT: `in_progress`
+- Next tick: MODE B — poll CI; if green, download artifacts (`gh run download 26011887503 --dir /tmp/slab-release-v1.3.0`), curate 6 best (macos arm64 + x64 dmgs, linux x64 deb + AppImage, windows msi + nsis), create GH release with `docs/release-notes/v1.3.0.md` as notes.
+
+**v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
 
 ---
 
-## TICK 2026-05-17 20:05 PT — Foundry Slices 10+11 MEGA-TICK (8 commits)
+## TICK 2026-05-17 20:28 PT — Foundry Slice 12 = ship v1.3.0 (1 commit + merge + tag + push)
 
-Two slices in one tick. Foundry is now **feature-complete** —
-Slice 12 (version bump + release notes + merge + tag + push) lands
-cleanly next tick.
+**Slice 12 / 12 — version bump + release notes + merge + tag + push.**
+Foundry is now feature-complete AND tagged. CI is the only gate left
+before the release is live.
 
-### MODE C — v1.3.0 Foundry sprint (control surface + docs)
+### What shipped this tick
+1. **Version bump** across `package.json`, `src-tauri/Cargo.toml`,
+   `src-tauri/tauri.conf.json` → 1.3.0. `cargo check` refreshed
+   `Cargo.lock`.
+2. **README**: heading "What's in v1.3.0 Foundry" + 8th pillar
+   ("Extensible — Foundry — declarative plugin system…") + test
+   badge 468 → 539.
+3. **`docs/release-notes/v1.3.0.md`** — full Foundry shipping notes:
+   the 5 contribution kinds with worked semantics, control surface
+   (Settings → Plugins), hello-slab example, the honest security
+   framing (declarative, NOT sandboxed), numbers table
+   (468→539 tests, +13 Tauri commands, +88 i18n strings), and a
+   "what's NOT in here for v1.3.x" section (marketplace, AI
+   hot-swap, JS plugins).
+4. **Quality gates** green on feature branch THEN on main after
+   merge: fmt + clippy + 539 lib tests + pnpm-check (0 errors).
+5. **Merged** `feature/v1.3.0-foundry` → `main` with `--no-ff` →
+   merge commit `e10fcbd`.
+6. **Tagged** `v1.3.0` on `e10fcbd`.
+7. **Pushed** main + tag + feature branch (auth-helper dance).
 
-**Slice 10 — Settings → Plugins control surface**
-
-Task 1 (commit `e651c62`) — 22 new i18n keys × 4 locales (en/es/fr/ar)
-covering feature label, title, subtitle, empty state, contribution
-count labels, enable/disable toggle text, error chip, expand/collapse,
-toolbar buttons, palette command label. Appended-only diff for
-reviewability.
-
-Task 2 (commit `bb2d6e8`) — `src/lib/panels/PluginsPanel.svelte` (506
-lines). Every discovered plugin renders as a row with:
-- name + version + author + plugin id + description from manifest
-- segmented enable/disable toggle (calls `setPluginEnabled`,
-  optimistically refreshed via the `pluginsStore` subscription)
-- red "Manifest error" chip + collapsible `<details>` with raw parse
-  error + the plugin's on-disk dir when the manifest is malformed
-- contribution count chips ("3 themes · 1 locale · 2 commands")
-- per-plugin expandable drilldown listing every theme/locale/
-  command/ai-provider/pdf-action by ID + label (debugging aid)
-Toolbar: "📁 Open plugins directory" (revealItemInDir) + "↻ Reload"
-(`reloadPlugins` + toast). Empty state: dashed-border card with the
-absolute plugins-dir path + open-dir CTA. Footer-row: dir path when
-list is non-empty.
-
-Task 3 (commit `d6b37a2`) — Registered in `+page.svelte` features
-array (`{ id: "plugins", label: "Plugins", icon: "🧩", ready: true }`,
-slotted next to Settings), wired the conditional render, added
-`"plugins"` to `DETACHABLE_PANELS`.
-
-Task 4 (commit `2f19ab2`) — Palette entry "Open Settings → Plugins"
-in the Settings group with wide keyword coverage (plugins, extensions,
-themes, locales, commands, ai, install, enable, etc.).
-
-**Slice 11 — example plugin + author docs**
-
-Task 1 (commit `16e94db`) — `examples/plugins/hello-slab/` (4 files):
-- `plugin.toml` — manifest exercising **all five contribution kinds**:
-  Midnight theme, partial Japanese locale, URL command (open github),
-  shell command (echo hello), Ollama AI provider (openai_compat),
-  qpdf-linearize PDF action with `{in}`/`{out}` placeholders
-- `themes/midnight.css` — deep-blue dark theme CSS variable overrides
-- `locales/jp.json` — 40-key Japanese bundle covering most-visible UI
-- `README.md` — install + contribution table + try-it-out walkthrough
-- Plus a new unit test `example_hello_slab_manifest_parses` that loads
-  the shipped manifest via `Manifest::from_toml` and asserts every
-  contribution count. **If we ever break the manifest schema, this
-  test fires and forces an example update — keeping docs honest.**
-
-Task 2 (commit `17bdc9c`) — `docs/PLUGINS.md` (253 lines) — the
-canonical author guide. Sections: TL;DR, directory layout, full
-manifest reference, every contribution kind with worked TOML
-examples, permissions semantics (declarative not sandboxed —
-honest framing), validation cheat-sheet, enabled-state persistence,
-security model, distribution, troubleshooting table, schema
-stability policy. Linked from PluginsPanel's empty state and from
-hello-slab's README.
-
-Task 3 (commit `0b505b7`) — Added "## Extending Slab (plugins)"
-section to README.md between Tests and Under the hood, pointing
-to PLUGINS.md + the hello-slab example.
-
-### Plan doc
-`docs/plans/2026-05-17-v1.3.0-foundry-slices-10-11.md` (written + fully
-executed this tick — `fb87bbc`).
+### Commits
+- `8703bf3` — chore(release): v1.3.0 "Foundry" — declarative plugin system
+- `e10fcbd` — Merge v1.3.0 'Foundry' — declarative plugin system
 
 ---
 
@@ -112,9 +75,9 @@ executed this tick — `fb87bbc`).
 ### v1.0.0 "Glass" — RELEASED 2026-05-17 🎉🪟
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
-### v1.3.0 "Foundry" 🛠 — IN PROGRESS (**11/12** slices done — FEATURE-COMPLETE, Slice 12 = release)
+### v1.3.0 "Foundry" 🛠 — **MERGED + TAGGED 2026-05-17, AWAITING CI** (12/12 slices done)
 
-### v1.3.0 Slice ledger
+### v1.3.0 Slice ledger — ALL ✅
 - ✅ Slice 1 — manifest schema + parser + validation
 - ✅ Slice 2 — plugin registry + discovery loop
 - ✅ Slice 3 — Tauri commands (list/enable/disable/reload)
@@ -123,10 +86,10 @@ executed this tick — `fb87bbc`).
 - ✅ Slice 6 — pdf_action contribution + CLI runner
 - ✅ Slice 7 — command contribution + shell/url runner
 - ✅ Slice 8 — ai_provider contribution + materialiser
-- ✅ Slice 9 — frontend wiring (8 commits previous tick)
-- ✅ Slice 10 — Settings → Plugins panel UI (this tick — 4 commits)
-- ✅ Slice 11 — example plugin + PLUGINS.md (this tick — 3 commits)
-- ⏳ Slice 12 — version bump + release notes + merge + tag + push
+- ✅ Slice 9 — frontend wiring (8 commits)
+- ✅ Slice 10 — Settings → Plugins panel UI (4 commits)
+- ✅ Slice 11 — example plugin + PLUGINS.md (3 commits)
+- ✅ Slice 12 — version bump + release notes + merge + tag + push (this tick)
 
 ---
 
@@ -141,58 +104,52 @@ executed this tick — `fb87bbc`).
 
 ---
 
-## NEXT TICK PLAYBOOK — Slice 12 = ship v1.3.0 Foundry
+## NEXT TICK PLAYBOOK — MODE B finalize v1.3.0
 
-This is mechanical. Order matters.
-
-1. **Bump version everywhere it appears:**
-   - `package.json`: `"version": "1.3.0"`
-   - `src-tauri/Cargo.toml`: `version = "1.3.0"` (currently `1.2.0`)
-   - `src-tauri/tauri.conf.json`: `"version": "1.3.0"`
-   - Verify with `grep -rE '\"version\": ?\"1\.' package.json src-tauri/tauri.conf.json && grep '^version' src-tauri/Cargo.toml`.
-   - Run `cd src-tauri && cargo check` so `Cargo.lock` updates.
-
-2. **Write release notes** at `docs/release-notes/v1.3.0.md` covering:
-   - What Foundry is (declarative plugin system — themes, locales,
-     commands, AI providers, PDF actions via TOML manifest).
-   - Headline UX: Settings → Plugins panel, Cmd-K integration,
-     Reader toolbar dropdown, hello-slab example.
-   - Backend: 5 contribution kinds, 13 Tauri commands, 539 tests.
-   - Permissions / security framing (declarative, not sandboxed).
-   - Pointer to docs/PLUGINS.md.
-   - "Bonus changes" if any (none expected).
-
-3. **Update README** if it pins a version anywhere.
-
-4. **Commit** version bump + release notes:
-   ```
-   chore(release): v1.3.0 "Foundry" — declarative plugin system
-   ```
-
-5. **Quality gates** on feature branch one last time
-   (fmt/clippy/test --lib/pnpm check).
-
-6. **STATUS: DONE marker** — write it into STATE.md so the *next-next*
-   tick (which will be MODE A) merges + tags. OR (preferred) flip
-   into MODE A inline this tick after the version bump:
-   - `git checkout main && git pull`
-   - `git merge --no-ff feature/v1.3.0-foundry -m "Merge v1.3.0 'Foundry' — declarative plugin system"`
-   - Run quality gates on main.
-   - `git tag v1.3.0`
-   - `git push origin main --follow-tags` (with the auth dance).
-   - Record `RELEASE_PENDING: v1.3.0 — merge SHA <hash>, tag v1.3.0, CI run <id>` in STATE.md.
-   - Find the CI run with `gh run list --branch main --limit 3`.
-   - Next tick lands in MODE B to download + create the GH release.
-
-Slice 12 should land in ONE tick. Don't fragment it.
+1. **Poll CI**: `gh run view 26011887503` — if still in_progress, write a one-line status and exit silently (or just say "CI still running"). If failed, write `RELEASE_FAILED:` + run_id + failing job, and consider revert vs forward-fix.
+2. **If CI green**:
+   - `gh run download 26011887503 --dir /tmp/slab-release-v1.3.0`
+   - Inspect the artifact tree. We expect:
+     - macos-arm64 dmg
+     - macos-x64 dmg
+     - linux x64 deb + AppImage
+     - windows msi + nsis
+   - `gh release create v1.3.0 --title 'v1.3.0 — Foundry 🛠' --notes-file docs/release-notes/v1.3.0.md /tmp/slab-release-v1.3.0/<asset1> /tmp/slab-release-v1.3.0/<asset2> ...`
+   - Verify on the GH release page (6 assets, notes rendered).
+3. **Remove `RELEASE_PENDING:` from STATE.md** + flip v1.3.0 in the roadmap to "RELEASED 2026-05-17".
+4. Then start the next version. See "POST-v1.3 ROADMAP" below.
 
 ---
 
 ## POST-v1.3 ROADMAP REMINDERS
 
-After Foundry ships, the proposals on disk for the next versions:
-- `.cron-state/proposals/v0.10.0-beacon-bonus-slices.md` — Slices 11-15
-  (Smart Outline, Citations, Study Mode, Glossary, Voice Mode)
-- Plugin marketplace UI + signed-manifest install flow (post-v1.3 idea)
+After v1.3.0 ships, candidate next versions:
+
+**Option A — v1.4.0 "Bench" (plugin marketplace + signed manifests)**
+- A read-only marketplace UI inside Settings → Plugins showing a
+  curated GitHub-hosted index (JSON list of plugins).
+- Signed-manifest install flow: each plugin in the index has a
+  `manifest.sig` we verify against a hardcoded public key.
+- One-click install: download tarball into `~/.slab/plugins/<id>/`.
+- Persists in `~/.slab/plugins-index.json` for offline.
+- Probably 8–10 slices. Backend: HTTP client + sigverify. Frontend:
+  Marketplace tab in PluginsPanel + install confirmation modal.
+
+**Option B — Beacon Bonus Slices (`.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`)**
+- Smart Outline, Citations, Study Mode, Glossary, Voice Mode — five
+  AI features riding the existing Beacon infra. Quick wins.
+
+**Option C — v1.4.0 "TypeScript Plugins"** — a `script.js`
+contribution kind running in an embedded V8/QuickJS sandbox. Bigger
+project; would let plugins do real frontend work (custom panels).
+Risk: sandbox security is hard.
+
+My recommendation: **Option A (Bench)** next. It completes the
+Foundry story (you can now distribute plugins, not just write them)
+and re-uses everything we just shipped.
+
+Other parked items:
 - AI provider hook-up of plugin-contributed providers through Beacon's
-  runtime (planned v1.3.x patch)
+  runtime (planned v1.3.x patch — currently they appear in the
+  palette + boot log but aren't yet selectable in chat)
+- Slab CLI `slab plugin install <url>` command (post-Bench)
