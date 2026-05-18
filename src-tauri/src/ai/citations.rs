@@ -48,7 +48,7 @@ pub struct InlineCite {
     pub text: String,
     /// Canonical key for linking to a Reference. Lowercased "first-author"
     /// + year for author-year cites; raw number for bracket-num
-    /// (e.g. `"12"`); raw key for bracket-key (e.g. `"smith2024"`).
+    ///   (e.g. `"12"`); raw key for bracket-key (e.g. `"smith2024"`).
     pub key: String,
     /// Best-effort author surname hint (empty for bracket-num cites).
     pub authors_hint: String,
@@ -255,6 +255,112 @@ pub(super) fn build_summary(inline: &[InlineCite], refs: &[Reference]) -> Citati
     }
 }
 
+const SYSTEM_PROMPT: &str = "You are Beacon, a bibliography extractor. \
+The user shows you the last pages of an academic or technical PDF, which \
+contains a References / Bibliography section. Reply with JSON ONLY, no \
+prose, no markdown fences:\n\
+{\"entries\":[{\"key\":\"...\",\"authors\":\"...\",\"year\":\"YYYY\",\"title\":\"...\",\"page\":N}]}\n\
+- key: short stable id like \"smith2024\" or \"12\". If the entry has a \
+visible number prefix (e.g. \"[12] Smith, J. ...\") use that as the key.\n\
+- authors: comma-separated authors as printed.\n\
+- year: 4-digit year, or empty string if absent.\n\
+- title: the work's title (or first sentence if no title).\n\
+- page: the 1-based page where the entry is printed.\n\
+Skip headers (\"References\", \"Bibliography\"), page numbers, and \
+footers. Limit to entries that look like real bibliography lines.";
+
+/// Pick the last ~10% of pages (min 3, max 25) as candidate end-matter.
+fn end_matter_pages(total: usize) -> (usize, usize) {
+    if total == 0 {
+        return (0, 0);
+    }
+    let tail = ((total as f32 * 0.1).ceil() as usize).clamp(3, 25);
+    let tail = tail.min(total);
+    let start = total - tail;
+    (start, total)
+}
+
+/// Build prompt for references extraction. Returns (msgs, pages_used).
+fn build_refs_messages(pages: &[String], max_chars: usize) -> (Vec<ChatMessage>, u32) {
+    let (lo, hi) = end_matter_pages(pages.len());
+    let mut buf = String::new();
+    let mut used = 0u32;
+    for (i, page) in pages.iter().enumerate().take(hi).skip(lo) {
+        let header = format!("\n--- PAGE {} ---\n", i + 1);
+        if buf.len() + header.len() + page.len() > max_chars {
+            break;
+        }
+        buf.push_str(&header);
+        buf.push_str(page);
+        used += 1;
+    }
+    let user = format!(
+        "Below are the last pages of a PDF. Extract every bibliography \
+         entry you can identify. Respond with JSON only.\n{buf}"
+    );
+    (
+        vec![
+            ChatMessage {
+                role: ChatRole::System,
+                content: SYSTEM_PROMPT.to_string(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                content: user,
+            },
+        ],
+        used,
+    )
+}
+
+/// Top-level: run the full citation pipeline against pre-extracted pages.
+pub async fn find_citations(
+    provider: Arc<dyn AiProvider>,
+    pages: &[String],
+    opts: &CitationOpts,
+) -> Result<CitationReport, AiError> {
+    // Pre-flight chunker (fail fast on truly empty docs).
+    let _chunks = chunk_pages(pages);
+
+    let inline = scan_inline_citations(pages);
+    let mut references: Vec<Reference> = Vec::new();
+    let mut model = String::new();
+
+    if opts.include_llm_pass && !pages.is_empty() {
+        let (msgs, _pages_used) = build_refs_messages(pages, opts.max_context_chars as usize);
+        let chat_opts = ChatOpts {
+            temperature: Some(0.1),
+            max_tokens: Some(8_000),
+            ..Default::default()
+        };
+        let resp = provider.chat(&msgs, &chat_opts).await?;
+        model = resp.model;
+        let wire = parse_llm_references(&resp.content).unwrap_or(LlmRefsWire {
+            entries: Vec::new(),
+        });
+        references = validate_references(wire.entries, pages.len() as u32);
+    }
+
+    let summary = build_summary(&inline, &references);
+    Ok(CitationReport {
+        inline,
+        references,
+        summary,
+        model,
+    })
+}
+
+/// Convenience: read PDF text from disk, then run `find_citations`.
+pub async fn find_citations_from_path(
+    provider: Arc<dyn AiProvider>,
+    pdf_path: &Path,
+    opts: &CitationOpts,
+) -> Result<CitationReport, AiError> {
+    let pages = crate::pdf::extract::extract_text(pdf_path)
+        .map_err(|e| AiError::InvalidResponse(format!("reading {}: {e}", pdf_path.display())))?;
+    find_citations(provider, &pages, opts).await
+}
+
 /// Lazily-compiled regexes shared across calls.
 fn re_author_year() -> &'static Regex {
     // Matches "(Smith 2024)", "(Smith, 2024)", "(Smith and Jones 2024)",
@@ -358,8 +464,8 @@ pub fn scan_inline_citations(pages: &[String]) -> Vec<InlineCite> {
 }
 
 /// Expand `"12"` or `"14, 15"` or `"12-15"` into a `Vec<u32>`. Ranges with
-/// > 20 numbers are clamped to the first 20 (defends against pathological
-/// `[1-9999]`-style typos).
+/// more than 20 numbers are clamped to the first 20 (defends against
+/// pathological `[1-9999]`-style typos).
 fn expand_num_list(s: &str) -> Vec<u32> {
     let mut out = Vec::new();
     for part in s.split(',') {
@@ -624,5 +730,85 @@ mod tests {
         assert_eq!(s.references_total, 1);
         assert_eq!(s.linked, 1);
         assert_eq!(s.orphans, 0);
+    }
+
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    struct MockProvider {
+        reply: String,
+        captured: Mutex<Vec<ChatMessage>>,
+    }
+
+    impl MockProvider {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.into(),
+                captured: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AiProvider for MockProvider {
+        async fn chat(
+            &self,
+            msgs: &[ChatMessage],
+            _opts: &ChatOpts,
+        ) -> Result<super::super::ChatResponse, AiError> {
+            *self.captured.lock().unwrap() = msgs.to_vec();
+            Ok(super::super::ChatResponse {
+                content: self.reply.clone(),
+                model: "mock-citations:test".into(),
+            })
+        }
+        async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, AiError> {
+            unimplemented!()
+        }
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn find_citations_happy_path() {
+        // Page 1: body with cites. Page 2: bibliography.
+        let pages = vec![
+            "Foundational result (Smith 2024) and [12].".to_string(),
+            "[12] Smith, J. (2024). On X. Journal of X, 1(1).".to_string(),
+        ];
+        let reply = r#"{"entries":[
+            {"key":"smith2024","authors":"Smith, J.","year":"2024","title":"On X","page":2},
+            {"key":"12","authors":"Smith, J.","year":"2024","title":"On X","page":2}
+        ]}"#;
+        let provider = Arc::new(MockProvider::new(reply));
+        let opts = CitationOpts::default();
+        let report = find_citations(provider, &pages, &opts).await.unwrap();
+        // Three inline cites: (Smith 2024) on p1, [12] on p1, [12] on p2.
+        // (The bibliography line "[12] Smith, J. ..." also matches the
+        // bracket-num regex — that's a known harmless duplicate that
+        // links to the same reference.)
+        assert_eq!(report.inline.len(), 3);
+        // Two references parsed.
+        assert_eq!(report.references.len(), 2);
+        // All three inline cites should link to one of the two refs.
+        assert_eq!(report.summary.linked, 3);
+        assert_eq!(report.summary.orphans, 0);
+        assert_eq!(report.model, "mock-citations:test");
+    }
+
+    #[tokio::test]
+    async fn find_citations_without_llm_pass_skips_references() {
+        let pages = vec!["See (Smith 2024).".to_string()];
+        let provider = Arc::new(MockProvider::new("should-not-be-called"));
+        let opts = CitationOpts {
+            include_llm_pass: false,
+            max_context_chars: 1000,
+        };
+        let report = find_citations(provider, &pages, &opts).await.unwrap();
+        assert_eq!(report.inline.len(), 1);
+        assert!(report.references.is_empty());
+        assert_eq!(report.summary.orphans, 1);
+        assert_eq!(report.model, "");
     }
 }
