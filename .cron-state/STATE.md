@@ -5,71 +5,72 @@
 
 ---
 
-## STATUS: ✦ v1.7.0 "Study Mode" 🎓 RELEASED + v1.8.0 "Glossary" 📖 in flight
+## STATUS: ✦ v1.8.0 "Glossary" 📖 RELEASE_PENDING + v1.9.0 "Voice Mode" 🔊 RELEASE_PENDING
 
-**Main HEAD**: `521f8ec` (chore(release): v1.7.0 "Study Mode" 🎓)
-**Latest release**: **v1.7.0 "Study Mode" 🎓** — https://github.com/Sanjays2402/slab/releases/tag/v1.7.0
-**Active dev branch**: `feature/v1.8.0-beacon-bonus-14-glossary` (6 commits, pushed)
+**Main HEAD**: `3ed93c0` (Merge v1.9.0 'Voice Mode' 🔊)
+**Latest published release**: **v1.7.0 "Study Mode" 🎓** — https://github.com/Sanjays2402/slab/releases/tag/v1.7.0
+**Pending releases (need MODE B)**:
+- **v1.8.0** "Glossary" 📖 — merge SHA `41c6a37`, tag `v1.8.0`, CI run `26037405085` (in_progress at end of this tick)
+- **v1.9.0** "Voice Mode" 🔊 — merge SHA `3ed93c0`, tag `v1.9.0`, CI run `26038422918` (queued at end of this tick)
 
 ---
 
-## TICK 2026-05-18 06:17 PT — MODE B (v1.7.0 finalize) + MODE C (v1.8.0 Slice 14)
+## TICK 2026-05-18 06:59 PT — MODE A (v1.8.0 merge) + MODE C (ship v1.9.0)
 
-**MODE B — v1.7.0 finalize complete:**
-- CI run `26034343468` finished with conclusion `success`.
-- Downloaded all artifacts to `/tmp/slab-release-v1.7.0`.
-- `gh release create v1.7.0` with 6 curated artifacts:
-  - macos-arm64 dmg, macos-x64 dmg, linux deb + AppImage, windows nsis + msi.
-- Release notes from `docs/release-notes/v1.7.0.md` posted.
-- v1.7.0 now public: https://github.com/Sanjays2402/slab/releases/tag/v1.7.0
+**MODE A — v1.8.0 "Glossary" 📖 merged to main, tagged, pushed:**
+- Merge `--no-ff` of `feature/v1.8.0-beacon-bonus-14-glossary` into main.
+- Version bump 1.7.0 → 1.8.0 across package.json, src-tauri/Cargo.{toml,lock}, tauri.conf.json.
+- Release notes at `docs/release-notes/v1.8.0.md`.
+- Quality gates all green on main.
+- Tag `v1.8.0`, push origin main --follow-tags via gh token credential helper.
+- CI run id `26037405085`. RELEASE_PENDING.
 
-**MODE C — v1.8.0 "Glossary" 📖 Slice 14 shipped end-to-end this tick:**
-Branch `feature/v1.8.0-beacon-bonus-14-glossary` pushed with 6 commits:
-- `21745b9` scaffold + types + 2 tests
-- `2ea20b8` regex-based candidate detection (4 patterns) + 7 tests
-- `2c2d18c` LLM definition extraction + validator + 4 tests
-- `ae00094` JSON sidecar cache (load/save/clear) + 5 tests
-- `15f5901` Tauri commands (build / load_cache / clear_cache) + invoke_handler
-- `be55b4e` BeaconGlossaryPanel.svelte (cache-first UX, filter chips, copy)
-- `3dc0e50` Mount panel in `+page.svelte` + i18n key
-- `cbda2b1` Clippy `sort_by_key` cleanup
+**MODE C — v1.9.0 "Voice Mode" 🔊 Slice 15 (TTS-first) shipped end-to-end:**
+Branch `feature/v1.9.0-beacon-bonus-15-voice-mode` (5 commits, merged):
+- Voice scaffold + cross-platform TTS engines (say / espeak-ng / PowerShell) + 20 tests
+- Single-slot VoiceSession with kill-prev-on-speak + 5 tests
+- Tauri command surface (6 commands) + VoiceConfig persistence + 5 config tests
+- `8e7d0f3` Frontend BeaconVoicePanel.svelte + nav + i18n + clippy cleanup
+- `a080fc5` chore(release): v1.9.0 "Voice Mode" 🔊 (version bump + release notes)
+- Merged into main as `3ed93c0` with --no-ff.
+- Tag `v1.9.0` pushed. CI run id `26038422918`. RELEASE_PENDING.
 
-**Slice 14 is functionally complete + STATUS: DONE.** Quality gates:
+**Quality gates on main after both merges (v1.8.0 then v1.9.0):**
 - `cargo fmt --all -- --check` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
-- `cargo test --lib` — **652 passed; 0 failed** (+18 new vs main)
+- `cargo test --lib` — **682 passed; 0 failed** (+30 voice tests vs v1.8.0)
 - `pnpm check` — 0 errors, 23 pre-existing warnings
 
-E2E smoke (Task 8 of the plan) deferred — no Ollama running in cron;
-will run manually by Sanjay or in the next interactive session.
+**Key decisions:**
+- TTS-first slice; STT (mic + whisper.cpp) deferred to **v1.9.1** — impossible to validate STT in CI without audio HW + external binaries.
+- TTS via shell-out to native engines (no audio crate bindings) for portability + CI-friendly unit-tests of command builders.
+- `[beacon.voice]` config section uses `skip_serializing_if = is_empty` so existing user configs are not perturbed.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE A merge v1.8.0
+## NEXT TICK PLAYBOOK — MODE B x2 (finalize v1.8.0 + v1.9.0)
 
-Slice 14 is DONE on `feature/v1.8.0-beacon-bonus-14-glossary`. Next tick
-runs MODE A:
+Both releases pending. Next tick should:
 
-1. `git fetch origin && git checkout main && git pull --ff-only`
-2. `git merge --no-ff feature/v1.8.0-beacon-bonus-14-glossary -m "Merge v1.8.0 'Glossary' 📖 — auto-extract jargon with definitions"`
-3. Version bump 1.7.0 → 1.8.0 in `package.json`, `src-tauri/Cargo.toml`,
-   `src-tauri/tauri.conf.json`, `src-tauri/Cargo.lock` (cargo update -p slab-app --offline).
-4. Write `docs/release-notes/v1.8.0.md` (model on v1.6.0 / v1.7.0).
-5. Quality gates on main (batched).
-6. `git tag -a v1.8.0 -m 'v1.8.0 Glossary'`
-7. `git push origin main --follow-tags` via gh token.
-8. RELEASE_PENDING: v1.8.0 — write to STATE.md, watch CI.
-
-Then MODE C in same tick: start Slice 15 "Voice Mode" 🔊.
+1. `gh run view 26037405085` — if green, download artifacts, `gh release create v1.8.0` with 6 curated artifacts + notes from `docs/release-notes/v1.8.0.md`. Remove v1.8.0 from RELEASE_PENDING.
+2. `gh run view 26038422918` — if green, download artifacts, `gh release create v1.9.0` with 6 curated artifacts + notes from `docs/release-notes/v1.9.0.md`. Remove v1.9.0 from RELEASE_PENDING.
+3. If either CI fails, write `RELEASE_FAILED:` line with run id + failing job; consider revert or fix-forward on a follow-up branch.
+4. After both releases are public, MODE C: open `feature/v1.9.1-beacon-voice-stt` and start mic-input + whisper.cpp integration. STT spec scratch:
+   - whisper.cpp CLI bundled per-platform (small.en model, 39MB)
+   - `slab_beacon_voice_record_start/stop` Tauri commands
+   - Inline mic button on BeaconChatPanel
+   - Privacy-first: never persist audio bytes, never network
 
 ---
 
 ## ROADMAP
 
 ### v0.8.1 → v1.6.0 — RELEASED (see git history)
-### v1.7.0 "Study Mode" 🎓 — **RELEASED 2026-05-18** (this tick)
-### v1.8.0 "Glossary" 📖 — DONE on branch, ready for MODE A next tick
-### v1.9.0 "Voice Mode" 🔊 — proposal: TTS + STT for hands-free Beacon
+### v1.7.0 "Study Mode" 🎓 — **RELEASED 2026-05-18**
+### v1.8.0 "Glossary" 📖 — **MERGED + TAGGED + CI in flight (run 26037405085)**
+### v1.9.0 "Voice Mode" 🔊 (TTS-first) — **MERGED + TAGGED + CI queued (run 26038422918)**
+### v1.9.1 "Voice Mode: Listen" 🎙️ — next: STT + mic + whisper.cpp
+### v2.0.0 — TBD (TypeScript Plugins vs. Forge signing)
 
 ---
 
@@ -84,14 +85,15 @@ Then MODE C in same tick: start Slice 15 "Voice Mode" 🔊.
 
 ---
 
-## POST-v1.8 ROADMAP REMINDERS
+## POST-v1.9 ROADMAP REMINDERS
 
-**Slice 15 — Voice Mode** 🔊
-- TTS playback of Beacon answers + STT for asking questions. Provider-
-  agnostic — local Whisper for STT, system TTS for output. v1 ships
-  buttons-only, no wake-word.
+**Slice 15.1 — Voice Mode STT** 🎙️ (v1.9.1)
+- whisper.cpp CLI bundled per-platform (small.en, ~39MB)
+- New `slab_beacon_voice_record_*` Tauri commands
+- Inline mic button on BeaconChatPanel
+- Never persist audio, never network
 
-After Bonus Slices land, **v2.0.0 candidates**:
+**v2.0.0 candidates:**
 
 **Option A — v2.0.0 "TypeScript Plugins"**
 - `script.js` contribution kind running in an embedded V8/QuickJS
@@ -110,6 +112,9 @@ Other parked items:
 - Slab CLI `slab plugin install <url>` command (post-Bench)
 - The leftover `docs/screenshots-v1.3.1/` directory in repo root is
   Sanjay's intermediate working copy; harmless, can be `rm -rf`'d.
+- CommandPalette DETACHABLE_PANELS drift: missing citations/study/glossary
+  entries pre-existed; voice was added this tick but the other three
+  remain — quick cleanup tick someday.
 - Sanjay's external action for v1.4.1: create `Sanjays2402/slab-plugins`
   GH repo, drop seed files from `docs/marketplace-seed/`, sign the
   hello-slab plugin and post the first real `index.json`.
