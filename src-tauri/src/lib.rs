@@ -48,6 +48,11 @@ use ai::study_store::{
     default_db_path as default_study_db_path, StoredCard, StudyError, StudyStats, StudyStore,
 };
 use ai::summary::{beacon_summary_from_path as do_beacon_summary, BeaconSummary, SummaryLength};
+use ai::voice::{
+    capabilities as voice_capabilities, engine_is_installed as voice_engine_is_installed,
+    list_voices as voice_list_voices, SpeakOpts, TtsEngine, Voice, VoiceCapabilities,
+};
+use ai::voice_session::VoiceSession;
 use ai::{ChatMessage, ChatRole};
 
 use pdf::annot_export::{
@@ -2147,6 +2152,122 @@ fn slab_marketplace_uninstall(
     Ok(removed)
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Beacon Voice Mode (v1.9.0 Slice 15) — Tauri command surface.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Probe what TTS engines are available on this host. Returns the
+/// recommended engine for the platform plus the list of engines that
+/// responded to a version probe. STT is always `false` in v1.9.0.
+#[tauri::command]
+fn slab_beacon_voice_capabilities() -> VoiceCapabilities {
+    voice_capabilities()
+}
+
+/// List the voices the named engine knows about. The frontend uses
+/// this to populate the voice picker in settings. Returns an empty Vec
+/// if the engine isn't installed (the UI surfaces an "install hint"
+/// based on `slab_beacon_voice_capabilities`).
+#[tauri::command]
+fn slab_beacon_voice_list_voices(engine: String) -> CmdResult<Vec<Voice>> {
+    let eng = match TtsEngine::from_id(&engine) {
+        Some(e) => e,
+        None => {
+            return CmdResult::Err {
+                message: format!("unknown TTS engine: {engine}"),
+            }
+        }
+    };
+    if !voice_engine_is_installed(eng) {
+        return CmdResult::Err {
+            message: format!("{engine} is not installed on this host"),
+        };
+    }
+    match voice_list_voices(eng) {
+        Ok(v) => CmdResult::Ok { value: v },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Speak `text` through the chosen engine. Cancels any in-flight
+/// utterance first (single-slot policy). Returns the new child PID
+/// so the UI can correlate the "speaking now" badge if it wants.
+///
+/// `voice` and `rate_wpm` are optional — pass `None` to use the
+/// engine's defaults.
+#[tauri::command]
+fn slab_beacon_voice_speak(
+    engine: String,
+    text: String,
+    voice: Option<String>,
+    rate_wpm: Option<u32>,
+    session: tauri::State<'_, std::sync::Arc<VoiceSession>>,
+) -> CmdResult<u32> {
+    let eng = match TtsEngine::from_id(&engine) {
+        Some(e) => e,
+        None => {
+            return CmdResult::Err {
+                message: format!("unknown TTS engine: {engine}"),
+            }
+        }
+    };
+    if text.trim().is_empty() {
+        return CmdResult::Err {
+            message: "text is empty".into(),
+        };
+    }
+    let opts = SpeakOpts { voice, rate_wpm };
+    match session.speak(eng, &text, &opts) {
+        Ok(pid) => CmdResult::Ok { value: pid },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Stop any in-flight utterance. Returns `true` if a process was
+/// killed, `false` if nothing was speaking.
+#[tauri::command]
+fn slab_beacon_voice_stop(
+    session: tauri::State<'_, std::sync::Arc<VoiceSession>>,
+) -> CmdResult<bool> {
+    CmdResult::Ok {
+        value: session.stop(),
+    }
+}
+
+/// Returns whether a speaker is currently active. The UI polls this
+/// only when needed (on button-press) so the cost is bounded.
+#[tauri::command]
+fn slab_beacon_voice_is_speaking(
+    session: tauri::State<'_, std::sync::Arc<VoiceSession>>,
+) -> CmdResult<bool> {
+    CmdResult::Ok {
+        value: session.is_speaking(),
+    }
+}
+
+/// Speak a short fixed test phrase so the user can sanity-check the
+/// engine + voice + rate combination they just picked. Returns the
+/// child PID for symmetry with `voice_speak`.
+#[tauri::command]
+fn slab_beacon_voice_test(
+    engine: String,
+    voice: Option<String>,
+    rate_wpm: Option<u32>,
+    session: tauri::State<'_, std::sync::Arc<VoiceSession>>,
+) -> CmdResult<u32> {
+    slab_beacon_voice_speak(
+        engine,
+        "Slab Beacon voice test. The quick brown fox jumps over the lazy dog.".into(),
+        voice,
+        rate_wpm,
+        session,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2155,6 +2276,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(windows::WindowRegistry::new())
         .manage(plugins::PluginRegistry::new())
+        .manage(std::sync::Arc::new(VoiceSession::new()))
         .setup(|app| {
             // Cabinet (v1.1.0): restore last session's detached windows
             // from ~/.slab/windows.json. Quiet on error.
@@ -2295,6 +2417,12 @@ pub fn run() {
             slab_marketplace_index,
             slab_marketplace_install,
             slab_marketplace_uninstall,
+            slab_beacon_voice_capabilities,
+            slab_beacon_voice_list_voices,
+            slab_beacon_voice_speak,
+            slab_beacon_voice_stop,
+            slab_beacon_voice_is_speaking,
+            slab_beacon_voice_test,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

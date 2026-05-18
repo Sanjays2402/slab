@@ -115,6 +115,47 @@ pub struct BeaconConfig {
     /// `OPENAI_API_KEY`). Only used by the OpenAI-compatible provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_env: Option<String>,
+    /// Voice Mode settings (v1.9.0 Slice 15). Defaults to an empty
+    /// `VoiceConfig` so existing configs deserialise cleanly.
+    #[serde(default, skip_serializing_if = "VoiceConfig::is_empty")]
+    pub voice: VoiceConfig,
+}
+
+/// Beacon Voice Mode persisted settings. All fields are optional so the
+/// frontend can save partial configurations as the user fills them in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct VoiceConfig {
+    /// Engine id from `ai::voice::TtsEngine::as_id()`: `"say"`,
+    /// `"espeak-ng"`, or `"powershell"`. `None` → use platform default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// Engine-specific voice id (e.g. `"Samantha"`, `"en-us+f3"`).
+    /// `None` → use engine's default voice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    /// Words-per-minute. Clamped by the engine; `None` → engine default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_wpm: Option<u32>,
+    /// If true, Beacon chat responses are auto-spoken when they finish
+    /// streaming. Off by default — the user toggles this from the panel.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auto_speak_replies: bool,
+}
+
+impl VoiceConfig {
+    /// Used by `skip_serializing_if` to omit empty voice blocks from
+    /// config files. Saves on disk noise for users who never enable
+    /// voice mode.
+    pub fn is_empty(&self) -> bool {
+        self.engine.is_none()
+            && self.voice.is_none()
+            && self.rate_wpm.is_none()
+            && !self.auto_speak_replies
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -252,6 +293,7 @@ mod tests {
                 embed_model: Some("text-embedding-3-small".into()),
                 base_url: Some("https://api.openai.com/v1".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
+                voice: VoiceConfig::default(),
             },
             ui: UiConfig::default(),
             keymap: Default::default(),
@@ -525,5 +567,98 @@ mod tests {
             AiError::InvalidResponse(_) => {}
             other => panic!("expected InvalidResponse, got {other:?}"),
         }
+    }
+
+    // ─────────── Voice Mode config (v1.9.0 Slice 15) ───────────
+
+    /// Default `VoiceConfig` is the "no voice mode configured" shape.
+    #[test]
+    fn voice_config_default_is_empty() {
+        let v = VoiceConfig::default();
+        assert!(v.is_empty());
+        assert_eq!(v.engine, None);
+        assert_eq!(v.voice, None);
+        assert_eq!(v.rate_wpm, None);
+        assert!(!v.auto_speak_replies);
+    }
+
+    /// is_empty() returns false the moment any field is set.
+    #[test]
+    fn voice_config_is_empty_flips_on_each_field() {
+        let with_engine = VoiceConfig {
+            engine: Some("say".into()),
+            ..Default::default()
+        };
+        assert!(!with_engine.is_empty());
+        let with_voice = VoiceConfig {
+            voice: Some("Samantha".into()),
+            ..Default::default()
+        };
+        assert!(!with_voice.is_empty());
+        let with_rate = VoiceConfig {
+            rate_wpm: Some(180),
+            ..Default::default()
+        };
+        assert!(!with_rate.is_empty());
+        let with_auto = VoiceConfig {
+            auto_speak_replies: true,
+            ..Default::default()
+        };
+        assert!(!with_auto.is_empty());
+    }
+
+    /// Empty voice config is omitted from saved TOML — keeps existing
+    /// users' on-disk configs clean (no surprise lines after upgrade).
+    #[test]
+    fn empty_voice_config_omitted_from_toml() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let cfg = SlabConfig::default();
+        save_to(&path, &cfg).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !body.contains("[beacon.voice]"),
+            "empty voice should not be serialised; got:\n{body}"
+        );
+    }
+
+    /// Populated voice config round-trips through TOML.
+    #[test]
+    fn voice_config_roundtrips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let cfg = SlabConfig {
+            beacon: BeaconConfig {
+                voice: VoiceConfig {
+                    engine: Some("say".into()),
+                    voice: Some("Samantha".into()),
+                    rate_wpm: Some(200),
+                    auto_speak_replies: true,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        save_to(&path, &cfg).unwrap();
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(loaded.beacon.voice.engine.as_deref(), Some("say"));
+        assert_eq!(loaded.beacon.voice.voice.as_deref(), Some("Samantha"));
+        assert_eq!(loaded.beacon.voice.rate_wpm, Some(200));
+        assert!(loaded.beacon.voice.auto_speak_replies);
+    }
+
+    /// Legacy v1.8.x config (no [beacon.voice] section) still loads
+    /// cleanly and yields a default voice block.
+    #[test]
+    fn legacy_config_without_voice_section_loads_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[beacon]\nprovider = \"ollama\"\nchat_model = \"llama3.2:3b\"\n",
+        )
+        .unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert!(cfg.beacon.voice.is_empty());
     }
 }
