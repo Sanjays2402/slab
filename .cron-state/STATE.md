@@ -5,12 +5,13 @@
 
 ---
 
-## STATUS: 🛠 v1.3.0 "Foundry" — Slices 5+7+8 shipped this tick (3 commits, 8/12 done)
+## STATUS: 🛠 v1.3.0 "Foundry" — Slice 9 plan written (planning tick, no code)
 
 **Main HEAD**: `bdcba0f` — `docs(README): bring up to v1.2.0 "Glass II"`
 **v1.2.0 release**: https://github.com/Sanjays2402/slab/releases/tag/v1.2.0 — all 6 assets uploaded ✓
-**Active branch**: `feature/v1.3.0-foundry` (12 commits ahead of main, pushed to origin)
-**Branch HEAD**: `3247d75` — `feat(plugins): plugin-contributed AI providers (Slice 8)`
+**Active branch**: `feature/v1.3.0-foundry` (13 commits ahead of main)
+**Branch HEAD**: see latest `docs(plans): …slice-9` commit
+**Slice 9 plan**: `docs/plans/2026-05-17-v1.3.0-foundry-slice-9.md` (8 tasks, ~600 LOC TS/Svelte expected)
 
 **Quality gates green on branch HEAD:**
 - `cargo fmt --all -- --check` ✓
