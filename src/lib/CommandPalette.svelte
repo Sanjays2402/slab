@@ -299,6 +299,29 @@
         keywords: `plugin ${c.plugin_id} ${c.id} ${c.label} ${c.url ? "url link open" : "shell command"}`,
       });
     }
+    // Foundry Slice 9 — informational surface for plugin AI providers.
+    // Hook-up of materialised provider through Beacon's runtime is a
+    // v1.3.x follow-up. For now: running the action copies the base
+    // URL so users can paste it into curl / Settings, plus a discovery
+    // toast.
+    for (const p of pluginsSnap.aiProviders) {
+      out.push({
+        id: `plugin-ai:${p.plugin_id}:${p.id}`,
+        title: `AI provider: ${p.label}`,
+        subtitle: `${p.kind} · ${p.base_url}`,
+        icon: "✦",
+        group: "Plugin AI providers",
+        run: async () => {
+          try {
+            await navigator.clipboard.writeText(p.base_url);
+            notify.info(p.label, { detail: `${p.base_url} copied to clipboard` });
+          } catch {
+            notify.info(p.label, { detail: p.base_url });
+          }
+        },
+        keywords: `plugin ai provider llm ${p.plugin_id} ${p.id} ${p.label} ${p.kind} ${p.base_url}`,
+      });
+    }
     // Glass Slice 5: MRU management
     if (Object.keys(mru).length > 0) {
       out.push({
