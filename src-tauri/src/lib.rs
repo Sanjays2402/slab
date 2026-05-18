@@ -1496,6 +1496,65 @@ async fn slab_library_auto_tag_many(
     CmdResult::Ok { value: res }
 }
 
+// ---------- Foundry (v1.3.0) — plugin Tauri commands ----------
+
+/// List all known plugins (active + broken + disabled). UI calls this
+/// to populate the plugin panel.
+#[tauri::command]
+fn slab_plugins_list(reg: tauri::State<'_, plugins::PluginRegistry>) -> Vec<plugins::Plugin> {
+    reg.list()
+}
+
+/// Flip a plugin's enabled flag and persist the new state to
+/// `~/.slab/plugin-state.toml`. Returns `false` if the ID is unknown.
+#[tauri::command]
+fn slab_plugins_set_enabled(
+    id: String,
+    enabled: bool,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<bool, String> {
+    if !reg.set_enabled(&id, enabled) {
+        return Ok(false);
+    }
+    if let Some(p) = plugins::default_state_path() {
+        let snap = reg.enabled_state();
+        if let Err(e) = plugins::write_enabled_state(&p, &snap) {
+            return Err(format!("could not persist plugin state: {e}"));
+        }
+    }
+    Ok(true)
+}
+
+/// Re-scan the plugins directory (`~/.slab/plugins`). UI calls this
+/// after the user drops a new plugin in. Returns the fresh list.
+#[tauri::command]
+fn slab_plugins_reload(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<Vec<plugins::Plugin>, String> {
+    let state_path = plugins::default_state_path();
+    let enabled = state_path
+        .as_deref()
+        .map(plugins::read_enabled_state)
+        .unwrap_or_default();
+    let root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    reg.discover(&root, &enabled);
+    Ok(reg.list())
+}
+
+/// Return the on-disk path of `~/.slab/plugins` (creating it if it
+/// doesn't exist). The frontend uses this with `tauri-plugin-opener` to
+/// reveal the directory in Finder/Explorer/Files.
+#[tauri::command]
+fn slab_plugins_dir() -> Result<String, String> {
+    let root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    if let Err(e) = std::fs::create_dir_all(&root) {
+        return Err(format!("could not create plugins dir: {e}"));
+    }
+    Ok(root.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1503,11 +1562,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(windows::WindowRegistry::new())
+        .manage(plugins::PluginRegistry::new())
         .setup(|app| {
             // Cabinet (v1.1.0): restore last session's detached windows
             // from ~/.slab/windows.json. Quiet on error.
             let handle = tauri::Manager::app_handle(app).clone();
             windows::restore_windows(&handle);
+
+            // Foundry (v1.3.0): discover plugins under ~/.slab/plugins
+            // at boot. Quiet on error — if HOME is unset or the dir is
+            // missing, registry stays empty and the UI shows an empty
+            // panel rather than crashing.
+            if let Some(root) = plugins::default_plugins_root() {
+                let enabled = plugins::default_state_path()
+                    .as_deref()
+                    .map(plugins::read_enabled_state)
+                    .unwrap_or_default();
+                if let Some(reg) = tauri::Manager::try_state::<plugins::PluginRegistry>(app) {
+                    reg.discover(&root, &enabled);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1603,6 +1677,10 @@ pub fn run() {
             windows::slab_window_close,
             windows::slab_window_list,
             slab_request_open_in_main,
+            slab_plugins_list,
+            slab_plugins_set_enabled,
+            slab_plugins_reload,
+            slab_plugins_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
