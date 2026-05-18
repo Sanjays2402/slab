@@ -143,6 +143,14 @@ mod tests {
     /// is_speaking() must opportunistically clear an exited child so
     /// the UI doesn't keep showing "speaking…" forever after a quick
     /// utterance finishes.
+    ///
+    /// Implementation note: we used to sleep a fixed 50ms then check
+    /// once, but the `sh -c "exit 0"` round-trip is slower on Windows
+    /// CI runners (Git Bash adds ~100–300ms of spawn latency) so the
+    /// child was occasionally still alive when we polled — producing
+    /// a flake. We now poll for up to 5 seconds with a 25ms cadence;
+    /// this stays fast on every platform under normal conditions and
+    /// only "uses" extra time on the rare slow CI tick.
     #[test]
     fn is_speaking_reaps_exited_child() {
         let s = VoiceSession::new();
@@ -156,10 +164,22 @@ mod tests {
             let mut slot = s.current.lock().unwrap();
             *slot = Some(child);
         }
-        // Tiny delay so the process can exit.
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        // First call reaps it, returns false.
-        assert!(!s.is_speaking());
+        // Poll until `is_speaking` returns false or we hit the budget.
+        // On a healthy host the first iteration suffices; on slow CI
+        // we get a few extra hops without a hard-coded magic sleep.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut reaped = false;
+        while std::time::Instant::now() < deadline {
+            if !s.is_speaking() {
+                reaped = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            reaped,
+            "expected is_speaking() to reap exited child within 5s"
+        );
         // Subsequent calls remain false.
         assert!(!s.is_speaking());
     }
