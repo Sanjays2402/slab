@@ -234,6 +234,102 @@ fn walk_mut<'a>(roots: &'a mut [OutlineNode], path: &[usize]) -> &'a mut Outline
     cur
 }
 
+const SYSTEM_PROMPT: &str = "You are Beacon, a PDF table-of-contents author. \
+Given the content of a PDF (paginated), you propose a clean H1/H2/H3 outline. \
+Reply with JSON ONLY, no prose, no markdown fences, in this exact shape:\n\
+{\"entries\":[{\"title\":\"...\",\"page\":N,\"level\":1|2|3}]}\n\
+- title: short, human-readable (4-8 words). No trailing periods.\n\
+- page: 1-based page number where the section starts.\n\
+- level: 1 for top-level chapters, 2 for sub-sections, 3 only when clearly nested.\n\
+Prefer fewer, meaningful entries over many noisy ones. Aim for 5-25 entries on\n\
+a normal document. Skip table-of-contents pages, copyright pages, and indexes.";
+
+/// Build the prompt vec for an outline proposal. Pulled out so tests can pin it.
+fn build_messages(pages: &[String], max_context_chars: usize) -> (Vec<ChatMessage>, u32) {
+    // We deliberately don't reuse build_context() from chat.rs here — that
+    // helper formats for Q&A with a tail-bias. For outlines we want a
+    // forward-bias (chapters live near the front of long docs) and explicit
+    // page-number anchors so the model has fewer excuses to fabricate.
+    let mut buf = String::new();
+    let mut pages_used = 0u32;
+    for (i, page) in pages.iter().enumerate() {
+        let header = format!("\n--- PAGE {} ---\n", i + 1);
+        if buf.len() + header.len() + page.len() > max_context_chars {
+            break;
+        }
+        buf.push_str(&header);
+        buf.push_str(page);
+        pages_used += 1;
+    }
+    let user = format!(
+        "Below is the content of a PDF. Propose a hierarchical outline \
+         (table of contents) inferred from the body text. Each entry MUST \
+         cite the page where that section begins. Respond with JSON only.\n\
+         {buf}"
+    );
+    (
+        vec![
+            ChatMessage {
+                role: ChatRole::System,
+                content: SYSTEM_PROMPT.to_string(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                content: user,
+            },
+        ],
+        pages_used,
+    )
+}
+
+/// Run a Smart Outline proposal turn against pre-extracted page text.
+pub async fn propose_outline(
+    provider: Arc<dyn AiProvider>,
+    pages: &[String],
+    max_context_chars: usize,
+) -> Result<ProposedOutline, AiError> {
+    // Chunker isn't strictly needed for the prompt itself, but we call it
+    // up-front so a doc with zero extractable text fails fast with an
+    // empty-ish proposal rather than waiting on an LLM round-trip.
+    let _chunks = chunk_pages(pages);
+
+    let (msgs, pages_used) = build_messages(pages, max_context_chars);
+    let opts = ChatOpts {
+        // Outline generation wants determinism — same doc, same outline.
+        temperature: Some(0.1),
+        // 80 entries * ~40 tokens each ≈ 3200; double for safety.
+        max_tokens: Some(6_000),
+        ..Default::default()
+    };
+    let resp = provider.chat(&msgs, &opts).await?;
+
+    let wire = parse_llm_outline(&resp.content).unwrap_or(LlmOutlineWire {
+        entries: Vec::new(),
+    });
+    let (nodes, stats) = build_tree(wire.entries, pages.len() as u32);
+
+    Ok(ProposedOutline {
+        nodes,
+        model: resp.model,
+        pages_used,
+        pages_total: pages.len() as u32,
+        raw_candidates: stats.raw_candidates,
+        dropped_invalid_page: stats.dropped_invalid_page,
+        dropped_duplicate: stats.dropped_duplicate,
+    })
+}
+
+/// Convenience wrapper: read PDF text from disk, then propose.
+pub async fn propose_outline_from_path(
+    provider: Arc<dyn AiProvider>,
+    pdf_path: &Path,
+    max_context_chars: usize,
+) -> Result<ProposedOutline, AiError> {
+    let pages = crate::pdf::extract::extract_text(pdf_path)
+        .map_err(|e| AiError::InvalidResponse(format!("reading {}: {e}", pdf_path.display())))?;
+    propose_outline(provider, &pages, max_context_chars).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,5 +438,99 @@ mod tests {
         }
         let total = count(&tree);
         assert!(total <= MAX_PROPOSED_NODES, "got {total} nodes");
+    }
+
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    struct MockProvider {
+        reply: String,
+        captured: Mutex<Vec<ChatMessage>>,
+    }
+
+    impl MockProvider {
+        fn new(reply: &str) -> Self {
+            Self {
+                reply: reply.into(),
+                captured: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AiProvider for MockProvider {
+        async fn chat(
+            &self,
+            msgs: &[ChatMessage],
+            _opts: &ChatOpts,
+        ) -> Result<super::super::ChatResponse, AiError> {
+            *self.captured.lock().unwrap() = msgs.to_vec();
+            Ok(super::super::ChatResponse {
+                content: self.reply.clone(),
+                model: "mock-outline:test".into(),
+            })
+        }
+        async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, AiError> {
+            unimplemented!()
+        }
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn propose_outline_happy_path() {
+        let pages = vec![
+            "chapter one body".to_string(),
+            "chapter two body".to_string(),
+        ];
+        let reply = r#"{"entries":[
+            {"title":"Chapter One","page":1,"level":1},
+            {"title":"Chapter Two","page":2,"level":1}
+        ]}"#;
+        let provider = Arc::new(MockProvider::new(reply));
+        let p = propose_outline(provider, &pages, 5_000).await.unwrap();
+        assert_eq!(p.nodes.len(), 2);
+        assert_eq!(p.nodes[0].title, "Chapter One");
+        assert_eq!(p.nodes[0].page_index, Some(0));
+        assert_eq!(p.pages_total, 2);
+        assert_eq!(p.raw_candidates, 2);
+        assert_eq!(p.dropped_invalid_page, 0);
+        assert_eq!(p.model, "mock-outline:test");
+    }
+
+    #[tokio::test]
+    async fn propose_outline_handles_chatty_llm() {
+        let pages = vec!["a".to_string(); 3];
+        let reply = "Sure! Here it is:\n```json\n{\"entries\":[{\"title\":\"Top\",\"page\":1}]}\n```\nLet me know if you'd like adjustments!";
+        let provider = Arc::new(MockProvider::new(reply));
+        let p = propose_outline(provider, &pages, 5_000).await.unwrap();
+        assert_eq!(p.nodes.len(), 1);
+        assert_eq!(p.nodes[0].title, "Top");
+    }
+
+    #[tokio::test]
+    async fn propose_outline_empty_on_garbage() {
+        let provider = Arc::new(MockProvider::new("no json here, sorry"));
+        let pages = vec!["a".to_string()];
+        let p = propose_outline(provider, &pages, 5_000).await.unwrap();
+        assert_eq!(p.nodes.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn propose_outline_prompt_asks_for_json() {
+        let provider = Arc::new(MockProvider::new(r#"{"entries":[]}"#));
+        let pages = vec!["a".to_string()];
+        let _ = propose_outline(provider.clone(), &pages, 5_000)
+            .await
+            .unwrap();
+        let captured = provider.captured.lock().unwrap().clone();
+        let sys = captured
+            .iter()
+            .find(|m| m.role == ChatRole::System)
+            .unwrap();
+        assert!(sys.content.to_lowercase().contains("json"));
+        let usr = captured.iter().find(|m| m.role == ChatRole::User).unwrap();
+        assert!(usr.content.to_lowercase().contains("page"));
     }
 }
