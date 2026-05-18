@@ -43,6 +43,8 @@ use ai::selection_action::{
     run_selection_action as do_selection_action, SelectionAction, SelectionActionReply,
 };
 use ai::sm2::Ease;
+use ai::stt::{capabilities as stt_capabilities, SttCapabilities, SttEngine, Transcript};
+use ai::stt_session::SttSession;
 use ai::study::{generate_deck_from_path as do_beacon_generate_deck, DeckOpts, DeckReport};
 use ai::study_store::{
     default_db_path as default_study_db_path, StoredCard, StudyError, StudyStats, StudyStore,
@@ -2268,6 +2270,86 @@ fn slab_beacon_voice_test(
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Beacon Voice Mode: Listen (v1.9.1 STT) — Tauri command surface.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Probe what STT engines + recorders are available on this host. The
+/// frontend uses this to (a) populate the engine selector and (b) show
+/// an "install whisper-cpp" hint when the binary is missing. Cheap —
+/// re-call on every settings panel render is fine.
+#[tauri::command]
+fn slab_beacon_voice_stt_capabilities() -> SttCapabilities {
+    stt_capabilities()
+}
+
+/// Start a fresh mic recording. `engine` is optional — pass `None` to
+/// use the platform default (currently always `whisper-cpp`). Cancels
+/// any in-flight recording first (single-slot policy, mirroring the
+/// TTS side).
+///
+/// Returns `Ok(())` on success. On failure (no recorder, unknown
+/// engine, spawn error) the frontend gets a user-grade error message.
+#[tauri::command]
+fn slab_beacon_voice_stt_start(
+    engine: Option<String>,
+    session: tauri::State<'_, std::sync::Arc<SttSession>>,
+) -> CmdResult<()> {
+    let eng = match engine.as_deref() {
+        Some(id) => match SttEngine::from_id(id) {
+            Some(e) => e,
+            None => {
+                return CmdResult::Err {
+                    message: format!("unknown STT engine: {id}"),
+                };
+            }
+        },
+        None => match SttEngine::platform_default() {
+            Some(e) => e,
+            None => {
+                return CmdResult::Err {
+                    message: "no STT engine available on this platform".into(),
+                };
+            }
+        },
+    };
+    match session.start(eng) {
+        Ok(()) => CmdResult::Ok { value: () },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Stop the in-flight recording and transcribe. The WAV file is
+/// **always** unlinked before this returns, even on transcription
+/// failure — Slab never persists audio bytes.
+///
+/// Returns the transcript text + detected language + recording
+/// duration. Errors carry a user-grade message ("whisper-cli not
+/// installed", "transcription produced no text", etc.).
+#[tauri::command]
+fn slab_beacon_voice_stt_stop(
+    session: tauri::State<'_, std::sync::Arc<SttSession>>,
+) -> CmdResult<Transcript> {
+    match session.stop() {
+        Ok(t) => CmdResult::Ok { value: t },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// True iff a recording slot is currently held. Cheap (a single mutex
+/// lock with no syscall). The UI polls this to decide whether to show
+/// the "recording…" indicator on focus return.
+#[tauri::command]
+fn slab_beacon_voice_stt_is_recording(
+    session: tauri::State<'_, std::sync::Arc<SttSession>>,
+) -> bool {
+    session.is_recording()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2277,6 +2359,7 @@ pub fn run() {
         .manage(windows::WindowRegistry::new())
         .manage(plugins::PluginRegistry::new())
         .manage(std::sync::Arc::new(VoiceSession::new()))
+        .manage(std::sync::Arc::new(SttSession::new()))
         .setup(|app| {
             // Cabinet (v1.1.0): restore last session's detached windows
             // from ~/.slab/windows.json. Quiet on error.
@@ -2423,6 +2506,10 @@ pub fn run() {
             slab_beacon_voice_stop,
             slab_beacon_voice_is_speaking,
             slab_beacon_voice_test,
+            slab_beacon_voice_stt_capabilities,
+            slab_beacon_voice_stt_start,
+            slab_beacon_voice_stt_stop,
+            slab_beacon_voice_stt_is_recording,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
