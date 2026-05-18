@@ -21,6 +21,7 @@
 use super::{AiError, AiProvider, ChatMessage, ChatOpts, ChatResponse};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 
 /// A reasonable cheap default that exists on most providers.
@@ -35,6 +36,11 @@ pub struct OpenAiCompatibleProvider {
     api_key: String,
     chat_model: String,
     embed_model: String,
+    /// Extra HTTP headers attached to every chat/embed request.
+    /// Populated by plugin-contributed providers (Foundry Slice 8) so
+    /// plugin authors can carry e.g. `X-Org-Id` or a custom auth scheme
+    /// without modifying provider code.
+    extra_headers: HashMap<String, String>,
     client: reqwest::Client,
 }
 
@@ -56,6 +62,7 @@ impl OpenAiCompatibleProvider {
             api_key: api_key.into(),
             chat_model: DEFAULT_CHAT_MODEL.to_string(),
             embed_model: DEFAULT_EMBED_MODEL.to_string(),
+            extra_headers: HashMap::new(),
             client,
         }
     }
@@ -69,6 +76,55 @@ impl OpenAiCompatibleProvider {
         self.embed_model = model.into();
         self
     }
+
+    /// Attach extra HTTP headers (e.g. `X-Organization`, `X-Custom-Auth`)
+    /// to every request. Replaces any previously-set extras. Used by
+    /// plugin-contributed providers (Foundry Slice 8) that need a
+    /// non-Bearer auth scheme or organisation routing.
+    ///
+    /// Header **values** may use the `$VAR_NAME` syntax to interpolate
+    /// an environment variable at construction time (see
+    /// [`resolve_header_value`]).
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.extra_headers = headers;
+        self
+    }
+}
+
+/// Resolve a header value, expanding a leading `$VAR_NAME` to the
+/// corresponding env var. The whole value must be `$NAME` (no
+/// concatenation, no braces) — keeps the contract simple and
+/// predictable. Bare values (no `$` prefix) pass through verbatim.
+///
+/// Returns `Err` when the value starts with `$` but the env var is
+/// unset or empty.
+pub fn resolve_header_value(value: &str) -> Result<String, AiError> {
+    if let Some(name) = value.strip_prefix('$') {
+        let v = std::env::var(name).map_err(|_| {
+            AiError::ProviderUnavailable(format!("header references missing env var ${name}"))
+        })?;
+        if v.trim().is_empty() {
+            return Err(AiError::ProviderUnavailable(format!(
+                "header env var ${name} is empty"
+            )));
+        }
+        Ok(v)
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+/// Apply [`OpenAiCompatibleProvider::extra_headers`] to a reqwest
+/// request builder, performing `$VAR` substitution per header value.
+fn apply_extra_headers(
+    mut req: reqwest::RequestBuilder,
+    extras: &HashMap<String, String>,
+) -> Result<reqwest::RequestBuilder, AiError> {
+    for (k, v) in extras {
+        let resolved = resolve_header_value(v)?;
+        req = req.header(k, resolved);
+    }
+    Ok(req)
 }
 
 // ---------- Wire types ----------
@@ -149,13 +205,13 @@ impl AiProvider for OpenAiCompatibleProvider {
             max_tokens: opts.max_tokens,
         };
         let url = format!("{}/chat/completions", self.base_url);
-        let res = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await?;
+        let mut req = self.client.post(&url);
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let req = req.json(&body);
+        let req = apply_extra_headers(req, &self.extra_headers)?;
+        let res = req.send().await?;
         let status = res.status();
         if status.as_u16() == 429 {
             return Err(AiError::RateLimited);
@@ -187,13 +243,13 @@ impl AiProvider for OpenAiCompatibleProvider {
             input: texts,
         };
         let url = format!("{}/embeddings", self.base_url);
-        let res = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await?;
+        let mut req = self.client.post(&url);
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let req = req.json(&body);
+        let req = apply_extra_headers(req, &self.extra_headers)?;
+        let res = req.send().await?;
         let status = res.status();
         if status.as_u16() == 429 {
             return Err(AiError::RateLimited);
@@ -392,6 +448,180 @@ mod tests {
                 "got {m}"
             ),
             other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    // ---------- Slice 8: header injection (plugin-contributed providers) ----------
+
+    /// Bare values pass through unchanged. No `$` prefix → no env-var lookup.
+    #[test]
+    fn resolve_header_value_bare_passes_through() {
+        let got = resolve_header_value("acme-prod").unwrap();
+        assert_eq!(got, "acme-prod");
+    }
+
+    /// `$VAR_NAME` reads from env and returns the value.
+    #[test]
+    fn resolve_header_value_expands_env_var() {
+        let name = "SLAB_TEST_HDR_VAR_PRESENT_8A";
+        // SAFETY: unique name avoids collision with parallel tests.
+        std::env::set_var(name, "secret-token-42");
+        let got = resolve_header_value(&format!("${name}")).unwrap();
+        assert_eq!(got, "secret-token-42");
+        std::env::remove_var(name);
+    }
+
+    /// Missing env var → `ProviderUnavailable` with a helpful message.
+    #[test]
+    fn resolve_header_value_missing_env_var_errors() {
+        let name = "SLAB_TEST_HDR_VAR_MISSING_8B";
+        std::env::remove_var(name);
+        let err = resolve_header_value(&format!("${name}")).unwrap_err();
+        match err {
+            AiError::ProviderUnavailable(m) => {
+                assert!(
+                    m.contains(name),
+                    "expected error to mention var name, got: {m}"
+                );
+                assert!(m.contains("missing"), "expected 'missing' in {m}");
+            }
+            other => panic!("expected ProviderUnavailable, got {other:?}"),
+        }
+    }
+
+    /// Empty env var → `ProviderUnavailable`. Treats `VAR=""` as a
+    /// misconfiguration rather than silently sending an empty header.
+    #[test]
+    fn resolve_header_value_empty_env_var_errors() {
+        let name = "SLAB_TEST_HDR_VAR_EMPTY_8C";
+        std::env::set_var(name, "   ");
+        let err = resolve_header_value(&format!("${name}")).unwrap_err();
+        std::env::remove_var(name);
+        match err {
+            AiError::ProviderUnavailable(m) => assert!(m.contains("empty"), "got {m}"),
+            other => panic!("expected ProviderUnavailable, got {other:?}"),
+        }
+    }
+
+    /// End-to-end: a provider built `.with_headers(...)` actually sends
+    /// those headers on chat requests. Uses mockito `.match_header()` to
+    /// fail the mock unless the header is present.
+    #[tokio::test]
+    async fn chat_sends_extra_headers() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_header("x-org-id", "acme")
+            .match_header("x-custom-tier", "gold")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}"#,
+            )
+            .create_async()
+            .await;
+        let mut headers = HashMap::new();
+        headers.insert("X-Org-Id".to_string(), "acme".to_string());
+        headers.insert("X-Custom-Tier".to_string(), "gold".to_string());
+        let provider = OpenAiCompatibleProvider::new(format!("{}/v1", server.url()), "sk-test")
+            .with_headers(headers);
+        let res = provider
+            .chat(
+                &[ChatMessage {
+                    role: ChatRole::User,
+                    content: "hi".into(),
+                }],
+                &ChatOpts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.content, "ok");
+        mock.assert_async().await;
+    }
+
+    /// End-to-end: same as above, on the embeddings endpoint. Catches
+    /// regressions where only `chat()` is wired up.
+    #[tokio::test]
+    async fn embed_sends_extra_headers() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/embeddings")
+            .match_header("x-org-id", "acme")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":[{"embedding":[0.1,0.2]}]}"#)
+            .create_async()
+            .await;
+        let mut headers = HashMap::new();
+        headers.insert("X-Org-Id".to_string(), "acme".to_string());
+        let provider = OpenAiCompatibleProvider::new(format!("{}/v1", server.url()), "sk-test")
+            .with_headers(headers);
+        let vecs = provider.embed(&["hello".to_string()]).await.unwrap();
+        assert_eq!(vecs, vec![vec![0.1f32, 0.2f32]]);
+        mock.assert_async().await;
+    }
+
+    /// `$VAR` expansion is applied at request time, so a header value of
+    /// `$SLAB_TEST_HDR_LIVE` reads the env var and sends the resolved value.
+    #[tokio::test]
+    async fn chat_expands_env_var_header_at_request_time() {
+        let name = "SLAB_TEST_HDR_LIVE_8D";
+        std::env::set_var(name, "resolved-bearer-xyz");
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_header("x-extra-auth", "resolved-bearer-xyz")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}"#,
+            )
+            .create_async()
+            .await;
+        let mut headers = HashMap::new();
+        headers.insert("X-Extra-Auth".to_string(), format!("${name}"));
+        let provider = OpenAiCompatibleProvider::new(format!("{}/v1", server.url()), "sk-test")
+            .with_headers(headers);
+        let res = provider
+            .chat(
+                &[ChatMessage {
+                    role: ChatRole::User,
+                    content: "hi".into(),
+                }],
+                &ChatOpts::default(),
+            )
+            .await;
+        std::env::remove_var(name);
+        let res = res.unwrap();
+        assert_eq!(res.content, "ok");
+        mock.assert_async().await;
+    }
+
+    /// If `$VAR` is unset at request time, the call fails with
+    /// `ProviderUnavailable` before the HTTP request is made.
+    #[tokio::test]
+    async fn chat_with_missing_env_var_header_fails_before_request() {
+        let name = "SLAB_TEST_HDR_MISSING_LIVE_8E";
+        std::env::remove_var(name);
+        // No mock — if we made an HTTP request the test would hang/error.
+        let mut headers = HashMap::new();
+        headers.insert("X-Auth".to_string(), format!("${name}"));
+        let provider =
+            OpenAiCompatibleProvider::new("http://127.0.0.1:1/v1".to_string(), "sk-test")
+                .with_headers(headers);
+        let err = provider
+            .chat(
+                &[ChatMessage {
+                    role: ChatRole::User,
+                    content: "hi".into(),
+                }],
+                &ChatOpts::default(),
+            )
+            .await
+            .unwrap_err();
+        match err {
+            AiError::ProviderUnavailable(m) => assert!(m.contains(name), "got {m}"),
+            other => panic!("expected ProviderUnavailable, got {other:?}"),
         }
     }
 }

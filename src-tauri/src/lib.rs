@@ -1680,6 +1680,30 @@ fn slab_plugins_run_command(
     plugins::run_command(&entry).map_err(|e| e.to_string())
 }
 
+/// Validate a plugin-contributed AI provider by running the
+/// materialiser (Foundry Slice 8). On success returns `Ok(())` — this
+/// only checks that the contribution's `kind` is supported and that
+/// the constructor accepts the manifest fields. It does **not** make
+/// an HTTP call: header `$VAR` expansion is deferred to request time.
+///
+/// Used by the Settings → Plugins UI to surface a "misconfigured"
+/// chip next to providers whose manifest is rejected.
+#[tauri::command]
+fn slab_plugins_validate_ai_provider(
+    plugin_id: String,
+    provider_id: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<(), String> {
+    let providers = plugins::active_ai_providers(&reg);
+    let entry = providers
+        .into_iter()
+        .find(|p| p.plugin_id == plugin_id && p.provider.id == provider_id)
+        .ok_or_else(|| format!("no active ai_provider {provider_id:?} on plugin {plugin_id:?}"))?;
+    plugins::materialize_active(&entry)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1815,6 +1839,7 @@ pub fn run() {
             slab_plugins_run_pdf_action,
             slab_plugins_load_locale_bundle,
             slab_plugins_run_command,
+            slab_plugins_validate_ai_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

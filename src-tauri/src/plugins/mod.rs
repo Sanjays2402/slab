@@ -6,6 +6,7 @@
 //! `registry.rs` for discovery + enabled-state, and `contributions.rs`
 //! for the active-list views that feature code consumes.
 
+pub mod ai_materialize;
 pub mod command_runner;
 pub mod contributions;
 pub mod locale_loader;
@@ -13,6 +14,7 @@ pub mod manifest;
 pub mod registry;
 pub mod runner;
 
+pub use ai_materialize::{materialize_active, materialize_contribution};
 pub use command_runner::{
     run_command, CommandError, CommandOutcome, CommandStatus, ShellReport,
     DEFAULT_COMMAND_TIMEOUT_MS,
