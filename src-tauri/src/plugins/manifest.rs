@@ -367,4 +367,26 @@ mod tests {
         "#;
         assert!(Manifest::from_toml(good).is_ok());
     }
+
+    /// The shipped `examples/plugins/hello-slab/plugin.toml` is the user
+    /// docs' source of truth for the manifest format. If we ever change
+    /// the schema in a way that breaks it, this test fires and we have
+    /// to update the example too — keeping docs honest.
+    #[test]
+    fn example_hello_slab_manifest_parses() {
+        // CARGO_MANIFEST_DIR is `<repo>/src-tauri`; the example lives at
+        // `<repo>/examples/plugins/hello-slab/plugin.toml`.
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.pop(); // -> <repo>
+        path.push("examples/plugins/hello-slab/plugin.toml");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+        let m = Manifest::from_toml(&src).expect("hello-slab manifest must parse");
+        assert_eq!(m.id, "com.example.hello-slab");
+        assert_eq!(m.contributions.themes.len(), 1);
+        assert_eq!(m.contributions.locales.len(), 1);
+        assert_eq!(m.contributions.commands.len(), 2);
+        assert_eq!(m.contributions.ai_providers.len(), 1);
+        assert_eq!(m.contributions.pdf_actions.len(), 1);
+    }
 }
