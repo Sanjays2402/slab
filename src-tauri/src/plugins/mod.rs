@@ -2,12 +2,18 @@
 //!
 //! Plugins live at `~/.slab/plugins/<name>/plugin.toml` and contribute
 //! themes, locales, PDF actions, custom commands, and AI providers via
-//! a strict TOML manifest. See `manifest.rs` for the schema and
-//! `registry.rs` for discovery + enabled-state persistence.
+//! a strict TOML manifest. See `manifest.rs` for the schema,
+//! `registry.rs` for discovery + enabled-state, and `contributions.rs`
+//! for the active-list views that feature code consumes.
 
+pub mod contributions;
 pub mod manifest;
 pub mod registry;
 
+pub use contributions::{
+    active_ai_providers, active_commands, active_locales, active_pdf_actions, active_themes,
+    read_asset, ActiveAiProvider, ActiveCommand, ActiveLocale, ActivePdfAction, ActiveTheme,
+};
 pub use manifest::{
     AiProviderContribution, CommandContribution, Contributions, LocaleContribution, Manifest,
     ManifestError, PdfActionContribution, Permission, ThemeContribution,

@@ -1555,6 +1555,64 @@ fn slab_plugins_dir() -> Result<String, String> {
     Ok(root.to_string_lossy().to_string())
 }
 
+/// List themes contributed by enabled plugins. Frontend calls this on
+/// boot to populate the theme picker. Each entry carries the plugin's
+/// dir so the frontend can `slab_plugins_read_asset` the CSS file.
+#[tauri::command]
+fn slab_plugins_active_themes(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveTheme> {
+    plugins::active_themes(&reg)
+}
+
+/// List locale bundles contributed by enabled plugins.
+#[tauri::command]
+fn slab_plugins_active_locales(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveLocale> {
+    plugins::active_locales(&reg)
+}
+
+/// List custom commands (palette entries) contributed by enabled plugins.
+#[tauri::command]
+fn slab_plugins_active_commands(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveCommand> {
+    plugins::active_commands(&reg)
+}
+
+/// List AI providers contributed by enabled plugins.
+#[tauri::command]
+fn slab_plugins_active_ai_providers(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActiveAiProvider> {
+    plugins::active_ai_providers(&reg)
+}
+
+/// List PDF actions contributed by enabled plugins. (CLI runner lands
+/// in Slice 6; this just exposes the catalog.)
+#[tauri::command]
+fn slab_plugins_active_pdf_actions(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Vec<plugins::ActivePdfAction> {
+    plugins::active_pdf_actions(&reg)
+}
+
+/// Read a relative asset file (theme CSS, locale JSON, icon) from a
+/// plugin's directory. Path-traversal is rejected at the Rust layer —
+/// the resolved path must stay inside the plugin's directory.
+#[tauri::command]
+fn slab_plugins_read_asset(
+    plugin_id: String,
+    relative: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<String, String> {
+    let p = reg
+        .get(&plugin_id)
+        .ok_or_else(|| format!("unknown plugin {plugin_id:?}"))?;
+    plugins::read_asset(&p.dir, &relative)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1681,6 +1739,12 @@ pub fn run() {
             slab_plugins_set_enabled,
             slab_plugins_reload,
             slab_plugins_dir,
+            slab_plugins_active_themes,
+            slab_plugins_active_locales,
+            slab_plugins_active_commands,
+            slab_plugins_active_ai_providers,
+            slab_plugins_active_pdf_actions,
+            slab_plugins_read_asset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
