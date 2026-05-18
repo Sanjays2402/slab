@@ -5,37 +5,63 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" Slice 1 IN PROGRESS — feature/v1.4.0-bench
+## STATUS: 🪑 v1.4.0 "Bench" Slices 1–4 SHIPPED — feature/v1.4.0-bench
 
-**Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch' — cross-platform test fixes (Linux + Windows CI)`
-**Active feature branch**: `feature/v1.4.0-bench` @ `6ad9fb0` — Slice 1: marketplace index + Ed25519 verifier (4 commits)
-**Latest release**: v1.3.1 → https://github.com/Sanjays2402/slab/releases/tag/v1.3.1 — all 6 assets uploaded ✓
+**Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch'`
+**Active feature branch**: `feature/v1.4.0-bench` @ `2afc228` — Slices 1–4 done + polished, pushed to origin
+**Latest release**: v1.3.1 → https://github.com/Sanjays2402/slab/releases/tag/v1.3.1
 
-**Quality gates green on feature/v1.4.0-bench HEAD:**
+**Quality gates green on feature/v1.4.0-bench HEAD (`2afc228`):**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ (**551 passed**, +12 new marketplace tests over v1.3.1 baseline of 539)
+- `cargo test --lib` ✓ **581 passed** (+42 marketplace tests over v1.3.1 baseline of 539)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
+
+**Marketplace test breakdown (42):**
+- index.rs: 4 (roundtrip, to_unsigned, field order, real-world JSON)
+- verify.rs: 9 (correct/tampered/wrong-key/bad-b64/short/long sig, maintainer fixture verify + reject)
+- fetch.rs: 14 (parse envelope checks, mockito 200/500, cache fresh/stale/failed/corrupt paths, default_cache_path, default_client, FetchOutcome accessors)
+- install.rs: 16 (happy path, sha256 mismatch, oversize, traversal/abs sanitizer, replace existing, uninstall+idempotent, validate_plugin_id battery, zip-bomb cap, uppercase sha256, sha256 vector, sanitize curdir/empty, ct_eq)
 
 ---
 
-## TICK 2026-05-17 21:13 PT — v1.3.1 finalized + v1.4.0 Slice 1 in one tick (4 commits)
+## TICK 2026-05-17 21:13 PT — v1.3.1 finalized + v1.4.0 Slice 1
 
-**MODE B finalize v1.3.1:**
-- CI run 26012655931 went green at 04:11 UTC (Windows bundle finished while I was investigating).
-- `gh release create v1.3.1` with `docs/release-notes/v1.3.1.md` + all 6 assets:
-  - macos-arm64 dmg, macos-x64 dmg, linux deb + AppImage, windows msi + nsis.
-- v1.3.1 RELEASED.
+(History — first tick on Bench.)
 
-**MODE C develop v1.4.0 "Bench" Slice 1:** (on `feature/v1.4.0-bench`)
-1. `daa10d9` — chore(deps): add ed25519-dalek (pure-Rust, std features only)
-2. `6f2a7fe` — feat(marketplace): scaffold module + define Index/IndexEntry schema (4 tests)
-3. `f5552f4` — feat(marketplace): Ed25519 signature verifier (8 tests, covers tampering / wrong-key / bad-base64 / placeholder fail-closed)
-4. `6ad9fb0` — docs(plans): v1.4.0 proposal (11 slices) + Slice 1 implementation plan
+---
 
-**Slice 1 done locally. 12/12 marketplace tests green; all quality gates green.**
+## TICK 2026-05-17 21:43 PT — v1.4.0 Slices 2 + 3 + 4 in one tick (5 commits)
 
-Will push the branch next tick after one more sanity polish + plan Slice 2.
+**MODE C develop v1.4.0 "Bench":** (on `feature/v1.4.0-bench`)
+
+1. `c14fd44` — feat(marketplace): bake real Ed25519 maintainer public key into verifier
+   - Replaced all-zero placeholder with real key (hex `17f38d92db3af964…7b27`).
+   - Private key generated locally + saved to `~/.slab-maintainer-key` (chmod 600, NOT committed).
+   - Regression test pins a known-good fixture signature so any future key drift breaks loudly.
+
+2. `ad0c23c` — feat(marketplace): slab-sign-plugin CLI for maintainer signing (Slice 2)
+   - New `[[bin]]` in `src-tauri/Cargo.toml` → `cargo run --bin slab-sign-plugin`.
+   - Reads private key file (base64 32-byte seed, `#` comments stripped), computes tarball sha256, signs canonical IndexEntryUnsigned, prints pretty JSON.
+   - `--print-public-key` / `--print-fixture-signature` utility modes.
+   - 14 unit tests + verified end-to-end against a real test tarball.
+
+3. `337c0d5` — feat(marketplace): HTTP fetch + offline cache (Slice 3)
+   - `fetch_index` (pure HTTP+parse), `fetch_index_with_cache` (network-first, stale fallback).
+   - Envelope validation: schema_version ≤ CURRENT, signing_key_id == MAINTAINER_KEY_ID.
+   - `default_client` mirrors Ollama config (3s connect, 30s total).
+   - 14 unit tests via mockito + tempfile — fully offline.
+
+4. `017bc1a` — feat(marketplace): atomic install pipeline (Slice 4)
+   - `install_from_bytes` / `install_from_entry` / `uninstall_plugin`.
+   - Staging-then-rename atomicity; replace existing via `.trash/<id>-<ts>`.
+   - Hardening: plugin-id validation, path sanitizer (no `..`/abs/empty), symlink target containment, type allowlist, MAX_TARBALL_BYTES (5 MiB) + MAX_UNCOMPRESSED_BYTES (50 MiB) caps.
+   - New deps: `flate2 = "1"` (rust_backend), `tar = "0.4"`.
+   - 16 unit tests including a real zip-bomb gzip → uncompressed-cap defense.
+
+5. `2afc228` — chore(marketplace): polish — rustfmt, clippy clean, README test count 539→581.
+
+**Pushed `2afc228` to origin/feature/v1.4.0-bench. All gates green.**
 
 ---
 
@@ -55,8 +81,8 @@ Will push the branch next tick after one more sanity polish + plan Slice 2.
 ### v1.1.0 "Cabinet" — RELEASED 2026-05-17 🗄
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
 ### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
-### v1.3.1 "Foundry Patch" 🩹 — **RELEASED 2026-05-17** ✓
-### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slice 1/11 local-done; 12 new tests; not yet pushed)
+### v1.3.1 "Foundry Patch" 🩹 — RELEASED 2026-05-17 ✓
+### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slices 1–4/11 shipped & pushed; backend done, UX next)
 
 ---
 
@@ -71,40 +97,50 @@ Will push the branch next tick after one more sanity polish + plan Slice 2.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench
+## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench (Slice 5 → 8: frontend + commands)
 
-1. **Push the v1.4.0-bench branch** (Slice 1 commits) with the gh-auth credential helper:
-   ```
-   TOK=$(gh auth token)
-   git -c credential.helper="!f() { printf 'username=x-access-token\npassword=%s\n' '$TOK'; }; f" \
-       push -u origin feature/v1.4.0-bench
-   ```
-2. **Ship Slice 2** — maintainer signing tool `tools/sign-plugin/src/main.rs`:
-   - CLI that takes a tarball + private key file
-   - Emits JSON entry ready to paste into `index.json`
-   - Generates a real Ed25519 key pair (the maintainer's), bakes the
-     public key into `marketplace::verify::MAINTAINER_PUBLIC_KEY`
-   - Private key goes into `~/.slab-maintainer-key` (out of tree, NOT committed)
-3. **Ship Slice 3** — `marketplace/fetch.rs` HTTP GET + offline cache:
-   - reqwest GET of the curated `index.json`
-   - Cache to `~/.slab/marketplace-cache.json`
-   - Stale-cache fallback on network failure
-4. End the tick by pushing all of Slices 2+3 together (≥6 commits in one push).
-5. Update STATE.md with what shipped.
+Backend is **done**. Next is wiring + UX. Suggested batching:
+
+1. **Slice 5 — Tauri commands** (`src-tauri/src/lib.rs`):
+   - `slab_marketplace_index() -> FetchOutcome JSON` (calls `fetch_index_with_cache` with default URL + cache path)
+   - `slab_marketplace_install(entry: IndexEntry) -> InstallReport`
+     (verifies sig first via `verify_with_maintainer_key`, then `install_from_entry`, then triggers plugin registry reload)
+   - `slab_marketplace_uninstall(id: String) -> bool` (calls `uninstall_plugin` + registry reload)
+   - Wire into the `invoke_handler!` macro alongside existing `slab_plugins_*` commands.
+
+2. **Slice 6 — Frontend store + types** (`src/lib/marketplace.ts`):
+   - TypeScript mirrors of IndexEntry / InstallReport / FetchOutcome.
+   - Svelte store `marketplace = { state: 'idle'|'loading'|'ready'|'error', index?, error?, isStale? }`.
+   - Actions: `refresh()`, `install(entry)`, `uninstall(id)`.
+
+3. **Slice 7 — Browse tab UI** (extend `src/lib/panels/PluginsPanel.svelte`):
+   - Add tab strip (Installed | Browse).
+   - Grid of plugin cards (icon, name, version, author, description, install button).
+   - "Showing cached results" banner when `isStale`.
+
+4. **Slice 8 — Install modal + update badges**:
+   - Modal with progress + outcome toast.
+   - "Update available" pill on installed plugins when index has a newer version.
+
+Aim for **Slices 5 + 6 in one tick** (backend wire-up + TS store; smaller pieces) and Slices 7 + 8 in the following tick (bigger UI work).
+
+After Slice 8 ships, Slice 9 = uninstall flow polish, Slice 10 = docs + seed `slab-plugins` repo, Slice 11 = release ceremony.
+
+**Push the v1.4.0-bench branch is already done this tick (2afc228).** Next tick can start straight into Slice 5.
 
 ---
 
 ## v1.4.0 "Bench" Slice plan summary (full spec in `.cron-state/proposals/v1.4.0-bench.md`)
 
-1. ✅ Marketplace index schema + Ed25519 verifier (this tick)
-2. Maintainer signing tool (`tools/sign-plugin/`)
-3. `marketplace/fetch.rs` — HTTP + offline cache
-4. `marketplace/install.rs` — download, sha256 verify, atomic extract
-5. Tauri commands `slab_marketplace_*`
+1. ✅ Marketplace index schema + Ed25519 verifier (Tick 1, 12 tests)
+2. ✅ Maintainer signing tool (Tick 2, 14 tests + real key bake-in)
+3. ✅ `marketplace/fetch.rs` — HTTP + offline cache (Tick 2, 14 tests)
+4. ✅ `marketplace/install.rs` — atomic extract with hardening (Tick 2, 16 tests)
+5. Tauri commands `slab_marketplace_*` (NEXT TICK)
 6. Frontend `src/lib/marketplace.ts` store
 7. Frontend Browse tab + plugin cards
 8. Frontend install modal + update-available badges
-9. Uninstall flow
+9. Uninstall flow polish
 10. Docs + seed `slab-plugins` repo with 3 example plugins
 11. Release — version bump 1.3.1 → 1.4.0 + notes + merge + tag + push
 
