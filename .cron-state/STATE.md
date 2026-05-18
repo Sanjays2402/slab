@@ -5,11 +5,50 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" SHIPPED ✓ — Slice 11 plan staged for next dev tick
+## STATUS: ✦ v1.5.0 "Smart Outline" MERGED + TAGGED — CI in_progress, MODE B finalize next tick
 
-**Main HEAD**: `b4dfd6d` — `docs(plans): Beacon Slice 11 — Smart Outline implementation plan`
-**Latest release**: [v1.4.0](https://github.com/Sanjays2402/slab/releases/tag/v1.4.0) — 6 platform assets attached
-**Next mode**: MODE C — execute `docs/plans/2026-05-18-beacon-slice-11-smart-outline.md`
+**Main HEAD**: `f4f07b7` — `chore(release): bump to v1.5.0 "Smart Outline" ✦`
+**Last MERGE commit**: `f4c74af` (merge of feature/v1.5.0-beacon-bonus-11-smart-outline → main, this tick)
+**Tag pushed**: `v1.5.0` (lightweight)
+**CI run for MODE B**: `26020447055` (started ~07:47 UTC, ~12min expected)
+**RELEASE_PENDING**: v1.5.0 — wait for CI green, then `gh release create v1.5.0 --notes-file docs/release-notes/v1.5.0.md` with curated 6 assets
+
+---
+
+## TICK 2026-05-18 00:36 PT — Beacon Slice 11 Smart Outline SHIPPED end-to-end ✦
+
+Executed the entire 8-task plan in `docs/plans/2026-05-18-beacon-slice-11-smart-outline.md`
+in one tick, then promoted it through MODE A merge. Total: **8 commits**,
+**698 lines added**, **12 new unit tests**, **0 quality-gate regressions**.
+
+**Commits on feature/v1.5.0-beacon-bonus-11-smart-outline:**
+1. `3e948d7` feat(beacon): scaffold ai::outline module with ProposedOutline types
+2. `ff6110d` feat(beacon/outline): add liberal LLM JSON parser
+3. `5184348` feat(beacon/outline): validate, dedupe, and tree-ify LLM proposals
+4. `854c94e` feat(beacon/outline): add propose_outline async entry point + path wrapper
+5. `6fbc5c2` feat(beacon/outline): expose slab_beacon_propose_outline Tauri command
+6. `17bef60` feat(beacon/outline-ui): Smart Outline button + proposal review in editor
+
+**MODE A merge on main:**
+- merge `--no-ff` of feature/v1.5.0-beacon-bonus-11-smart-outline (4 files +698)
+- `f4f07b7` chore(release): bump to v1.5.0 "Smart Outline" ✦ (package/Cargo/tauri.conf + Cargo.lock + release notes)
+- tag `v1.5.0` (lightweight) pushed to origin
+- main pushed with `--follow-tags`, tag pushed separately because it's lightweight
+
+**Quality gates ALL green on the merged main:**
+- `cargo fmt --all -- --check` → exit 0
+- `cargo clippy --all-targets -- -D warnings` → no error: lines
+- `cargo test --lib` → **593 passed** (581 baseline + 12 new outline tests)
+- `pnpm check` → **0 errors, 23 warnings** (baseline preserved)
+- `pnpm build` → built in 4.21s
+
+**The feature itself** — what shipped to users:
+- `✦ Suggest (Beacon)` button in the Outline Editor header
+- One click → Beacon proposes hierarchical H1/H2/H3 TOC from PDF body text
+- Page-number validation (drops out-of-range), dedupe (near-duplicate titles within ±1 page), level clamping (1..=3), max 80 nodes
+- Proposal panel: model name, pages used, dropped count, accept/reject
+- Accept replaces working tree; user still clicks Save to persist (two-step)
+- Reuses `slab_write_outline` save path — NO new save plumbing (YAGNI)
 
 ---
 
@@ -34,52 +73,14 @@ Two things shipped this tick:
    `b4dfd6d` on main). Eight tasks, ~12 unit tests planned, ~50 minutes
    of focused work — a clean handoff for next tick to execute.
 
-**Disk-space note**: `/tmp` was at 100% capacity when the artifact
-download started — had to delete old `/tmp/slab-v*-release/` dirs from
-v1.0/1.1/1.2/1.3.1 to free ~1.7G. Cleanup is now part of the MODE B
-workflow muscle memory. Final state: 2.4G free on `/tmp`.
-
 ---
 
-## TICK 2026-05-17 23:55 PT — v1.4.0 release pipeline executed
+## NEXT TICK PLAYBOOK — MODE B finalize v1.5.0
 
-**Bigger story than expected.** Sanjay had pushed `8166f40` to main
-between ticks — a deliberate README rewrite (generic framing, no
-version anchors, no codenames, 42 fresh screenshots) PLUS the same
-`__APP_VERSION__` work that was sitting in his WIP stash on the
-feature branch. The stash conflict + README direction conflict
-forced a recovery dance:
-
-1. Started with feature/v1.4.0-bench at 179b074. Popped Sanjay's
-   stash (`vite.config.js`, `src/routes/+page.svelte`, `src/app.d.ts`
-   completion of `__APP_VERSION__`) and committed.
-2. Did the four-file version bump + wrote `docs/release-notes/v1.4.0.md`
-   + updated README v1.4 front-door. Committed.
-3. Switched to main → pulled `8166f40` which contains a *contradictory*
-   README rewrite + duplicate version-injection plumbing.
-4. **Reset feature branch to 179b074** to drop the redundant commits.
-5. Merged origin/main into feature/v1.4.0-bench. README conflict
-   resolved by taking origin/main wholesale (Sanjay's design intent
-   wins — README stays version-agnostic, no per-version sections).
-6. Re-did version bump as a single clean commit on top of the merge.
-7. Pushed feature branch (force-with-lease, because step 4 rewrote).
-8. Merged --no-ff into main, tagged v1.4.0, pushed main --follow-tags.
-
-**Final commits on main this tick:**
-- `e9b878f` — Merge remote-tracking branch 'origin/main' into feature/v1.4.0-bench
-- `61d95ea` — chore(release): bump to v1.4.0 "Bench" 🪑
-- `9060763` — Merge v1.4.0 'Bench' 🪑 — signed plugin marketplace
-
-**Lesson learned**: `git pull` on main BEFORE touching the feature
-branch next time. Sanjay edits between ticks; assume main moves.
-
----
-
-## NEXT TICK PLAYBOOK — MODE B finalize v1.4.0
-
-1. Poll CI: `gh run view 26018215033` — if in_progress, skip to MODE C.
+1. Poll CI: `gh run view 26020447055` — if in_progress, skip to MODE C (start writing Slice 12 plan).
 2. If CI green:
-   - Download artifacts: `gh run download 26018215033 --dir /tmp/slab-release-v1.4.0`
+   - `mkdir -p /tmp/slab-release-v1.5.0 && gh run download 26020447055 --dir /tmp/slab-release-v1.5.0`
+   - **DISK CHECK FIRST**: `df -h /tmp` — clean up `/tmp/slab-*-release/` from prior versions if free < 3G.
    - Curate 6 best assets:
      - macos-arm64 `.dmg`
      - macos-x64 `.dmg`
@@ -87,24 +88,22 @@ branch next time. Sanjay edits between ticks; assume main moves.
      - linux-x64 `.AppImage`
      - windows-x64 `.msi`
      - windows-x64 setup `.exe` (nsis)
-   - `gh release create v1.4.0 --title 'v1.4.0 — Bench 🪑' --notes-file docs/release-notes/v1.4.0.md <6 asset paths>`
+   - `gh release create v1.5.0 --title 'v1.5.0 — Smart Outline ✦' --notes-file docs/release-notes/v1.5.0.md <6 asset paths>`
    - Remove `RELEASE_PENDING` line from STATE.md.
 3. If CI failed:
-   - `RELEASE_FAILED: v1.4.0 — run 26018215033, job <name>`
-   - Decide: fix on `feature/v1.4.0-bench-hotfix` or revert merge.
+   - `RELEASE_FAILED: v1.5.0 — run 26020447055, job <name>`
+   - Decide: fix on `feature/v1.5.1-hotfix` or revert merge.
 
 **Note on the workflow**: `build.yml` triggers on push to main +
-PRs only. **It does NOT auto-create GH releases on tag push.** STATE
-note from v1.3.1 saying "tauri-action auto-created release" was
-wrong — that release was created manually. MODE B must run
+PRs only. **It does NOT auto-create GH releases on tag push.** MODE B must run
 `gh release create` explicitly.
 
 ---
 
 ## ROADMAP
 
-### v0.8.1 → v1.3.1 — RELEASED (see git history)
-### v1.4.0 "Bench" 🪑 — **MERGED + TAGGED, awaiting CI for MODE B finalize**
+### v0.8.1 → v1.4.0 — RELEASED (see git history)
+### v1.5.0 "Smart Outline" ✦ — **MERGED + TAGGED, CI in_progress for MODE B finalize**
 
 ---
 
@@ -119,34 +118,39 @@ wrong — that release was created manually. MODE B must run
 
 ---
 
-## POST-v1.4 ROADMAP REMINDERS
+## POST-v1.5 ROADMAP REMINDERS
 
-After v1.4.0 ships, candidate next versions:
+Next candidates (recommend Beacon Bonus Slices 12-15 in order — quick AI
+wins riding existing infra):
 
-**Option A — v1.4.1 "Bench seed" (one-time external)**
-- Sanjay creates `Sanjays2402/slab-plugins` GH repo, drops the seed
-  files from `docs/marketplace-seed/` into it. Maintainer-side: sign
-  the hello-slab plugin and post the first real `index.json`. This
-  is a Sanjay action, not a Cake one.
+**Slice 12 — Citations**
+- Beacon scans PDFs for `(Author 2024)` style citations and links them to
+  a built References / Bibliography table. Re-uses chunker + provider.
 
-**Option B — Beacon Bonus Slices (`.cron-state/proposals/v0.10.0-beacon-bonus-slices.md`)**
-- Smart Outline, Citations, Study Mode, Glossary, Voice Mode — five
-  AI features riding the existing Beacon infra. Quick wins.
+**Slice 13 — Study Mode**
+- Generate flashcards (Q&A pairs) + auto-quiz from a doc section.
+  Persists to `~/.slab/study.db`. UI: panel similar to Beacon Chat.
 
-**Option C — v1.5.0 "TypeScript Plugins"** — a `script.js`
-contribution kind running in an embedded V8/QuickJS sandbox. Bigger
-project; would let plugins do real frontend work (custom panels).
-Risk: sandbox security is hard.
+**Slice 14 — Glossary**
+- LLM extracts domain-specific terms and definitions from the doc, builds
+  a sidebar glossary, links inline mentions on hover.
 
-**Option D — v1.5.0 "Forge" (author-controlled signing)**
-- Lets plugin authors sign their own releases with their own keys
-  instead of routing through the maintainer. Bigger trust model
-  shift; want at least 10 plugins in the curated index before
-  considering this.
+**Slice 15 — Voice Mode**
+- TTS playback of Beacon answers + STT for asking questions. Provider-
+  agnostic — local Whisper for STT, system TTS for output. v1 ships
+  buttons-only, no wake-word.
 
-My recommendation: **Option B (Beacon Bonus Slices)** next. Quick
-wins riding the existing Beacon infra — Smart Outline + Citations
-are 2-3 ticks each and visibly bump the AI experience.
+After Bonus Slices land, **v1.6.0 candidates**:
+
+**Option A — v1.6.0 "TypeScript Plugins"**
+- `script.js` contribution kind running in an embedded V8/QuickJS
+  sandbox. Lets plugins do real frontend work (custom panels).
+  Risk: sandbox security is hard.
+
+**Option B — v1.6.0 "Forge" (author-controlled signing)**
+- Lets plugin authors sign their own releases with their own keys instead
+  of routing through the maintainer. Want at least 10 plugins in the
+  curated index before considering this.
 
 Other parked items:
 - AI provider hook-up of plugin-contributed providers through Beacon's
@@ -154,6 +158,7 @@ Other parked items:
   palette + boot log but aren't yet selectable in chat)
 - Slab CLI `slab plugin install <url>` command (post-Bench)
 - The leftover `docs/screenshots-v1.3.1/` directory in repo root is
-  Sanjay's intermediate working copy; Sanjay's commit `8166f40`
-  already shipped fresh screenshots into `docs/screenshots/`. The
-  legacy dir is untracked and harmless; Sanjay can `rm -rf` it.
+  Sanjay's intermediate working copy; harmless, can be `rm -rf`'d.
+- Sanjay's external action for v1.4.1: create `Sanjays2402/slab-plugins`
+  GH repo, drop seed files from `docs/marketplace-seed/`, sign the
+  hello-slab plugin and post the first real `index.json`.
