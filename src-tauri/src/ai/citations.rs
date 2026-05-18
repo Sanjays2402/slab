@@ -167,6 +167,66 @@ pub(super) fn parse_llm_references(raw: &str) -> Option<LlmRefsWire> {
     serde_json::from_str(&body[start..=end]).ok()
 }
 
+/// Validate, dedupe, and cap a raw list of LLM-extracted reference entries.
+///
+/// Rules:
+/// - `page` must be `1..=total_pages`; entries without a valid page are
+///   dropped. (No page = we can't jump-to-bibliography, which is the
+///   feature's primary value.)
+/// - Empty `title` AND empty `authors` → drop.
+/// - Missing `key` → synthesize from `<first-author-surname-lowercased><year>`.
+/// - Dedupe by lowercased key, first occurrence wins.
+/// - Cap at `MAX_REFERENCES`.
+pub(super) fn validate_references(
+    entries: Vec<LlmRefEntryWire>,
+    total_pages: u32,
+) -> Vec<Reference> {
+    let mut seen: HashMap<String, ()> = HashMap::new();
+    let mut out: Vec<Reference> = Vec::new();
+    for e in entries {
+        let authors = e.authors.unwrap_or_default().trim().to_string();
+        let title = e.title.unwrap_or_default().trim().to_string();
+        if authors.is_empty() && title.is_empty() {
+            continue;
+        }
+        let year = e.year.unwrap_or_default().trim().to_string();
+        let page = match e.page {
+            Some(p) if p >= 1 && p <= total_pages => p,
+            _ => continue,
+        };
+        let key_raw = e.key.unwrap_or_default().trim().to_string();
+        let key = if key_raw.is_empty() {
+            let first = authors
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_end_matches(',')
+                .to_lowercase();
+            format!("{first}{year}")
+        } else {
+            key_raw.to_lowercase()
+        };
+        if key.is_empty() {
+            continue;
+        }
+        if seen.contains_key(&key) {
+            continue;
+        }
+        seen.insert(key.clone(), ());
+        out.push(Reference {
+            key,
+            authors,
+            year,
+            title,
+            page_in_doc: page,
+        });
+        if out.len() >= MAX_REFERENCES {
+            break;
+        }
+    }
+    out
+}
+
 /// Lazily-compiled regexes shared across calls.
 fn re_author_year() -> &'static Regex {
     // Matches "(Smith 2024)", "(Smith, 2024)", "(Smith and Jones 2024)",
@@ -430,5 +490,58 @@ mod tests {
     fn refs_returns_none_on_garbage() {
         assert!(parse_llm_references("not json at all").is_none());
         assert!(parse_llm_references("").is_none());
+    }
+
+    fn ref_entry(key: &str, authors: &str, year: &str, title: &str, page: u32) -> LlmRefEntryWire {
+        LlmRefEntryWire {
+            key: Some(key.into()),
+            authors: Some(authors.into()),
+            year: Some(year.into()),
+            title: Some(title.into()),
+            page: Some(page),
+        }
+    }
+
+    #[test]
+    fn validate_refs_drops_invalid_page() {
+        let entries = vec![
+            ref_entry("a24", "A", "2024", "T1", 5),
+            ref_entry("b25", "B", "2025", "T2", 9999), // out of range
+        ];
+        let refs = validate_references(entries, 100);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].key, "a24");
+    }
+
+    #[test]
+    fn validate_refs_dedupes_by_key() {
+        let entries = vec![
+            ref_entry("smith2024", "Smith", "2024", "On X", 50),
+            ref_entry("SMITH2024", "Smith, J.", "2024", "On X (better)", 51), // case insensitive
+            ref_entry("smith2024", "Smith", "2024", "dup", 52),
+        ];
+        let refs = validate_references(entries, 100);
+        assert_eq!(refs.len(), 1);
+        // First occurrence wins.
+        assert_eq!(refs[0].authors, "Smith");
+        assert_eq!(refs[0].page_in_doc, 50);
+    }
+
+    #[test]
+    fn validate_refs_synthesizes_key_when_missing() {
+        let mut e = ref_entry("", "Smith", "2024", "T", 10);
+        e.key = None;
+        let refs = validate_references(vec![e], 100);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].key, "smith2024");
+    }
+
+    #[test]
+    fn validate_refs_caps_at_max() {
+        let entries: Vec<LlmRefEntryWire> = (0..MAX_REFERENCES + 30)
+            .map(|i| ref_entry(&format!("k{i}"), "A", "2024", "T", 1))
+            .collect();
+        let refs = validate_references(entries, 100);
+        assert_eq!(refs.len(), MAX_REFERENCES);
     }
 }
