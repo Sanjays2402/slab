@@ -123,6 +123,164 @@ impl Default for CitationOpts {
     }
 }
 
+use regex::Regex;
+
+/// Lazily-compiled regexes shared across calls.
+fn re_author_year() -> &'static Regex {
+    // Matches "(Smith 2024)", "(Smith, 2024)", "(Smith and Jones 2024)",
+    // "(Smith et al. 2024)", "(Smith et al., 2024)".
+    // First capture: author surname(s) blob. Second: 4-digit year.
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"\(([A-Z][A-Za-z'\-]+(?:\s+et\s+al\.?)?(?:\s+(?:and|&)\s+[A-Z][A-Za-z'\-]+(?:\s+et\s+al\.?)?)*),?\s+((?:19|20)\d{2})\)",
+        )
+        .unwrap()
+    })
+}
+
+fn re_bracket_num() -> &'static Regex {
+    // Matches "[12]", "[12, 14]", "[12-15]". We use one regex for the
+    // outer "[...]" and parse the content with a small helper.
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[(\d+(?:\s*[,\u{2013}-]\s*\d+)*)\]").unwrap())
+}
+
+fn re_bracket_key() -> &'static Regex {
+    // Matches "[Smith2024]", "[smith-2024-foo]". Avoids matching plain
+    // numbers (those are handled by re_bracket_num).
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[([A-Za-z][A-Za-z0-9_\-]*\d{4}[A-Za-z0-9_\-]*)\]").unwrap())
+}
+
+/// Scan every page for inline citations using regex. Pure, deterministic.
+pub fn scan_inline_citations(pages: &[String]) -> Vec<InlineCite> {
+    let mut out: Vec<InlineCite> = Vec::new();
+
+    'outer: for (i, page) in pages.iter().enumerate() {
+        let page_no = (i as u32) + 1;
+
+        // Pass 1: author-year cites.
+        for caps in re_author_year().captures_iter(page) {
+            let raw = caps.get(0).unwrap().as_str().to_string();
+            let authors_raw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let year = caps.get(2).map(|m| m.as_str()).unwrap_or("").to_string();
+            // First author surname is the head of the authors blob.
+            let first = authors_raw
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_end_matches(',')
+                .to_lowercase();
+            let key = format!("{first}{year}");
+            out.push(InlineCite {
+                page: page_no,
+                text: raw,
+                key,
+                authors_hint: first,
+                year_hint: year,
+            });
+            if out.len() >= MAX_INLINE_CITES {
+                break 'outer;
+            }
+        }
+
+        // Pass 2: bracket-numeric cites (each number in a list becomes
+        // its own InlineCite).
+        for caps in re_bracket_num().captures_iter(page) {
+            let raw = caps.get(0).unwrap().as_str().to_string();
+            let body = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            for n in expand_num_list(body) {
+                out.push(InlineCite {
+                    page: page_no,
+                    text: raw.clone(),
+                    key: n.to_string(),
+                    authors_hint: String::new(),
+                    year_hint: String::new(),
+                });
+                if out.len() >= MAX_INLINE_CITES {
+                    break 'outer;
+                }
+            }
+        }
+
+        // Pass 3: bracket-key cites.
+        for caps in re_bracket_key().captures_iter(page) {
+            let raw = caps.get(0).unwrap().as_str().to_string();
+            let key_raw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let key = key_raw.to_lowercase();
+            // Best-effort: split on the 4-digit year to derive hints.
+            let (author_hint, year_hint) = split_key(&key);
+            out.push(InlineCite {
+                page: page_no,
+                text: raw,
+                key,
+                authors_hint: author_hint,
+                year_hint,
+            });
+            if out.len() >= MAX_INLINE_CITES {
+                break 'outer;
+            }
+        }
+    }
+
+    out
+}
+
+/// Expand `"12"` or `"14, 15"` or `"12-15"` into a `Vec<u32>`. Ranges with
+/// > 20 numbers are clamped to the first 20 (defends against pathological
+/// `[1-9999]`-style typos).
+fn expand_num_list(s: &str) -> Vec<u32> {
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        // En-dash (U+2013) or ASCII hyphen as range separator.
+        let sep = if part.contains('\u{2013}') {
+            '\u{2013}'
+        } else {
+            '-'
+        };
+        if part.contains(sep) {
+            let mut iter = part.split(sep);
+            if let (Some(a), Some(b)) = (iter.next(), iter.next()) {
+                if let (Ok(start), Ok(end)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
+                    let lo = start.min(end);
+                    let hi = start.max(end);
+                    for n in lo..=hi {
+                        out.push(n);
+                        if out.len() >= 20 {
+                            return out;
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+        if let Ok(n) = part.parse::<u32>() {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Split a `[Smith2024]`-style key into `(author_hint, year_hint)`. Best
+/// effort: finds the first 4-digit year inside the key.
+fn split_key(key: &str) -> (String, String) {
+    let bytes = key.as_bytes();
+    for i in 0..bytes.len().saturating_sub(3) {
+        let slice = &bytes[i..i + 4];
+        if slice.iter().all(|b| b.is_ascii_digit()) {
+            let year = std::str::from_utf8(slice).unwrap_or("").to_string();
+            // Year must be a plausible publication year.
+            if year.starts_with("19") || year.starts_with("20") {
+                let head = key[..i].trim_end_matches(|c: char| !c.is_alphabetic());
+                return (head.to_lowercase(), year);
+            }
+        }
+    }
+    (key.to_string(), String::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +303,67 @@ mod tests {
         let o = CitationOpts::default();
         assert!(o.include_llm_pass);
         assert_eq!(o.max_context_chars, DEFAULT_CITATIONS_MAX_CHARS as u32);
+    }
+
+    #[test]
+    fn scans_author_year_cites() {
+        let pages = vec![
+            "The early work (Smith 2024) showed this.".to_string(),
+            "More recently (Jones et al., 2025) reported new results.".to_string(),
+        ];
+        let cites = scan_inline_citations(&pages);
+        assert_eq!(cites.len(), 2);
+        assert_eq!(cites[0].page, 1);
+        assert_eq!(cites[0].authors_hint, "smith");
+        assert_eq!(cites[0].year_hint, "2024");
+        assert_eq!(cites[0].key, "smith2024");
+        assert_eq!(cites[1].authors_hint, "jones");
+        assert_eq!(cites[1].year_hint, "2025");
+    }
+
+    #[test]
+    fn scans_bracket_numeric_cites() {
+        let pages = vec!["See [12] and [14, 15] for details.".to_string()];
+        let cites = scan_inline_citations(&pages);
+        // [12], [14, 15] → expand the range/list into 3 entries
+        assert_eq!(cites.len(), 3);
+        assert_eq!(cites[0].text, "[12]");
+        assert_eq!(cites[0].key, "12");
+        assert_eq!(cites[1].key, "14");
+        assert_eq!(cites[2].key, "15");
+    }
+
+    #[test]
+    fn scans_bracket_key_cites() {
+        let pages = vec!["See [Smith2024] for details.".to_string()];
+        let cites = scan_inline_citations(&pages);
+        assert_eq!(cites.len(), 1);
+        assert_eq!(cites[0].key, "smith2024");
+    }
+
+    #[test]
+    fn ignores_non_citation_parens() {
+        // (Note that...) is prose, not a cite — no 4-digit year.
+        let pages = vec!["Some prose (with a parenthetical aside).".to_string()];
+        let cites = scan_inline_citations(&pages);
+        assert!(cites.is_empty());
+    }
+
+    #[test]
+    fn caps_at_max_inline_cites() {
+        // Build a single page with way too many cites. Use a varying letter
+        // suffix so each author name parses (digits aren't allowed in the
+        // [A-Z][A-Za-z'\-]+ author regex).
+        let blob: String = (0..MAX_INLINE_CITES + 50)
+            .map(|i| {
+                let suffix: String = (0..((i / 26) + 1))
+                    .map(|j| (b'a' + ((i + j) % 26) as u8) as char)
+                    .collect();
+                format!("(Author{suffix} 2024) ")
+            })
+            .collect();
+        let pages = vec![blob];
+        let cites = scan_inline_citations(&pages);
+        assert_eq!(cites.len(), MAX_INLINE_CITES);
     }
 }
