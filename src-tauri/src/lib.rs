@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod keymap;
+pub mod marketplace;
 pub mod pdf;
 pub mod plugins;
 pub mod windows;
@@ -1704,6 +1705,127 @@ fn slab_plugins_validate_ai_provider(
         .map_err(|e| e.to_string())
 }
 
+// ---------- Bench (v1.4.0) — marketplace Tauri commands ----------
+
+/// Outcome shape for [`slab_marketplace_index`]. Mirrors the Rust
+/// [`marketplace::FetchOutcome`] but as a flat struct that's easier
+/// for the TS layer to consume (no tagged union).
+#[derive(Debug, Clone, serde::Serialize)]
+struct MarketplaceFetchResult {
+    /// Index was fetched from the network this call.
+    is_fresh: bool,
+    /// Network failed but a cached copy was returned.
+    is_stale: bool,
+    /// The index itself when present (Fresh or Stale).
+    index: Option<marketplace::Index>,
+    /// Last-error string when present (Stale.network_error or Failed).
+    error: Option<String>,
+}
+
+/// Fetch the curated plugin index from the maintainer repo with offline
+/// cache fallback. Never throws — failures land in the `error` field
+/// so the UI can render a friendly "showing cached results" banner.
+///
+/// The frontend `marketplaceStore` calls this on demand (Browse tab
+/// mount + manual refresh button). We do **not** auto-refresh on boot
+/// because the index is only relevant when the user opens the panel.
+#[tauri::command]
+async fn slab_marketplace_index() -> MarketplaceFetchResult {
+    let client = marketplace::default_client();
+    let cache_path = marketplace::default_cache_path();
+    let outcome = marketplace::fetch_index_with_cache(
+        &client,
+        marketplace::DEFAULT_INDEX_URL,
+        cache_path.as_deref(),
+    )
+    .await;
+    match outcome {
+        marketplace::FetchOutcome::Fresh(index) => MarketplaceFetchResult {
+            is_fresh: true,
+            is_stale: false,
+            index: Some(index),
+            error: None,
+        },
+        marketplace::FetchOutcome::Stale {
+            index,
+            network_error,
+        } => MarketplaceFetchResult {
+            is_fresh: false,
+            is_stale: true,
+            index: Some(index),
+            error: Some(network_error.to_string()),
+        },
+        marketplace::FetchOutcome::Failed(e) => MarketplaceFetchResult {
+            is_fresh: false,
+            is_stale: false,
+            index: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Install a plugin from a marketplace [`IndexEntry`]. We verify the
+/// Ed25519 signature against the baked-in maintainer key **before**
+/// touching the network — a bad sig fails fast and saves bandwidth.
+/// After the install pipeline succeeds, we trigger a registry re-scan
+/// so the new plugin shows up in the Installed list immediately.
+///
+/// The frontend is expected to have already filtered out untrusted
+/// entries; we re-verify here as defence-in-depth.
+#[tauri::command]
+async fn slab_marketplace_install(
+    entry: marketplace::IndexEntry,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<marketplace::InstallReport, String> {
+    // 1) Signature check — never trust unsigned input.
+    marketplace::verify_with_maintainer_key(&entry)
+        .map_err(|e| format!("signature check failed: {e}"))?;
+
+    // 2) Resolve plugins root (HOME-rooted).
+    let plugins_root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    if let Err(e) = std::fs::create_dir_all(&plugins_root) {
+        return Err(format!("could not create plugins dir: {e}"));
+    }
+
+    // 3) Download + extract via the install pipeline.
+    let client = marketplace::default_client();
+    let report = marketplace::install_from_entry(&client, &entry, &plugins_root)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 4) Refresh the registry so the new plugin appears in the UI.
+    let enabled = plugins::default_state_path()
+        .as_deref()
+        .map(plugins::read_enabled_state)
+        .unwrap_or_default();
+    reg.discover(&plugins_root, &enabled);
+
+    Ok(report)
+}
+
+/// Uninstall a marketplace-installed plugin by id. Synchronous because
+/// the install module's uninstall is pure-filesystem. After removal,
+/// re-discover so the registry drops the entry. Returns `false` if the
+/// plugin wasn't installed in the first place.
+#[tauri::command]
+fn slab_marketplace_uninstall(
+    id: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<bool, String> {
+    let plugins_root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    let removed = marketplace::uninstall_plugin(&plugins_root, &id).map_err(|e| e.to_string())?;
+    if removed {
+        let enabled = plugins::default_state_path()
+            .as_deref()
+            .map(plugins::read_enabled_state)
+            .unwrap_or_default();
+        reg.discover(&plugins_root, &enabled);
+    }
+    Ok(removed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1840,6 +1962,9 @@ pub fn run() {
             slab_plugins_load_locale_bundle,
             slab_plugins_run_command,
             slab_plugins_validate_ai_provider,
+            slab_marketplace_index,
+            slab_marketplace_install,
+            slab_marketplace_uninstall,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

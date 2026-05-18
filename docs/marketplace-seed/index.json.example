@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "signing_key_id": "slab-maintainer-2026",
+  "plugins": [
+    {
+      "id": "com.slab.hello-slab",
+      "name": "Hello Slab",
+      "version": "0.1.0",
+      "description": "The canonical demo plugin — adds a 'Hello' command + a sample theme + a Portuguese locale bundle. Useful as a copy-paste starter.",
+      "author": "Slab maintainers",
+      "download_url": "https://github.com/Sanjays2402/slab/releases/download/plugins/hello-slab-0.1.0.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 4096,
+      "slab_compat": ">=1.4.0",
+      "signature": "PENDING_MAINTAINER_SIGNATURE_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=="
+    },
+    {
+      "id": "com.example.qpdf-tools",
+      "name": "QPDF Tools",
+      "version": "1.2.0",
+      "description": "Wraps the qpdf CLI as Slab actions (linearize, decrypt, structural repair). Requires the qpdf binary on PATH.",
+      "author": "Community",
+      "download_url": "https://github.com/example/slab-qpdf-tools/releases/download/v1.2.0/qpdf-tools-1.2.0.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 12288,
+      "slab_compat": ">=1.4.0",
+      "signature": "PENDING_MAINTAINER_SIGNATURE_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=="
+    },
+    {
+      "id": "com.example.theme-pack",
+      "name": "Theme Pack — 12 themes",
+      "version": "0.3.0",
+      "description": "Twelve hand-tuned color themes for Slab (Solarized, Tokyo Night, Nord, Catppuccin variants, and more). Switch via Settings → Appearance.",
+      "author": "Community",
+      "download_url": "https://github.com/example/slab-theme-pack/releases/download/v0.3.0/theme-pack-0.3.0.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 28672,
+      "slab_compat": ">=1.4.0",
+      "signature": "PENDING_MAINTAINER_SIGNATURE_ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc=="
+    }
+  ]
+}
