@@ -327,7 +327,7 @@ pnpm tauri build        # produce an installer / app bundle for your platform
 ## Tests
 
 ```bash
-cd src-tauri && cargo test          # 468 tests
+cd src-tauri && cargo test          # 581 tests
 cargo clippy --all-targets -- -D warnings
 cd .. && pnpm exec svelte-check     # type-check the UI
 ```
