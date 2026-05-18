@@ -34,6 +34,7 @@
   import BeaconPiiPanel from "$lib/panels/BeaconPiiPanel.svelte";
   import BeaconCitationsPanel from "$lib/panels/BeaconCitationsPanel.svelte";
   import BeaconStudyPanel from "$lib/panels/BeaconStudyPanel.svelte";
+  import BeaconGlossaryPanel from "$lib/panels/BeaconGlossaryPanel.svelte";
   import LibraryPanel from "$lib/panels/LibraryPanel.svelte";
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
@@ -74,6 +75,7 @@
     { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
     { id: "citations", label: "Citations", icon: "📑", ready: true },
     { id: "study", label: "Study", icon: "🎓", ready: true },
+    { id: "glossary", label: "Glossary", icon: "📖", ready: true },
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
     { id: "split-chapter", label: "Split by Chapter", icon: "✂", ready: true },
@@ -145,6 +147,7 @@
     "pii",
     "citations",
     "study",
+    "glossary",
     "pages",
     "pages-list",
     "diff",
@@ -528,6 +531,8 @@
       <BeaconCitationsPanel />
     {:else if detachedPanel === "study"}
       <BeaconStudyPanel />
+    {:else if detachedPanel === "glossary"}
+      <BeaconGlossaryPanel />
     {:else if detachedPanel === "reader"}
       <ReaderPanel
         tabId="detached"
@@ -701,6 +706,8 @@
     <BeaconCitationsPanel />
   {:else if active === "study"}
     <BeaconStudyPanel />
+  {:else if active === "glossary"}
+    <BeaconGlossaryPanel />
   {:else if active === "merge"}
     <MergePanel />
   {:else if active === "split"}
