@@ -5,16 +5,33 @@
 
 ---
 
-## STATUS: ✦ v1.9.1 "Beacon Voice Mode: Listen" 🎙 RELEASE_PENDING (CI re-running after Windows flake fix)
+## STATUS: ✦ v1.9.1 "Beacon Voice Mode: Listen" 🎙 **RELEASED** — pipeline idle, awaiting next slice
 
-**Main HEAD**: `4a84ed4` (fix(beacon/voice): deflake is_speaking_reaps_exited_child on Windows CI)
-**Latest published release**: **v1.9.0 "Voice Mode" 🔊** — https://github.com/Sanjays2402/slab/releases/tag/v1.9.0
+**Main HEAD**: `4a84ed4` (fix(beacon/voice): deflake is_speaking_reaps_exited_child on Windows CI) — STATE update commit pending this tick.
+**Latest published release**: **v1.9.1 "Beacon Voice Mode: Listen" 🎙** — https://github.com/Sanjays2402/slab/releases/tag/v1.9.1
+**Prior release**: **v1.9.0 "Voice Mode" 🔊** — https://github.com/Sanjays2402/slab/releases/tag/v1.9.0
 
-**Pending releases (need MODE B)**:
-- **v1.9.1** "Beacon Voice Mode: Listen" 🎙 — tag `v1.9.1` moved to `4a84ed4`, CI run `26042940723` (in_progress)
+**No RELEASE_PENDING.** No DONE feature branches. Pipeline is idle — next tick is MODE C (DEVELOP).
 
-**Last CI failure on v1.9.1 (run `26041745207`):**
-- Windows cargo test failed on `ai::voice_session::tests::is_speaking_reaps_exited_child` — 50ms fixed sleep too tight on Windows runners (Git Bash spawn latency ~100–300ms). Pre-existing v1.9.0 test, not a v1.9.1 regression. Fixed with poll-up-to-5s/25ms-cadence — deterministic, fast on every healthy host. 711/711 lib tests pass locally.
+---
+
+## TICK 2026-05-18 08:41 PT — MODE B finalize v1.9.1
+
+CI run `26042940723` came back **fully green** (7/7 jobs, all platforms — windows/linux/macos-arm64/macos-x64 cargo test + bundle). Flake fix-forward (`4a84ed4`) worked: poll loop with 5s budget / 25ms cadence held up across all runners.
+
+**Finalize actions:**
+- `gh run download 26042940723 --dir /tmp/slab-release-1.9.1` — all 4 platform bundles fetched.
+- `gh release create v1.9.1 --title 'v1.9.1 — Beacon Voice Mode: Listen 🎙' --notes-file docs/release-notes/v1.9.1.md` with 6 curated assets:
+  - `Slab_1.9.1_aarch64.dmg` (8.4 MB) — macOS arm64
+  - `Slab_1.9.1_x64.dmg` (9.1 MB) — macOS x64
+  - `Slab_1.9.1_amd64.deb` (10.1 MB) — Linux x64
+  - `Slab_1.9.1_amd64.AppImage` (84.2 MB) — Linux x64
+  - `Slab_1.9.1_x64_en-US.msi` (8.9 MB) — Windows x64
+  - `Slab_1.9.1_x64-setup.exe` (5.7 MB) — Windows x64
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v1.9.1
+- Temp release dir cleaned.
+
+**Tick ends here.** Local time 08:41 PT — well before the 09:00 PT business-hours blackout. No development this tick (release-only). Next tick (18:00 PT or later) starts MODE C on v1.9.2 OR v2.0.0 (decision below).
 
 ---
 
@@ -41,9 +58,7 @@ CI run `26041745207` for v1.9.1 came back **red**: Windows `cargo test (windows-
 - `cargo test --lib` — **711 passed; 0 failed**
 - `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
 
-**New CI run:** `26042940723` (in_progress at end of this tick).
-
-Tick ends right at the start of the weekday business-hours blackout window (09:00 PT), so MODE B finalize (`gh release create v1.9.1` + artifact upload) happens next tick (evening 18:00 PT or later).
+**New CI run:** `26042940723` → **GREEN** (finalized in next tick).
 
 ---
 
@@ -59,47 +74,46 @@ Tasks 1–3 (backend) already shipped pre-tick:
 
 This tick shipped Tasks 4–6:
 - `1f39bc2` feat(beacon/voice): Tauri command surface for STT (4 commands)
-  - `slab_beacon_voice_stt_capabilities` / `_start(engine?)` / `_stop` (CmdResult<Transcript>) / `_is_recording`
-  - `Arc<SttSession>` managed state alongside existing `VoiceSession`
 - `8224b86` feat(beacon/voice): mic button + Listen settings (frontend)
-  - `BeaconChatPanel.svelte`: pulsing red mic button between composer + Send. Transcript appends space-padded; caret to end; focus restored. Mic hidden entirely when sttCapable=false.
-  - `BeaconVoicePanel.svelte`: 🎙 Listen fieldset with engine/recorder status badges + privacy callout + per-OS install hints.
-- `39d2caf` chore(release): v1.9.1 — version bumps + release notes (`docs/release-notes/v1.9.1.md`)
+- `39d2caf` chore(release): v1.9.1 — version bumps + release notes
 - `a98eb5a` chore(cron): STATE.md update
 
 **MODE A — merged to main**:
 - `git merge --no-ff feature/v1.9.1-beacon-voice-stt` into main → merge commit `e0e7b0b`
-- Resolved STATE.md conflict (took feature-branch version)
-- Tag `v1.9.1` pushed
-- CI run id `26041745207` (in_progress)
-
-**Quality gates on main after merge:**
-- `cargo fmt --all -- --check` — clean
-- `cargo clippy --all-targets -- -D warnings` — clean
-- `cargo test --lib` — **711 passed; 0 failed** (+29 vs v1.9.0)
-- `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
-
-**Key decisions:**
-- Two independent session slots (`Arc<SttSession>` + `Arc<VoiceSession>`) — dictate input while TTS speaks output without collision.
-- `slab_beacon_voice_stt_start(engine: Option<String>)` — `None` → `SttEngine::platform_default()`. Unknown id → user-grade error, no panic.
-- Mic button **hidden** when not capable — no broken affordances; install hints live in settings panel only.
-- Transcript **appends** to existing composer text with space-pad — supports "Summarise: <dictated>" workflow.
-- Audio bytes never persist beyond transcription call — WAV unlinked unconditionally even on error paths.
+- Tag `v1.9.1` pushed; CI eventually green at `26042940723`.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE B (finalize v1.9.1)
+## NEXT TICK PLAYBOOK — MODE C (DEVELOP)
 
-1. **MODE B — finalize v1.9.1**:
-   - `gh run view 26042940723` — if green:
-     - `mkdir -p /tmp/slab-release-1.9.1 && gh run download 26042940723 --dir /tmp/slab-release-1.9.1`
-     - `gh release create v1.9.1 --title 'v1.9.1 — Beacon Voice Mode: Listen 🎙' --notes-file docs/release-notes/v1.9.1.md` with 6 curated artifacts (macos arm64+x64 dmg, linux x64 deb+AppImage, windows msi+nsis).
-     - Remove RELEASE_PENDING line from STATE.md.
-   - If CI fails again → write `RELEASE_FAILED:` line with run id + failing job; consider revert or fix-forward.
+**v1.9.1 is shipped.** No pending releases. Next tick is fresh-slice territory.
 
-2. After v1.9.1 published, MODE C — pick next slice:
-   - **v1.9.2** "Voice Mode: Polish" — native Windows STT (whisper.cpp + WASAPI recorder), recording-cancel/discard affordance, voice-driven Beacon commands (dictate → auto-send on keyword)
-   - **OR v2.0.0** — TypeScript Plugins vs Forge (signing)
+### Recommended slice — **v1.9.2 "Voice Mode: Polish"** 🎙
+
+Logical follow-on to v1.9.0/v1.9.1. Sanjay's directive: ship BIG vertical slices, not 1–2 fixes. Polish slice should include:
+
+1. **Native Windows STT** (whisper.cpp + WASAPI recorder)
+   - Cargo feature `windows-stt` gating a WASAPI recorder module.
+   - `SttEngine::WhisperWindows` variant; capability probe returns `Available` on Win when binary present.
+   - End the "Windows = not installed" placeholder; ship full parity with macOS/Linux.
+2. **Mid-recording cancel/discard affordance**
+   - Currently mic button is `Start` → `Stop+Transcribe`. Add right-click or long-press → `Cancel (discard)`.
+   - Backend: new `slab_beacon_voice_stt_cancel` command that drops the WAV without transcribing.
+   - Frontend: ESC while recording = cancel; visual feedback "Recording discarded".
+3. **Voice-driven Beacon commands** (dictate → auto-send on keyword)
+   - Trailing-phrase detection on stop: if transcript ends with "send it" / "go" → auto-submit composer.
+   - Configurable trigger word in Voice settings, default "send it".
+4. **STT model picker UI** (small / base / medium)
+   - whisper-cpp accepts `-m <model.bin>`. Surface model selector in Voice settings.
+   - Default `base.en` if available else `small.en`.
+
+**Branch**: `feature/v1.9.2-voice-polish`. Plan file: `docs/plans/2026-05-XX-v1.9.2-voice-polish.md` (write before coding).
+
+### Alternative — **v2.0.0 "TypeScript Plugins" or "Forge"**
+
+If voice polish feels stale, jump to v2.0.0. Two candidates parked below in POST-v1.9 ROADMAP REMINDERS. Pre-flight: v2.0.0 needs a real spec doc first (write in `.cron-state/proposals/`).
+
+**Tick decision rule**: default to v1.9.2 (clear scope, natural arc). Only divert to v2.0.0 if Sanjay has flagged a preference.
 
 ---
 
@@ -109,8 +123,8 @@ This tick shipped Tasks 4–6:
 ### v1.7.0 "Study Mode" 🎓 — **RELEASED 2026-05-18**
 ### v1.8.0 "Glossary" 📖 — **RELEASED 2026-05-18**
 ### v1.9.0 "Voice Mode" 🔊 (TTS-first) — **RELEASED 2026-05-18**
-### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **MERGED + TAGGED + CI in flight (run 26041745207)**
-### v1.9.2 "Voice Mode: Polish" — Windows STT, cancel-affordance, voice→send
+### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **RELEASED 2026-05-18**
+### v1.9.2 "Voice Mode: Polish" — **NEXT** (Windows STT, cancel, voice→send, model picker)
 ### v2.0.0 — TBD (TypeScript Plugins vs. Forge signing)
 
 ---
@@ -128,11 +142,7 @@ This tick shipped Tasks 4–6:
 
 ## POST-v1.9 ROADMAP REMINDERS
 
-**Slice 15.2 — Voice Mode Polish** 🎙 (v1.9.2)
-- Native Windows STT (whisper.cpp + WASAPI recorder)
-- Mid-recording cancel/discard affordance (not just stop+transcribe)
-- Voice-driven Beacon commands: dictate → auto-send when keyword detected
-- Voice selection UI for STT models (small vs base vs medium)
+**Slice 15.2 — Voice Mode Polish** 🎙 (v1.9.2) — see NEXT TICK PLAYBOOK above
 
 **v2.0.0 candidates:**
 
@@ -154,7 +164,7 @@ Other parked items:
 - The leftover `docs/screenshots-v1.3.1/` directory in repo root is
   Sanjay's intermediate working copy; harmless, can be `rm -rf`'d.
 - CommandPalette DETACHABLE_PANELS drift: missing citations/study/glossary
-  entries pre-existed; voice was added this tick but the other three
+  entries pre-existed; voice was added in v1.9.0 but the other three
   remain — quick cleanup tick someday.
 - Sanjay's external action for v1.4.1: create `Sanjays2402/slab-plugins`
   GH repo, drop seed files from `docs/marketplace-seed/`, sign the
