@@ -112,18 +112,34 @@ fn run_shell(plugin_id: &str, command_id: &str, line: &str, timeout_ms: u64) -> 
 
     let timeout = Duration::from_millis(timeout_ms.max(1));
     let outcome = wait_with_timeout(&mut child, timeout);
-    if matches!(outcome, WaitOutcome::Timeout) {
+    let timed_out = matches!(outcome, WaitOutcome::Timeout);
+    if timed_out {
         let _ = child.kill();
         let _ = child.wait();
     }
 
     let mut stdout_buf = String::new();
     let mut stderr_buf = String::new();
-    if let Some(out) = child.stdout.take() {
-        let _ = read_to_string(out, &mut stdout_buf);
-    }
-    if let Some(err) = child.stderr.take() {
-        let _ = read_to_string(err, &mut stderr_buf);
+    if !timed_out {
+        if let Some(out) = child.stdout.take() {
+            let _ = read_to_string(out, &mut stdout_buf);
+        }
+        if let Some(err) = child.stderr.take() {
+            let _ = read_to_string(err, &mut stderr_buf);
+        }
+    } else {
+        // On timeout, deliberately drop the pipe handles WITHOUT
+        // reading. /bin/sh on Linux (dash) doesn't propagate SIGTERM
+        // to its exec'd children, so a grandchild like `sleep` keeps
+        // the stdout/stderr pipes open until it finishes on its own.
+        // Reading here would stall the whole timeout path for the
+        // remainder of the grandchild's lifetime (~9.8s in the
+        // 200ms-timeout regression test). The Timeout arm of the
+        // match below produces a synthetic stderr message anyway, so
+        // we weren't surfacing pipe contents to the caller on
+        // timeout in any case.
+        drop(child.stdout.take());
+        drop(child.stderr.take());
     }
     let duration_ms = started.elapsed().as_millis() as u64;
 
