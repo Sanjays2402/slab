@@ -71,7 +71,7 @@ rusqlite = { version = "0.32", features = ["bundled", "blob"] }
 # Beacon: PDF content hash → cache key for the embedding index. `sha2`
 # is already transitively pulled by reqwest TLS, so this is a zero-cost
 # explicit dep.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Atlas (v0.12.0 Library Mode) — recursive directory walk for the
 # library scanner. Skips broken symlinks gracefully and gives us a
