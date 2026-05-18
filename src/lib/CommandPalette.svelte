@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
-  import { setUiConfig, ACCENT_COLORS, type ThemeMode, type Density } from "$lib/theme";
+  import { setUiConfig, ACCENT_COLORS, BUILT_IN_THEMES, type Density } from "$lib/theme";
   import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
   import { openPanelWindow } from "$lib/windows";
   import { isInTauri } from "$lib/tauri";
@@ -129,20 +129,15 @@
       });
     }
     // Theme quick actions
-    const themes: { id: ThemeMode; label: string; icon: string }[] = [
-      { id: "auto", label: "Auto (match system)", icon: "◐" },
-      { id: "light", label: "Light", icon: "☀" },
-      { id: "dark", label: "Dark", icon: "☾" },
-    ];
-    for (const t of themes) {
+    for (const th of BUILT_IN_THEMES) {
       out.push({
-        id: `theme:${t.id}`,
-        title: `Theme: ${t.label}`,
+        id: `theme:${th.id}`,
+        title: `Theme: ${th.label}`,
         subtitle: "Switch appearance",
-        icon: t.icon,
+        icon: th.icon,
         group: "Appearance",
-        run: () => void setUiConfig({ theme: t.id }),
-        keywords: `theme appearance ${t.id} ${t.label} light dark auto`,
+        run: () => void setUiConfig({ theme: th.id }),
+        keywords: `theme appearance ${th.id} ${th.label} light dark auto`,
       });
     }
     for (const a of ACCENT_COLORS) {

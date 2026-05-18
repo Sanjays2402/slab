@@ -40,6 +40,13 @@ export const ACCENT_COLORS: { id: AccentColor; label: string; hex: string }[] = 
   { id: "pink", label: "Coral", hex: "#ff6aa3" },
 ];
 
+/** Built-in theme picks shown in the palette / Settings. */
+export const BUILT_IN_THEMES: { id: ThemeMode; label: string; icon: string }[] = [
+  { id: "auto", label: "Auto (match system)", icon: "◐" },
+  { id: "light", label: "Light", icon: "☀" },
+  { id: "dark", label: "Dark", icon: "☾" },
+];
+
 const DEFAULT_CONFIG: UiConfig = {
   theme: "auto",
   accent: "orange",
