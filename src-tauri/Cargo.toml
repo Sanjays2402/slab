@@ -67,7 +67,7 @@ toml = "0.8"
 # embedding storage. We skip `sqlite-vec` for v1: brute-force cosine
 # in Rust handles up to ~200k chunks @ 768d in <100ms on M1, and we
 # avoid the cross-platform extension-loading headache.
-rusqlite = { version = "0.32", features = ["bundled", "blob"] }
+rusqlite = { version = "0.39", features = ["bundled", "blob"] }
 # Beacon: PDF content hash → cache key for the embedding index. `sha2`
 # is already transitively pulled by reqwest TLS, so this is a zero-cost
 # explicit dep.
