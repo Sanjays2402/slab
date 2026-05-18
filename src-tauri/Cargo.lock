@@ -1198,6 +1198,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3927,6 +3937,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "ed25519-dalek",
+ "flate2",
  "futures-util",
  "image",
  "lopdf",
@@ -3939,6 +3950,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -4192,6 +4204,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
 ]
 
 [[package]]
@@ -6011,6 +6034,16 @@ dependencies = [
  "libc",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
 ]
 
 [[package]]

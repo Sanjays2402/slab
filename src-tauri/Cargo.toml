@@ -96,6 +96,12 @@ similar = "2.6"
 # maintainer key is hard-coded as a const byte array in
 # `marketplace::verify`.
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+# Bench (v1.4.0 Slice 4) — atomic plugin tarball install.
+# `flate2` for gzip decode (rust_backend, no zlib system dep);
+# `tar` for archive iteration with directory-traversal guards. Both
+# crates have zero unsafe in the hot path and no transitive bloat.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
