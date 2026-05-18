@@ -66,11 +66,68 @@
     };
   }
 
+  function countNodes(nodes: EditNode[]): number {
+    let n = 0;
+    for (const node of nodes) n += 1 + countNodes(node.children);
+    return n;
+  }
+
   let roots = $state<EditNode[]>([]);
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let saving = $state(false);
   let saveError = $state<string | null>(null);
+
+  // Smart Outline proposal state (Beacon Slice 11).
+  type ProposedOutlineDto = {
+    nodes: RawNode[];
+    model: string;
+    pages_used: number;
+    pages_total: number;
+    raw_candidates: number;
+    dropped_invalid_page: number;
+    dropped_duplicate: number;
+  };
+
+  let proposing = $state(false);
+  let proposeError = $state<string | null>(null);
+  let proposal = $state<ProposedOutlineDto | null>(null);
+  let proposedRoots = $state<EditNode[] | null>(null);
+
+  async function suggestOutline() {
+    if (!isInTauri()) {
+      proposeError = "Smart Outline requires the desktop app.";
+      return;
+    }
+    proposing = true;
+    proposeError = null;
+    try {
+      const result = await invoke<ProposedOutlineDto>("slab_beacon_propose_outline", {
+        pdfPath: path,
+      });
+      proposal = result;
+      proposedRoots = result.nodes.map(toEdit);
+    } catch (e) {
+      proposeError = String(e);
+      proposal = null;
+      proposedRoots = null;
+    } finally {
+      proposing = false;
+    }
+  }
+
+  function acceptProposal() {
+    if (!proposedRoots) return;
+    roots = proposedRoots;
+    proposal = null;
+    proposedRoots = null;
+  }
+
+  function rejectProposal() {
+    proposal = null;
+    proposedRoots = null;
+    proposeError = null;
+  }
 
   // Loading happens on mount. We use $effect with a `loaded` flag rather than
   // onMount so reactivity is consistent with the rest of Slab's Svelte 5 code.
@@ -263,8 +320,44 @@
 <section class="outline-editor" role="dialog" aria-labelledby="outline-editor-title">
   <header class="oe-head">
     <h2 id="outline-editor-title">Edit outline</h2>
+    <span class="oe-spacer"></span>
+    <button
+      class="oe-btn ghost"
+      onclick={suggestOutline}
+      disabled={proposing || loading || saving || !isInTauri()}
+      title="Ask Beacon to propose an outline from the document content"
+    >
+      {proposing ? "Thinking…" : "✦ Suggest (Beacon)"}
+    </button>
     <button class="oe-close" onclick={onclose} title="Close (Esc)">×</button>
   </header>
+
+  {#if proposeError}
+    <div class="oe-status err">Smart Outline failed: {proposeError}</div>
+  {/if}
+
+  {#if proposal && proposedRoots}
+    <div class="oe-proposal">
+      <div class="oe-proposal-head">
+        <strong>Beacon proposes {countNodes(proposedRoots)} entries</strong>
+        <span class="oe-proposal-meta">
+          {proposal.model} · {proposal.pages_used}/{proposal.pages_total} pages
+          {#if proposal.dropped_invalid_page > 0 || proposal.dropped_duplicate > 0}
+            · dropped {proposal.dropped_invalid_page + proposal.dropped_duplicate} weak entries
+          {/if}
+        </span>
+      </div>
+      <ul class="oe-list oe-proposal-list">
+        {@render renderLevel(proposedRoots, 0)}
+      </ul>
+      <div class="oe-proposal-actions">
+        <button class="oe-btn" onclick={rejectProposal}>Reject</button>
+        <button class="oe-btn primary" onclick={acceptProposal}>
+          Replace current outline
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <div class="oe-body">
     {#if loading}
@@ -452,6 +545,36 @@
   }
 
   .oe-actions { display: inline-flex; gap: 2px; }
+
+  .oe-proposal {
+    margin: 0 16px 12px;
+    padding: 12px;
+    border: 1px solid var(--border, #2a2a2a);
+    border-radius: 8px;
+    background: var(--bg-elev, #1c1c1c);
+  }
+  .oe-proposal-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .oe-proposal-meta {
+    color: var(--muted, #888);
+    font-size: 12px;
+  }
+  .oe-proposal-list {
+    max-height: 280px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    opacity: 0.92;
+  }
+  .oe-proposal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
   .oe-icon {
     background: transparent;
     border: 1px solid transparent;
