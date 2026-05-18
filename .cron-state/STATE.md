@@ -5,16 +5,16 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" Slices 1–7 SHIPPED — feature/v1.4.0-bench
+## STATUS: 🪑 v1.4.0 "Bench" Slices 1–8 SHIPPED — feature/v1.4.0-bench
 
 **Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch'`
-**Active feature branch**: `feature/v1.4.0-bench` @ `c826248` — Slices 1–7 done, pushed to origin (frontend wire-up complete: Tauri commands + TS store + Browse tab UI in 4 locales)
+**Active feature branch**: `feature/v1.4.0-bench` @ `7087c5d` — Slices 1–8 done, pushed to origin (backend + Tauri cmds + TS store + Browse UI + plugin detail drawer + install progress modal + cross-tab update badge)
 **Latest release**: v1.3.1 → https://github.com/Sanjays2402/slab/releases/tag/v1.3.1
 
-**Quality gates green on feature/v1.4.0-bench HEAD (`c826248`):**
+**Quality gates green on feature/v1.4.0-bench HEAD (`7087c5d`):**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
-- `cargo test --lib` ✓ **581 passed** (+42 marketplace tests over v1.3.1 baseline of 539)
+- `cargo test --lib` ✓ **581 passed** (no backend changes in Slice 8)
 - `pnpm check` ✓ (0 errors / 23 warnings — baseline preserved)
 
 **Marketplace test breakdown (42):**
@@ -28,6 +28,23 @@
 ## TICK 2026-05-17 21:13 PT — v1.3.1 finalized + v1.4.0 Slice 1
 
 (History — first tick on Bench.)
+
+---
+
+## TICK 2026-05-17 22:39 PT — v1.4.0 Slice 8 (drawer + install modal + update badge) in one tick
+
+**MODE C develop v1.4.0 "Bench":** (on `feature/v1.4.0-bench`)
+
+1. `7087c5d` — feat(marketplace): plugin detail drawer + install modal + update badges (Slice 8)
+   - New `PluginDetailDrawer.svelte` — right-side 420px slide-in with full description, identity, install state, size, compat, SHA-256, signature, download URL, contextual action button. ESC+backdrop close.
+   - New `InstallProgressModal.svelte` — centered modal with phased status (verifying → downloading → extracting → done|error), CSS-only indeterminate progress bar (respects prefers-reduced-motion), success auto-dismiss (1.8s), errors stick with detail + Close.
+   - Cross-tab update badge: `availableUpdates` $derived map; amber pill on Installed-tab rows when marketplace has a newer version; one-click jump to Browse + drawer at matching entry.
+   - `onMount` opportunistically refreshes the marketplace index when any plugins are installed, so badges populate without requiring Browse-tab visit.
+   - Wiring: cards become role=button + tabindex=0 + Enter/Space handlers; .market-card-actions stops click propagation to prevent double-fire; drawer & modal mount outside <section> so backdrops cover whole panel.
+   - i18n: 16 new keys × 4 locales (en, es, fr, ar) under `plugins.detail.*`, `plugins.install.*`, `plugins.installed.*`.
+   - Plan: `docs/plans/2026-05-17-v1.4.0-bench-slice-8.md`.
+
+**Pushed `7087c5d` to origin/feature/v1.4.0-bench. All gates green.** 581 tests still pass (Slice 8 is 100% frontend).
 
 ---
 
@@ -109,7 +126,7 @@
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
 ### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
 ### v1.3.1 "Foundry Patch" 🩹 — RELEASED 2026-05-17 ✓
-### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slices 1–7/11 shipped & pushed; backend + Tauri cmds + TS store + Browse UI done; install modal/update badges + uninstall polish + docs + release next)
+### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slices 1–8/11 shipped & pushed; backend + Tauri cmds + TS store + Browse UI + drawer + install modal + update badges done; uninstall polish + docs + release next)
 
 ---
 
@@ -124,43 +141,36 @@
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench (Slice 8 → 11: polish + ship)
+## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench (Slice 9 → 11: uninstall polish + docs + release)
 
-Slices 1–7 are done. The Bench is functionally complete: backend signs+fetches+installs+verifies, frontend has a working Browse tab in 4 locales. Remaining work:
+Slices 1–8 are done. Remaining work:
 
-1. **Slice 8 — Install modal + update badges** (most impactful UX polish):
-   - Progress modal during long installs (download size + extraction progress hook from `install_from_entry`).
-   - Outcome toast: success (with green checkmark + "View plugin") or detailed error.
-   - "Update available" pill on installed-tab cards when index has a newer version (cross-tab signal — index already fetched after first Browse visit).
-   - Plugin detail drawer (click card → side drawer with README, screenshots, changelog, permissions).
-
-2. **Slice 9 — Uninstall flow polish** (smaller):
+1. **Slice 9 — Uninstall flow polish** (smaller — good single-tick or combined-with-10 target):
    - Confirmation dialog ("Uninstall <name>? This removes its plugin files.").
    - Move-to-trash semantics already exist in backend; surface a "Trashed (restore?)" toast for 5 seconds.
-   - Auto-deselect if active plugin is uninstalled.
+   - Auto-deselect if active plugin (active AI provider, current theme, etc.) is uninstalled — refresh selectors gracefully.
 
-3. **Slice 10 — Docs + seed `slab-plugins` repo**:
+2. **Slice 10 — Docs + seed `slab-plugins` repo**:
    - Public repo with 3 example plugins signed by maintainer key.
    - Generate `index.json` via `slab-sign-plugin` + commit to repo.
    - Host via GitHub Pages or raw.githubusercontent.
    - Add `MARKETPLACE.md` to slab repo documenting authorship/signing/publishing.
 
-4. **Slice 11 — Release ceremony**:
+3. **Slice 11 — Release ceremony**:
    - Bump `package.json` + `Cargo.toml` + `tauri.conf.json` to 1.4.0.
-   - Release notes from this TICK section + Slice 1-4 tick.
+   - Release notes from Slice 1–8 tick history.
    - Merge feature/v1.4.0-bench → main (--no-ff).
    - Tag v1.4.0, push, wait for CI, GH release with artifacts.
 
 Suggested batching:
-- **Next tick:** Slice 8 (big — modal + badges + detail drawer; might split into 8a/8b).
-- **Tick after:** Slice 9 + 10 together.
-- **Tick after that:** Slice 11 ship ceremony.
+- **Next tick:** Slice 9 + 10 together (uninstall polish + docs + maybe seed repo). Both are smaller pieces.
+- **Tick after:** Slice 11 ship ceremony.
 
 ---
 
-## (Previous playbook — Slices 5-8 — superseded above; kept for history)
+## (Previous playbook — Slice 8 — superseded above; kept for history)
 
-(Slices 5/6/7 completed in TICK 2026-05-17 22:21 PT — see history section above.)
+(Slice 8 completed in TICK 2026-05-17 22:39 PT — see history section above.)
 
 ---
 
@@ -173,8 +183,8 @@ Suggested batching:
 5. ✅ Tauri commands `slab_marketplace_*` (Tick 3, `80f08e5`)
 6. ✅ Frontend `src/lib/marketplace.ts` store (Tick 3, `9f104fc`)
 7. ✅ Frontend Browse tab + plugin cards + 4-locale i18n (Tick 3, `c826248`)
-8. Frontend install modal + update-available badges + plugin detail drawer (NEXT TICK)
-9. Uninstall flow polish
+8. ✅ Frontend install modal + update-available badges + plugin detail drawer (Tick 4, `7087c5d`)
+9. Uninstall flow polish (NEXT TICK)
 10. Docs + seed `slab-plugins` repo with 3 example plugins
 11. Release — version bump 1.3.1 → 1.4.0 + notes + merge + tag + push
 
