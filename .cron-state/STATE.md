@@ -5,87 +5,76 @@
 
 ---
 
-## STATUS: ✦ v1.6.0 "Citations" 📑 RELEASED — Slice 13 plan AUTHORED + saved, execute next tick
+## STATUS: ✦ v1.7.0 Beacon Bonus Slice 13 "Study Mode" 🎓 DONE on feature/v1.7.0-beacon-bonus-13-study-mode — MERGE next tick
 
-**Main HEAD**: `a109957` — `chore(state): record v1.6.0 merge + release-pending + next-tick playbook`
-**Latest release**: v1.6.0 "Citations" 📑 — https://github.com/Sanjays2402/slab/releases/tag/v1.6.0 (6 assets uploaded by CI workflow)
-**Plan file (now exists on disk)**: `docs/plans/2026-05-18-beacon-slice-13-study-mode.md` — 8 tasks, ~55 min, 22 tests total (sm2 8 + store 5 + study 9), every task copy-pasteable
-
-> **2026-05-18 04:46 PT correction:** The previous tick's STATE.md
-> claimed this plan was "saved" but the file was actually empty —
-> caught this tick by attempting to open it. Authored the full plan
-> using the `writing-plans` skill against the live codebase (read
-> ai::citations, ai::outline, pdf::library::registry, the existing
-> Citations panel + sidebar wiring). Every command is copy-pasteable
-> and each task ends with a `cargo test --lib` verification.
+**Main HEAD**: `5306b3e` (unchanged)
+**Feature branch HEAD**: `fa32144` — `fix(beacon/study): use std::io::Error::other (clippy 1.95)`
+**Plan executed**: `docs/plans/2026-05-18-beacon-slice-13-study-mode.md` (8 tasks, all green)
+**Latest release**: v1.6.0 "Citations" 📑 — https://github.com/Sanjays2402/slab/releases/tag/v1.6.0
 
 ---
 
-## TICK 2026-05-18 04:01 PT — v1.6.0 finalized + Slice 13 plan authored 🎓
+## TICK 2026-05-18 05:26 PT — Slice 13 "Study Mode" 🎓 shipped end-to-end
 
-Two things shipped this tick:
+Beacon Bonus Slice 13 landed in one tick: 9 commits (8 from the plan + 1
+clippy fix), the full vertical slice (ai::study + ai::study_store +
+ai::sm2 + 4 Tauri commands + BeaconStudyPanel.svelte + sidebar nav).
+Each layer TDD'd against existing patterns:
 
-1. **MODE B finalize for v1.6.0** — CI run 26023622380 turned green
-   between ticks (all 7 jobs success: 3× cargo-test + 4× bundle). On
-   inspection, the release-on-tag workflow had ALREADY created
-   `v1.6.0` on GitHub with the 6 standard assets attached (macos-arm64
-   dmg, macos-x64 dmg, linux deb + AppImage, windows msi + nsis).
-   Verified asset list via `gh release view` — all 6 present, all
-   `state: "uploaded"`. Removed the `RELEASE_PENDING` line from
-   STATE.md. Release URL:
-   https://github.com/Sanjays2402/slab/releases/tag/v1.6.0.
+- **ai::sm2** — pure scheduler (8 tests covering ease ladder + EF
+  floor/cap). `Ease::{Again,Hard,Good,Easy}` enum with snake_case serde.
+- **ai::study_store** — sqlite at ~/.slab/study.sqlite, schema-versioned
+  via `PRAGMA user_version`, modelled on `pdf::library::registry`
+  (6 tests, in-memory harness via `:memory:` connection).
+- **ai::study** — generate_deck pipeline (extract → chunk → LLM Q&A →
+  parse → validate → insert; 9 tests for parser + validator + dedupe
+  + caps + budget).
+- **4 Tauri commands**: `slab_beacon_generate_deck`, `slab_beacon_study_due`,
+  `slab_beacon_study_review`, `slab_beacon_study_stats` — all hashed
+  per-PDF via reused `EmbeddingIndex::hash_file`.
+- **BeaconStudyPanel.svelte** — Svelte 5 ($state runes), pick PDF +
+  generate + review-one-at-a-time UI with 4-button ease scale,
+  reveal-then-rate flow, footer stats, jump-to-page event dispatch.
+- **Sidebar nav + detach support** — both main and detached-window
+  branches of `+page.svelte`, added to `DETACHABLE_PANELS`.
 
-2. **MODE C planning** — Sanjay invoked the `writing-plans` skill
-   (same pattern as the Slice 11 and Slice 12 ticks that both
-   executed cleanly the following tick). Authored the full
-   TDD-structured implementation plan for the next big feature:
-   **Beacon Bonus Slice 13 (Study Mode — Q&A flashcards with SM-2
-   lite spaced repetition, sqlite-backed deck store at
-   `~/.slab/study.sqlite`)**. Saved to
-   `docs/plans/2026-05-18-beacon-slice-13-study-mode.md`. 8 tasks,
-   17 unit tests planned, ~1300 LoC, ~50 min of focused work — clean
-   handoff for next tick.
+Quality gates: all four green (fmt clean, clippy -D warnings clean
+after fixing one `io_other_error` lint, `cargo test --lib` 634/634,
+`pnpm check` 0 errors / 23 pre-existing warnings).
 
-The plan mirrors the architectural pattern of Slice 12 (scaffold →
-deterministic core → LLM-assisted layer → validate → store → command
-→ UI), but with one new piece: a small sqlite store module
-(`ai::study_store`) modelled on `pdf::library::registry` —
-schema-versioned via `PRAGMA user_version`, in-memory test harness,
-idempotent migrations. The SM-2 lite scheduler is pure deterministic
-math (no IO), unit-tested against fixture cards.
+**Commits** (oldest first):
+- `0fb046b` feat(beacon/study): scaffold ai::study module + Flashcard type
+- `5c1fee8` feat(beacon/sm2): SM-2-lite spaced-repetition scheduler
+- `0021dc8` feat(beacon/study-store): sqlite store for flashcards + review log
+- `5328bc6` feat(beacon/study): card generation pipeline + validator
+- `a0b5c12` feat(beacon/study): expose 4 Tauri commands for Study Mode
+- `cbfcf6b` feat(beacon/study-ui): BeaconStudyPanel — pick PDF, generate, review
+- `5a3342a` feat(beacon/study-nav): Study panel sidebar entry + detach support
+- `fa32144` fix(beacon/study): use std::io::Error::other (clippy 1.95)
 
-Architectural fit: identical layering to `ai::outline` and
-`ai::citations` for the generation half; the store half resembles
-`pdf::library::registry` (the existing canonical sqlite pattern in
-the codebase). A maintainer reading these four files side-by-side
-sees the family resemblance immediately.
+Branch pushed: `feature/v1.7.0-beacon-bonus-13-study-mode` is up on origin.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE C execute Slice 13
+## NEXT TICK PLAYBOOK — MODE A merge + tag v1.7.0
 
-1. Pull main: `git fetch origin && git checkout main && git pull --ff-only`
-2. `git checkout -b feature/v1.7.0-beacon-bonus-13-study-mode`
-3. Open `docs/plans/2026-05-18-beacon-slice-13-study-mode.md` and walk
-   it task-by-task (each task has its own commit message in a heredoc).
-4. After Task 8, run all quality gates one batched pass:
+1. `git fetch origin && git checkout main && git pull --ff-only`
+2. `git merge --no-ff feature/v1.7.0-beacon-bonus-13-study-mode -m "Merge v1.7.0 'Study Mode' 🎓 — Q&A flashcards with SM-2 spaced repetition"`
+3. Bump version to 1.7.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `package.json` + add CHANGELOG entry. Commit:
+   `chore(release): v1.7.0 "Study Mode"`
+4. Run all 4 quality gates on main:
    - `cd src-tauri && cargo fmt --all -- --check`
    - `cd src-tauri && cargo clippy --all-targets -- -D warnings`
    - `cd src-tauri && cargo test --lib`
    - `pnpm check` (from repo root)
-5. Push the branch (use the `gh auth token` credential helper —
-   plain `git push` fails in cron).
-6. Update STATE.md to:
-   `STATUS: ✦ v1.7.0 Beacon Bonus Slice 13 "Study Mode" DONE on
-    feature/v1.7.0-beacon-bonus-13-study-mode — MERGE next tick`
-7. Following tick: MODE A merge, bump to v1.7.0, tag, push, kick CI.
-
-**Time estimate**: Slice 11 was 8 commits in one tick (~50 min).
-Slice 12 was the same. Slice 13 has the same shape (8 tasks). Should
-fit one tick. The one risk is the new sqlite store module — if
-schema migrations get fiddly, may need to split into two ticks.
+5. If gates pass → `git tag v1.7.0` then push:
+   `git push origin main --follow-tags` (use credential helper).
+6. Find CI run id via `gh run list --branch main --limit 1`.
+7. Record in STATE.md: `RELEASE_PENDING: v1.7.0 — merge SHA <hash>, tag v1.7.0, CI run <id>`
+8. Tick after that: MODE B finalize (`gh release create v1.7.0 ...` with curated artifacts).
 
 ---
+
 
 ## ROADMAP
 
