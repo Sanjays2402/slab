@@ -5,13 +5,13 @@
 
 ---
 
-## STATUS: 🪑 v1.4.0 "Bench" Slices 1–4 SHIPPED — feature/v1.4.0-bench
+## STATUS: 🪑 v1.4.0 "Bench" Slices 1–7 SHIPPED — feature/v1.4.0-bench
 
 **Main HEAD**: `9f0fd6f` — `Merge v1.3.1 'Foundry Patch'`
-**Active feature branch**: `feature/v1.4.0-bench` @ `2afc228` — Slices 1–4 done + polished, pushed to origin
+**Active feature branch**: `feature/v1.4.0-bench` @ `c826248` — Slices 1–7 done, pushed to origin (frontend wire-up complete: Tauri commands + TS store + Browse tab UI in 4 locales)
 **Latest release**: v1.3.1 → https://github.com/Sanjays2402/slab/releases/tag/v1.3.1
 
-**Quality gates green on feature/v1.4.0-bench HEAD (`2afc228`):**
+**Quality gates green on feature/v1.4.0-bench HEAD (`c826248`):**
 - `cargo fmt --all -- --check` ✓
 - `cargo clippy --all-targets -- -D warnings` ✓
 - `cargo test --lib` ✓ **581 passed** (+42 marketplace tests over v1.3.1 baseline of 539)
@@ -28,6 +28,33 @@
 ## TICK 2026-05-17 21:13 PT — v1.3.1 finalized + v1.4.0 Slice 1
 
 (History — first tick on Bench.)
+
+---
+
+## TICK 2026-05-17 22:21 PT — v1.4.0 Slices 5 + 6 + 7 in one tick (3 commits)
+
+**MODE C develop v1.4.0 "Bench":** (on `feature/v1.4.0-bench`)
+
+1. `80f08e5` — feat(marketplace): Tauri commands — fetch/install/uninstall (Slice 5)
+   - 3 commands in `src-tauri/src/lib.rs`: `slab_marketplace_index`, `slab_marketplace_install`, `slab_marketplace_uninstall`.
+   - `MarketplaceFetchResult` flat struct (is_fresh/is_stale/index/error) — never throws, errors flow through `error` field.
+   - Install verifies signature pre-network (defence in depth), then atomic install, then triggers `PluginRegistry::discover` for auto-refresh.
+   - Uninstall is sync + idempotent (returns false if dir absent).
+
+2. `9f104fc` — feat(marketplace): TypeScript store + types (Slice 6)
+   - New 253-line `src/lib/marketplace.ts`: types, `marketplaceStore` writable, `refreshMarketplace()`, `installPlugin(entry)`, `uninstallPluginById(id)`, `compareSemver` (semver + pre-release aware), `formatBytes`.
+   - Browser-mode short-circuits everywhere via `isInTauri()` so `pnpm dev` outside Tauri shell still works.
+   - Per-id busy flags in store so each card spins independently.
+
+3. `c826248` — feat(marketplace): Browse tab + 4-locale i18n (Slice 7)
+   - PluginsPanel.svelte: tab strip (Installed | Browse) using existing `.seg` aesthetic.
+   - Browse states: loading, error+retry, empty, stale-banner, responsive grid (1→2 cols).
+   - Per-card statuses: install / installed (accent border) / update (amber glow), driven by `compareSemver`.
+   - i18n: 23 new keys × 4 locales (en, es, fr, ar).
+   - +170 lines of scoped styles, line-clamp polyfilled.
+   - Plan: `docs/plans/2026-05-17-v1.4.0-bench-slices-5-7.md`.
+
+**Pushed `c826248` to origin/feature/v1.4.0-bench. All gates green.**
 
 ---
 
@@ -82,7 +109,7 @@
 ### v1.2.0 "Glass II" — RELEASED 2026-05-17 🪟²
 ### v1.3.0 "Foundry" 🛠 — TAGGED but CI failed, superseded by v1.3.1
 ### v1.3.1 "Foundry Patch" 🩹 — RELEASED 2026-05-17 ✓
-### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slices 1–4/11 shipped & pushed; backend done, UX next)
+### v1.4.0 "Bench" 🪑 — **IN PROGRESS** (Slices 1–7/11 shipped & pushed; backend + Tauri cmds + TS store + Browse UI done; install modal/update badges + uninstall polish + docs + release next)
 
 ---
 
@@ -97,36 +124,43 @@
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench (Slice 5 → 8: frontend + commands)
+## NEXT TICK PLAYBOOK — MODE C continue v1.4.0 Bench (Slice 8 → 11: polish + ship)
 
-Backend is **done**. Next is wiring + UX. Suggested batching:
+Slices 1–7 are done. The Bench is functionally complete: backend signs+fetches+installs+verifies, frontend has a working Browse tab in 4 locales. Remaining work:
 
-1. **Slice 5 — Tauri commands** (`src-tauri/src/lib.rs`):
-   - `slab_marketplace_index() -> FetchOutcome JSON` (calls `fetch_index_with_cache` with default URL + cache path)
-   - `slab_marketplace_install(entry: IndexEntry) -> InstallReport`
-     (verifies sig first via `verify_with_maintainer_key`, then `install_from_entry`, then triggers plugin registry reload)
-   - `slab_marketplace_uninstall(id: String) -> bool` (calls `uninstall_plugin` + registry reload)
-   - Wire into the `invoke_handler!` macro alongside existing `slab_plugins_*` commands.
+1. **Slice 8 — Install modal + update badges** (most impactful UX polish):
+   - Progress modal during long installs (download size + extraction progress hook from `install_from_entry`).
+   - Outcome toast: success (with green checkmark + "View plugin") or detailed error.
+   - "Update available" pill on installed-tab cards when index has a newer version (cross-tab signal — index already fetched after first Browse visit).
+   - Plugin detail drawer (click card → side drawer with README, screenshots, changelog, permissions).
 
-2. **Slice 6 — Frontend store + types** (`src/lib/marketplace.ts`):
-   - TypeScript mirrors of IndexEntry / InstallReport / FetchOutcome.
-   - Svelte store `marketplace = { state: 'idle'|'loading'|'ready'|'error', index?, error?, isStale? }`.
-   - Actions: `refresh()`, `install(entry)`, `uninstall(id)`.
+2. **Slice 9 — Uninstall flow polish** (smaller):
+   - Confirmation dialog ("Uninstall <name>? This removes its plugin files.").
+   - Move-to-trash semantics already exist in backend; surface a "Trashed (restore?)" toast for 5 seconds.
+   - Auto-deselect if active plugin is uninstalled.
 
-3. **Slice 7 — Browse tab UI** (extend `src/lib/panels/PluginsPanel.svelte`):
-   - Add tab strip (Installed | Browse).
-   - Grid of plugin cards (icon, name, version, author, description, install button).
-   - "Showing cached results" banner when `isStale`.
+3. **Slice 10 — Docs + seed `slab-plugins` repo**:
+   - Public repo with 3 example plugins signed by maintainer key.
+   - Generate `index.json` via `slab-sign-plugin` + commit to repo.
+   - Host via GitHub Pages or raw.githubusercontent.
+   - Add `MARKETPLACE.md` to slab repo documenting authorship/signing/publishing.
 
-4. **Slice 8 — Install modal + update badges**:
-   - Modal with progress + outcome toast.
-   - "Update available" pill on installed plugins when index has a newer version.
+4. **Slice 11 — Release ceremony**:
+   - Bump `package.json` + `Cargo.toml` + `tauri.conf.json` to 1.4.0.
+   - Release notes from this TICK section + Slice 1-4 tick.
+   - Merge feature/v1.4.0-bench → main (--no-ff).
+   - Tag v1.4.0, push, wait for CI, GH release with artifacts.
 
-Aim for **Slices 5 + 6 in one tick** (backend wire-up + TS store; smaller pieces) and Slices 7 + 8 in the following tick (bigger UI work).
+Suggested batching:
+- **Next tick:** Slice 8 (big — modal + badges + detail drawer; might split into 8a/8b).
+- **Tick after:** Slice 9 + 10 together.
+- **Tick after that:** Slice 11 ship ceremony.
 
-After Slice 8 ships, Slice 9 = uninstall flow polish, Slice 10 = docs + seed `slab-plugins` repo, Slice 11 = release ceremony.
+---
 
-**Push the v1.4.0-bench branch is already done this tick (2afc228).** Next tick can start straight into Slice 5.
+## (Previous playbook — Slices 5-8 — superseded above; kept for history)
+
+(Slices 5/6/7 completed in TICK 2026-05-17 22:21 PT — see history section above.)
 
 ---
 
@@ -136,10 +170,10 @@ After Slice 8 ships, Slice 9 = uninstall flow polish, Slice 10 = docs + seed `sl
 2. ✅ Maintainer signing tool (Tick 2, 14 tests + real key bake-in)
 3. ✅ `marketplace/fetch.rs` — HTTP + offline cache (Tick 2, 14 tests)
 4. ✅ `marketplace/install.rs` — atomic extract with hardening (Tick 2, 16 tests)
-5. Tauri commands `slab_marketplace_*` (NEXT TICK)
-6. Frontend `src/lib/marketplace.ts` store
-7. Frontend Browse tab + plugin cards
-8. Frontend install modal + update-available badges
+5. ✅ Tauri commands `slab_marketplace_*` (Tick 3, `80f08e5`)
+6. ✅ Frontend `src/lib/marketplace.ts` store (Tick 3, `9f104fc`)
+7. ✅ Frontend Browse tab + plugin cards + 4-locale i18n (Tick 3, `c826248`)
+8. Frontend install modal + update-available badges + plugin detail drawer (NEXT TICK)
 9. Uninstall flow polish
 10. Docs + seed `slab-plugins` repo with 3 example plugins
 11. Release — version bump 1.3.1 → 1.4.0 + notes + merge + tag + push
