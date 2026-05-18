@@ -1613,6 +1613,32 @@ fn slab_plugins_read_asset(
     plugins::read_asset(&p.dir, &relative)
 }
 
+/// Run a plugin PDF action against `input` and write the result to
+/// `output`. Returns an [`ActionReport`] with status + stdout/stderr;
+/// the frontend surfaces this so users can see what the external CLI
+/// said. Errors here are reserved for setup failures (missing input,
+/// tempfile failures) — CLI exit codes go in the report status.
+#[tauri::command]
+fn slab_plugins_run_pdf_action(
+    plugin_id: String,
+    action_id: String,
+    input: String,
+    output: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<plugins::ActionReport, String> {
+    let actions = plugins::active_pdf_actions(&reg);
+    let action = actions
+        .into_iter()
+        .find(|a| a.plugin_id == plugin_id && a.action.id == action_id)
+        .ok_or_else(|| format!("no active pdf_action {action_id:?} on plugin {plugin_id:?}"))?;
+    plugins::run_pdf_action(
+        &action,
+        std::path::Path::new(&input),
+        std::path::Path::new(&output),
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1745,6 +1771,7 @@ pub fn run() {
             slab_plugins_active_ai_providers,
             slab_plugins_active_pdf_actions,
             slab_plugins_read_asset,
+            slab_plugins_run_pdf_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

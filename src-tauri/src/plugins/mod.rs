@@ -9,6 +9,7 @@
 pub mod contributions;
 pub mod manifest;
 pub mod registry;
+pub mod runner;
 
 pub use contributions::{
     active_ai_providers, active_commands, active_locales, active_pdf_actions, active_themes,
@@ -22,3 +23,4 @@ pub use registry::{
     default_plugins_root, default_state_path, read_enabled_state, write_enabled_state,
     EnabledState, Plugin, PluginRegistry,
 };
+pub use runner::{run_pdf_action, ActionError, ActionReport, ActionStatus};
