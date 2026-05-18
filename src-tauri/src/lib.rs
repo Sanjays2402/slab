@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod keymap;
 pub mod pdf;
+pub mod plugins;
 pub mod windows;
 
 use ai::auto_tag::AutoTagOpts;
