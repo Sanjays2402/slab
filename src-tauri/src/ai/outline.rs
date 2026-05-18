@@ -72,3 +72,63 @@ pub(super) struct LlmEntryWire {
 fn default_level() -> u8 {
     1
 }
+
+/// Liberal JSON parser. Strips ```json ... ``` fences if present, then finds
+/// the outermost `{...}` and tries `serde_json`. Returns `None` on any
+/// parse failure — the LLM occasionally surrounds JSON with chatty prose
+/// despite the system prompt, and we'd rather emit an empty proposal than
+/// fail the whole panel.
+pub(super) fn parse_llm_outline(raw: &str) -> Option<LlmOutlineWire> {
+    let s = raw.trim();
+    // Strip a markdown fence if the model wrapped its output.
+    let body = if let Some(rest) = s.strip_prefix("```json") {
+        rest.trim_end_matches("```").trim()
+    } else if let Some(rest) = s.strip_prefix("```") {
+        rest.trim_end_matches("```").trim()
+    } else {
+        s
+    };
+    let start = body.find('{')?;
+    let end = body.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str(&body[start..=end]).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_plain_json() {
+        let raw = r#"{"entries":[{"title":"Intro","page":1,"level":1}]}"#;
+        let w = parse_llm_outline(raw).expect("parse should succeed");
+        assert_eq!(w.entries.len(), 1);
+        assert_eq!(w.entries[0].title, "Intro");
+        assert_eq!(w.entries[0].page, Some(1));
+        assert_eq!(w.entries[0].level, 1);
+    }
+
+    #[test]
+    fn strips_markdown_fence() {
+        let raw = "```json\n{\"entries\":[{\"title\":\"X\",\"page\":2}]}\n```";
+        let w = parse_llm_outline(raw).expect("should parse fenced");
+        assert_eq!(w.entries.len(), 1);
+        assert_eq!(w.entries[0].title, "X");
+    }
+
+    #[test]
+    fn tolerates_trailing_chatter() {
+        let raw =
+            "Sure, here it is: {\"entries\":[{\"title\":\"Y\",\"page\":3,\"level\":2}]}\nHope that helps!";
+        let w = parse_llm_outline(raw).expect("should ignore prose");
+        assert_eq!(w.entries[0].level, 2);
+    }
+
+    #[test]
+    fn returns_none_on_garbage() {
+        assert!(parse_llm_outline("absolutely no json here").is_none());
+        assert!(parse_llm_outline("").is_none());
+    }
+}
