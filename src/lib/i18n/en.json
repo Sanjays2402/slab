@@ -38,6 +38,7 @@
   "features.beacon": "Beacon AI",
   "features.search": "Beacon Search",
   "features.pii": "PII Redact",
+  "features.glossary": "Glossary",
   "features.merge": "Merge",
   "features.split": "Split",
   "features.split-chapter": "Split by Chapter",

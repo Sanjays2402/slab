@@ -24,6 +24,13 @@ use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
     IndexReport, IndexStats, SearchHit,
 };
+use ai::glossary::{
+    build_glossary_from_path as do_beacon_build_glossary, GlossaryOpts, GlossaryReport,
+};
+use ai::glossary_cache::{
+    cache_dir as glossary_cache_dir, clear as glossary_cache_clear, load as glossary_cache_load,
+    save as glossary_cache_save,
+};
 use ai::outline::{
     propose_outline_from_path as do_beacon_propose_outline, ProposedOutline,
     DEFAULT_OUTLINE_MAX_CHARS,
@@ -818,6 +825,97 @@ async fn slab_beacon_find_citations(
     do_beacon_find_citations(provider, &pdf_path, &opts)
         .await
         .into()
+}
+
+/// Beacon Glossary — scan a PDF for jargon, acronyms, and italicised
+/// terms, ask the AI provider for plain-English definitions, and return
+/// a sorted, deduped `GlossaryReport`. Result is automatically cached
+/// to `~/.slab/glossary/<pdf_hash>.json` so subsequent loads are
+/// instant. v1.8.0 Beacon Bonus Slice 14.
+#[tauri::command]
+async fn slab_beacon_build_glossary(
+    pdf_path: PathBuf,
+    opts: Option<GlossaryOpts>,
+) -> CmdResult<GlossaryReport> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let opts = opts.unwrap_or_default();
+    let report = match do_beacon_build_glossary(provider, &pdf_path, &opts).await {
+        Ok(r) => r,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    // Best-effort write to the on-disk cache; a failed write does NOT
+    // fail the command (the caller already has the report in memory).
+    if let Ok(hash) = hash_pdf_path(&pdf_path) {
+        let dir = glossary_cache_dir();
+        if let Err(e) = glossary_cache_save(&hash, &report, &dir) {
+            eprintln!("[beacon/glossary] cache save failed: {e}");
+        }
+    }
+    CmdResult::Ok { value: report }
+}
+
+/// Beacon Glossary — load a previously-built report from the on-disk
+/// cache, keyed by `sha256(pdf_contents)`. Returns `Some(report)` on a
+/// hit, `None` on a miss / version-mismatch / corrupted file. The UI
+/// uses this to populate the panel without re-hitting the LLM.
+#[tauri::command]
+async fn slab_beacon_load_glossary_cache(pdf_path: PathBuf) -> CmdResult<Option<GlossaryReport>> {
+    let hash = match hash_pdf_path(&pdf_path) {
+        Ok(h) => h,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("hashing pdf: {e}"),
+            }
+        }
+    };
+    let dir = glossary_cache_dir();
+    match glossary_cache_load(&hash, &dir) {
+        Ok(opt) => CmdResult::Ok { value: opt },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Beacon Glossary — remove the cached report for a PDF so the next
+/// `slab_beacon_build_glossary` call rebuilds from scratch. Invoked by
+/// the "Rebuild" button in the glossary panel.
+#[tauri::command]
+async fn slab_beacon_clear_glossary_cache(pdf_path: PathBuf) -> CmdResult<()> {
+    let hash = match hash_pdf_path(&pdf_path) {
+        Ok(h) => h,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("hashing pdf: {e}"),
+            }
+        }
+    };
+    let dir = glossary_cache_dir();
+    match glossary_cache_clear(&hash, &dir) {
+        Ok(()) => CmdResult::Ok { value: () },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
 }
 
 impl<T: Serialize> From<Result<T, StudyError>> for CmdResult<T> {
@@ -2143,6 +2241,9 @@ pub fn run() {
             slab_beacon_summary,
             slab_beacon_propose_outline,
             slab_beacon_find_citations,
+            slab_beacon_build_glossary,
+            slab_beacon_load_glossary_cache,
+            slab_beacon_clear_glossary_cache,
             slab_beacon_generate_deck,
             slab_beacon_study_due,
             slab_beacon_study_review,

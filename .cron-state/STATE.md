@@ -5,90 +5,70 @@
 
 ---
 
-## STATUS: ✦ v1.7.0 "Study Mode" 🎓 merged + tagged + pushed — RELEASE_PENDING (CI building)
+## STATUS: ✦ v1.7.0 "Study Mode" 🎓 RELEASED + v1.8.0 "Glossary" 📖 in flight
 
 **Main HEAD**: `521f8ec` (chore(release): v1.7.0 "Study Mode" 🎓)
-**Merge SHA**: `da53f84` (Merge v1.7.0 'Study Mode' 🎓 — Q&A flashcards with SM-2 spaced repetition)
-**Tag**: `v1.7.0` → pushed to origin
-**CI run**: `26034343468` (in_progress at tick end, all-platforms matrix build)
-**Latest release**: v1.6.0 "Citations" 📑 — https://github.com/Sanjays2402/slab/releases/tag/v1.6.0
-
-**RELEASE_PENDING: v1.7.0 — merge SHA da53f84, release commit 521f8ec, tag v1.7.0, CI run 26034343468**
+**Latest release**: **v1.7.0 "Study Mode" 🎓** — https://github.com/Sanjays2402/slab/releases/tag/v1.7.0
+**Active dev branch**: `feature/v1.8.0-beacon-bonus-14-glossary` (6 commits, pushed)
 
 ---
 
-## TICK 2026-05-18 05:42 PT — MODE A complete (merge + tag + push)
+## TICK 2026-05-18 06:17 PT — MODE B (v1.7.0 finalize) + MODE C (v1.8.0 Slice 14)
 
-Picked up Slice 13 "Study Mode" 🎓 sitting DONE on
-`feature/v1.7.0-beacon-bonus-13-study-mode` from the prior tick (5:26 PT)
-and executed the full MODE A playbook in one pass:
+**MODE B — v1.7.0 finalize complete:**
+- CI run `26034343468` finished with conclusion `success`.
+- Downloaded all artifacts to `/tmp/slab-release-v1.7.0`.
+- `gh release create v1.7.0` with 6 curated artifacts:
+  - macos-arm64 dmg, macos-x64 dmg, linux deb + AppImage, windows nsis + msi.
+- Release notes from `docs/release-notes/v1.7.0.md` posted.
+- v1.7.0 now public: https://github.com/Sanjays2402/slab/releases/tag/v1.7.0
 
-1. `git checkout main && git pull --ff-only` — main was at 5306b3e, clean.
-2. `git merge --no-ff feature/v1.7.0-beacon-bonus-13-study-mode` — clean
-   merge via 'ort' strategy, 8 files changed, 1584 insertions. Merge
-   commit `da53f84`.
-3. Version bump 1.6.0 → 1.7.0 across `package.json`,
-   `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and
-   `src-tauri/Cargo.lock` (regenerated via `cargo update -p slab-app
-   --offline`).
-4. Wrote `docs/release-notes/v1.7.0.md` — modelled on the v1.6.0
-   template, covers Study Mode sidebar entry, SM-2-lite scheduler,
-   sqlite store, generation pipeline, 4 Tauri commands, and the
-   Svelte panel.
-5. Commit `521f8ec` — `chore(release): v1.7.0 "Study Mode" 🎓`.
-6. Quality gates on main (all four green, batched once):
-   - `cargo fmt --all -- --check` — clean
-   - `cargo clippy --all-targets -- -D warnings` — clean
-   - `cargo test --lib` — **634 passed; 0 failed**
-   - `pnpm check` — 0 errors, 23 pre-existing warnings
-7. `git tag -a v1.7.0` then pushed: `git push origin main --follow-tags`
-   via gh-token credential helper. Both main + tag landed on origin.
-8. CI run `26034343468` triggered automatically by the push; in
-   progress at tick end (all three platforms — macos-arm64, linux-x64,
-   windows-x64 — in the matrix).
+**MODE C — v1.8.0 "Glossary" 📖 Slice 14 shipped end-to-end this tick:**
+Branch `feature/v1.8.0-beacon-bonus-14-glossary` pushed with 6 commits:
+- `21745b9` scaffold + types + 2 tests
+- `2ea20b8` regex-based candidate detection (4 patterns) + 7 tests
+- `2c2d18c` LLM definition extraction + validator + 4 tests
+- `ae00094` JSON sidecar cache (load/save/clear) + 5 tests
+- `15f5901` Tauri commands (build / load_cache / clear_cache) + invoke_handler
+- `be55b4e` BeaconGlossaryPanel.svelte (cache-first UX, filter chips, copy)
+- `3dc0e50` Mount panel in `+page.svelte` + i18n key
+- `cbda2b1` Clippy `sort_by_key` cleanup
 
-Next tick: **MODE B finalize** — poll the CI run, download all 6
-curated artifacts when green, and `gh release create v1.7.0` with the
-release notes. If CI red, diagnose and either fix on a follow-up branch
-or revert.
+**Slice 14 is functionally complete + STATUS: DONE.** Quality gates:
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --all-targets -- -D warnings` — clean
+- `cargo test --lib` — **652 passed; 0 failed** (+18 new vs main)
+- `pnpm check` — 0 errors, 23 pre-existing warnings
+
+E2E smoke (Task 8 of the plan) deferred — no Ollama running in cron;
+will run manually by Sanjay or in the next interactive session.
 
 ---
 
-## NEXT TICK PLAYBOOK — MODE B finalize v1.7.0
+## NEXT TICK PLAYBOOK — MODE A merge v1.8.0
 
-1. `cd /Users/sanjay/Projects/slab && gh run view 26034343468`
-2. If still in_progress → skip to MODE C (likely Slice 14 "Glossary" prep) and
-   re-check next tick.
-3. If completed success:
-   ```bash
-   gh run download 26034343468 --dir /tmp/slab-release-v1.7.0
-   ls /tmp/slab-release-v1.7.0/
-   ```
-   Curate the 6 best artifacts: macos-arm64 dmg, macos-x64 dmg, linux
-   x64 deb + AppImage, windows msi + nsis. (Match the platform table in
-   `docs/release-notes/v1.7.0.md`.)
-4. ```bash
-   gh release create v1.7.0 \
-     --title 'v1.7.0 — Study Mode 🎓' \
-     --notes-file docs/release-notes/v1.7.0.md \
-     /tmp/slab-release-v1.7.0/<artifact1> /tmp/slab-release-v1.7.0/<artifact2> ...
-   ```
-5. Remove the `RELEASE_PENDING` line from STATE.md.
-6. If CI failed → write `RELEASE_FAILED:` to STATE.md with run_id +
-   failing job, fix on a follow-up branch, no revert needed (the v1.6.0
-   release is fine and main builds locally).
-7. Begin authoring **Slice 14 "Glossary"** plan at
-   `docs/plans/2026-05-18-beacon-slice-14-glossary.md` in MODE C of the
-   same tick.
+Slice 14 is DONE on `feature/v1.8.0-beacon-bonus-14-glossary`. Next tick
+runs MODE A:
+
+1. `git fetch origin && git checkout main && git pull --ff-only`
+2. `git merge --no-ff feature/v1.8.0-beacon-bonus-14-glossary -m "Merge v1.8.0 'Glossary' 📖 — auto-extract jargon with definitions"`
+3. Version bump 1.7.0 → 1.8.0 in `package.json`, `src-tauri/Cargo.toml`,
+   `src-tauri/tauri.conf.json`, `src-tauri/Cargo.lock` (cargo update -p slab-app --offline).
+4. Write `docs/release-notes/v1.8.0.md` (model on v1.6.0 / v1.7.0).
+5. Quality gates on main (batched).
+6. `git tag -a v1.8.0 -m 'v1.8.0 Glossary'`
+7. `git push origin main --follow-tags` via gh token.
+8. RELEASE_PENDING: v1.8.0 — write to STATE.md, watch CI.
+
+Then MODE C in same tick: start Slice 15 "Voice Mode" 🔊.
 
 ---
 
 ## ROADMAP
 
-### v0.8.1 → v1.5.0 — RELEASED (see git history)
-### v1.6.0 "Citations" 📑 — **RELEASED 2026-05-18**
-### v1.7.0 "Study Mode" 🎓 — **TAGGED 2026-05-18**, CI building, MODE B next tick
-### v1.8.0 "Glossary" 📖 — proposal: LLM-extracted domain terms with hover linking
+### v0.8.1 → v1.6.0 — RELEASED (see git history)
+### v1.7.0 "Study Mode" 🎓 — **RELEASED 2026-05-18** (this tick)
+### v1.8.0 "Glossary" 📖 — DONE on branch, ready for MODE A next tick
 ### v1.9.0 "Voice Mode" 🔊 — proposal: TTS + STT for hands-free Beacon
 
 ---
@@ -104,18 +84,9 @@ or revert.
 
 ---
 
-## POST-v1.7 ROADMAP REMINDERS
+## POST-v1.8 ROADMAP REMINDERS
 
-After Study Mode lands, the Bonus track continues:
-
-**Slice 14 — Glossary** (next up after MODE B finalises v1.7.0)
-- LLM extracts domain-specific terms and definitions from the doc, builds
-  a sidebar glossary, links inline mentions on hover.
-- Reuse pattern: `ai::glossary` module mirroring `ai::outline` / `ai::citations`
-  (regex scanner for term candidates → LLM definition extraction → liberal
-  JSON → validate → link → cache). Sqlite or JSON cache TBD.
-
-**Slice 15 — Voice Mode**
+**Slice 15 — Voice Mode** 🔊
 - TTS playback of Beacon answers + STT for asking questions. Provider-
   agnostic — local Whisper for STT, system TTS for output. v1 ships
   buttons-only, no wake-word.
