@@ -5,16 +5,45 @@
 
 ---
 
-## STATUS: ✦ v1.9.1 "Beacon Voice Mode: Listen" 🎙 RELEASE_PENDING (CI in flight)
+## STATUS: ✦ v1.9.1 "Beacon Voice Mode: Listen" 🎙 RELEASE_PENDING (CI re-running after Windows flake fix)
 
-**Main HEAD**: `e0e7b0b` (Merge v1.9.1 'Beacon Voice Mode: Listen' 🎙)
+**Main HEAD**: `4a84ed4` (fix(beacon/voice): deflake is_speaking_reaps_exited_child on Windows CI)
 **Latest published release**: **v1.9.0 "Voice Mode" 🔊** — https://github.com/Sanjays2402/slab/releases/tag/v1.9.0
-**Also published last tick**: v1.8.0 "Glossary" 📖 — https://github.com/Sanjays2402/slab/releases/tag/v1.8.0
 
 **Pending releases (need MODE B)**:
-- **v1.9.1** "Beacon Voice Mode: Listen" 🎙 — merge SHA `e0e7b0b`, tag `v1.9.1`, CI run `26041745207` (in_progress at end of this tick)
+- **v1.9.1** "Beacon Voice Mode: Listen" 🎙 — tag `v1.9.1` moved to `4a84ed4`, CI run `26042940723` (in_progress)
 
-**Discovery this tick:** v1.8.0 + v1.9.0 were *already* published (6 artifacts each) — the prior STATE.md had stale RELEASE_PENDING entries. Cleared.
+**Last CI failure on v1.9.1 (run `26041745207`):**
+- Windows cargo test failed on `ai::voice_session::tests::is_speaking_reaps_exited_child` — 50ms fixed sleep too tight on Windows runners (Git Bash spawn latency ~100–300ms). Pre-existing v1.9.0 test, not a v1.9.1 regression. Fixed with poll-up-to-5s/25ms-cadence — deterministic, fast on every healthy host. 711/711 lib tests pass locally.
+
+---
+
+## TICK 2026-05-18 08:24 PT — MODE B triage + flake fix-forward
+
+CI run `26041745207` for v1.9.1 came back **red**: Windows `cargo test (windows-x64)` failed on a single test, `ai::voice_session::tests::is_speaking_reaps_exited_child` (panic at `voice_session.rs:162` — `assertion failed: !s.is_speaking()`). All 3 other test legs (linux-x64, macos-arm64, windows clippy/fmt) passed.
+
+**Diagnosis:** flake, not a regression. Test plants a `sh -c "exit 0"` child, sleeps a fixed 50ms, asserts the child has been reaped. On Windows runners Git Bash imposes ~100–300ms of spawn latency, so the child is occasionally still alive at the 50ms mark. The test ships with v1.9.0 (released cleanly) but rolled the dice unfavorably on this v1.9.1 run.
+
+**Fix (`4a84ed4`)** — `fix(beacon/voice): deflake is_speaking_reaps_exited_child on Windows CI`:
+- Replaced fixed 50ms sleep with poll loop: up to 5s budget, 25ms cadence.
+- On a healthy host first iteration suffices; on slow CI a few extra hops.
+- Deterministic, fast in the common case, robust under load.
+- Local run: 5/5 voice_session tests pass in 0.18s; full lib 711/711 in 3.04s.
+
+**Tag reshuffle:**
+- `git tag -d v1.9.1` locally (was at `e0e7b0b`).
+- Re-created `v1.9.1` at `4a84ed4` (the fix commit).
+- `git push --force origin refs/tags/v1.9.1` — moved on remote (no published release attached, so safe).
+
+**Quality gates on main (after fix):**
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --all-targets -- -D warnings` — clean
+- `cargo test --lib` — **711 passed; 0 failed**
+- `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
+
+**New CI run:** `26042940723` (in_progress at end of this tick).
+
+Tick ends right at the start of the weekday business-hours blackout window (09:00 PT), so MODE B finalize (`gh release create v1.9.1` + artifact upload) happens next tick (evening 18:00 PT or later).
 
 ---
 
@@ -62,11 +91,11 @@ This tick shipped Tasks 4–6:
 ## NEXT TICK PLAYBOOK — MODE B (finalize v1.9.1)
 
 1. **MODE B — finalize v1.9.1**:
-   - `gh run view 26041745207` — if green:
-     - `mkdir -p /tmp/slab-release-1.9.1 && gh run download 26041745207 --dir /tmp/slab-release-1.9.1`
+   - `gh run view 26042940723` — if green:
+     - `mkdir -p /tmp/slab-release-1.9.1 && gh run download 26042940723 --dir /tmp/slab-release-1.9.1`
      - `gh release create v1.9.1 --title 'v1.9.1 — Beacon Voice Mode: Listen 🎙' --notes-file docs/release-notes/v1.9.1.md` with 6 curated artifacts (macos arm64+x64 dmg, linux x64 deb+AppImage, windows msi+nsis).
      - Remove RELEASE_PENDING line from STATE.md.
-   - If CI fails → write `RELEASE_FAILED:` line with run id + failing job; consider revert or fix-forward.
+   - If CI fails again → write `RELEASE_FAILED:` line with run id + failing job; consider revert or fix-forward.
 
 2. After v1.9.1 published, MODE C — pick next slice:
    - **v1.9.2** "Voice Mode: Polish" — native Windows STT (whisper.cpp + WASAPI recorder), recording-cancel/discard affordance, voice-driven Beacon commands (dictate → auto-send on keyword)
