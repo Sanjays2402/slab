@@ -12,9 +12,9 @@ Every other PDF tool wants you to upload your taxes, your contracts, your medica
 
 ![Slab Reader with the PDF 1.7 spec open](docs/screenshots/00-hero-reader.png)
 
-## What's in v1.0.0 "Glass"
+## What's in v1.2.0 "Glass II"
 
-A real Adobe‑Acrobat‑replacing toolkit, shipped in 16 honest releases. Six pillars, all local:
+A real Adobe‑Acrobat‑replacing toolkit, shipped in 18 honest releases. Seven pillars, all local:
 
 | Pillar | What it does | Highlight versions |
 | --- | --- | --- |
@@ -23,7 +23,8 @@ A real Adobe‑Acrobat‑replacing toolkit, shipped in 16 honest releases. Six p
 | **Document tools** | Markdown→PDF · Grayscale · Page Labels · Auto‑Redact · Polyglot (.docx/.xlsx/.epub/.html/...) · Flatten · Sanitize · Repair · Edit Text | v0.7 → v0.11 |
 | **OCR & Lens** | Tesseract OCR (v0.8) plus a full Lens panel: table extraction, language packs, batch, preflight (v0.13) | v0.8, v0.13 |
 | **AI (local)** | **Beacon** — Chat / Summary / Semantic Search across the open PDF, on‑device only | v0.10 |
-| **Productivity** | **Atlas** PDF Library · **Stack** line‑level diff · **Theater** present mode · **Glass** settings + keyboard shortcuts | v0.12, v0.14, v0.15, v1.0 |
+| **Productivity** | **Atlas** PDF Library · **Stack** line‑level diff · **Theater** present mode · **Glass** settings + keyboard shortcuts · **Cabinet** detachable panels | v0.12, v0.14, v0.15, v1.0, v1.1 |
+| **Reach** | **Vim mode** · WCAG‑level a11y audit + fixes · i18n foundation | v1.2 |
 
 **468 Rust tests passing**, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
 
@@ -240,6 +241,18 @@ Turn any PDF into a deck. Full‑screen slideshow, speaker notes view, live anno
 ### Glass — settings & shortcuts *(v1.0.0)*
 
 The 1.0 polish layer: a proper Settings system with theme + accent color + density (compact / cozy / comfortable), a customizable keymap, an MRU‑sorted command palette, and a `?` shortcut overlay that lists every keybinding in the app.
+
+### Cabinet — detachable panels *(v1.1.0)*
+
+Any of **11 panels** detaches into its own native window. Drop Beacon on a second monitor while the Reader stays on the first. Open three Library views, each filtered to a different folder. Run Stack diff next to two side‑by‑side Readers. Cross‑window events keep it coherent: add a folder in the main Library, every detached Library refetches in milliseconds. Window geometry + which‑panels‑were‑open survives app restart (`~/.slab/windows.json`). A new sidebar "Detached" section lists every open window, one click to focus.
+
+### Glass II — Vim, a11y, i18n *(v1.2.0)*
+
+A modal **Vim mode** built from a clean pure state machine — `gg`/`G`/`j`/`k`/`Ctrl-d`/`Ctrl-u`, count prefixes (`10j`), `/foo<CR>` + `n`/`N`, `:42<CR>` to jump to a page, `:q` to close. Reader, Library, and Beacon all wired. Cmd/Ctrl shortcuts are reserved for the app — Vim never eats your Cmd‑F.
+
+An **accessibility audit** (`pnpm a11y:audit`, zero deps) flags icon buttons missing labels, unlabelled form inputs, and images without alt. Baseline ran clean across every Svelte file in the tree; the strict variant runs in CI on every push. Plus a global `:focus-visible` ring tied to your accent color, `prefers-reduced-motion` overrides, `prefers-contrast: more` border thickening, and proper `<nav aria-label="Primary">` + `aria-current` on the sidebar.
+
+An **i18n foundation**: every string in the UI passes through a `t(key)` function backed by JSON locale files. English ships today; community translations welcome.
 
 ## Install
 
