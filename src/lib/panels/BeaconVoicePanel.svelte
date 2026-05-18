@@ -33,6 +33,17 @@
     stt: boolean;
   };
 
+  // v1.9.1 — Voice Mode: Listen (STT) types.
+  type SttEngineCapability = {
+    id: string;
+    installed: boolean;
+    binary_path?: string;
+  };
+  type SttCapabilities = {
+    engines: SttEngineCapability[];
+    recorder_available: boolean;
+  };
+
   type VoiceCfg = {
     engine?: string;
     voice?: string;
@@ -50,6 +61,7 @@
   };
 
   let caps = $state<Capabilities | null>(null);
+  let sttCaps = $state<SttCapabilities | null>(null);
   let engine = $state<string>(""); // "" = nothing chosen yet
   let voices = $state<Voice[]>([]);
   let voiceId = $state<string>("");
@@ -64,6 +76,16 @@
   onMount(async () => {
     try {
       caps = await invoke<Capabilities>("slab_beacon_voice_capabilities");
+      // v1.9.1 — probe STT capabilities alongside TTS so we can show
+      // a unified Listen section. Failure is non-fatal — the section
+      // simply renders "(probing…)".
+      try {
+        sttCaps = await invoke<SttCapabilities>(
+          "slab_beacon_voice_stt_capabilities",
+        );
+      } catch {
+        sttCaps = null;
+      }
       // Best-effort: load the persisted voice config so the form
       // pre-fills with whatever the user picked last time.
       try {
@@ -359,6 +381,57 @@
     ></textarea>
   </fieldset>
 
+  <!-- v1.9.1 — Voice Mode: Listen (STT). Lives below the speak controls
+       so the visual flow is "out → in" — settings for talking back to
+       the user, then settings for hearing the user. -->
+  <fieldset class="listen-fieldset">
+    <legend>🎙 Listen (STT)</legend>
+    {#if sttCaps === null}
+      <p class="hint">Probing speech-to-text…</p>
+    {:else}
+      {#if sttCaps.engines[0]?.installed && sttCaps.recorder_available}
+        <p class="hint">
+          A microphone button will appear in Beacon Chat. Click to dictate
+          your question; Slab transcribes it on-device with whisper.cpp.
+          <strong>Audio bytes never leave this machine</strong> and the
+          WAV file is deleted immediately after transcription.
+        </p>
+      {/if}
+      <div class="listen-status">
+        <div>
+          <span class="ls-label">Engine:</span>
+          <code>{sttCaps.engines[0]?.id ?? "(none)"}</code>
+          {#if sttCaps.engines[0]?.installed}
+            <span class="badge ok">installed</span>
+          {:else}
+            <span class="badge missing">not installed</span>
+          {/if}
+        </div>
+        <div>
+          <span class="ls-label">Recorder:</span>
+          {#if sttCaps.recorder_available}
+            <span class="badge ok">available</span>
+          {:else}
+            <span class="badge missing">missing</span>
+          {/if}
+        </div>
+      </div>
+      {#if !sttCaps.engines[0]?.installed}
+        <p class="install-hint stt-hint">
+          Install whisper.cpp to enable dictation:<br />
+          <code>brew install whisper-cpp</code> (macOS) ·
+          <code>apt install whisper-cpp</code> (Debian/Ubuntu)
+        </p>
+      {:else if !sttCaps.recorder_available}
+        <p class="install-hint stt-hint">
+          Install a microphone recorder:
+          <code>brew install sox</code> (macOS) ·
+          <code>apt install alsa-utils</code> (Linux)
+        </p>
+      {/if}
+    {/if}
+  </fieldset>
+
   {#if status.kind !== "idle"}
     <div class="status status-{status.kind}">
       {#if status.kind === "working"}⏳{:else if status.kind === "ok"}✓{:else}✗{/if}
@@ -373,8 +446,10 @@
         ? caps.available_engines.join(", ")
         : "(no engines detected)"
       : "(probing…)"}
-    {#if caps && !caps.stt}
-      <span class="muted">· STT lands in v1.9.1</span>
+    {#if sttCaps?.engines[0]?.installed && sttCaps.recorder_available}
+      <span class="muted">· STT ready (whisper-cpp)</span>
+    {:else if sttCaps}
+      <span class="muted">· STT unavailable (install whisper-cpp + recorder)</span>
     {/if}
   </footer>
 </div>
@@ -514,6 +589,55 @@
     background: rgba(255, 255, 255, 0.05);
     padding: 1px 5px;
     border-radius: 3px;
+  }
+  /* v1.9.1 — Listen (STT) status box. */
+  .listen-status {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .listen-status code {
+    font-family:
+      "SF Mono", Menlo, Consolas, monospace;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .ls-label {
+    color: var(--text-muted, #888);
+    margin-right: 4px;
+  }
+  .badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .badge.ok {
+    background: rgba(76, 175, 80, 0.18);
+    color: #66bb6a;
+  }
+  .badge.missing {
+    background: rgba(244, 67, 54, 0.18);
+    color: #ef5350;
+  }
+  .stt-hint {
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .stt-hint code {
+    font-family:
+      "SF Mono", Menlo, Consolas, monospace;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
   }
   .status {
     display: flex;
