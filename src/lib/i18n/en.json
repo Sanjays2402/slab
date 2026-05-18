@@ -115,5 +115,24 @@
   "plugins.notify.installFailed": "Install failed",
   "plugins.notify.uninstallOk": "Uninstalled {name}",
   "plugins.notify.uninstallFailed": "Uninstall failed",
-  "plugins.notify.browserOnly": "Marketplace is only available in the Slab desktop app"
+  "plugins.notify.browserOnly": "Marketplace is only available in the Slab desktop app",
+
+  "plugins.detail.close": "Close",
+  "plugins.detail.byAuthor": "by {author}",
+  "plugins.detail.installed": "Installed",
+  "plugins.detail.updateFrom": "Update available — v{from} → v{to}",
+  "plugins.detail.size": "Size",
+  "plugins.detail.compat": "Slab compatibility",
+  "plugins.detail.sha256": "SHA-256",
+  "plugins.detail.signature": "Signature",
+  "plugins.detail.downloadUrl": "Download URL",
+
+  "plugins.install.verifying": "Verifying signature…",
+  "plugins.install.downloading": "Downloading plugin archive…",
+  "plugins.install.extracting": "Extracting plugin files…",
+  "plugins.install.done": "Installed {name}",
+  "plugins.install.failed": "Install failed",
+
+  "plugins.installed.updateAvailable": "Update available",
+  "plugins.installed.updateBadge": "Update available — v{version}"
 }

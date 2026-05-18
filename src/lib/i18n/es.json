@@ -115,5 +115,24 @@
   "plugins.notify.installFailed": "Falló la instalación",
   "plugins.notify.uninstallOk": "{name} desinstalado",
   "plugins.notify.uninstallFailed": "Falló la desinstalación",
-  "plugins.notify.browserOnly": "El mercado solo está disponible en la app de escritorio de Slab"
+  "plugins.notify.browserOnly": "El mercado solo está disponible en la app de escritorio de Slab",
+
+  "plugins.detail.close": "Cerrar",
+  "plugins.detail.byAuthor": "por {author}",
+  "plugins.detail.installed": "Instalado",
+  "plugins.detail.updateFrom": "Actualización disponible — v{from} → v{to}",
+  "plugins.detail.size": "Tamaño",
+  "plugins.detail.compat": "Compatibilidad con Slab",
+  "plugins.detail.sha256": "SHA-256",
+  "plugins.detail.signature": "Firma",
+  "plugins.detail.downloadUrl": "URL de descarga",
+
+  "plugins.install.verifying": "Verificando firma…",
+  "plugins.install.downloading": "Descargando archivo del plugin…",
+  "plugins.install.extracting": "Extrayendo archivos del plugin…",
+  "plugins.install.done": "{name} instalado",
+  "plugins.install.failed": "Falló la instalación",
+
+  "plugins.installed.updateAvailable": "Actualización disponible",
+  "plugins.installed.updateBadge": "Actualización disponible — v{version}"
 }

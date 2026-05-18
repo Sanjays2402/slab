@@ -35,6 +35,8 @@
   } from "$lib/marketplace";
   import { notify } from "$lib/notify";
   import { tStore, t } from "$lib/i18n";
+  import PluginDetailDrawer from "$lib/components/PluginDetailDrawer.svelte";
+  import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
 
   // ---------------- Installed-tab state (unchanged from Foundry) ----
   // Local mirror of the store so we can render reactively.
@@ -67,6 +69,24 @@
     busy: {},
   });
 
+  // ---------------- Slice 8 — drawer + install modal state ---------
+  /** When set, render the PluginDetailDrawer for this entry. */
+  let drawerEntry = $state<IndexEntry | null>(null);
+
+  /**
+   * When set, render the InstallProgressModal. The shape mirrors the
+   * modal's `Props` so we can splat it directly. Phase transitions
+   * are driven by setTimeout heuristics in `onInstall` — the backend
+   * doesn't emit progress events yet, but this UI is the contract we
+   * want to honor when it does.
+   */
+  type InstallModalState = {
+    entry: IndexEntry;
+    phase: "verifying" | "downloading" | "extracting" | "done" | "error";
+    error: string | null;
+  } | null;
+  let installModal = $state<InstallModalState>(null);
+
   $effect(() => {
     const unsubPlugins = pluginsStore.subscribe((v) => (snap = v));
     const unsubMarketplace = marketplaceStore.subscribe((v) => (marketplace = v));
@@ -79,7 +99,15 @@
   onMount(() => {
     // Layout boot already refreshes plugins, but call here too so the
     // panel works even if the user opens it before boot completes.
-    void refreshPlugins();
+    void refreshPlugins().then(() => {
+      // Slice 8: if any plugins are installed, opportunistically fetch
+      // the marketplace index so the Installed tab can show
+      // "update available" badges without waiting for the user to
+      // visit Browse first. Idle-only — no-op if already loaded.
+      if (snap.plugins.length > 0 && marketplace.phase === "idle" && marketplaceAvailable()) {
+        void refreshMarketplace();
+      }
+    });
     pluginsDir()
       .then((p) => (dirPath = p))
       .catch(() => (dirPath = null));
@@ -106,26 +134,110 @@
     return out;
   });
 
+  /**
+   * Slice 8: cross-tab "update available" lookup. For every installed
+   * plugin, check whether the marketplace index has a strictly newer
+   * version. Returns a map id → the index entry to use for the
+   * upgrade. Empty when the marketplace hasn't loaded yet.
+   */
+  let availableUpdates = $derived.by<Record<string, IndexEntry>>(() => {
+    const out: Record<string, IndexEntry> = {};
+    if (marketplace.phase !== "ready" || !marketplace.index) return out;
+    for (const p of snap.plugins) {
+      const installed = p.manifest?.version;
+      if (!installed) continue;
+      const entry = marketplace.index.plugins.find((e) => e.id === p.id);
+      if (!entry) continue;
+      if (compareSemver(entry.version, installed) > 0) {
+        out[p.id] = entry;
+      }
+    }
+    return out;
+  });
+
   function entryStatus(entry: IndexEntry): "install" | "installed" | "update" {
     const cur = installedVersion[entry.id];
     if (!cur) return "install";
     return compareSemver(entry.version, cur) > 0 ? "update" : "installed";
   }
 
+  // ---------------- Slice 8a — drawer helpers ----------------------
+  function openDrawer(entry: IndexEntry) {
+    drawerEntry = entry;
+  }
+  function closeDrawer() {
+    drawerEntry = null;
+  }
+  /**
+   * Click handler for the Installed-tab update badge. Switches to the
+   * Browse tab AND opens the detail drawer at the matching entry, so
+   * the user gets a one-click path from "I see there's an update" to
+   * "I'm reading the release notes about it."
+   */
+  function jumpToUpdate(entry: IndexEntry) {
+    selectTab("browse");
+    drawerEntry = entry;
+  }
+
+  /**
+   * Slice 8a/8b unified install flow. Wraps the original Slice 7
+   * install with an InstallProgressModal that shows phased status.
+   * Phase timing is heuristic (no backend events yet); the modal's
+   * contract is intentionally narrow so a future PR can replace the
+   * timers with real Tauri progress events without changing the UI.
+   */
   async function onInstall(entry: IndexEntry) {
     if (!marketplaceAvailable()) {
       notify.error(t("plugins.notify.browserOnly"));
       return;
     }
+    installModal = { entry, phase: "verifying", error: null };
+    // Heuristic phase ticks: verify → download (400ms) → extract (2s).
+    // We guard each transition against the install having advanced or
+    // changed entry to avoid stomping a real terminal state.
+    const downloadTimer = setTimeout(() => {
+      if (installModal && installModal.entry.id === entry.id && installModal.phase === "verifying") {
+        installModal = { ...installModal, phase: "downloading" };
+      }
+    }, 400);
+    const extractTimer = setTimeout(() => {
+      if (
+        installModal &&
+        installModal.entry.id === entry.id &&
+        installModal.phase === "downloading"
+      ) {
+        installModal = { ...installModal, phase: "extracting" };
+      }
+    }, 2000);
     try {
       await installPlugin(entry);
       await refreshPlugins();
+      clearTimeout(downloadTimer);
+      clearTimeout(extractTimer);
+      installModal = { entry, phase: "done", error: null };
+      // Auto-dismiss success after a beat — the toast already
+      // confirms success in the bottom-right.
+      setTimeout(() => {
+        if (
+          installModal &&
+          installModal.entry.id === entry.id &&
+          installModal.phase === "done"
+        ) {
+          installModal = null;
+        }
+      }, 1800);
       notify.success(t("plugins.notify.installOk", { name: entry.name }));
     } catch (e) {
-      notify.error(t("plugins.notify.installFailed"), {
-        detail: e instanceof Error ? e.message : String(e),
-      });
+      clearTimeout(downloadTimer);
+      clearTimeout(extractTimer);
+      const msg = e instanceof Error ? e.message : String(e);
+      installModal = { entry, phase: "error", error: msg };
+      notify.error(t("plugins.notify.installFailed"), { detail: msg });
     }
+  }
+
+  function dismissInstallModal() {
+    installModal = null;
   }
 
   async function onUninstall(entry: IndexEntry) {
@@ -270,6 +382,19 @@
                 {#if p.manifest?.description}
                   <p class="desc">{p.manifest.description}</p>
                 {/if}
+                {#if availableUpdates[p.id]}
+                  <button
+                    type="button"
+                    class="chip update-badge"
+                    title={t("plugins.installed.updateBadge", {
+                      version: availableUpdates[p.id].version,
+                    })}
+                    onclick={() => jumpToUpdate(availableUpdates[p.id])}
+                  >
+                    ↑ v{availableUpdates[p.id].version} —
+                    {$tStore("plugins.installed.updateAvailable")}
+                  </button>
+                {/if}
               </div>
               <div class="plugin-status">
                 {#if p.error}
@@ -407,7 +532,21 @@
         {#each marketplace.index.plugins as entry (entry.id)}
           {@const status = entryStatus(entry)}
           {@const inFlight = !!marketplace.busy[entry.id]}
-          <article class="market-card" class:status-installed={status === "installed"} class:status-update={status === "update"}>
+          <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+          <article
+            class="market-card"
+            class:status-installed={status === "installed"}
+            class:status-update={status === "update"}
+            role="button"
+            tabindex="0"
+            onclick={() => openDrawer(entry)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                openDrawer(entry);
+              }
+            }}
+          >
             <header class="market-card-head">
               <h3>{entry.name}</h3>
               <span class="chip ver-pill">v{entry.version}</span>
@@ -422,7 +561,12 @@
                 {t("plugins.browse.size", { size: formatBytes(entry.size_bytes) })}
                 · {t("plugins.browse.compat", { compat: entry.slab_compat })}
               </span>
-              <div class="market-card-actions">
+              <div
+                class="market-card-actions"
+                role="presentation"
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => e.stopPropagation()}
+              >
                 {#if status === "installed"}
                   <span class="chip status-pill">{$tStore("plugins.browse.installed")}</span>
                   <button
@@ -466,6 +610,36 @@
     {/if}
   {/if}
 </section>
+
+<!-- Slice 8 — plugin detail drawer + install progress modal. Both
+     mount outside the section so their fixed-position backdrops cover
+     the whole panel, not just the scroll container. -->
+{#if drawerEntry}
+  {@const drawerStatus = entryStatus(drawerEntry)}
+  {@const drawerInFlight = !!marketplace.busy[drawerEntry.id]}
+  <PluginDetailDrawer
+    entry={drawerEntry}
+    status={drawerStatus}
+    installedVersion={installedVersion[drawerEntry.id]}
+    inFlight={drawerInFlight}
+    onClose={closeDrawer}
+    onAction={() => {
+      if (!drawerEntry) return;
+      const e = drawerEntry;
+      if (drawerStatus === "installed") void onUninstall(e);
+      else void onInstall(e);
+    }}
+  />
+{/if}
+
+{#if installModal}
+  <InstallProgressModal
+    entry={installModal.entry}
+    phase={installModal.phase}
+    error={installModal.error}
+    onDismiss={dismissInstallModal}
+  />
+{/if}
 
 <style>
   .plugins-panel {
@@ -886,5 +1060,48 @@
   .market-card-actions .ghost.danger:hover:not(:disabled) {
     color: var(--danger);
     border-color: rgba(255, 90, 90, 0.45);
+  }
+
+  /* ===== Slice 8 — interactive market cards + update badge ===== */
+
+  /* The whole card is a click target now (opens the detail drawer),
+   * so cue it visually with a pointer + slightly stronger hover.
+   * Buttons inside still feel like buttons because they keep their
+   * own borders + the action wrapper stops click propagation. */
+  .market-card[role="button"] {
+    cursor: pointer;
+  }
+  .market-card[role="button"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .market-card[role="button"]:hover {
+    border-color: var(--border-strong);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Amber pill on Installed-tab rows when the marketplace knows about
+   * a newer version. Matches the .status-update card styling so the
+   * two surfaces visually agree on "this needs attention." */
+  .update-badge {
+    background: rgba(255, 180, 60, 0.12);
+    border-color: rgba(255, 180, 60, 0.45);
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    margin-top: 8px;
+    padding: 3px 10px;
+    transition:
+      background 0.12s,
+      border-color 0.12s;
+  }
+  .update-badge:hover {
+    background: rgba(255, 180, 60, 0.22);
+    border-color: rgba(255, 180, 60, 0.6);
+  }
+  .update-badge:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 </style>

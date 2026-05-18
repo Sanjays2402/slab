@@ -115,5 +115,24 @@
   "plugins.notify.installFailed": "فشل التثبيت",
   "plugins.notify.uninstallOk": "تمت إزالة {name}",
   "plugins.notify.uninstallFailed": "فشلت الإزالة",
-  "plugins.notify.browserOnly": "المتجر متاح فقط في تطبيق Slab لسطح المكتب"
+  "plugins.notify.browserOnly": "المتجر متاح فقط في تطبيق Slab لسطح المكتب",
+
+  "plugins.detail.close": "إغلاق",
+  "plugins.detail.byAuthor": "بواسطة {author}",
+  "plugins.detail.installed": "مثبت",
+  "plugins.detail.updateFrom": "تحديث متاح — v{from} ← v{to}",
+  "plugins.detail.size": "الحجم",
+  "plugins.detail.compat": "توافق Slab",
+  "plugins.detail.sha256": "SHA-256",
+  "plugins.detail.signature": "التوقيع",
+  "plugins.detail.downloadUrl": "رابط التنزيل",
+
+  "plugins.install.verifying": "جاري التحقق من التوقيع…",
+  "plugins.install.downloading": "جاري تنزيل أرشيف الإضافة…",
+  "plugins.install.extracting": "جاري استخراج ملفات الإضافة…",
+  "plugins.install.done": "تم تثبيت {name}",
+  "plugins.install.failed": "فشل التثبيت",
+
+  "plugins.installed.updateAvailable": "تحديث متاح",
+  "plugins.installed.updateBadge": "تحديث متاح — v{version}"
 }
