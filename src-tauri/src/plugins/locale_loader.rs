@@ -163,7 +163,11 @@ mod tests {
     fn rejects_absolute_path() {
         let tmp = TempDir::new().unwrap();
         write(tmp.path(), "ok.json", "{}");
-        let err = load_locale_bundle(tmp.path(), "/etc/passwd").unwrap_err();
+        #[cfg(unix)]
+        let absolute = "/etc/passwd";
+        #[cfg(windows)]
+        let absolute = r"C:\Windows\System32\drivers\etc\hosts";
+        let err = load_locale_bundle(tmp.path(), absolute).unwrap_err();
         assert!(err.contains("relative"), "got: {err}");
     }
 
