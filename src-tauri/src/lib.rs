@@ -1662,6 +1662,24 @@ fn slab_plugins_load_locale_bundle(
     plugins::load_locale_bundle(&entry.plugin_dir, &entry.locale.bundle)
 }
 
+/// Run a plugin-contributed command. Shell commands spawn `/bin/sh -c`
+/// (Windows: `cmd /C`) under a 30s default timeout and return captured
+/// stdout/stderr. URL commands return an outcome carrying the URL so
+/// the frontend can dispatch through `tauri_plugin_opener`.
+#[tauri::command]
+fn slab_plugins_run_command(
+    plugin_id: String,
+    command_id: String,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<plugins::CommandOutcome, String> {
+    let cmds = plugins::active_commands(&reg);
+    let entry = cmds
+        .into_iter()
+        .find(|c| c.plugin_id == plugin_id && c.command.id == command_id)
+        .ok_or_else(|| format!("no active command {command_id:?} on plugin {plugin_id:?}"))?;
+    plugins::run_command(&entry).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1796,6 +1814,7 @@ pub fn run() {
             slab_plugins_read_asset,
             slab_plugins_run_pdf_action,
             slab_plugins_load_locale_bundle,
+            slab_plugins_run_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

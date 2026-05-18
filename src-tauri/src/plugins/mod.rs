@@ -6,12 +6,17 @@
 //! `registry.rs` for discovery + enabled-state, and `contributions.rs`
 //! for the active-list views that feature code consumes.
 
+pub mod command_runner;
 pub mod contributions;
 pub mod locale_loader;
 pub mod manifest;
 pub mod registry;
 pub mod runner;
 
+pub use command_runner::{
+    run_command, CommandError, CommandOutcome, CommandStatus, ShellReport,
+    DEFAULT_COMMAND_TIMEOUT_MS,
+};
 pub use contributions::{
     active_ai_providers, active_commands, active_locales, active_pdf_actions, active_themes,
     read_asset, ActiveAiProvider, ActiveCommand, ActiveLocale, ActivePdfAction, ActiveTheme,
