@@ -22,6 +22,7 @@ pub mod config;
 pub mod diff_summary;
 pub mod embedding_index;
 pub mod glossary;
+pub mod glossary_cache;
 pub mod ollama;
 pub mod openai_compat;
 pub mod outline;
