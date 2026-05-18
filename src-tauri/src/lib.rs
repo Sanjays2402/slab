@@ -12,6 +12,9 @@ use ai::auto_tag::AutoTagOpts;
 use ai::chat::{
     beacon_chat_from_path as do_beacon_chat, BeaconChatReply, DEFAULT_MAX_CONTEXT_CHARS,
 };
+use ai::citations::{
+    find_citations_from_path as do_beacon_find_citations, CitationOpts, CitationReport,
+};
 use ai::config::{
     load as do_load_beacon_config, save as do_save_beacon_config, BeaconConfig, ProviderKind,
     SlabConfig,
@@ -777,6 +780,37 @@ async fn slab_beacon_propose_outline(
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_OUTLINE_MAX_CHARS);
     do_beacon_propose_outline(provider, &pdf_path, budget)
+        .await
+        .into()
+}
+
+/// Beacon Citations — scan the PDF for inline citations and extract a
+/// structured References list from end-matter. Returns a `CitationReport`
+/// that the front-end can render as a sidebar panel with mention chips
+/// and "jump to bibliography" links. v1.6.0 Beacon Bonus Slice 12.
+#[tauri::command]
+async fn slab_beacon_find_citations(
+    pdf_path: PathBuf,
+    opts: Option<CitationOpts>,
+) -> CmdResult<CitationReport> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let opts = opts.unwrap_or_default();
+    do_beacon_find_citations(provider, &pdf_path, &opts)
         .await
         .into()
 }
@@ -1956,6 +1990,7 @@ pub fn run() {
             slab_beacon_chat,
             slab_beacon_summary,
             slab_beacon_propose_outline,
+            slab_beacon_find_citations,
             slab_beacon_diff_summary,
             slab_beacon_index_pdf,
             slab_beacon_search,
