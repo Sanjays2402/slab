@@ -171,7 +171,11 @@ pub fn default_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(3))
-        .user_agent(concat!("slab/", env!("CARGO_PKG_VERSION"), " (marketplace)"))
+        .user_agent(concat!(
+            "slab/",
+            env!("CARGO_PKG_VERSION"),
+            " (marketplace)"
+        ))
         .build()
         .expect("reqwest client builder")
 }
@@ -369,7 +373,10 @@ mod tests {
     fn default_cache_path_uses_home() {
         std::env::set_var("HOME", "/tmp/cake-test-home");
         let p = default_cache_path().unwrap();
-        assert_eq!(p, PathBuf::from("/tmp/cake-test-home/.slab/marketplace-cache.json"));
+        assert_eq!(
+            p,
+            PathBuf::from("/tmp/cake-test-home/.slab/marketplace-cache.json")
+        );
     }
 
     #[test]

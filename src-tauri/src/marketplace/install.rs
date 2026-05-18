@@ -317,7 +317,9 @@ fn extract_tarball(bytes: &[u8], dest: &Path) -> Result<(u64, u32), InstallError
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent).map_err(|e| InstallError::Io(e.to_string()))?;
                 }
-                let entry_size = header.size().map_err(|e| InstallError::Tar(e.to_string()))?;
+                let entry_size = header
+                    .size()
+                    .map_err(|e| InstallError::Tar(e.to_string()))?;
                 if total_bytes.saturating_add(entry_size) > MAX_UNCOMPRESSED_BYTES {
                     return Err(InstallError::UncompressedTooLarge {
                         limit: MAX_UNCOMPRESSED_BYTES,
@@ -421,7 +423,6 @@ mod tests {
     use super::*;
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    use std::io::Write;
     use tar::{Builder, Header};
     use tempfile::TempDir;
 
@@ -461,7 +462,10 @@ mod tests {
     fn install_happy_path_extracts_files() {
         let tmp = TempDir::new().unwrap();
         let bytes = make_tarball(&[
-            ("plugin.toml", b"id = \"com.example.x\"\nname = \"X\"\nversion = \"0.1.0\"\n"),
+            (
+                "plugin.toml",
+                b"id = \"com.example.x\"\nname = \"X\"\nversion = \"0.1.0\"\n",
+            ),
             ("README.md", b"hi"),
             ("themes/dark.toml", b"name = \"Dark\"\n"),
         ]);
