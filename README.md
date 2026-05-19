@@ -35,7 +35,7 @@ Eight pillars, all local:
 | **Reach** | Modal Vim mode · WCAG‑level a11y audit + fixes · i18n foundation |
 | **Extensible** | **Foundry** + **Bench** — declarative plugin system with a signed, in‑app marketplace |
 
-A full Rust test suite (650+ tests) passing, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
+A full Rust test suite (730+ tests) passing, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
 
 ## The toolkit, one by one
 
@@ -76,7 +76,8 @@ Eleven AI features that run **entirely on your machine** by default. No API keys
 **Voice Mode (v1.9):**
 
 - **🔊 Speak (TTS)** *(v1.9.0)* — highlight a summary, an answer, or any selection and let your machine read it aloud through the native engine: **`say`** on macOS, **`espeak-ng`** on Linux, **PowerShell SpeechSynthesizer** on Windows. Voice + words‑per‑minute slider. Pressing speak twice cancels the in‑flight utterance — single‑slot, no queue.
-- **🎙 Listen (STT)** *(v1.9.1)* — tap the mic in Beacon Chat, dictate, and an on‑device **whisper.cpp** transcribes the audio straight into the composer. macOS uses `sox` to capture, Linux uses `arecord`; the WAV is unlinked unconditionally on every code path. Nothing is uploaded, nothing lingers on disk.
+- **🎙 Listen (STT)** *(v1.9.1)* — tap the mic in Beacon Chat, dictate, and an on‑device **whisper.cpp** transcribes the audio straight into the composer. macOS uses `sox` to capture, Linux uses `arecord`, Windows uses PowerShell `SoundRecorder`; the WAV is unlinked unconditionally on every code path. Nothing is uploaded, nothing lingers on disk.
+- **🎙 Listen Polish** *(v1.9.2)* — three sharp UX wins on top of v1.9.1: press **Esc** (or right‑click the mic) to **cancel** a recording — the in‑flight WAV is unlinked immediately and no transcript is produced; **voice‑to‑send** trigger phrase (default `send it`) auto‑submits your dictated prompt for true hands‑free chat; and a **Whisper model picker** (tiny.en / base.en / small.en, plus any custom `ggml-*.bin` dropped into `~/.slab/models/`) so you can swap models per‑recording or set a default.
 
 **Pluggable AI provider** — Ollama is the default; any OpenAI‑compatible endpoint is a config away (LM Studio, vLLM, a remote host, or a Foundry plugin).
 
