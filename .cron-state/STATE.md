@@ -5,13 +5,73 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 6 COMPLETE 🔥 document lifecycle live end-to-end
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 7 SHIPPED 🛰️ slab.fetch live
 
 **Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
 **Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `65588a5`, 20 commits ahead of `main`.
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `3929d48`, 22 commits ahead of `main`.
 **RELEASE_PENDING**: *(none)*
+
+---
+
+## TICK 2026-05-18 23:30 PT — MODE C v2.0.0 Slice 7 SHIPPED (host fetch + JS binding + E2E)
+
+Two-commit big vertical slice. `slab.fetch` is now a live, capability-gated,
+timeout-bounded HTTP client surface for runtime plugins. Plugins can now
+`await slab.fetch(url, init?)` and get back a web-Fetch-shaped Response
+object (status, headers, text(), json()).
+
+**Commits this tick:**
+- `b5aaead` feat(plugins/runtime): host fetch executor — slab.fetch backend infra (v2.0.0 Slice 7.1-7.3)
+- `3929d48` feat(plugins/runtime): live slab.fetch JS binding — host-mediated HTTP from plugins (v2.0.0 Slice 7.4)
+
+**Slice 7.1-7.3 (commit 1) — backend (~750 LOC, 3 files):**
+- New module `src-tauri/src/plugins/runtime/fetch.rs`: process-global
+  `reqwest::Client` (rustls, 30s default timeout, 10-redirect cap,
+  cookies off, 16 MiB body cap on both directions). `do_fetch` async,
+  `response_to_js` builds the JS Response-like Object with `text()` /
+  `json()` methods. URL parsing uses `reqwest::Url` re-export (no new
+  direct dep on `url`).
+- `actor.rs`: `RuntimeCmd::Fetch { request_id, request }` variant —
+  intentionally carries only `Send` data; the `Persistent<Function>`
+  resolve/reject callbacks live in a worker-local `PendingFetches`
+  table keyed by request_id. Solves `RuntimeCmd: Send + Clone` while
+  still routing settlement back into the actor's `Context`.
+- `dispatch_fetch` helper: `tokio::Handle::try_current()` → use Tauri's
+  runtime if alive, else build a single-threaded current-thread rt for
+  unit tests. Wall-clock interrupt set fresh per dispatch.
+
+**Slice 7.4 (commit 2, `3929d48`) — live JS binding (~500 LOC net):**
+- `slab_global.rs::make_fetch`: builds `slab.fetch(url, init?)`. Pre-flight
+  host parse + capability gate (sync throw on deny like every other
+  `slab.*` surface), then mints a Promise via `rquickjs::Promise::new`,
+  persists resolve/reject into the worker-local map, sends
+  `RuntimeCmd::Fetch` at the actor's own channel.
+- `dispatch_fetch` now drains `execute_pending_job` after settling so
+  awaiting `.then` bodies run in the same tick (otherwise plugin code
+  would starve until the next actor command).
+- `HostBindings.{cmd_tx, pending_fetches}` plumbed through `run_actor`
+  signature. Both `Option` to keep the ephemeral `enable_plugin` path
+  valid; on that path `slab.fetch` returns an already-rejected Promise.
+- Flipped `enable_plugin_reserved_surfaces_throw_with_slice_label` from
+  `slab.fetch` (now live) to `slab.storage.get` (still Slice-8 placeholder).
+- 3 new E2E tests (all green):
+  - `slab_fetch_round_trip_resolves_with_body_via_actor` — one-shot
+    `127.0.0.1` HTTP server in-process, plugin does `await slab.fetch(...)`,
+    we observe `r.text()` via `slab.ui.notify`. End-to-end through
+    reqwest + Promise + microtask drain.
+  - `slab_fetch_throws_sync_when_net_not_granted` — capability gate.
+  - `slab_fetch_throws_sync_when_host_not_in_allowlist` — allowlist enforcement.
+
+**Quality gates on `feature/v2.0.0-workshop` HEAD `3929d48`:**
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --lib --all-targets -- -D warnings` — clean
+- `cargo test --lib` — **871 passed / 0 failed** (848 prior + 19 fetch
+  unit tests in commit 1 + 4 actor/binding tests in commit 2)
+- `pnpm check` — 0 errors, 35 pre-existing warnings (unchanged)
+
+**Push:** in progress (see below).
 
 ---
 
@@ -170,29 +230,42 @@ Big vertical slice: typed manifest surface + standalone modal component + parent
 
 ## NEXT TICK PLAYBOOK
 
-### Step 1 — MODE C continue v2.0.0 "Workshop" Slice 7 (fetch shim)
+### Step 1 — MODE C continue v2.0.0 "Workshop" Slice 8 (storage shim)
 
-**Slice 7 (network capability + `slab.fetch` shim) — NEXT:**
-- Detailed sub-plan landed: `docs/plans/2026-05-18-v2.0.0-workshop-slice-7.md` (1079 lines, 8 sub-tasks).
-- TL;DR: 3 commit batches — backend (7.1-7.5), tests (7.6), polish (7.7-7.8). ~990 LOC. Mockito for HTTP fixtures.
-- Implementer hand-off: load `subagent-driven-development` skill, one `delegate_task` per sub-task with two-stage review.
-- Sketch (now documented in the sub-plan):
-  - `slab.fetch(url, init)` lands on the actor thread → enqueues a
-    `RuntimeCmd::Fetch { request, resolve, reject }`.
-  - Actor extends `RuntimeCmd::Fetch` handling: blocks on
-    `tokio::runtime::Handle::current().block_on(do_fetch(req))`
-    against a process-shared `reqwest::Client`, then dispatches back
-    into the rquickjs context to resolve the Promise via the stored
-    `Persistent<Function>`.
-  - Capability enforcement: `granted.net == None` → reject pre-flight.
-    `net_allow_hosts` non-empty → require the URL's host to match
-    (enforced via existing `CapabilityRequest::NetFetch { host }`).
-  - 14 contract tests: deny-all, host allow-list, GET, POST JSON,
-    headers, lowercased response headers, 302 redirect chain,
-    timeoutMs, 16 MiB body cap, 4xx-resolves-with-ok-false, file://
-    rejection, malformed URL, NetCap::Any wildcard, concurrent fetches.
-- ETA: 1-2 ticks. Next tick: execute Tasks 7.1 → 7.5 (backend commit
-  batch), confirm `cargo check --lib` clean, then move to 7.6 tests.
+**Slice 8 (`slab.storage.{get,set,delete,list}` — per-plugin key-value) — NEXT:**
+- Goal: persistent key-value store scoped per plugin so authors can stash
+  cache / preferences / state across sessions without their own SQLite.
+- Sketch:
+  - Backing store: single `~/.slab/plugin-storage.db` (sqlite via rusqlite
+    + bundled feature), one table per plugin id (or a single `kv(plugin_id,
+    key, value)` table — TBD in the sub-plan).
+  - `slab.storage.get(key) → string | null` (async, returns Promise),
+    `slab.storage.set(key, value) → Promise<void>`,
+    `slab.storage.delete(key) → Promise<boolean>`,
+    `slab.storage.list() → Promise<string[]>`.
+  - Same pending-callbacks pattern as Slice 7: `RuntimeCmd::Storage*`
+    variants with request_id, callbacks stashed in a per-worker map.
+  - Capability: there's no existing manifest cap for storage. Either
+    (a) implicit (no gate; plugins always have their own scope) or
+    (b) introduce `storage: StorageCap { None, Allow }` in the manifest.
+    Lean toward (a) since scoping IS the security — but a separate
+    quota gate (`storage_max_kb`) might be useful for fairness.
+  - Sentinel placeholder: `slab.storage.get` still throws with "Slice 8"
+    label — `enable_plugin_reserved_surfaces_throw_with_slice_label`
+    pins this. Replace when the binding lands.
+- Want to write a sub-plan in `docs/plans/2026-05-19-v2.0.0-workshop-slice-8.md`
+  the same way Slice 7 was structured. 6-8 sub-tasks: backend storage layer
+  + sqlite migration, RuntimeCmd variants, dispatch helpers, JS binding,
+  per-plugin scoping enforcement, E2E tests.
+- ETA: 2 ticks (sub-plan + 7.x cleanup + Slice 8 backend in tick 1, JS
+  binding + E2E in tick 2).
+
+### Slice 7.x follow-ups (lower priority, not blocking)
+
+- Headers-array form support in `parse_headers` (tuple-array `[[k,v]]`)
+- Typed-array / ArrayBuffer bodies in `parse_body` (TODO marker in code)
+- Streaming bodies (Response.body as ReadableStream) — bigger lift, skip
+  unless plugin authors actually need it.
 
 ### Step 2 — Watch for sibling subagent activity
 
@@ -235,9 +308,10 @@ Sibling subagents can touch `/tmp/msg.txt`. Always overwrite right before commit
 - ✅ Slice 4 (`slab` global + lifecycle + Tauri grant cmds + TS bindings) — shipped 2026-05-18
 - ✅ Slice 5 (Cabinet consent modal + enable integration) — shipped 2026-05-18
 - ✅ Slice 6 (document lifecycle events) — **COMPLETE 2026-05-18** (6.1-6.6 actor system, 6.7 Tauri commands + enable-flow spawn/teardown, 6.8 ReaderPanel hook)
-- ⏭ Slices 7-12 — see plan doc
+- ✅ Slice 7 (`slab.fetch` shim — host-mediated HTTP) — **COMPLETE 2026-05-18** (7.1-7.4: process-shared reqwest client + Promise-bridging actor + JS binding + E2E)
+- ⏭ Slices 8-12 — see plan doc
 
-Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch ✅, 7→fetch shim 🟡 NEXT, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
+Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch ✅, 7→fetch shim ✅, 8→storage 🟡 NEXT, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
 
 **v2.1.0 candidates (post-Workshop):**
 - **Forge** — author-signed plugins. Wants 10+ plugins in curated index before considering (Sanjay's flag).
