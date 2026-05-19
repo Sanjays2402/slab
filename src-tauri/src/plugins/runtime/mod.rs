@@ -262,13 +262,14 @@ impl Runtime {
                 granted: granted_arc,
                 registrations: regs_for_closure,
                 // Ephemeral enable: no long-lived runtime, so no
-                // lifecycle / active_doc snapshots / fetch channel.
-                // The actor path (Slice 6.5+7) constructs
-                // HostBindings with Some(..) for all four.
+                // lifecycle / active_doc snapshots / fetch channel /
+                // storage handle. The actor path (Slice 6.5+7+8)
+                // constructs HostBindings with `Some(..)` for all.
                 lifecycle: None,
                 active_doc: None,
                 cmd_tx: None,
                 pending_fetches: None,
+                storage: None,
             };
             slab_global::install_slab(&ctx, bindings)
                 .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;

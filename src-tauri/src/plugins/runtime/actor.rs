@@ -58,6 +58,7 @@ use super::{
 };
 use crate::plugins::grants::PluginGrants;
 use crate::plugins::manifest::Capabilities;
+use crate::plugins::storage::SharedPluginStorage;
 
 /// Commands the host sends to a plugin worker thread.
 ///
@@ -345,6 +346,31 @@ impl PluginActor {
         granted: PluginGrants,
         source: String,
     ) -> Result<WorkerHandle, RuntimeError> {
+        // Open (or re-acquire) the process-wide KV store. A
+        // filesystem-level failure here (e.g. `~/.slab/` is
+        // read-only) is non-fatal — `slab.storage` becomes
+        // unavailable but the plugin still loads, and the JS
+        // binding returns an already-rejected Promise on use.
+        let storage = crate::plugins::storage::shared_storage().ok();
+        Self::spawn_inner(plugin_id, declared, granted, source, storage)
+    }
+
+    /// Slice 8 test seam: same shape as [`Self::spawn`] but lets the
+    /// caller pass an explicit `Option<SharedPluginStorage>` so
+    /// integration tests can hand the actor a deterministic
+    /// in-memory store via [`crate::plugins::storage::shared_in_memory`].
+    ///
+    /// Production code path goes through [`Self::spawn`], which always
+    /// opens the on-disk DB. We keep this separate (rather than making
+    /// `spawn` take an `Option`) so the common call sites don't have
+    /// to thread state they don't care about.
+    pub fn spawn_inner(
+        plugin_id: String,
+        declared: Capabilities,
+        granted: PluginGrants,
+        source: String,
+        storage: Option<SharedPluginStorage>,
+    ) -> Result<WorkerHandle, RuntimeError> {
         let (tx, rx) = unbounded::<RuntimeCmd>();
         let (init_tx, init_rx) = sync_channel::<Result<(), RuntimeError>>(1);
 
@@ -357,6 +383,7 @@ impl PluginActor {
         // next loop iteration when the actor picks up its own
         // message and runs `dispatch_fetch`.
         let tx_for_worker = tx.clone();
+        let storage_for_worker = storage;
 
         let join = thread::Builder::new()
             // Visible in `ps -T` / Activity Monitor — makes debugging
@@ -373,6 +400,7 @@ impl PluginActor {
                     rx,
                     init_tx,
                     shared_for_worker,
+                    storage_for_worker,
                 );
             })
             .map_err(|e| RuntimeError::Init(format!("actor thread spawn: {e}")))?;
@@ -418,6 +446,7 @@ fn run_actor(
     rx: crossbeam_channel::Receiver<RuntimeCmd>,
     init_tx: std::sync::mpsc::SyncSender<Result<(), RuntimeError>>,
     shared: Arc<ActorSharedState>,
+    storage: Option<SharedPluginStorage>,
 ) {
     // -- Boot: build runtime + context ---------------------------------------
     let rt = match rquickjs::Runtime::new() {
@@ -481,6 +510,14 @@ fn run_actor(
             // thread it was sent from — Promise settles next tick.
             cmd_tx: Some(tx.clone()),
             pending_fetches: Some(Arc::clone(&pending_fetches)),
+            // Slice 8: per-plugin KV store. `storage` is process-
+            // global (`Arc<Mutex<PluginStorage>>`), cloned into the
+            // JS binding closures; per-plugin scoping happens via
+            // the `plugin_id` field above. `None` only on the
+            // (test-only) `spawn_inner(..., storage=None)` path —
+            // in that case the JS binding rejects with "storage
+            // unavailable" rather than panicking.
+            storage: storage.clone(),
         };
         install_slab(&ctx, bindings)
             .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;

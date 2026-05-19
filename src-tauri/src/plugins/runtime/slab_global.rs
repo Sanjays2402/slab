@@ -58,6 +58,7 @@ use super::host_api::{
 use super::lifecycle::{SharedActiveDoc, SharedLifecycle};
 use crate::plugins::grants::{enforce, CapabilityRequest, DenyReason, PluginGrants};
 use crate::plugins::manifest::Capabilities;
+use crate::plugins::storage::SharedPluginStorage;
 
 /// Bundle of everything a plugin script needs from the host side.
 /// Cloned into each closure so the JS-callable functions can
@@ -88,6 +89,20 @@ pub(super) struct HostBindings {
     /// ephemeral paths. Same `Arc<Mutex<_>>` instance the actor
     /// stores; both ends are on the same thread.
     pub pending_fetches: Option<SharedPendingFetches>,
+    /// Process-wide per-plugin KV store. `Some` whenever the on-disk
+    /// DB at `~/.slab/plugin-storage.sqlite` opened successfully
+    /// (which is essentially always — only a filesystem-level
+    /// permission denied would force `None` here). `None` during
+    /// ephemeral `enable_plugin` / `execute_script` paths or when the
+    /// global open errored; the JS binding (Slice 8.5) returns an
+    /// already-rejected Promise in that case so plugins can `.catch`
+    /// gracefully without losing the actor.
+    ///
+    /// `dead_code` allow here is a one-commit bridge: Slice 8.4 ships
+    /// the plumbing, Slice 8.5 (same tick) ships the readers in
+    /// `make_storage_*`. Will be dropped in the very next commit.
+    #[allow(dead_code)]
+    pub storage: Option<SharedPluginStorage>,
 }
 
 /// Install the `slab` global on the given context.
@@ -710,6 +725,7 @@ mod tests {
             active_doc: None,
             cmd_tx: None,
             pending_fetches: None,
+            storage: None,
         };
         let b2 = b1.clone();
         b1.registrations.lock().unwrap().ui_panels.push(UiPanelReg {
