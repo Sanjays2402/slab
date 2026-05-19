@@ -5,13 +5,64 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 1-5 + 6.1-6.6 SHIPPED, document lifecycle LIVE 🔥
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 6 COMPLETE 🔥 document lifecycle live end-to-end
 
 **Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
 **Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `7b73329`, 18 commits ahead of `main`.
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `65588a5`, 20 commits ahead of `main`.
 **RELEASE_PENDING**: *(none)*
+
+---
+
+## TICK 2026-05-18 23:01 PT — MODE C v2.0.0 Slice 6.7 + 6.8 (Slice 6 COMPLETE)
+
+True end-to-end vertical slice: the actor system from 6.1–6.6 is now
+wired into Slab's real plugin enable flow AND the PDF viewer's real
+load/teardown path. `slab.document.{onOpen,onClose,getActive}` is no
+longer "wired but no callers" — it's live every time a user enables a
+runtime plugin and opens a PDF.
+
+**Commits this tick:**
+- `6bd171d` feat(plugins): Tauri document-event commands + actor lifecycle on enable (v2.0.0 Slice 6.7)
+- `65588a5` feat(viewer): wire ReaderPanel into plugin document lifecycle (v2.0.0 Slice 6.8)
+
+**Slice 6.7 (`6bd171d`) — backend + enable wiring (~420 insertions, 2 files):**
+- New `slab_plugins_document_opened(path, registry)` and `_closed` Tauri
+  commands. Each builds `DocumentEvent::from_path(path)` and calls
+  `registry.broadcast(RuntimeCmd::Document{Opened,Closed}(ev))`. Both
+  registered in `tauri::generate_handler!`.
+- `slab_plugins_set_enabled` now takes `runtime_reg: State<PluginRuntimeRegistry>`.
+  On enable for `[runtime]` plugins: spawn `PluginActor` with grants from
+  `~/.slab/plugin-grants.toml` (deny-all default), insert into registry.
+  On disable: `registry.remove(id)` → `LiveEntry::Drop` → worker
+  Shutdown + join. Declarative-only plugins untouched.
+- 5 new registry-level integration tests verify broadcast reaches real
+  JS handlers across 2+ plugins, removed plugins are skipped,
+  re-insertion shuts down the old actor cleanly, and open→close fires
+  in order.
+
+**Slice 6.8 (`65588a5`) — frontend hook (~54 LOC, 1 file):**
+- `ReaderPanel.svelte` got `notifyPluginsDocumentOpened/Closed` helpers
+  — fire-and-forget invokes guarded by `isInTauri()`; failures log to
+  `console.debug`. `lastPluginPath` tracks which path has an
+  outstanding "opened" so every close pairs with a real prior open.
+- `loadBytes()` fires `_opened` after existing audit kickoffs (covers
+  open, drag-drop, recents, post-OCR/Polyglot/decrypt — every load
+  path funnels here).
+- `tearDownDoc()` fires `_closed` BEFORE clearing pdfjs state (mirrors
+  the actor's "clear active_doc before dispatch" ordering so plugin
+  `onClose` handlers observe `getActive() === null`).
+- onDestroy already calls tearDownDoc → tab-close & app-exit fire close.
+
+**Quality gates on `feature/v2.0.0-workshop` HEAD `65588a5`:**
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --all-targets -- -D warnings` — clean
+- `cargo test --lib` — **848 passed / 0 failed** (843 prior + 5 new
+  registry/broadcast integration tests)
+- `pnpm check` — 0 errors, 35 pre-existing warnings (unchanged)
+
+**Push:** in progress (see below).
 
 ---
 
@@ -119,19 +170,26 @@ Big vertical slice: typed manifest surface + standalone modal component + parent
 
 ## NEXT TICK PLAYBOOK
 
-### Step 1 — MODE C continue v2.0.0 "Workshop"
+### Step 1 — MODE C continue v2.0.0 "Workshop" Slice 7 (fetch shim)
 
-**Slice 6.7 (Tauri commands + enable/disable wiring) — NEXT:**
-- Add `commands::slab_plugins_document_opened(path: String, registry: State<PluginRuntimeRegistry>) -> Result<(), String>` and the symmetric `_closed`. Each builds a `DocumentEvent::from_path(path)` and calls `registry.broadcast(RuntimeCmd::DocumentOpened/Closed(ev))`.
-- Register both in `lib.rs`'s `invoke_handler!` list.
-- Hook PluginRegistry's enable path so `set_enabled(id, true)` spawns into `PluginRuntimeRegistry` (via `PluginActor::spawn(..)`) and `set_enabled(id, false)` removes + drops the handle.
-- 4-5 integration tests: command broadcasts to N live actors; disabled plugins receive nothing; enable+disable cycle leaves registry empty; concurrent broadcasts safe.
-
-**Slice 6.8 (Frontend hooks):**
-- PDF viewer `+page.svelte` open/close lifecycle → `invoke('slab_plugins_document_opened', { path })` and the close counterpart.
-- Light: ~30 LOC svelte.
-
-**Then move to Slice 7 (fetch shim) per `docs/plans/2026-05-18-v2.0.0-workshop.md`.**
+**Slice 7 (network capability + `slab.fetch` shim) — NEXT:**
+- Needs its own sub-plan document (the network path threads through
+  `granted.net` + `net_allow_hosts` enforcement inside the actor
+  thread, plus `tokio::spawn` to keep the JS event loop unblocked).
+- Sketch of pieces:
+  - `slab.fetch(url, init)` lands on the actor thread → enqueues a
+    `RuntimeCmd::Fetch { url, init, resolve_id }`.
+  - Actor extends `RuntimeCmd::Fetch` handling: spawns a tokio task
+    against the host's existing `reqwest::Client`, awaits the result,
+    then dispatches back into the rquickjs context to resolve the
+    Promise via a stored `Persistent<Function>`.
+  - Capability enforcement: `granted.net == None` → reject pre-flight.
+    `net_allow_hosts` non-empty → require the URL's host to match.
+  - 12+ contract tests: deny-all rejection, host allow-list,
+    abort/timeout, large body cap, JSON parsing, header forwarding,
+    302 redirect chain, etc.
+- ETA: 1-2 ticks. First tick: write the slice 7 sub-plan + scaffold
+  `RuntimeCmd::Fetch` + the Promise dispatcher.
 
 ### Step 2 — Watch for sibling subagent activity
 
@@ -173,10 +231,10 @@ Sibling subagents can touch `/tmp/msg.txt`. Always overwrite right before commit
 - ✅ Slice 3 (capability grants backend + enforce()) — shipped 2026-05-18
 - ✅ Slice 4 (`slab` global + lifecycle + Tauri grant cmds + TS bindings) — shipped 2026-05-18
 - ✅ Slice 5 (Cabinet consent modal + enable integration) — shipped 2026-05-18
-- 🟡 Slice 6 (document lifecycle events) — **6.1-6.6 shipped (live `slab.document.*`)**, 6.7+6.8 (Tauri commands + frontend) pending
+- ✅ Slice 6 (document lifecycle events) — **COMPLETE 2026-05-18** (6.1-6.6 actor system, 6.7 Tauri commands + enable-flow spawn/teardown, 6.8 ReaderPanel hook)
 - ⏭ Slices 7-12 — see plan doc
 
-Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch 🟡 (6.1/10), 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
+Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch ✅, 7→fetch shim 🟡 NEXT, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
 
 **v2.1.0 candidates (post-Workshop):**
 - **Forge** — author-signed plugins. Wants 10+ plugins in curated index before considering (Sanjay's flag).

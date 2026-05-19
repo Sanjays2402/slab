@@ -1889,12 +1889,8 @@ fn slab_plugins_set_enabled(
             let granted = plugins::default_grants_path()
                 .map(|p| plugins::read_grants(&p).get(&id))
                 .unwrap_or_default();
-            match plugins::runtime::actor::PluginActor::spawn(
-                id.clone(),
-                declared,
-                granted,
-                source,
-            ) {
+            match plugins::runtime::actor::PluginActor::spawn(id.clone(), declared, granted, source)
+            {
                 Ok(handle) => {
                     runtime_reg.insert(id.clone(), plugins::LiveEntry::new(handle));
                 }
