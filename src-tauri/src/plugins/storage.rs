@@ -69,7 +69,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 
 /// Schema version stamped into `PRAGMA user_version`. Bump + add a
 /// migration arm in [`PluginStorage::init_schema`] when changing the
@@ -187,18 +187,14 @@ pub fn default_db_path() -> PathBuf {
 // ---------------------------------------------------------------------------
 
 /// Owning handle around the per-process sqlite [`Connection`]. CRUD
-/// methods land in Slice 8.2; this module ships the scaffolding +
-/// schema + open helpers.
+/// methods (`kv_get` / `kv_set` / `kv_remove` / `kv_list` / `kv_clear`
+/// / `kv_usage_bytes`) live below the struct; the JS binding in Slice
+/// 8.5 calls them through a [`SharedPluginStorage`] handle.
 pub struct PluginStorage {
     /// The underlying sqlite connection. Marked `pub(crate)` so the
-    /// Slice 8.3 unit tests can poke at it via raw SQL when asserting
-    /// schema-level invariants (e.g. that `PRAGMA user_version`
-    /// matches [`SCHEMA_VERSION`]).
-    ///
-    /// `dead_code` allow: in 8.1 nothing *reads* this field yet; the
-    /// CRUD methods landing in 8.2 will. The field is the whole
-    /// point of the struct, so we accept the temporary lint.
-    #[allow(dead_code)]
+    /// Slice 8.1+8.3 unit tests can poke at it via raw SQL when
+    /// asserting schema-level invariants (e.g. that `PRAGMA
+    /// user_version` matches [`SCHEMA_VERSION`]).
     pub(crate) conn: Connection,
 }
 
@@ -267,6 +263,161 @@ impl PluginStorage {
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // CRUD — every method takes `plugin_id: &str` and pins it into every
+    // WHERE clause. Per-plugin scoping is enforced in code here; there is
+    // no other layer (no manifest gate, no row-level security, no namespace
+    // mangling). If you refactor these queries, KEEP the `plugin_id` filter
+    // on every read AND every write.
+    // -----------------------------------------------------------------------
+
+    /// Fetch the value for `key` in `plugin_id`'s namespace, or
+    /// `None` if not set.
+    ///
+    /// Values were written by [`Self::kv_set`] as UTF-8 bytes; this
+    /// reads them back via `String::from_utf8_lossy` so a malformed
+    /// row (which shouldn't be possible through the public API)
+    /// degrades to the Unicode replacement character rather than
+    /// erroring out the whole lookup.
+    pub fn kv_get(&self, plugin_id: &str, key: &str) -> Result<Option<String>, StorageError> {
+        let row: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT value FROM kv WHERE plugin_id = ?1 AND key = ?2",
+                params![plugin_id, key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(row.map(|b| String::from_utf8_lossy(&b).into_owned()))
+    }
+
+    /// Insert or replace the value for `key` in `plugin_id`'s
+    /// namespace. Enforces all three quotas BEFORE writing:
+    ///
+    /// 1. Key length ≤ [`MAX_KEY_BYTES`]
+    /// 2. Value length ≤ [`MAX_VALUE_BYTES`]
+    /// 3. Projected total ≤ [`MAX_PLUGIN_BYTES`], where projected =
+    ///    `current_total - prev_size + new_size`. The subtraction is
+    ///    why overwriting an existing key doesn't double-count.
+    ///
+    /// # Errors
+    /// - [`StorageError::KeyTooLong`] / [`StorageError::ValueTooLarge`]
+    ///   — validation failures (no DB write occurred).
+    /// - [`StorageError::QuotaExceeded`] — quota check failed (no DB
+    ///   write occurred). The error fields carry the post-eviction
+    ///   baseline and the incoming write size so the JS binding can
+    ///   surface specific numbers to plugin authors.
+    /// - [`StorageError::Db`] — sqlite rejected the write.
+    pub fn kv_set(&self, plugin_id: &str, key: &str, value: &str) -> Result<(), StorageError> {
+        if key.len() > MAX_KEY_BYTES {
+            return Err(StorageError::KeyTooLong(key.len(), MAX_KEY_BYTES));
+        }
+        let value_bytes = value.as_bytes();
+        if value_bytes.len() > MAX_VALUE_BYTES {
+            return Err(StorageError::ValueTooLarge(
+                value_bytes.len(),
+                MAX_VALUE_BYTES,
+            ));
+        }
+
+        // Read current total for this plugin. COALESCE handles the
+        // empty-plugin case (SUM of zero rows is NULL).
+        let current_total: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(value_size), 0) FROM kv WHERE plugin_id = ?1",
+            params![plugin_id],
+            |r| r.get(0),
+        )?;
+
+        // Read prior size at THIS key, if any. Subtracted from the
+        // total so an overwrite doesn't double-count toward the quota.
+        let prev_size: i64 = self
+            .conn
+            .query_row(
+                "SELECT value_size FROM kv WHERE plugin_id = ?1 AND key = ?2",
+                params![plugin_id, key],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+
+        // Saturating arithmetic protects against a corrupt DB where
+        // prev_size somehow exceeds current_total — that would
+        // underflow `u64` and let the write succeed against intent.
+        let baseline = (current_total as u64).saturating_sub(prev_size as u64);
+        let incoming = value_bytes.len() as u64;
+        let projected = baseline.saturating_add(incoming);
+        if projected > MAX_PLUGIN_BYTES {
+            return Err(StorageError::QuotaExceeded {
+                current: baseline,
+                incoming,
+                limit: MAX_PLUGIN_BYTES,
+            });
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO kv(plugin_id, key, value, value_size, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(plugin_id, key) DO UPDATE SET \
+               value = excluded.value, \
+               value_size = excluded.value_size, \
+               updated_at = excluded.updated_at",
+            params![plugin_id, key, value_bytes, value_bytes.len() as i64, now],
+        )?;
+        Ok(())
+    }
+
+    /// Delete the row at `(plugin_id, key)`. Returns `true` iff a
+    /// row was actually removed.
+    pub fn kv_remove(&self, plugin_id: &str, key: &str) -> Result<bool, StorageError> {
+        let n = self.conn.execute(
+            "DELETE FROM kv WHERE plugin_id = ?1 AND key = ?2",
+            params![plugin_id, key],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Every key stored for `plugin_id`, lexicographic order. The JS
+    /// binding (Slice 8.5) returns this as a `Promise<string[]>`.
+    pub fn kv_list(&self, plugin_id: &str) -> Result<Vec<String>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key FROM kv WHERE plugin_id = ?1 ORDER BY key")?;
+        let rows = stmt.query_map(params![plugin_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Drop every key for `plugin_id`. Returns the number of rows
+    /// removed (informational — the JS binding surfaces this as the
+    /// `Promise<number>` resolution value).
+    pub fn kv_clear(&self, plugin_id: &str) -> Result<usize, StorageError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM kv WHERE plugin_id = ?1", params![plugin_id])?;
+        Ok(n)
+    }
+
+    /// Total bytes stored for `plugin_id`. Used by quota arithmetic
+    /// internally and exposed publicly for a future
+    /// `slab.storage.usage()` introspection surface; tests assert
+    /// quota arithmetic via this method to avoid taking a direct
+    /// dependency on the schema column names.
+    pub fn kv_usage_bytes(&self, plugin_id: &str) -> Result<u64, StorageError> {
+        let total: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(value_size), 0) FROM kv WHERE plugin_id = ?1",
+            params![plugin_id],
+            |r| r.get(0),
+        )?;
+        Ok(total.max(0) as u64)
     }
 }
 
@@ -480,5 +631,220 @@ mod tests {
         assert!(s.contains('5'));
         assert!(s.contains("10"));
         assert!(s.contains("12"));
+    }
+
+    // ---- Slice 8.3 CRUD contract tests ----
+
+    #[test]
+    fn get_returns_none_for_missing_key() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        assert_eq!(s.kv_get("plug", "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn set_then_get_round_trips_value() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plug", "k", "hello").unwrap();
+        assert_eq!(s.kv_get("plug", "k").unwrap().as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn set_round_trips_unicode_and_null_bytes() {
+        // BLOB-not-TEXT column means embedded NULs and arbitrary
+        // UTF-8 round-trip without sqlite trying to interpret them.
+        let s = PluginStorage::open_in_memory().unwrap();
+        let payload = "héllo\0wörld 🍰";
+        s.kv_set("plug", "weird", payload).unwrap();
+        assert_eq!(s.kv_get("plug", "weird").unwrap().as_deref(), Some(payload));
+    }
+
+    #[test]
+    fn set_overwrites_existing_value() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plug", "k", "first").unwrap();
+        s.kv_set("plug", "k", "second").unwrap();
+        assert_eq!(s.kv_get("plug", "k").unwrap().as_deref(), Some("second"));
+        // And exactly one row, not two.
+        assert_eq!(s.kv_list("plug").unwrap(), vec!["k"]);
+    }
+
+    #[test]
+    fn remove_deletes_key_and_returns_true() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plug", "k", "v").unwrap();
+        assert!(s.kv_remove("plug", "k").unwrap());
+        assert_eq!(s.kv_get("plug", "k").unwrap(), None);
+    }
+
+    #[test]
+    fn remove_returns_false_for_missing_key() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        assert!(!s.kv_remove("plug", "ghost").unwrap());
+    }
+
+    #[test]
+    fn list_returns_sorted_keys_for_plugin_only() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        // Insert out-of-order to verify ORDER BY actually sorts.
+        s.kv_set("plug-a", "zebra", "z").unwrap();
+        s.kv_set("plug-a", "apple", "a").unwrap();
+        s.kv_set("plug-a", "mango", "m").unwrap();
+        // Decoy in a different namespace — must not leak into list.
+        s.kv_set("plug-b", "leaked", "x").unwrap();
+        assert_eq!(
+            s.kv_list("plug-a").unwrap(),
+            vec!["apple", "mango", "zebra"]
+        );
+    }
+
+    #[test]
+    fn list_is_empty_for_unknown_plugin() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plug-a", "k", "v").unwrap();
+        let empty: Vec<String> = vec![];
+        assert_eq!(s.kv_list("plug-unknown").unwrap(), empty);
+    }
+
+    #[test]
+    fn clear_drops_all_keys_for_plugin() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plug", "a", "1").unwrap();
+        s.kv_set("plug", "b", "2").unwrap();
+        s.kv_set("plug", "c", "3").unwrap();
+        let n = s.kv_clear("plug").unwrap();
+        assert_eq!(n, 3);
+        assert!(s.kv_list("plug").unwrap().is_empty());
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), 0);
+    }
+
+    #[test]
+    fn clear_other_plugins_unaffected() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plug-a", "k", "alpha").unwrap();
+        s.kv_set("plug-b", "k", "beta").unwrap();
+        s.kv_clear("plug-a").unwrap();
+        // Decoy plugin's data still intact.
+        assert_eq!(s.kv_get("plug-b", "k").unwrap().as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn set_rejects_oversized_key() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        let huge_key = "k".repeat(MAX_KEY_BYTES + 1);
+        let err = s.kv_set("plug", &huge_key, "v").unwrap_err();
+        assert!(
+            matches!(err, StorageError::KeyTooLong(n, lim) if n == MAX_KEY_BYTES + 1 && lim == MAX_KEY_BYTES),
+            "got {err:?}"
+        );
+        // And no write occurred.
+        assert!(s.kv_list("plug").unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_rejects_oversized_value() {
+        let s = PluginStorage::open_in_memory().unwrap();
+        let huge_value = "x".repeat(MAX_VALUE_BYTES + 1);
+        let err = s.kv_set("plug", "k", &huge_value).unwrap_err();
+        assert!(
+            matches!(err, StorageError::ValueTooLarge(n, lim) if n == MAX_VALUE_BYTES + 1 && lim == MAX_VALUE_BYTES),
+            "got {err:?}"
+        );
+        assert!(s.kv_list("plug").unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_rejects_when_quota_exceeded() {
+        // Fill the plugin to exactly the cap with N × 1 MiB values,
+        // then assert ONE MORE byte fails. Uses kv_usage_bytes to
+        // verify the post-cap state is still at the cap (no partial
+        // write).
+        let s = PluginStorage::open_in_memory().unwrap();
+        let big = "x".repeat(MAX_VALUE_BYTES);
+        let slots = MAX_PLUGIN_BYTES as usize / MAX_VALUE_BYTES;
+        for i in 0..slots {
+            s.kv_set("plug", &format!("k{i}"), &big)
+                .unwrap_or_else(|e| panic!("slot {i} should fit: {e:?}"));
+        }
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), MAX_PLUGIN_BYTES);
+        // One more byte is over the cap.
+        let err = s.kv_set("plug", "overflow", "y").unwrap_err();
+        match err {
+            StorageError::QuotaExceeded {
+                current,
+                incoming,
+                limit,
+            } => {
+                assert_eq!(current, MAX_PLUGIN_BYTES);
+                assert_eq!(incoming, 1);
+                assert_eq!(limit, MAX_PLUGIN_BYTES);
+            }
+            other => panic!("expected QuotaExceeded, got {other:?}"),
+        }
+        // Failed write left the cap intact.
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), MAX_PLUGIN_BYTES);
+    }
+
+    #[test]
+    fn set_overwrite_does_not_double_count_quota() {
+        // The crux of the quota arithmetic: an overwrite at the same
+        // key should subtract the prior size before adding the new
+        // size, NOT double-count. If we'd written `prev + new`, this
+        // test fails because 8 MiB + 1 MiB > 8 MiB.
+        let s = PluginStorage::open_in_memory().unwrap();
+        let big = "x".repeat(MAX_VALUE_BYTES);
+        let slots = MAX_PLUGIN_BYTES as usize / MAX_VALUE_BYTES;
+        for i in 0..slots {
+            s.kv_set("plug", &format!("k{i}"), &big).unwrap();
+        }
+        // Now overwrite k0 with another 1 MiB value. Net change is
+        // 0; quota check should pass.
+        s.kv_set("plug", "k0", &big)
+            .expect("overwrite of same-size value must fit");
+        // Sanity: usage didn't grow.
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), MAX_PLUGIN_BYTES);
+    }
+
+    #[test]
+    fn scoping_isolates_plugins() {
+        // The security-critical test. Two plugins write the same key;
+        // each must observe only its own value. Then clear plugin A
+        // and confirm plugin B is untouched.
+        let s = PluginStorage::open_in_memory().unwrap();
+        s.kv_set("plugin-a", "secret", "alpha").unwrap();
+        s.kv_set("plugin-b", "secret", "beta").unwrap();
+        assert_eq!(
+            s.kv_get("plugin-a", "secret").unwrap().as_deref(),
+            Some("alpha")
+        );
+        assert_eq!(
+            s.kv_get("plugin-b", "secret").unwrap().as_deref(),
+            Some("beta")
+        );
+        s.kv_clear("plugin-a").unwrap();
+        assert_eq!(s.kv_get("plugin-a", "secret").unwrap(), None);
+        assert_eq!(
+            s.kv_get("plugin-b", "secret").unwrap().as_deref(),
+            Some("beta")
+        );
+        // List on plugin-a is empty; plugin-b still sees its key.
+        assert!(s.kv_list("plugin-a").unwrap().is_empty());
+        assert_eq!(s.kv_list("plugin-b").unwrap(), vec!["secret"]);
+    }
+
+    #[test]
+    fn usage_tracks_inserts_overwrites_and_removes() {
+        // Belt-and-braces for the quota-arithmetic invariant: every
+        // write path that affects usage must keep `kv_usage_bytes`
+        // honest. If a future refactor breaks this, the JS binding's
+        // `slab.storage.usage()` would lie to plugin authors.
+        let s = PluginStorage::open_in_memory().unwrap();
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), 0);
+        s.kv_set("plug", "a", "hello").unwrap(); //  5 bytes
+        s.kv_set("plug", "b", "world!").unwrap(); // 6 bytes
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), 11);
+        s.kv_set("plug", "a", "hi").unwrap(); // shrink 5 → 2
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), 8);
+        s.kv_remove("plug", "b").unwrap();
+        assert_eq!(s.kv_usage_bytes("plug").unwrap(), 2);
     }
 }
