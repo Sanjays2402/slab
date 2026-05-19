@@ -34,6 +34,7 @@
 //!   synchronously inside [`Context::with`].
 
 pub mod actor;
+pub mod fetch;
 pub mod host_api;
 pub mod lifecycle;
 pub mod sandbox;

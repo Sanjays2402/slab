@@ -64,6 +64,16 @@ use crate::plugins::manifest::Capabilities;
 /// The variants intentionally carry small owned payloads (no
 /// borrowed refs, no `&Ctx`), so they're `Send + 'static` and can
 /// cross a `crossbeam-channel` boundary cleanly.
+///
+/// In particular, `Fetch` does NOT carry the `Persistent` resolve/
+/// reject callbacks directly — `Persistent` is `!Send` because it
+/// holds a raw `*mut JSRuntime`. Instead, the JS-side binding (which
+/// runs ON the worker thread inside `Context::with`) stashes the
+/// callbacks into a thread-local pending-fetch map keyed by
+/// `request_id`, then sends `RuntimeCmd::Fetch { request_id,
+/// request }`. The recv-loop pops the callbacks back out when it
+/// processes the command, all on the same thread, no cross-thread
+/// movement of `!Send` types.
 #[derive(Debug, Clone)]
 pub enum RuntimeCmd {
     /// A PDF was loaded into the viewer. The worker will invoke every
@@ -73,6 +83,16 @@ pub enum RuntimeCmd {
     /// The active PDF was closed (or replaced — the frontend emits a
     /// close for the previous doc followed by an open for the new one).
     DocumentClosed(DocumentEvent),
+    /// Host-mediated HTTP request from a plugin's `slab.fetch` call.
+    /// The recv loop runs the request synchronously (`block_on` on
+    /// the Tauri tokio handle), then looks up the stashed
+    /// `Persistent` resolve/reject pair in the worker's pending-fetch
+    /// map (see `runtime::fetch::PendingFetch`) and invokes whichever
+    /// matches the result.
+    Fetch {
+        request_id: u64,
+        request: FetchRequest,
+    },
     /// Drain any pending events, clear all Persistents from the
     /// lifecycle registry, then exit the worker thread cleanly.
     ///
@@ -109,6 +129,67 @@ impl DocumentEvent {
             .to_string();
         Self { path, name }
     }
+}
+
+/// Outbound HTTP request built by the JS-side `slab.fetch` host
+/// binding and consumed by the actor's recv loop.
+///
+/// All fields are owned `Send + 'static` values so the payload
+/// crosses the crossbeam-channel cleanly without borrows. Headers
+/// are kept lowercase by convention (the JS binding lowercases them
+/// at parse time); body bytes are buffered (Slice 7 does not stream).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchRequest {
+    /// Uppercase HTTP method (e.g. `"GET"`, `"POST"`). The binding
+    /// normalises whatever the plugin passed via `init.method`.
+    pub method: String,
+    /// Absolute URL string as supplied by the plugin. The host MUST
+    /// re-parse this before sending (the JS binding has already
+    /// validated it, but trust-but-verify keeps the recv loop honest).
+    pub url: String,
+    /// `(name, value)` pairs. Names are lowercase ASCII; values are
+    /// passed through verbatim. The recv loop converts these into a
+    /// `reqwest::header::HeaderMap` before dispatch.
+    pub headers: Vec<(String, String)>,
+    /// Body bytes. `None` for the default GET/HEAD case; `Some(vec![])`
+    /// for an explicit empty body on POST/PUT etc. The 16 MiB cap on
+    /// outbound bodies is enforced at JS-binding parse time (Slice 7.4).
+    pub body: Option<Vec<u8>>,
+    /// Hard timeout in milliseconds. Defaults to 30_000 when the JS
+    /// caller omits `init.timeoutMs`; clamped to `[1, 120_000]` by
+    /// the binding so a hostile plugin can't park the actor forever.
+    pub timeout_ms: u64,
+}
+
+/// Response payload returned from the host's `reqwest` call back to
+/// the JS Promise resolver.
+///
+/// Shape mirrors the minimum surface of the web Fetch `Response`
+/// that plugin authors expect: status code + canonical reason +
+/// final URL (after redirects) + headers + body bytes + `ok` flag.
+/// Conversion to JS lives in the actor recv loop (Slice 7.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchResponse {
+    /// HTTP status code (e.g. 200, 404, 500). Caller surfaces this
+    /// as `resp.status` in JS land.
+    pub status: u16,
+    /// Canonical reason phrase (e.g. `"OK"`, `"Not Found"`). May be
+    /// empty for unknown statuses.
+    pub status_text: String,
+    /// Final URL after redirect following — `reqwest::Response::url()`.
+    /// JS plugins use this to detect whether they were redirected.
+    pub url: String,
+    /// Lowercased response header pairs. Multi-value headers are
+    /// joined with `, ` per RFC 7230.
+    pub headers: Vec<(String, String)>,
+    /// Body bytes. Capped at [`crate::plugins::runtime::fetch::MAX_BODY_BYTES`]
+    /// (16 MiB) — oversized responses surface as a [`String`] error
+    /// from `do_fetch`, never reach this struct.
+    pub body: Vec<u8>,
+    /// True when `status` is in `200..=299`. Matches the web Fetch
+    /// `Response.ok` semantics — `slab.fetch` does NOT reject on
+    /// 4xx/5xx, it resolves with `ok = false`.
+    pub ok: bool,
 }
 
 /// Shared state owned by the actor's worker thread and visible to the
@@ -355,6 +436,17 @@ fn run_actor(
     // bindings, which run on this same worker.
     let lifecycle: SharedLifecycle = new_shared();
     let active_doc: SharedActiveDoc = new_shared_active_doc();
+    // Worker-local pending-fetch table. `slab.fetch` enqueues
+    // (resolve, reject) pairs here keyed by a monotonic request id,
+    // then sends `RuntimeCmd::Fetch { request_id, request }` over
+    // the channel. The recv loop pops the pair out by id and
+    // settles the Promise.
+    //
+    // Same `!Send` story as `lifecycle`: this `Arc` never crosses
+    // a thread boundary; the worker thread is the only one touching
+    // it. The `Arc<Mutex<_>>` shape is purely so the JS-side
+    // `Function::new` closure can capture a clone.
+    let pending_fetches: super::fetch::SharedPendingFetches = super::fetch::new_shared_pending();
 
     // -- Top-level eval ------------------------------------------------------
     // Wall-clock guard for the eval phase. The interrupt closure
@@ -425,6 +517,13 @@ fn run_actor(
                     *g = None;
                 }
                 dispatch_lifecycle(&rt, &ctx, &lifecycle, LifecycleAxis::OnClose, &ev);
+            }
+            RuntimeCmd::Fetch {
+                request_id,
+                request,
+            } => {
+                let callbacks = super::fetch::take_pending(&pending_fetches, request_id);
+                dispatch_fetch(&rt, &ctx, request, callbacks);
             }
             RuntimeCmd::Shutdown => break,
         }
@@ -543,6 +642,125 @@ fn dispatch_lifecycle(
     });
 
     rt.set_interrupt_handler(None);
+}
+
+/// Run a `RuntimeCmd::Fetch` against the shared `reqwest::Client`
+/// (Slice 7.2's `do_fetch`), then settle the JS Promise by invoking
+/// the supplied `Persistent<Function>` resolve/reject callbacks.
+///
+/// Blocks the actor thread for the duration of the request — that's
+/// intentional for Slice 7. QuickJS is single-threaded inside the
+/// actor anyway; while a fetch is in flight the plugin's JS is
+/// already idle (it's `await`ing the Promise). Concurrent fetches
+/// from the same plugin serialise naturally. If profiling later
+/// shows this is too restrictive, Slice 7b can promote individual
+/// fetches to spawned tokio tasks tracked in a per-actor join-set.
+///
+/// Error handling philosophy: never panic; one bad fetch must not
+/// take down the worker. Network errors, body-too-large, malformed
+/// URLs etc. all surface as Promise rejections in JS land. If the
+/// Promise plumbing itself fails (resolve/reject restore returns
+/// `UnrelatedRuntime`, or the JS-side resolve throws) we log via
+/// `eprintln!` and drop the callback — the Promise stays pending
+/// forever, which is acceptable for what's almost always a host bug
+/// (not a plugin bug).
+fn dispatch_fetch(
+    rt: &rquickjs::Runtime,
+    ctx: &Context,
+    request: super::actor::FetchRequest,
+    callbacks: Option<super::fetch::PendingCallbacks>,
+) {
+    // If the pending-fetch map has no entry for this request id
+    // (e.g. the entry was evicted, or there's a bug in the
+    // JS-side enqueue), drop silently — there's nobody to settle.
+    let Some((resolve, reject)) = callbacks else {
+        eprintln!("[plugin fetch] no pending callbacks for request — dropping");
+        return;
+    };
+
+    // Fresh wall-clock guard for this dispatch batch. The
+    // interrupt only fires while JS is executing (resolve/reject
+    // body etc.), so it doesn't interrupt the network `block_on` —
+    // that's bounded separately by `request.timeout_ms` inside
+    // `do_fetch`.
+    let deadline = Instant::now() + WALL_CLOCK_LIMIT;
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+
+    // Run the HTTP call. If we're inside a Tauri tokio runtime,
+    // borrow its handle; otherwise spin up a single-threaded
+    // current-thread runtime for this one call. The latter path
+    // exists so the actor remains usable from unit tests that
+    // don't bring up Tauri.
+    let result: Result<super::actor::FetchResponse, String> =
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) => h.block_on(super::fetch::do_fetch(request)),
+            Err(_) => match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt.block_on(super::fetch::do_fetch(request)),
+                Err(e) => Err(format!("tokio runtime build: {e}")),
+            },
+        };
+
+    // Settle the Promise inside the rquickjs context. Both
+    // resolve and reject are `Persistent`s owned by us; restoring
+    // requires a `Ctx<'_>` so we do it inside a `with` block.
+    ctx.with(|ctx| {
+        match result {
+            Ok(resp) => {
+                let resp_val = match super::fetch::response_to_js(&ctx, &resp) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("[plugin fetch] response_to_js failed: {e}");
+                        return;
+                    }
+                };
+                match resolve.restore(&ctx) {
+                    Ok(f) => {
+                        if let Err(e) = f.call::<_, Value>((resp_val,)).catch(&ctx) {
+                            eprintln!("[plugin fetch] resolve threw: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("[plugin fetch] resolve restore failed: {e}"),
+                }
+            }
+            Err(msg) => {
+                // Build an Error object so plugin authors get a
+                // typed rejection (e.g. `(await fetch(...)).catch(e
+                // => e.message)`). `eval` is the simplest way to
+                // get an `Error`-instance value without juggling
+                // rquickjs's Exception types.
+                let err_src = format!("new Error({})", json_string(&msg));
+                let err_val = match ctx.eval::<Value, _>(err_src.as_bytes()).catch(&ctx) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("[plugin fetch] error obj build failed: {e}");
+                        return;
+                    }
+                };
+                match reject.restore(&ctx) {
+                    Ok(f) => {
+                        if let Err(e) = f.call::<_, Value>((err_val,)).catch(&ctx) {
+                            eprintln!("[plugin fetch] reject threw: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("[plugin fetch] reject restore failed: {e}"),
+                }
+            }
+        }
+    });
+
+    rt.set_interrupt_handler(None);
+}
+
+/// Quote `s` as a JS string literal. Used to embed an error message
+/// into a `new Error(...)` source string without worrying about
+/// embedded quotes/newlines/backslashes. `serde_json::to_string` of
+/// a `&str` produces a valid JS string literal too (JSON strings are
+/// a subset of JS string literals).
+fn json_string(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"<unprintable>\"".to_string())
 }
 
 #[cfg(test)]
