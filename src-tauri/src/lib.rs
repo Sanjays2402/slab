@@ -2288,11 +2288,17 @@ fn slab_beacon_voice_stt_capabilities() -> SttCapabilities {
 /// any in-flight recording first (single-slot policy, mirroring the
 /// TTS side).
 ///
+/// `model` (v1.9.2) — optional explicit whisper.cpp model override
+/// (e.g. `"base.en"` or absolute `.bin` path). When omitted, falls
+/// back to `BeaconConfig.voice.stt_model`, then `$WHISPER_MODEL`,
+/// then whisper.cpp's compiled-in default.
+///
 /// Returns `Ok(())` on success. On failure (no recorder, unknown
 /// engine, spawn error) the frontend gets a user-grade error message.
 #[tauri::command]
 fn slab_beacon_voice_stt_start(
     engine: Option<String>,
+    model: Option<String>,
     session: tauri::State<'_, std::sync::Arc<SttSession>>,
 ) -> CmdResult<()> {
     let eng = match engine.as_deref() {
@@ -2313,7 +2319,15 @@ fn slab_beacon_voice_stt_start(
             }
         },
     };
-    match session.start(eng) {
+    // Precedence: explicit `model` arg → BeaconConfig.voice.stt_model
+    // → (env / whisper default — handled inside build_whisper_cmd).
+    let resolved_model = model.filter(|s| !s.is_empty()).or_else(|| {
+        crate::ai::config::load()
+            .ok()
+            .and_then(|c| c.beacon.voice.stt_model)
+            .filter(|s| !s.is_empty())
+    });
+    match session.start(eng, resolved_model) {
         Ok(()) => CmdResult::Ok { value: () },
         Err(e) => CmdResult::Err {
             message: e.to_string(),
@@ -2364,6 +2378,16 @@ fn slab_beacon_voice_stt_cancel(
 ) -> CmdResult<()> {
     session.cancel();
     CmdResult::Ok { value: () }
+}
+
+/// Enumerate installed + suggested whisper.cpp models for the
+/// Settings-panel picker (v1.9.2). Cheap (single readdir on
+/// `$SLAB_MODELS_DIR` / `~/.slab/models/`); safe to call on every
+/// settings render. Always returns the built-in suggestions even if
+/// the directory doesn't exist.
+#[tauri::command]
+fn slab_beacon_voice_stt_list_models() -> Vec<crate::ai::stt::WhisperModelInfo> {
+    crate::ai::stt::list_whisper_models()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2527,6 +2551,7 @@ pub fn run() {
             slab_beacon_voice_stt_stop,
             slab_beacon_voice_stt_is_recording,
             slab_beacon_voice_stt_cancel,
+            slab_beacon_voice_stt_list_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

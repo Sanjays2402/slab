@@ -239,7 +239,7 @@
       try {
         const res = await invoke<CmdResult<null>>(
           "slab_beacon_voice_stt_start",
-          { engine: null },
+          { engine: null, model: null },
         );
         if (res.kind === "ok") {
           isRecording = true;

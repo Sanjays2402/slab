@@ -67,6 +67,10 @@ struct InFlight {
     /// so the user can't surprise us by changing the config
     /// mid-recording.
     engine: SttEngine,
+    /// Optional explicit whisper.cpp model override. `None` falls
+    /// through to `$WHISPER_MODEL` then whisper's compiled-in default.
+    /// Captured at `start()` for the same reason as `engine`.
+    model: Option<String>,
 }
 
 /// Single-slot STT session. Safe to share across threads via `Arc`.
@@ -85,7 +89,11 @@ impl SttSession {
     /// **cancelled** (process killed, WAV unlinked) — no transcript.
     /// Returns `()` on success; PID is not exposed because the
     /// frontend doesn't need it (single-slot model).
-    pub fn start(&self, engine: SttEngine) -> Result<(), SttError> {
+    ///
+    /// `model` (v1.9.2): optional whisper.cpp model id ("base.en" etc.)
+    /// or absolute path to a `.bin`. `None` defers to `$WHISPER_MODEL`
+    /// then whisper's compiled default.
+    pub fn start(&self, engine: SttEngine, model: Option<String>) -> Result<(), SttError> {
         let mut slot = self.current.lock().expect("SttSession mutex poisoned");
         if let Some(prev) = slot.take() {
             cancel_inflight(prev);
@@ -96,6 +104,7 @@ impl SttSession {
             recording: rec,
             started_at: now,
             engine,
+            model,
         });
         Ok(())
     }
@@ -114,6 +123,7 @@ impl SttSession {
             mut recording,
             started_at,
             engine,
+            model,
         } = in_flight;
         let duration_ms = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
@@ -124,7 +134,7 @@ impl SttSession {
         let _ = recording.child.wait();
 
         // Transcribe.
-        let result = transcribe(&recording.wav_path, engine, duration_ms);
+        let result = transcribe(&recording.wav_path, engine, duration_ms, model.as_deref());
 
         // Always unlink the WAV. Privacy.
         let _ = std::fs::remove_file(&recording.wav_path);
@@ -194,6 +204,7 @@ impl SttSession {
             recording: Recording { child, wav_path },
             started_at: Instant::now(),
             engine: SttEngine::WhisperCpp,
+            model: None,
         });
     }
 }
@@ -268,36 +279,30 @@ pub fn detect_send_trigger(text: &str, trigger: Option<&str>) -> (String, bool) 
 /// Tauri command layer (Task 4) can invoke it directly for the
 /// "transcribe existing file" workflow (e.g. drag-and-drop a voice
 /// memo in v1.9.2+).
+///
+/// `model` (v1.9.2): optional explicit whisper.cpp model. Precedence:
+///   explicit arg → `$WHISPER_MODEL` env → omit (whisper default).
 pub fn transcribe(
     wav: &std::path::Path,
     engine: SttEngine,
     duration_ms: u64,
+    model: Option<&str>,
 ) -> Result<Transcript, SttError> {
     match engine {
-        SttEngine::WhisperCpp => transcribe_whisper_cpp(wav, duration_ms),
+        SttEngine::WhisperCpp => transcribe_whisper_cpp(wav, duration_ms, model),
     }
 }
 
-fn transcribe_whisper_cpp(wav: &std::path::Path, duration_ms: u64) -> Result<Transcript, SttError> {
+fn transcribe_whisper_cpp(
+    wav: &std::path::Path,
+    duration_ms: u64,
+    model: Option<&str>,
+) -> Result<Transcript, SttError> {
     let bin = locate_whisper_cli().ok_or(SttError::WhisperNotInstalled)?;
+    let args = build_whisper_cmd(&bin, wav, model);
 
-    // Run whisper-cli with sensible defaults:
-    //   -f <wav>          — input file
-    //   -nt               — no timestamps in stdout (cleaner parse)
-    //   -l auto           — auto-detect language; print to stderr
-    //   -m <model>        — optional override via $WHISPER_MODEL
-    //
-    // We deliberately omit `-otxt`/`-ovtt` flags — they'd write extra
-    // files. Stdout is the source of truth.
     let mut cmd = std::process::Command::new(&bin);
-    cmd.arg("-f").arg(wav);
-    cmd.arg("-nt");
-    cmd.arg("-l").arg("auto");
-    if let Ok(model) = std::env::var("WHISPER_MODEL") {
-        if !model.is_empty() {
-            cmd.arg("-m").arg(model);
-        }
-    }
+    cmd.args(&args);
     cmd.stdin(std::process::Stdio::null());
 
     let output = cmd
@@ -321,6 +326,44 @@ fn transcribe_whisper_cpp(wav: &std::path::Path, duration_ms: u64) -> Result<Tra
     } else {
         Ok(t)
     }
+}
+
+/// Pure argv builder for whisper-cli. Extracted so unit tests can
+/// pin the exact flag order without spawning a subprocess.
+///
+/// Flags emitted (in order):
+///   -f <wav>      input file
+///   -nt           no timestamps in stdout
+///   -l auto       auto-detect language
+///   -m <model>    only if `model.is_some()` OR `$WHISPER_MODEL` set
+///
+/// `_bin` is ignored at the moment but kept in the signature for
+/// future per-binary quirks (e.g. macOS-installed whisper.cpp vs.
+/// Homebrew differs on some flags).
+pub(crate) fn build_whisper_cmd(
+    _bin: &str,
+    wav: &std::path::Path,
+    model: Option<&str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = Vec::with_capacity(8);
+    args.push("-f".into());
+    args.push(wav.to_string_lossy().to_string());
+    args.push("-nt".into());
+    args.push("-l".into());
+    args.push("auto".into());
+
+    // Precedence: explicit arg → $WHISPER_MODEL env → omit.
+    let resolved_model: Option<String> = match model {
+        Some(m) if !m.is_empty() => Some(m.to_string()),
+        _ => std::env::var("WHISPER_MODEL")
+            .ok()
+            .filter(|s| !s.is_empty()),
+    };
+    if let Some(m) = resolved_model {
+        args.push("-m".into());
+        args.push(m);
+    }
+    args
 }
 
 /// Parse `whisper-cli -nt` stdout. With `-nt`, each line is just the
@@ -640,5 +683,92 @@ whisper_print_timings: total time = 1234.5 ms
         let (text, fire) = detect_send_trigger("hello world", Some(""));
         assert!(!fire);
         assert_eq!(text, "hello world");
+    }
+
+    // ── v1.9.2 Task 4: build_whisper_cmd ────────────────────────────
+
+    /// All env-touching tests serialize on this mutex — `cargo test`
+    /// runs in parallel by default and unsynchronised `set_var`/
+    /// `remove_var` from multiple threads is unsound on edition 2024+.
+    /// We use a sync mutex regardless to keep behaviour identical
+    /// across editions.
+    static WHISPER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Default invocation: no explicit model, no env. Emits only the
+    /// base flags; no `-m` appears.
+    #[test]
+    fn build_whisper_cmd_no_model_omits_dash_m() {
+        let _g = WHISPER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("WHISPER_MODEL").ok();
+        std::env::remove_var("WHISPER_MODEL");
+
+        let wav = std::path::PathBuf::from("/tmp/sample.wav");
+        let args = build_whisper_cmd("/usr/local/bin/whisper-cli", &wav, None);
+        assert_eq!(
+            args,
+            vec!["-f", "/tmp/sample.wav", "-nt", "-l", "auto"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert!(!args.iter().any(|a| a == "-m"));
+
+        if let Some(v) = prev {
+            std::env::set_var("WHISPER_MODEL", v);
+        }
+    }
+
+    /// Explicit model arg always wins, even over `$WHISPER_MODEL`.
+    #[test]
+    fn build_whisper_cmd_explicit_model_overrides_env() {
+        let _g = WHISPER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("WHISPER_MODEL").ok();
+        std::env::set_var("WHISPER_MODEL", "tiny.en");
+
+        let wav = std::path::PathBuf::from("/tmp/sample.wav");
+        let args = build_whisper_cmd("whisper-cli", &wav, Some("base.en"));
+        let m_idx = args.iter().position(|a| a == "-m").expect("must have -m");
+        assert_eq!(args[m_idx + 1], "base.en");
+        assert!(!args.iter().any(|a| a == "tiny.en"));
+
+        match prev {
+            Some(v) => std::env::set_var("WHISPER_MODEL", v),
+            None => std::env::remove_var("WHISPER_MODEL"),
+        }
+    }
+
+    /// Env variable used when no explicit arg is given.
+    #[test]
+    fn build_whisper_cmd_env_used_when_no_explicit() {
+        let _g = WHISPER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("WHISPER_MODEL").ok();
+        std::env::set_var("WHISPER_MODEL", "small.en");
+
+        let wav = std::path::PathBuf::from("/tmp/sample.wav");
+        let args = build_whisper_cmd("whisper-cli", &wav, None);
+        let m_idx = args.iter().position(|a| a == "-m").expect("must have -m");
+        assert_eq!(args[m_idx + 1], "small.en");
+
+        match prev {
+            Some(v) => std::env::set_var("WHISPER_MODEL", v),
+            None => std::env::remove_var("WHISPER_MODEL"),
+        }
+    }
+
+    /// Empty string passed as `model` is treated as `None` (defensive
+    /// against IPC-deserialized empties from the frontend).
+    #[test]
+    fn build_whisper_cmd_empty_model_falls_back_to_env() {
+        let _g = WHISPER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("WHISPER_MODEL").ok();
+        std::env::remove_var("WHISPER_MODEL");
+
+        let wav = std::path::PathBuf::from("/tmp/sample.wav");
+        let args = build_whisper_cmd("whisper-cli", &wav, Some(""));
+        assert!(!args.iter().any(|a| a == "-m"));
+
+        if let Some(v) = prev {
+            std::env::set_var("WHISPER_MODEL", v);
+        }
     }
 }
