@@ -35,6 +35,49 @@ export interface Manifest {
     commands: CommandContribution[];
     ai_providers: AiProviderContribution[];
   };
+  /**
+   * v2.0.0 "Workshop" — optional plugin runtime descriptor. Present
+   * when the plugin ships a `script.js` to be executed in the
+   * QuickJS sandbox. `capabilities` are the *declared upper bounds*;
+   * the user's actual decision lives in {@link PluginGrants}.
+   */
+  runtime: RuntimeManifest | null;
+}
+
+/**
+ * Workshop (v2.0.0) — plugin runtime descriptor mirror.
+ *
+ * Mirrors `plugins::RuntimeManifest` on the Rust side. The
+ * `capabilities` field is what the plugin *asks for*; the user
+ * actually grants (a subset of) those capabilities at first enable.
+ */
+export interface RuntimeManifest {
+  /** Path to the JS entry file, relative to the plugin dir. */
+  entry: string;
+  /** Lowercase hex SHA-256 of the entry file (64 chars). */
+  sha256: string;
+  /** Declared capability upper bounds (default = deny-all). */
+  capabilities: ManifestCapabilities;
+}
+
+/**
+ * Workshop (v2.0.0) — declared capability upper bounds.
+ *
+ * Mirrors `plugins::manifest::Capabilities`. Distinct from
+ * {@link PluginGrants}: this is what the plugin *can ask for*, the
+ * grants are what the user *actually approved*. The consent modal
+ * shows declared bounds and lets the user dial each axis down (but
+ * not up).
+ */
+export interface ManifestCapabilities {
+  fs: "none" | "read" | "read-write";
+  net: "none" | "specific" | "any";
+  ui: "none" | "panel" | "tool" | "both";
+  beacon: "none" | "tool-provider" | "ai-provider" | "both";
+  /** Hosts the plugin asks to reach when `net === "specific"`. */
+  net_allow_hosts: string[];
+  /** Paths the plugin asks to access when `fs !== "none"`. */
+  fs_allow_paths: string[];
 }
 
 export interface ThemeContribution {
