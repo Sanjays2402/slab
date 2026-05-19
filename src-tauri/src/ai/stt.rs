@@ -163,6 +163,130 @@ pub(crate) fn recorder_binary() -> Option<String> {
     }
 }
 
+// ── v1.9.2 Task 4: whisper.cpp model catalog ────────────────────────
+
+/// One row in the whisper.cpp model picker. Surfaces both installed
+/// on-disk models (under `$SLAB_MODELS_DIR` or `~/.slab/models/`) and
+/// well-known built-in suggestions the user *could* download.
+///
+/// The frontend renders this in `BeaconVoicePanel` as a `<select>`;
+/// installed entries are highlighted, missing entries link to the
+/// whisper.cpp model download docs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WhisperModelInfo {
+    /// Stable identifier used both as the dropdown value and on the
+    /// `whisper-cli -m <id>` command line when the model is on-disk
+    /// (we substitute `path` instead for absolute-pathed entries).
+    pub id: String,
+    /// Human-friendly label for the picker. Falls back to `id`.
+    pub label: String,
+    /// Absolute path to the `.bin` if we found it on disk. `None` for
+    /// built-in suggestions that haven't been downloaded yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Convenience flag — true iff `path.is_some()`. Frontend filters
+    /// the dropdown on this.
+    pub installed: bool,
+}
+
+/// Built-in catalog of whisper.cpp models we know about. Kept short
+/// because the picker is meant to be opinionated — the user can drop
+/// any `.bin` into `~/.slab/models/` to add their own and it'll show
+/// up alongside these.
+const BUILTIN_MODELS: &[(&str, &str)] = &[
+    ("tiny.en", "Tiny (English-only) — ~75 MB"),
+    ("base.en", "Base (English-only) — ~140 MB"),
+    ("small.en", "Small (English-only) — ~470 MB"),
+];
+
+/// Enumerate installed + suggested whisper.cpp models.
+///
+/// Lookup order:
+///   1. `$SLAB_MODELS_DIR` if set and a readable directory.
+///   2. `~/.slab/models/` otherwise.
+///
+/// Any `*.bin` or `ggml-*.bin` file in that directory becomes an
+/// installed entry. The built-in suggestion list is then merged in,
+/// upgraded to `installed: true` if a matching `.bin` was found
+/// (matched by stem — `ggml-base.en.bin` → `base.en`).
+///
+/// This function is **cheap** (one readdir, no file content reads) —
+/// safe to call on every Settings-panel render.
+pub fn list_whisper_models() -> Vec<WhisperModelInfo> {
+    let dir = resolve_models_dir();
+    let mut on_disk: Vec<WhisperModelInfo> = Vec::new();
+
+    if let Some(d) = dir.as_ref() {
+        if let Ok(entries) = std::fs::read_dir(d) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if !p.is_file() {
+                    continue;
+                }
+                let fname = match p.file_name().and_then(|s| s.to_str()) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                if !fname.ends_with(".bin") {
+                    continue;
+                }
+                // Strip leading "ggml-" prefix and trailing ".bin" so
+                // "ggml-base.en.bin" → id "base.en". If the file
+                // doesn't have the conventional prefix, use the full
+                // stem.
+                let stem = fname.trim_end_matches(".bin");
+                let id = stem.strip_prefix("ggml-").unwrap_or(stem).to_string();
+                let label = format!("{id} (installed)");
+                on_disk.push(WhisperModelInfo {
+                    id,
+                    label,
+                    path: Some(p.to_string_lossy().to_string()),
+                    installed: true,
+                });
+            }
+        }
+    }
+
+    // Merge with built-ins. If a built-in matches an on-disk id,
+    // promote the on-disk entry's label to the friendlier built-in
+    // string. Otherwise append the built-in as a not-yet-installed
+    // suggestion.
+    let mut out: Vec<WhisperModelInfo> = Vec::with_capacity(on_disk.len() + BUILTIN_MODELS.len());
+    for (id, label) in BUILTIN_MODELS {
+        if let Some(idx) = on_disk.iter().position(|m| m.id == *id) {
+            let mut existing = on_disk.remove(idx);
+            existing.label = (*label).to_string();
+            out.push(existing);
+        } else {
+            out.push(WhisperModelInfo {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                path: None,
+                installed: false,
+            });
+        }
+    }
+    // Append any user-supplied on-disk models that didn't match a
+    // built-in (e.g. "medium.en", "large-v3", custom-trained).
+    out.extend(on_disk);
+    out
+}
+
+/// Resolve the directory we scan for `.bin` files. Returns `None`
+/// only if we can't determine a home directory (very unusual).
+fn resolve_models_dir() -> Option<std::path::PathBuf> {
+    if let Ok(custom) = std::env::var("SLAB_MODELS_DIR") {
+        if !custom.is_empty() {
+            return Some(std::path::PathBuf::from(custom));
+        }
+    }
+    // `~/.slab/models/`.
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())?;
+    Some(std::path::PathBuf::from(home).join(".slab").join("models"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +388,123 @@ mod tests {
         };
         let json = serde_json::to_string(&cap).unwrap();
         assert!(!json.contains("binary_path"));
+    }
+
+    // ── v1.9.2 Task 4: whisper model catalog ────────────────────────
+
+    /// Shared lock for env-touching tests (`SLAB_MODELS_DIR`).
+    static MODELS_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// With an empty models dir we should still get the three
+    /// built-in suggestions — `tiny.en`, `base.en`, `small.en` — each
+    /// marked `installed: false`.
+    #[test]
+    fn list_whisper_models_returns_builtins_when_dir_empty() {
+        let _g = MODELS_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!(
+            "slab-models-empty-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).expect("mkdir tmp models dir");
+
+        let prev = std::env::var("SLAB_MODELS_DIR").ok();
+        std::env::set_var("SLAB_MODELS_DIR", &tmp);
+
+        let models = list_whisper_models();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"tiny.en"));
+        assert!(ids.contains(&"base.en"));
+        assert!(ids.contains(&"small.en"));
+        // None installed — directory is empty.
+        for m in &models {
+            assert!(!m.installed, "{} should not be installed", m.id);
+            assert!(m.path.is_none());
+        }
+
+        match prev {
+            Some(v) => std::env::set_var("SLAB_MODELS_DIR", v),
+            None => std::env::remove_var("SLAB_MODELS_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A `.bin` on disk should appear as installed, with its absolute
+    /// path. We touch `ggml-base.en.bin` and expect the matching
+    /// built-in `base.en` slot to be marked installed.
+    #[test]
+    fn list_whisper_models_picks_up_on_disk_files() {
+        let _g = MODELS_DIR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!(
+            "slab-models-ondisk-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).expect("mkdir tmp models dir");
+        // Drop a fake "base.en" + a non-builtin "medium.en" + a
+        // non-bin file that should be ignored.
+        std::fs::write(tmp.join("ggml-base.en.bin"), b"fake").unwrap();
+        std::fs::write(tmp.join("ggml-medium.en.bin"), b"fake").unwrap();
+        std::fs::write(tmp.join("README.md"), b"hi").unwrap();
+
+        let prev = std::env::var("SLAB_MODELS_DIR").ok();
+        std::env::set_var("SLAB_MODELS_DIR", &tmp);
+
+        let models = list_whisper_models();
+        let base = models
+            .iter()
+            .find(|m| m.id == "base.en")
+            .expect("base.en should appear");
+        assert!(base.installed, "base.en should be marked installed");
+        assert!(base.path.is_some(), "base.en should have a path");
+        // tiny.en wasn't on disk → still listed but not installed.
+        let tiny = models.iter().find(|m| m.id == "tiny.en").unwrap();
+        assert!(!tiny.installed);
+        // medium.en wasn't a builtin — comes from disk only.
+        let medium = models
+            .iter()
+            .find(|m| m.id == "medium.en")
+            .expect("medium.en (user-supplied) should be enumerated");
+        assert!(medium.installed);
+        // README.md (non-bin) should not have been picked up.
+        assert!(!models.iter().any(|m| m.id.contains("README")));
+
+        match prev {
+            Some(v) => std::env::set_var("SLAB_MODELS_DIR", v),
+            None => std::env::remove_var("SLAB_MODELS_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `WhisperModelInfo` should round-trip cleanly through JSON and
+    /// omit `path` when it's `None`.
+    #[test]
+    fn whisper_model_info_serialises_round_trip() {
+        let m = WhisperModelInfo {
+            id: "base.en".into(),
+            label: "Base".into(),
+            path: Some("/tmp/ggml-base.en.bin".into()),
+            installed: true,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"id\":\"base.en\""));
+        assert!(json.contains("\"installed\":true"));
+        let back: WhisperModelInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, m);
+
+        let none_path = WhisperModelInfo {
+            id: "tiny.en".into(),
+            label: "Tiny".into(),
+            path: None,
+            installed: false,
+        };
+        let json2 = serde_json::to_string(&none_path).unwrap();
+        assert!(!json2.contains("path"));
     }
 }

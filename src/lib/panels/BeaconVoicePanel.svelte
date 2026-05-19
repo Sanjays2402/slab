@@ -49,6 +49,21 @@
     voice?: string;
     rate_wpm?: number;
     auto_speak_replies?: boolean;
+    // v1.9.2 — STT-side settings.
+    stt_engine?: string;
+    stt_model?: string;
+    stt_language?: string;
+    stt_trigger_word?: string;
+    stt_send_on_trigger?: boolean;
+  };
+
+  // v1.9.2 — whisper.cpp model catalog entry, from
+  // `slab_beacon_voice_stt_list_models`.
+  type WhisperModelInfo = {
+    id: string;
+    label: string;
+    path?: string;
+    installed: boolean;
   };
 
   type BeaconCfg = {
@@ -60,6 +75,14 @@
     voice?: VoiceCfg;
   };
 
+  // The full `~/.slab/config.toml` payload. Backend command
+  // `slab_beacon_config_read` returns `CmdResult<SlabCfg>` — Tauri
+  // serialises it as `{ kind: "ok", value: SlabCfg }`.
+  type SlabCfg = {
+    beacon: BeaconCfg;
+    [k: string]: unknown;
+  };
+
   let caps = $state<Capabilities | null>(null);
   let sttCaps = $state<SttCapabilities | null>(null);
   let engine = $state<string>(""); // "" = nothing chosen yet
@@ -67,6 +90,11 @@
   let voiceId = $state<string>("");
   let rateWpm = $state<number>(175);
   let autoSpeakReplies = $state(false);
+  // v1.9.2 — Listen (STT) settings.
+  let sttModels = $state<WhisperModelInfo[]>([]);
+  let sttModelId = $state<string>(""); // "" = whisper default
+  let sttTriggerWord = $state<string>("");
+  let sttSendOnTrigger = $state(false);
   let testText = $state(
     "Slab Beacon voice test. The quick brown fox jumps over the lazy dog.",
   );
@@ -86,16 +114,35 @@
       } catch {
         sttCaps = null;
       }
-      // Best-effort: load the persisted voice config so the form
-      // pre-fills with whatever the user picked last time.
+      // v1.9.2 — fetch whisper.cpp model catalog. Cheap; tolerate
+      // failure so the dropdown just shows nothing.
       try {
-        const cfg = await invoke<BeaconCfg>("slab_beacon_config_read");
-        if (cfg.voice) {
+        sttModels = await invoke<WhisperModelInfo[]>(
+          "slab_beacon_voice_stt_list_models",
+        );
+      } catch {
+        sttModels = [];
+      }
+      // Best-effort: load the persisted voice config so the form
+      // pre-fills with whatever the user picked last time. Returns
+      // CmdResult-wrapped, so unwrap the `value` (containing the
+      // full SlabConfig with a `.beacon` field) before reading.
+      try {
+        const res = await invoke<CmdResult<SlabCfg>>("slab_beacon_config_read");
+        const cfg: BeaconCfg | undefined =
+          res.kind === "ok" ? res.value.beacon : undefined;
+        if (cfg?.voice) {
           if (cfg.voice.engine) engine = cfg.voice.engine;
           if (cfg.voice.voice) voiceId = cfg.voice.voice;
           if (cfg.voice.rate_wpm) rateWpm = cfg.voice.rate_wpm;
           if (cfg.voice.auto_speak_replies)
             autoSpeakReplies = cfg.voice.auto_speak_replies;
+          // v1.9.2 — STT-side prefs.
+          if (cfg.voice.stt_model) sttModelId = cfg.voice.stt_model;
+          if (cfg.voice.stt_trigger_word)
+            sttTriggerWord = cfg.voice.stt_trigger_word;
+          if (cfg.voice.stt_send_on_trigger)
+            sttSendOnTrigger = cfg.voice.stt_send_on_trigger;
         }
       } catch {
         // No config yet — fall through to platform defaults.
@@ -205,15 +252,34 @@
   async function applySettings() {
     status = { kind: "working", msg: "Saving voice settings…" };
     try {
-      const cfg = await invoke<BeaconCfg>("slab_beacon_config_read");
-      cfg.voice = {
+      const res = await invoke<CmdResult<SlabCfg>>("slab_beacon_config_read");
+      if (res.kind !== "ok") {
+        status = { kind: "err", msg: `Save failed: ${res.message}` };
+        return;
+      }
+      const cfg: SlabCfg = res.value;
+      // Defensive: backend always emits a beacon block, but accept an
+      // older config file shape that might be missing it.
+      cfg.beacon ??= {};
+      cfg.beacon.voice = {
         engine: engine || undefined,
         voice: voiceId || undefined,
         rate_wpm: rateWpm,
         auto_speak_replies: autoSpeakReplies,
+        // v1.9.2 — Listen settings.
+        stt_model: sttModelId || undefined,
+        stt_trigger_word: sttTriggerWord.trim() || undefined,
+        stt_send_on_trigger: sttSendOnTrigger,
       };
-      await invoke<void>("slab_beacon_config_write", { config: cfg });
-      status = { kind: "ok", msg: "Voice settings saved." };
+      const writeRes = await invoke<CmdResult<null>>(
+        "slab_beacon_config_write",
+        { config: cfg },
+      );
+      if (writeRes.kind === "ok") {
+        status = { kind: "ok", msg: "Voice settings saved." };
+      } else {
+        status = { kind: "err", msg: `Save failed: ${writeRes.message}` };
+      }
     } catch (e) {
       status = { kind: "err", msg: `Save failed: ${e}` };
     }
@@ -396,6 +462,52 @@
           <strong>Audio bytes never leave this machine</strong> and the
           WAV file is deleted immediately after transcription.
         </p>
+
+        <!-- v1.9.2 — model picker + voice-to-send trigger. -->
+        <div class="stt-settings">
+          <label class="row">
+            <span class="row-label">Model:</span>
+            <select bind:value={sttModelId}>
+              <option value="">(default — whisper's compiled-in)</option>
+              {#each sttModels as m (m.id)}
+                <option value={m.id}>
+                  {m.label}{m.installed ? "" : " · not installed"}
+                </option>
+              {/each}
+            </select>
+          </label>
+          <p class="row-hint">
+            Drop a <code>ggml-*.bin</code> into
+            <code>~/.slab/models/</code> to add your own.
+          </p>
+
+          <label class="row">
+            <span class="row-label">Send phrase:</span>
+            <input
+              type="text"
+              placeholder="e.g. send it, go ahead"
+              maxlength="40"
+              bind:value={sttTriggerWord}
+            />
+          </label>
+          <label class="row checkbox">
+            <input type="checkbox" bind:checked={sttSendOnTrigger} />
+            Auto-send when the transcript ends with this phrase
+          </label>
+          <p class="row-hint">
+            Case-insensitive, must be at the very end of what you said,
+            tolerates a single trailing punctuation mark.
+          </p>
+
+          <button
+            type="button"
+            class="save-stt"
+            onclick={applySettings}
+            disabled={status.kind === "working"}
+          >
+            Save Listen settings
+          </button>
+        </div>
       {/if}
       <div class="listen-status">
         <div>
@@ -638,6 +750,71 @@
     padding: 1px 5px;
     border-radius: 3px;
     font-size: 11px;
+  }
+  /* v1.9.2 — STT settings cluster inside the Listen fieldset. */
+  .stt-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0 6px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    border-radius: 6px;
+  }
+  .stt-settings .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .stt-settings .row.checkbox {
+    cursor: pointer;
+    user-select: none;
+  }
+  .stt-settings .row-label {
+    min-width: 100px;
+    color: var(--text-muted, #888);
+    font-weight: 500;
+  }
+  .stt-settings select,
+  .stt-settings input[type="text"] {
+    flex: 1;
+    padding: 5px 8px;
+    font-size: 12px;
+    background: var(--input-bg, rgba(255, 255, 255, 0.04));
+    color: var(--text);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    border-radius: 4px;
+  }
+  .stt-settings .row-hint {
+    margin: 0 0 4px 108px;
+    font-size: 11px;
+    color: var(--text-muted, #888);
+    line-height: 1.4;
+  }
+  .stt-settings .row-hint code {
+    font-family:
+      "SF Mono", Menlo, Consolas, monospace;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .stt-settings .save-stt {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 6px 14px;
+    font-size: 12px;
+    background: var(--accent, #4f8cff);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .stt-settings .save-stt:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .status {
     display: flex;

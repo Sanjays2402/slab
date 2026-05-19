@@ -5,13 +5,63 @@
 
 ---
 
-## STATUS: ✦ v1.9.1 "Beacon Voice Mode: Listen" 🎙 **RELEASED** — pipeline idle, awaiting next slice
+## STATUS: ✦ v1.9.2 "Voice Mode: Polish" 🎙 — IN FLIGHT on `feature/v1.9.2-voice-polish` (Tasks 1–5 done, T6 deferred)
 
-**Main HEAD**: `4a84ed4` (fix(beacon/voice): deflake is_speaking_reaps_exited_child on Windows CI) — STATE update commit pending this tick.
-**Latest published release**: **v1.9.1 "Beacon Voice Mode: Listen" 🎙** — https://github.com/Sanjays2402/slab/releases/tag/v1.9.1
-**Prior release**: **v1.9.0 "Voice Mode" 🔊** — https://github.com/Sanjays2402/slab/releases/tag/v1.9.0
+**Main HEAD**: `4a84ed4` (v1.9.1 release commit).
+**Active branch**: `feature/v1.9.2-voice-polish` — pushed to origin (`cb924e6`).
+**Latest published release**: **v1.9.1 "Beacon Voice Mode: Listen" 🎙**.
 
-**No RELEASE_PENDING.** No DONE feature branches. Pipeline is idle — next tick is MODE C (DEVELOP).
+**No RELEASE_PENDING.** Branch not yet DONE — Task 6 (Windows-native cpal recorder cargo-feature scaffold) is the only remaining slice. Next tick → finish T6 OR mark STATUS:DONE + merge if T6 is descoped to v1.9.3.
+
+---
+
+## TICK 2026-05-18 18:38 PT — MODE C v1.9.2 Tasks 4 + 5
+
+Shipped two big tasks in one tick. Branch now 6 commits ahead of base:
+
+- `cb924e6` feat(beacon/voice): Listen settings UI — model picker + send-trigger (T5)
+- `f2f5d09` feat(beacon/voice): whisper.cpp model picker + per-session override (T4)
+- `75a940d` feat(beacon/voice): voice-to-send trigger detector + chat-panel wiring (T3)
+- `62b778e` feat(beacon/voice): cancel-recording affordance (ESC + right-click) (T2)
+- `357e0ca` feat(beacon/voice): extend VoiceConfig + SttSession::cancel() (T1)
+- `1d03257` docs(plan): v1.9.2 Voice Mode Polish
+
+**T4 (backend model picker):**
+- `list_whisper_models()` in `ai/stt.rs` — readdir on `$SLAB_MODELS_DIR` or `~/.slab/models/`, merged with built-ins (tiny.en, base.en, small.en). Stems normalised (`ggml-base.en.bin` → `base.en`).
+- `build_whisper_cmd()` pure argv builder — precedence: explicit arg → `$WHISPER_MODEL` → omit `-m`.
+- `SttSession::start(engine, model: Option<String>)` — per-recording override captured in `InFlight.model`.
+- `slab_beacon_voice_stt_start` IPC gains optional `model` param with precedence: arg → `BeaconConfig.voice.stt_model` → env.
+- New IPC `slab_beacon_voice_stt_list_models` for the Settings dropdown.
+- **+7 tests** (build_whisper_cmd × 4, list_whisper_models × 2, serialization). Mutex-serialised the env-touching ones to avoid `cargo test` parallel races.
+
+**T5 (Settings panel UI):**
+- BeaconVoicePanel "Listen settings" cluster: model dropdown + send-phrase input + auto-send checkbox + scoped Save button.
+- Fixed a pre-existing buggy invoke shape — panel was casting `slab_beacon_config_read` to bare `BeaconCfg` and reading `cfg.voice`, but the real shape is `CmdResult<SlabConfig>` so `cfg.voice` was always `undefined`. Panel never pre-populated from disk before this commit. Now properly unwraps `res.value.beacon` and writes via `cfg.beacon.voice = …`.
+
+**Gates this tick (batched at end):**
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --all-targets -- -D warnings` — clean (one `useless_conversion` fix on `into_iter()`)
+- `cargo test --lib` — **736 passed / 0 failed** (was 711 before v1.9.2; +25 from T1–T4 tests)
+- `pnpm check` — 0 errors, 23 pre-existing warnings
+
+Branch pushed: `https://github.com/Sanjays2402/slab/tree/feature/v1.9.2-voice-polish`.
+
+---
+
+## NEXT TICK PLAYBOOK
+
+**Remaining work on `feature/v1.9.2-voice-polish`:**
+- **T6 — Windows-native recorder via `cpal` cargo feature.** Plan section: `docs/plans/2026-05-18-v1.9.2-voice-polish.md` ~line 1300+. Scope: gate behind `cargo feature = "windows-native-mic"`, fall back to PowerShell on default build. ~3-4 commits expected.
+
+**Then ship as v1.9.2:**
+1. Mark branch DONE → MODE A merge to main with `git merge --no-ff`.
+2. Tag `v1.9.2`, push, let CI run.
+3. MODE B finalize → `gh release create` with 6 platform bundles.
+4. Release notes: `docs/release-notes/v1.9.2.md` (write before tagging).
+
+**Alternative — descope T6 to v1.9.3** if PR-ready faster matters more than feature completeness. v1.9.2 would ship with macOS + Linux native, Windows still using the PowerShell shim (which works fine, just slower spawn). Defensible: v1.9.1 already shipped Windows STT via PowerShell; T6 is a perf-only delta.
+
+**Decision rule**: default to finishing T6 (one more tick of focus); only descope if a future tick is time-budget-constrained.
 
 ---
 

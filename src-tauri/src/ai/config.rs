@@ -140,6 +140,35 @@ pub struct VoiceConfig {
     /// streaming. Off by default — the user toggles this from the panel.
     #[serde(default, skip_serializing_if = "is_false")]
     pub auto_speak_replies: bool,
+
+    // ---- v1.9.2 — Listen (STT) settings ----------------------------
+    // All optional so v1.9.1 configs still deserialise without a
+    // [beacon.voice] migration. Surfaced in BeaconVoicePanel's
+    // "Listen (STT)" fieldset.
+    /// STT engine id (`SttEngine::as_id()`). v1.9.2 still only ships
+    /// `"whisper-cpp"`; field exists so future engines slot in without
+    /// a config-schema bump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_engine: Option<String>,
+    /// whisper.cpp model name OR absolute path to a `.bin` / `.gguf`
+    /// file. When set, takes precedence over `$WHISPER_MODEL`. Bare
+    /// names like `"base.en"` are passed straight to whisper-cli's
+    /// `-m` flag — whisper.cpp looks up `models/base.en.bin` relative
+    /// to its own install root in that case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_model: Option<String>,
+    /// Phrase that, if found at the END of a transcript, triggers
+    /// auto-send. `None` means no auto-send. Case-insensitive match.
+    /// Trailing whitespace + punctuation around the trigger is
+    /// stripped before comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_trigger_word: Option<String>,
+    /// Master switch for the auto-send feature. Even if a trigger
+    /// word is configured, no auto-send happens unless this is true.
+    /// Lets users keep their phrase parked while temporarily disabling
+    /// the behaviour.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stt_send_on_trigger: bool,
 }
 
 impl VoiceConfig {
@@ -151,6 +180,10 @@ impl VoiceConfig {
             && self.voice.is_none()
             && self.rate_wpm.is_none()
             && !self.auto_speak_replies
+            && self.stt_engine.is_none()
+            && self.stt_model.is_none()
+            && self.stt_trigger_word.is_none()
+            && !self.stt_send_on_trigger
     }
 }
 
@@ -634,6 +667,7 @@ mod tests {
                     voice: Some("Samantha".into()),
                     rate_wpm: Some(200),
                     auto_speak_replies: true,
+                    ..Default::default()
                 },
                 ..Default::default()
             },
@@ -660,5 +694,100 @@ mod tests {
         .unwrap();
         let cfg = load_from(&path).unwrap();
         assert!(cfg.beacon.voice.is_empty());
+    }
+
+    // ---- v1.9.2 — Listen (STT) field tests --------------------------
+
+    /// Default `VoiceConfig` must stay `is_empty()` even after adding
+    /// the four STT fields. Guards against accidental serialisation of
+    /// the new defaults to old users' configs.
+    #[test]
+    fn voice_config_stt_fields_default_empty() {
+        let v = VoiceConfig::default();
+        assert!(v.is_empty(), "default VoiceConfig must still be empty");
+        assert_eq!(v.stt_engine, None);
+        assert_eq!(v.stt_model, None);
+        assert_eq!(v.stt_trigger_word, None);
+        assert!(!v.stt_send_on_trigger);
+    }
+
+    /// Each STT field flips `is_empty()` to false in isolation. Mirrors
+    /// `voice_config_is_empty_flips_on_each_field` for the v1.9.0
+    /// fields.
+    #[test]
+    fn voice_config_stt_fields_flip_is_empty() {
+        let v = VoiceConfig {
+            stt_engine: Some("whisper-cpp".into()),
+            ..Default::default()
+        };
+        assert!(!v.is_empty(), "stt_engine should flip is_empty");
+
+        let v = VoiceConfig {
+            stt_model: Some("base.en".into()),
+            ..Default::default()
+        };
+        assert!(!v.is_empty(), "stt_model should flip is_empty");
+
+        let v = VoiceConfig {
+            stt_trigger_word: Some("send it".into()),
+            ..Default::default()
+        };
+        assert!(!v.is_empty(), "stt_trigger_word should flip is_empty");
+
+        let v = VoiceConfig {
+            stt_send_on_trigger: true,
+            ..Default::default()
+        };
+        assert!(!v.is_empty(), "stt_send_on_trigger should flip is_empty");
+    }
+
+    /// Populated STT fields round-trip through TOML alongside the
+    /// existing TTS fields. Guards against typo'd serde renames.
+    #[test]
+    fn voice_config_stt_fields_roundtrip_toml() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let cfg = SlabConfig {
+            beacon: BeaconConfig {
+                voice: VoiceConfig {
+                    engine: Some("say".into()),
+                    stt_engine: Some("whisper-cpp".into()),
+                    stt_model: Some("base.en".into()),
+                    stt_trigger_word: Some("go".into()),
+                    stt_send_on_trigger: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        save_to(&path, &cfg).unwrap();
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(
+            loaded.beacon.voice.stt_engine.as_deref(),
+            Some("whisper-cpp")
+        );
+        assert_eq!(loaded.beacon.voice.stt_model.as_deref(), Some("base.en"));
+        assert_eq!(loaded.beacon.voice.stt_trigger_word.as_deref(), Some("go"));
+        assert!(loaded.beacon.voice.stt_send_on_trigger);
+    }
+
+    /// v1.9.1 configs (engine/voice/rate but no stt_* fields) must
+    /// still deserialise cleanly. Guards the additive-field invariant.
+    #[test]
+    fn legacy_v191_voice_config_without_stt_fields_still_loads() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[beacon.voice]\nengine = \"say\"\nvoice = \"Samantha\"\nrate_wpm = 200\n",
+        )
+        .unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert_eq!(cfg.beacon.voice.engine.as_deref(), Some("say"));
+        assert_eq!(cfg.beacon.voice.stt_engine, None);
+        assert_eq!(cfg.beacon.voice.stt_model, None);
+        assert_eq!(cfg.beacon.voice.stt_trigger_word, None);
+        assert!(!cfg.beacon.voice.stt_send_on_trigger);
     }
 }
