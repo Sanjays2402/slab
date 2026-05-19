@@ -16,6 +16,7 @@
 
 use crate::plugins::manifest::{Manifest, ManifestError};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,18 @@ pub struct Plugin {
     pub enabled: bool,
     /// Last parse error, if any. `None` for healthy plugins.
     pub error: Option<String>,
+    /// v2.0.0 Workshop: verified bytes of the plugin's JS entry file,
+    /// when the manifest declared a `[runtime]` section AND the
+    /// on-disk SHA-256 matched the pinned hash. `None` for pure-
+    /// declarative plugins and for plugins whose runtime check failed
+    /// (in the failure case `error` carries the reason).
+    ///
+    /// Skipped from serde so the in-memory bytes (possibly large) don't
+    /// leak into IPC payloads. The frontend has no business reading the
+    /// raw script anyway — it only needs to know whether the plugin
+    /// loaded.
+    #[serde(skip)]
+    pub script_bytes: Option<Vec<u8>>,
 }
 
 impl Plugin {
@@ -165,12 +178,39 @@ fn load_one(dir: &Path, manifest_path: &Path, enabled_state: &EnabledState) -> P
             Ok(m) => {
                 let id = m.id.clone();
                 let enabled = enabled_state.get(&id).unwrap_or(true);
-                Plugin {
-                    dir: dir.to_path_buf(),
-                    id,
-                    manifest: Some(m),
-                    enabled,
-                    error: None,
+                // v2.0.0 Workshop: if manifest declares a [runtime]
+                // section, read+hash the JS entry file and verify it
+                // matches the pinned hash. Hash mismatch is a hard
+                // failure (treated like a parse error).
+                let script_outcome = match &m.runtime {
+                    Some(rt) => load_and_verify_script(dir, rt),
+                    None => ScriptOutcome::None,
+                };
+                match script_outcome {
+                    ScriptOutcome::None => Plugin {
+                        dir: dir.to_path_buf(),
+                        id,
+                        manifest: Some(m),
+                        enabled,
+                        error: None,
+                        script_bytes: None,
+                    },
+                    ScriptOutcome::Ok(bytes) => Plugin {
+                        dir: dir.to_path_buf(),
+                        id,
+                        manifest: Some(m),
+                        enabled,
+                        error: None,
+                        script_bytes: Some(bytes),
+                    },
+                    ScriptOutcome::Err(reason) => Plugin {
+                        dir: dir.to_path_buf(),
+                        id,
+                        manifest: None,
+                        enabled: false,
+                        error: Some(reason),
+                        script_bytes: None,
+                    },
                 }
             }
             Err(e) => Plugin {
@@ -179,6 +219,7 @@ fn load_one(dir: &Path, manifest_path: &Path, enabled_state: &EnabledState) -> P
                 manifest: None,
                 enabled: false,
                 error: Some(format_manifest_error(&e)),
+                script_bytes: None,
             },
         },
         Err(io) => Plugin {
@@ -187,8 +228,59 @@ fn load_one(dir: &Path, manifest_path: &Path, enabled_state: &EnabledState) -> P
             manifest: None,
             enabled: false,
             error: Some(format!("could not read plugin.toml: {io}")),
+            script_bytes: None,
         },
     }
+}
+
+/// Outcome of attempting to load the JS payload for a runtime-using plugin.
+enum ScriptOutcome {
+    /// No `[runtime]` section in the manifest — pure-declarative plugin.
+    None,
+    /// Script file existed and matched the pinned hash. Bytes attached.
+    Ok(Vec<u8>),
+    /// Script file missing, unreadable, or hash mismatch. Reason is
+    /// human-readable for the Cabinet UI.
+    Err(String),
+}
+
+/// Read the plugin's JS entry file, compute SHA-256, compare to the
+/// manifest-pinned hash. Returns the verified bytes on match, an error
+/// string otherwise. Pure: no panics, no `unwrap` on user input.
+fn load_and_verify_script(
+    dir: &Path,
+    rt: &crate::plugins::manifest::RuntimeManifest,
+) -> ScriptOutcome {
+    let script_path = dir.join(&rt.entry);
+    let bytes = match fs::read(&script_path) {
+        Ok(b) => b,
+        Err(e) => {
+            return ScriptOutcome::Err(format!(
+                "runtime.entry {:?} could not be read: {e}",
+                rt.entry
+            ));
+        }
+    };
+    let actual = hex_sha256(&bytes);
+    // Manifest validation already enforced lowercase + 64-char hex,
+    // so a direct string compare is correct.
+    if actual != rt.sha256 {
+        return ScriptOutcome::Err(format!(
+            "runtime.sha256 mismatch for {:?}: manifest says {}, on-disk is {}",
+            rt.entry, rt.sha256, actual
+        ));
+    }
+    ScriptOutcome::Ok(bytes)
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for b in digest.iter() {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
 }
 
 fn format_manifest_error(e: &ManifestError) -> String {
@@ -249,6 +341,18 @@ mod tests {
         let dir = root.join(name);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("plugin.toml"), toml).unwrap();
+    }
+
+    /// Helper for v2.0.0 runtime tests: write a plugin dir containing
+    /// both `plugin.toml` and `script.js`. Returns the actual SHA-256
+    /// of the script so tests can decide whether to pin it correctly
+    /// or wrongly.
+    fn write_runtime_plugin(root: &Path, name: &str, script_body: &str) -> (PathBuf, String) {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("script.js"), script_body).unwrap();
+        let actual = hex_sha256(script_body.as_bytes());
+        (dir, actual)
     }
 
     #[test]
@@ -458,5 +562,172 @@ mod tests {
         let snap = reg.enabled_state();
         assert_eq!(snap.get("com.example.a"), Some(true));
         assert_eq!(snap.get("com.example.b"), Some(false));
+    }
+
+    // -------- v2.0.0 Workshop runtime tests --------
+
+    /// Backward-compatibility guard: a declarative-only plugin must
+    /// load with `script_bytes = None`. Loader must not read or hash
+    /// anything in this case.
+    #[test]
+    fn declarative_plugin_loads_with_no_script_bytes() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin(
+            tmp.path(),
+            "decl",
+            r#"
+                id = "com.example.decl"
+                name = "Decl"
+                version = "0.1.0"
+                slab_compat = ">=1.3.0"
+            "#,
+        );
+        let reg = PluginRegistry::new();
+        reg.discover(tmp.path(), &EnabledState::default());
+        let plugin = reg.get("com.example.decl").unwrap();
+        assert!(plugin.script_bytes.is_none());
+        assert!(
+            plugin.is_active(),
+            "declarative plugin must still be active"
+        );
+    }
+
+    #[test]
+    fn script_load_verifies_sha256_match() {
+        let tmp = TempDir::new().unwrap();
+        let script_body = "console.log('hi from workshop');";
+        let (dir, sha) = write_runtime_plugin(tmp.path(), "ok", script_body);
+        let toml = format!(
+            r#"
+                id = "com.example.ok"
+                name = "Ok"
+                version = "0.2.0"
+                slab_compat = ">=2.0.0"
+
+                [runtime]
+                entry = "script.js"
+                sha256 = "{sha}"
+            "#
+        );
+        fs::write(dir.join("plugin.toml"), toml).unwrap();
+
+        let reg = PluginRegistry::new();
+        reg.discover(tmp.path(), &EnabledState::default());
+        let plugin = reg.get("com.example.ok").unwrap();
+        assert!(plugin.is_active());
+        assert_eq!(plugin.error, None);
+        assert_eq!(
+            plugin.script_bytes.as_deref(),
+            Some(script_body.as_bytes()),
+            "script bytes must be attached when hash matches"
+        );
+    }
+
+    #[test]
+    fn script_load_rejects_sha256_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let (dir, _real_sha) = write_runtime_plugin(tmp.path(), "bad", "let answer = 42;");
+        // Pin a hash that does NOT match the real one.
+        let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
+        let toml = format!(
+            r#"
+                id = "com.example.bad"
+                name = "Bad"
+                version = "0.2.0"
+                slab_compat = ">=2.0.0"
+
+                [runtime]
+                entry = "script.js"
+                sha256 = "{wrong}"
+            "#
+        );
+        fs::write(dir.join("plugin.toml"), toml).unwrap();
+
+        let reg = PluginRegistry::new();
+        reg.discover(tmp.path(), &EnabledState::default());
+        let plugin = reg.get("com.example.bad").unwrap();
+        assert!(
+            !plugin.is_active(),
+            "mismatched-hash plugin must be inactive"
+        );
+        assert!(plugin.manifest.is_none());
+        assert!(plugin.script_bytes.is_none());
+        let err = plugin.error.as_deref().unwrap_or("");
+        assert!(err.contains("sha256 mismatch"), "got: {err}");
+        assert!(
+            err.contains(wrong),
+            "error should name pinned hash, got: {err}"
+        );
+    }
+
+    #[test]
+    fn script_load_handles_missing_script_file() {
+        let tmp = TempDir::new().unwrap();
+        // Plugin dir exists but no script.js.
+        let dir = tmp.path().join("missing");
+        fs::create_dir_all(&dir).unwrap();
+        let toml = r#"
+            id = "com.example.missing"
+            name = "Missing"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        fs::write(dir.join("plugin.toml"), toml).unwrap();
+
+        let reg = PluginRegistry::new();
+        reg.discover(tmp.path(), &EnabledState::default());
+        let plugin = reg.get("com.example.missing").unwrap();
+        assert!(!plugin.is_active());
+        let err = plugin.error.as_deref().unwrap_or("");
+        assert!(err.contains("could not be read"), "got: {err}");
+    }
+
+    #[test]
+    fn script_load_succeeds_with_empty_script() {
+        // Edge case: empty file. SHA-256 of empty is well-known:
+        // e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let tmp = TempDir::new().unwrap();
+        let (dir, sha) = write_runtime_plugin(tmp.path(), "empty", "");
+        assert_eq!(
+            sha,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        let toml = format!(
+            r#"
+                id = "com.example.empty"
+                name = "Empty"
+                version = "0.2.0"
+                slab_compat = ">=2.0.0"
+
+                [runtime]
+                entry = "script.js"
+                sha256 = "{sha}"
+            "#
+        );
+        fs::write(dir.join("plugin.toml"), toml).unwrap();
+
+        let reg = PluginRegistry::new();
+        reg.discover(tmp.path(), &EnabledState::default());
+        let plugin = reg.get("com.example.empty").unwrap();
+        assert!(plugin.is_active());
+        assert_eq!(plugin.script_bytes.as_deref(), Some(&[][..]));
+    }
+
+    #[test]
+    fn hex_sha256_matches_known_vector() {
+        // "" -> well-known empty digest
+        assert_eq!(
+            hex_sha256(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        // "abc" -> NIST FIPS 180-2 test vector
+        assert_eq!(
+            hex_sha256(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }
