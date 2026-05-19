@@ -173,23 +173,26 @@ Big vertical slice: typed manifest surface + standalone modal component + parent
 ### Step 1 — MODE C continue v2.0.0 "Workshop" Slice 7 (fetch shim)
 
 **Slice 7 (network capability + `slab.fetch` shim) — NEXT:**
-- Needs its own sub-plan document (the network path threads through
-  `granted.net` + `net_allow_hosts` enforcement inside the actor
-  thread, plus `tokio::spawn` to keep the JS event loop unblocked).
-- Sketch of pieces:
+- Detailed sub-plan landed: `docs/plans/2026-05-18-v2.0.0-workshop-slice-7.md` (1079 lines, 8 sub-tasks).
+- TL;DR: 3 commit batches — backend (7.1-7.5), tests (7.6), polish (7.7-7.8). ~990 LOC. Mockito for HTTP fixtures.
+- Implementer hand-off: load `subagent-driven-development` skill, one `delegate_task` per sub-task with two-stage review.
+- Sketch (now documented in the sub-plan):
   - `slab.fetch(url, init)` lands on the actor thread → enqueues a
-    `RuntimeCmd::Fetch { url, init, resolve_id }`.
-  - Actor extends `RuntimeCmd::Fetch` handling: spawns a tokio task
-    against the host's existing `reqwest::Client`, awaits the result,
-    then dispatches back into the rquickjs context to resolve the
-    Promise via a stored `Persistent<Function>`.
+    `RuntimeCmd::Fetch { request, resolve, reject }`.
+  - Actor extends `RuntimeCmd::Fetch` handling: blocks on
+    `tokio::runtime::Handle::current().block_on(do_fetch(req))`
+    against a process-shared `reqwest::Client`, then dispatches back
+    into the rquickjs context to resolve the Promise via the stored
+    `Persistent<Function>`.
   - Capability enforcement: `granted.net == None` → reject pre-flight.
-    `net_allow_hosts` non-empty → require the URL's host to match.
-  - 12+ contract tests: deny-all rejection, host allow-list,
-    abort/timeout, large body cap, JSON parsing, header forwarding,
-    302 redirect chain, etc.
-- ETA: 1-2 ticks. First tick: write the slice 7 sub-plan + scaffold
-  `RuntimeCmd::Fetch` + the Promise dispatcher.
+    `net_allow_hosts` non-empty → require the URL's host to match
+    (enforced via existing `CapabilityRequest::NetFetch { host }`).
+  - 14 contract tests: deny-all, host allow-list, GET, POST JSON,
+    headers, lowercased response headers, 302 redirect chain,
+    timeoutMs, 16 MiB body cap, 4xx-resolves-with-ok-false, file://
+    rejection, malformed URL, NetCap::Any wildcard, concurrent fetches.
+- ETA: 1-2 ticks. Next tick: execute Tasks 7.1 → 7.5 (backend commit
+  batch), confirm `cargo check --lib` clean, then move to 7.6 tests.
 
 ### Step 2 — Watch for sibling subagent activity
 
