@@ -5,13 +5,47 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 1-5 + 6.1 SHIPPED, Slice 6 plan written
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 1-5 + 6.1-6.6 SHIPPED, document lifecycle LIVE 🔥
 
 **Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
 **Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `5941add`, 13 commits ahead of `main`.
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `7b73329`, 18 commits ahead of `main`.
 **RELEASE_PENDING**: *(none)*
+
+---
+
+## TICK 2026-05-18 22:23 PT — MODE C v2.0.0 Slice 6.5 (real actor runtime) + 6.6 finalize
+
+Two commits, BIG vertical slice: `PluginRuntimeRegistry` finalized + Tauri-managed, AND the real Slice 6.5 actor body that turns `slab.document.{onOpen,onClose,getActive}` from "throws when called outside enable context" into a fully live, event-driven surface. `Persistent<Function>` callbacks now actually fire on `DocumentOpened`/`DocumentClosed` commands.
+
+**Commits this tick:**
+- `db3897b` feat(plugins): PluginRuntimeRegistry — process-global live actor handles (v2.0.0 Slice 6.6)
+- `7b73329` feat(plugins/runtime): long-lived actor evaluates plugin + dispatches doc events (v2.0.0 Slice 6.5)
+
+**Slice 6.5 (`7b73329`) — the meaty one (732 insertions, 99 deletions in 2 files):**
+- Replaced placeholder `run_actor` with full Runtime+Context worker. `slab.document.*` is *live*.
+- Init handshake via `sync_channel(1)`: spawn blocks until eval completes; syntax/throw/time/memory errors propagate to the host the same way `Runtime::enable_plugin` already does.
+- Event loop dispatches each `Persistent<Function>` callback inside fresh `ctx.with` with a fresh interrupt deadline per batch.
+- `active_doc` set BEFORE OnOpen dispatch, cleared BEFORE OnClose dispatch — handlers observe the doc that just opened / "no doc" intuitively.
+- **Drop order strictly enforced** on both happy and error paths: `lifecycle.clear()` → `drop(ctx)` → `drop(rt)`. No rquickjs aborts.
+- `ActorSharedState` only carries Send-safe state (registrations + logs). `SharedLifecycle`/`SharedActiveDoc` are worker-thread-local because `Persistent` wraps `*mut JSRuntime` (`!Send`).
+- Per-callback try/catch in `dispatch_lifecycle` — one buggy handler doesn't poison the batch. Logged via `eprintln!`.
+- Snapshot `Vec<Persistent>` under the lock then call — avoids reentrancy deadlock when a callback re-registers via `slab.document.on*`.
+- `WorkerHandle::shared_state()` exposes `Arc<ActorSharedState>` for Slice 6.7 commands.
+- 9 new contract tests cover: onOpen/onClose dispatch + payload, registration order, error isolation, getActive() inside handlers (both axes), Persistent shutdown safety, syntax/throw propagation, top-level log capture.
+
+**Slice 6.6 (`db3897b`) — registry finalize:**
+- `PluginRuntimeRegistry` `Mutex<HashMap<String, LiveEntry>>` with `insert` (replaces and Drop-shuts-down old handle), `remove`, `broadcast` (best-effort fan-out), `live_plugin_ids`, `len`/`is_empty`. 8 tests.
+- `.manage(plugins::PluginRuntimeRegistry::default())` wired in `lib.rs::run()`.
+
+**Quality gates on `feature/v2.0.0-workshop` HEAD `7b73329`:**
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --all-targets -- -D warnings` — clean (added one targeted `#[allow]` on `lifecycle::new_shared` with doc explaining intra-thread refcounting)
+- `cargo test --lib` — **843 passed / 0 failed** (834 before 6.5; +9 actor contract tests)
+- `pnpm check` — 0 errors, 35 pre-existing warnings (unchanged)
+
+**Push:** in progress (see below).
 
 ---
 
@@ -87,18 +121,17 @@ Big vertical slice: typed manifest surface + standalone modal component + parent
 
 ### Step 1 — MODE C continue v2.0.0 "Workshop"
 
-**Slice 6.2 (PluginActor thread spawn) — NEXT:**
-- Add `crossbeam-channel = "0.5"` to `src-tauri/Cargo.toml`.
-- Add `PluginActor::spawn(plugin_id, declared, granted, source) -> Result<WorkerHandle, RuntimeError>`. For 6.2 the worker body is a placeholder that just drains commands and exits on `Shutdown` — real impl lands in 6.5.
-- 2 contract tests: spawn + shutdown clean; spawn with bad source surfaces or swallows quietly (either is fine).
-- Follow `docs/plans/2026-05-18-v2.0.0-workshop-slice-6.md` Task 6.2 verbatim.
+**Slice 6.7 (Tauri commands + enable/disable wiring) — NEXT:**
+- Add `commands::slab_plugins_document_opened(path: String, registry: State<PluginRuntimeRegistry>) -> Result<(), String>` and the symmetric `_closed`. Each builds a `DocumentEvent::from_path(path)` and calls `registry.broadcast(RuntimeCmd::DocumentOpened/Closed(ev))`.
+- Register both in `lib.rs`'s `invoke_handler!` list.
+- Hook PluginRegistry's enable path so `set_enabled(id, true)` spawns into `PluginRuntimeRegistry` (via `PluginActor::spawn(..)`) and `set_enabled(id, false)` removes + drops the handle.
+- 4-5 integration tests: command broadcasts to N live actors; disabled plugins receive nothing; enable+disable cycle leaves registry empty; concurrent broadcasts safe.
 
-**Slice 6.3 (`slab.document.on{Open,Close}` JS bindings):**
-- New `runtime/lifecycle.rs` (`LifecycleRegistry` + `SharedLifecycle` type).
-- Extend `HostBindings { lifecycle: Option<SharedLifecycle> }` — `None` for ephemeral `execute_script`, `Some` for actor paths.
-- Replace the `make_unavailable("Slice 4b")` stubs at `slab.document.onOpen/onClose` with real handlers that take a callback `Function` and stash it as `Persistent::save(&ctx, f)`.
+**Slice 6.8 (Frontend hooks):**
+- PDF viewer `+page.svelte` open/close lifecycle → `invoke('slab_plugins_document_opened', { path })` and the close counterpart.
+- Light: ~30 LOC svelte.
 
-**Slice 6.4+ — see plan doc** for the full arc through frontend wiring.
+**Then move to Slice 7 (fetch shim) per `docs/plans/2026-05-18-v2.0.0-workshop.md`.**
 
 ### Step 2 — Watch for sibling subagent activity
 
@@ -140,7 +173,7 @@ Sibling subagents can touch `/tmp/msg.txt`. Always overwrite right before commit
 - ✅ Slice 3 (capability grants backend + enforce()) — shipped 2026-05-18
 - ✅ Slice 4 (`slab` global + lifecycle + Tauri grant cmds + TS bindings) — shipped 2026-05-18
 - ✅ Slice 5 (Cabinet consent modal + enable integration) — shipped 2026-05-18
-- 🟡 Slice 6 (document lifecycle events) — **plan written, 6.1 types shipped**, 6.2-6.10 pending
+- 🟡 Slice 6 (document lifecycle events) — **6.1-6.6 shipped (live `slab.document.*`)**, 6.7+6.8 (Tauri commands + frontend) pending
 - ⏭ Slices 7-12 — see plan doc
 
 Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch 🟡 (6.1/10), 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
