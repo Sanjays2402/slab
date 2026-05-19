@@ -2033,6 +2033,81 @@ fn slab_plugins_validate_ai_provider(
         .map_err(|e| e.to_string())
 }
 
+// ---------- Workshop (v2.0.0) — plugin grant Tauri commands ----------
+
+/// Fetch the user's grant decision for `plugin_id`. Returns the
+/// persisted [`PluginGrants`] when one exists, otherwise the empty
+/// "deny-all" default — callers treat default + `has_decision == false`
+/// as "show the consent prompt".
+///
+/// We bundle the explicit-decision flag alongside the grants so the
+/// frontend can distinguish "user pressed Deny" from "first run, never
+/// asked". Both serialise as the same default `PluginGrants`, so we
+/// need a discriminator.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PluginGrantsResponse {
+    /// Has the user ever made an explicit grant decision for this
+    /// plugin? `false` ⇒ prompt the user.
+    has_decision: bool,
+    /// Current grants (default = deny-all when `has_decision` is false).
+    grants: plugins::PluginGrants,
+}
+
+/// Read the grant store from `~/.slab/plugin-grants.toml` and return
+/// the entry for `plugin_id`. Missing file or missing plugin both
+/// surface as `has_decision = false` with default grants.
+///
+/// Cabinet wires this to the consent modal: on first plugin enable the
+/// modal calls `plugin_grants_get` and only shows up when
+/// `has_decision == false`. Re-running an already-decided plugin skips
+/// the modal.
+#[tauri::command]
+fn plugin_grants_get(plugin_id: String) -> Result<PluginGrantsResponse, String> {
+    let path = plugins::default_grants_path().ok_or_else(|| {
+        "HOME env var not set; cannot locate ~/.slab/plugin-grants.toml".to_string()
+    })?;
+    let store = plugins::read_grants(&path);
+    Ok(PluginGrantsResponse {
+        has_decision: store.has_decision(&plugin_id),
+        grants: store.get(&plugin_id),
+    })
+}
+
+/// Persist a user grant decision for `plugin_id`. Overwrites any
+/// previous decision. Returns `()` on success; serialise/IO errors
+/// bubble up as a string so the Cabinet modal can surface them.
+///
+/// We re-read the on-disk store, mutate the one entry, then write the
+/// whole file back. The store is small (one row per plugin) so the
+/// extra read is cheap compared to keeping a long-lived in-memory copy
+/// behind a Mutex.
+#[tauri::command]
+fn plugin_grants_set(plugin_id: String, grants: plugins::PluginGrants) -> Result<(), String> {
+    let path = plugins::default_grants_path().ok_or_else(|| {
+        "HOME env var not set; cannot locate ~/.slab/plugin-grants.toml".to_string()
+    })?;
+    let mut store = plugins::read_grants(&path);
+    store.set(plugin_id, grants);
+    plugins::write_grants(&path, &store)
+        .map_err(|e| format!("could not persist plugin grants: {e}"))
+}
+
+/// Forget a plugin's grant decision. Used by the uninstall path and by
+/// the "Reset permissions" button in the plugin detail panel. After
+/// reset, the next enable triggers the consent modal again.
+///
+/// No-op when the plugin has no entry (still returns Ok).
+#[tauri::command]
+fn plugin_grants_reset(plugin_id: String) -> Result<(), String> {
+    let path = plugins::default_grants_path().ok_or_else(|| {
+        "HOME env var not set; cannot locate ~/.slab/plugin-grants.toml".to_string()
+    })?;
+    let mut store = plugins::read_grants(&path);
+    store.remove(&plugin_id);
+    plugins::write_grants(&path, &store)
+        .map_err(|e| format!("could not persist plugin grants: {e}"))
+}
+
 // ---------- Bench (v1.4.0) — marketplace Tauri commands ----------
 
 /// Outcome shape for [`slab_marketplace_index`]. Mirrors the Rust
@@ -2537,6 +2612,9 @@ pub fn run() {
             slab_plugins_load_locale_bundle,
             slab_plugins_run_command,
             slab_plugins_validate_ai_provider,
+            plugin_grants_get,
+            plugin_grants_set,
+            plugin_grants_reset,
             slab_marketplace_index,
             slab_marketplace_install,
             slab_marketplace_uninstall,
