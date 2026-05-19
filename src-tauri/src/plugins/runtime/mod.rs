@@ -680,28 +680,28 @@ mod tests {
         }
     }
 
+    /// Slice 8.7: `slab.storage.*` is LIVE on the actor-bound path
+    /// and returns a rejected Promise (not a sync throw) on the
+    /// ephemeral `enable_plugin` path because no SQLite handle is
+    /// opened there. The eval itself must succeed — only `await`s
+    /// or `.catch()`es observe the rejection — so this test simply
+    /// pins the no-throw contract.
+    ///
+    /// History: pre-Slice-8 this test asserted a `Slice 8` throw
+    /// from `make_unavailable`; the throw became a Promise.reject
+    /// when the surface went live, so the assertion flipped to
+    /// `.expect("must succeed")`. See Slice 8.6 for the actor-side
+    /// resolution tests that exercise the happy path end to end.
     #[test]
-    fn enable_plugin_reserved_surfaces_throw_with_slice_label() {
-        // `slab.storage.*` is reserved for Slice 8 — calling it
-        // should throw a recognizable message so plugin authors can
-        // probe. (`slab.fetch` was the placeholder used here pre-
-        // Slice 7; it's now live so we use `storage.get` instead.)
+    fn enable_plugin_storage_does_not_throw_outside_actor_runtime() {
         let rt = Runtime::new().expect("runtime");
-        let err = rt
-            .enable_plugin(
-                "p.future",
-                &caps_full(),
-                &grants_full(),
-                "slab.storage.get('k');",
-            )
-            .expect_err("must throw");
-        match err {
-            RuntimeError::Thrown(m) => {
-                assert!(m.contains("slab.storage.get"), "got {m:?}");
-                assert!(m.contains("Slice 8"), "got {m:?}");
-            }
-            other => panic!("expected Thrown, got {other:?}"),
-        }
+        rt.enable_plugin(
+            "p.storage.ephemeral",
+            &caps_full(),
+            &grants_full(),
+            "slab.storage.get('k');",
+        )
+        .expect("must succeed (rejection is async, not a throw)");
     }
 
     /// Slice 7: in the ephemeral `enable_plugin` path there's no

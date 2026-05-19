@@ -21,15 +21,20 @@
 //!    matches what the Cabinet UI will surface to the user. Plugin
 //!    scripts can `try { } catch (e)` to handle this gracefully.
 //!
-//! ## What this slice does NOT cover
+//! ## Surface status
 //!
-//! - `slab.storage.{get,set,remove}` — Slice 8.
-//! - `slab.fetch` — Slice 7.
+//! - `slab.beacon.*` — live since Slice 4.
+//! - `slab.ui.*` — live since Slice 4.
+//! - `slab.fetch` — live since Slice 7.
+//! - `slab.document.*` — live since Slice 6 (see below).
+//! - `slab.storage.*` — live since Slice 8 (this commit). Returns
+//!   `Promise<T>` even though the underlying ops are sync, so the
+//!   public JS contract stays stable if we ever swap the backing
+//!   store for an async one.
 //!
-//! Each unimplemented section throws a `Slice <N>` error message so
-//! plugin authors get a clear signal that the surface is reserved
-//! but not yet live, rather than the surface silently returning
-//! `undefined`.
+//! Any future surfaces that are reserved-but-not-live should use
+//! [`make_unavailable`] so plugin authors get a clear "ships in
+//! Slice <N>" error rather than `undefined`.
 //!
 //! ## `slab.document.*` (live since Slice 6)
 //!
@@ -45,8 +50,8 @@
 use std::sync::{Arc, Mutex};
 
 use rquickjs::{
-    convert::Coerced, function::Opt, function::Rest, Ctx, Exception, Function, Object, Persistent,
-    Promise, Result, Value,
+    convert::Coerced, function::Opt, function::Rest, Ctx, Exception, Function, IntoJs, Object,
+    Persistent, Promise, Result, Value,
 };
 
 use super::actor::{FetchRequest, RuntimeCmd};
@@ -97,11 +102,6 @@ pub(super) struct HostBindings {
     /// global open errored; the JS binding (Slice 8.5) returns an
     /// already-rejected Promise in that case so plugins can `.catch`
     /// gracefully without losing the actor.
-    ///
-    /// `dead_code` allow here is a one-commit bridge: Slice 8.4 ships
-    /// the plumbing, Slice 8.5 (same tick) ships the readers in
-    /// `make_storage_*`. Will be dropped in the very next commit.
-    #[allow(dead_code)]
     pub storage: Option<SharedPluginStorage>,
 }
 
@@ -156,14 +156,22 @@ pub(super) fn install_slab(ctx: &Ctx<'_>, bindings: HostBindings) -> Result<()> 
     )?;
     slab.set("document", document)?;
 
-    // --- slab.storage.* (Slice 8 — reserved-but-not-live) ------------------
+    // --- slab.storage.* (Slice 8 — live!) ----------------------------------
+    // Per-plugin sqlite-backed KV store. Each binding takes a clone of
+    // the `Arc<Mutex<PluginStorage>>` from `bindings.storage`; per-plugin
+    // scoping happens inside every helper because every call pins
+    // `bindings.plugin_id` into the underlying SQL WHERE clauses.
+    //
+    // There is NO manifest capability gate on this surface — see the
+    // module doc on `plugins/storage.rs` for the "scoping is the
+    // security boundary" rationale.
     let storage = Object::new(ctx.clone())?;
-    storage.set("get", make_unavailable(ctx, "slab.storage.get", "Slice 8")?)?;
-    storage.set("set", make_unavailable(ctx, "slab.storage.set", "Slice 8")?)?;
-    storage.set(
-        "remove",
-        make_unavailable(ctx, "slab.storage.remove", "Slice 8")?,
-    )?;
+    storage.set("get", make_storage_get(ctx, bindings.clone())?)?;
+    storage.set("set", make_storage_set(ctx, bindings.clone())?)?;
+    storage.set("remove", make_storage_remove(ctx, bindings.clone())?)?;
+    storage.set("list", make_storage_list(ctx, bindings.clone())?)?;
+    storage.set("clear", make_storage_clear(ctx, bindings.clone())?)?;
+    storage.set("usage", make_storage_usage(ctx, bindings.clone())?)?;
     slab.set("storage", storage)?;
 
     // --- slab.fetch (Slice 7) ----------------------------------------------
@@ -182,6 +190,12 @@ pub(super) fn install_slab(ctx: &Ctx<'_>, bindings: HostBindings) -> Result<()> 
 /// available in this Slab version (lands in <slice>)")` when called.
 /// Used for surfaces that are part of the v2.0.0 plan but ship in a
 /// later slice.
+///
+/// Currently unused — every reserved surface from the original plan
+/// has shipped — but kept around because future slices add new
+/// reserved-but-not-live surfaces (the module doc references this
+/// helper as the canonical way to gate them).
+#[allow(dead_code)]
 fn make_unavailable<'js>(
     ctx: &Ctx<'js>,
     surface_name: &'static str,
@@ -663,6 +677,214 @@ fn parse_body<'js>(init: &Object<'js>) -> Result<Option<Vec<u8>>> {
     // back as `Content-Length: 0` — surprising but not dangerous.
     // TODO(slice-7.x): wire `rquickjs::ArrayBuffer` and `TypedArray`.
     Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// slab.storage.* — per-plugin sqlite-backed KV (Slice 8.5)
+// ---------------------------------------------------------------------------
+//
+// Every binding follows the same five-step shape:
+//
+//   1. If `b.storage` is `None` we're on the ephemeral path
+//      (enable_plugin / execute_script) where no SQLite handle was
+//      opened. Return an already-rejected Promise so plugins can
+//      `.catch()` and degrade gracefully instead of `await`ing
+//      forever.
+//   2. Lock the `Arc<Mutex<PluginStorage>>`. A poisoned mutex
+//      shouldn't be recoverable from inside a plugin so we reject
+//      with a stable message; the host should restart the actor.
+//   3. Call the appropriate `kv_*` method, passing `b.plugin_id`
+//      as the scoping key — this is the single security boundary
+//      that prevents plugin A from reading plugin B's data. The
+//      `plugin_id` is set by the host at actor spawn and is NOT
+//      reachable from inside the JS sandbox, so a plugin cannot
+//      forge it.
+//   4. Translate the `StorageError` into a JS `Error` via
+//      `reject_now`. We include the precise quota numbers so
+//      plugin authors can write helpful UI ("you've used 7.8MB
+//      of 8MB").
+//   5. Resolve with a JS-native value. We construct values
+//      ad-hoc with `ctx.eval` rather than via a serde adapter
+//      because the round-trip costs more than the strings we
+//      paste, and the inputs (numbers, lists of strings) are
+//      fully under host control.
+//
+// All five `make_storage_*` helpers return `Function<'js>` that take
+// their args and return `Promise<T>`. The Promise contract is sync
+// in practice (the underlying ops are sync sqlite calls) but we
+// keep the surface async-shaped so plugins write `await
+// slab.storage.get('k')` and survive a future swap to an async
+// backend without API churn.
+
+/// Resolve a JS Promise immediately with a host-side `Value<'js>`.
+///
+/// Mirror image of [`reject_now`]. Used by the storage bindings so a
+/// sync sqlite hit doesn't have to round-trip through the runtime's
+/// pending-fetch table — we just splice a settled Promise into the
+/// JS world and return.
+fn resolve_now<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Value<'js>> {
+    // Build `Promise.resolve(x)` by pulling the global Promise and
+    // calling its static `resolve`. `eval` would work too but would
+    // re-stringify `value` through JSON, losing fidelity for things
+    // like arrays of strings with weird unicode.
+    let globals = ctx.globals();
+    let promise: Function<'js> = globals.get::<_, Object<'js>>("Promise")?.get("resolve")?;
+    promise.call((value,))
+}
+
+fn make_storage_get<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, key: String| -> Result<Value<'js>> {
+            let Some(storage) = &b.storage else {
+                return reject_now(
+                    &ctx,
+                    "slab.storage.get unavailable outside the per-plugin runtime",
+                );
+            };
+            let guard = match storage.lock() {
+                Ok(g) => g,
+                Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
+            };
+            match guard.kv_get(&b.plugin_id, &key) {
+                Ok(Some(s)) => {
+                    let v: Value<'js> = s.into_js(&ctx)?;
+                    resolve_now(&ctx, v)
+                }
+                Ok(None) => {
+                    // Resolve with `null` so plugins distinguish
+                    // "missing key" from "stored empty string".
+                    let v = Value::new_null(ctx.clone());
+                    resolve_now(&ctx, v)
+                }
+                Err(e) => reject_now(&ctx, &format!("slab.storage.get: {e}")),
+            }
+        },
+    )
+}
+
+fn make_storage_set<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, key: String, value: Coerced<String>| -> Result<Value<'js>> {
+            // `Coerced<String>` accepts non-string values and
+            // stringifies them per JS semantics (numbers → "42",
+            // objects → "[object Object]"). This matches what
+            // `localStorage.setItem` does in the browser and keeps
+            // the surface forgiving for typed-without-thinking
+            // plugin authors.
+            let Some(storage) = &b.storage else {
+                return reject_now(
+                    &ctx,
+                    "slab.storage.set unavailable outside the per-plugin runtime",
+                );
+            };
+            let guard = match storage.lock() {
+                Ok(g) => g,
+                Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
+            };
+            match guard.kv_set(&b.plugin_id, &key, &value.0) {
+                Ok(()) => resolve_now(&ctx, Value::new_undefined(ctx.clone())),
+                Err(e) => reject_now(&ctx, &format!("slab.storage.set: {e}")),
+            }
+        },
+    )
+}
+
+fn make_storage_remove<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, key: String| -> Result<Value<'js>> {
+            let Some(storage) = &b.storage else {
+                return reject_now(
+                    &ctx,
+                    "slab.storage.remove unavailable outside the per-plugin runtime",
+                );
+            };
+            let guard = match storage.lock() {
+                Ok(g) => g,
+                Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
+            };
+            match guard.kv_remove(&b.plugin_id, &key) {
+                Ok(existed) => {
+                    let v: Value<'js> = existed.into_js(&ctx)?;
+                    resolve_now(&ctx, v)
+                }
+                Err(e) => reject_now(&ctx, &format!("slab.storage.remove: {e}")),
+            }
+        },
+    )
+}
+
+fn make_storage_list<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<Value<'js>> {
+        let Some(storage) = &b.storage else {
+            return reject_now(
+                &ctx,
+                "slab.storage.list unavailable outside the per-plugin runtime",
+            );
+        };
+        let guard = match storage.lock() {
+            Ok(g) => g,
+            Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
+        };
+        match guard.kv_list(&b.plugin_id) {
+            Ok(keys) => {
+                let v: Value<'js> = keys.into_js(&ctx)?;
+                resolve_now(&ctx, v)
+            }
+            Err(e) => reject_now(&ctx, &format!("slab.storage.list: {e}")),
+        }
+    })
+}
+
+fn make_storage_clear<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<Value<'js>> {
+        let Some(storage) = &b.storage else {
+            return reject_now(
+                &ctx,
+                "slab.storage.clear unavailable outside the per-plugin runtime",
+            );
+        };
+        let guard = match storage.lock() {
+            Ok(g) => g,
+            Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
+        };
+        match guard.kv_clear(&b.plugin_id) {
+            Ok(n) => {
+                // Cast through `i64` because rquickjs maps that to
+                // a JS number cleanly; `usize` triggers an extra
+                // `as` chain.
+                let v: Value<'js> = (n as i64).into_js(&ctx)?;
+                resolve_now(&ctx, v)
+            }
+            Err(e) => reject_now(&ctx, &format!("slab.storage.clear: {e}")),
+        }
+    })
+}
+
+fn make_storage_usage<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<Value<'js>> {
+        let Some(storage) = &b.storage else {
+            return reject_now(
+                &ctx,
+                "slab.storage.usage unavailable outside the per-plugin runtime",
+            );
+        };
+        let guard = match storage.lock() {
+            Ok(g) => g,
+            Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
+        };
+        match guard.kv_usage_bytes(&b.plugin_id) {
+            Ok(n) => {
+                // JS number is f64 — total fits comfortably under
+                // MAX_PLUGIN_BYTES (8MiB), so no precision loss.
+                let v: Value<'js> = (n as i64).into_js(&ctx)?;
+                resolve_now(&ctx, v)
+            }
+            Err(e) => reject_now(&ctx, &format!("slab.storage.usage: {e}")),
+        }
+    })
 }
 
 #[cfg(test)]
