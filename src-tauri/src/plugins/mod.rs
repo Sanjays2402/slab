@@ -9,6 +9,7 @@
 pub mod ai_materialize;
 pub mod command_runner;
 pub mod contributions;
+pub mod grants;
 pub mod locale_loader;
 pub mod manifest;
 pub mod registry;
@@ -26,8 +27,9 @@ pub use contributions::{
 };
 pub use locale_loader::load_locale_bundle;
 pub use manifest::{
-    AiProviderContribution, CommandContribution, Contributions, LocaleContribution, Manifest,
-    ManifestError, PdfActionContribution, Permission, ThemeContribution,
+    AiProviderContribution, BeaconCap, Capabilities, CommandContribution, Contributions, FsCap,
+    LocaleContribution, Manifest, ManifestError, NetCap, PdfActionContribution, Permission,
+    RuntimeManifest, ThemeContribution, UiCap,
 };
 pub use registry::{
     default_plugins_root, default_state_path, read_enabled_state, write_enabled_state,
