@@ -5,60 +5,51 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 1+3 SHIPPED on `feature/v2.0.0-workshop`
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 1+2+3+4 SHIPPED on `feature/v2.0.0-workshop`
 
 **Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
 **Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `5c9533a`, 5 commits ahead of `main`.
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `6bd4cf7`, 8 commits ahead of `main`.
 **RELEASE_PENDING**: *(none)*
 
 ---
 
-## TICK 2026-05-18 19:56 PT — MODE C BIG vertical slice: v2.0.0 Slice 1 (rquickjs) + Slice 3 (grants)
+## TICK 2026-05-18 20:44 PT — MODE C v2.0.0 Slice 4 (slab global skeleton + lifecycle + grant cmds + TS bindings)
 
-Per Sanjay's "ship big things every tick" directive, used the full tick to land **two** non-trivial v2.0.0 slices in one go. Slice 1 was projected as risky (3-5 min first rquickjs build) but actual cold compile was only ~17s on the M-series host, so I had budget for Slice 3 too.
+Big vertical slice: backend `slab` JS API + lifecycle + Tauri commands + TS adapter — three commits in one tick.
 
 **Commits this tick:**
-- `bd00df0` feat(plugins/runtime): sandboxed QuickJS interpreter for plugin scripts (v2.0.0 Slice 1)
-- `5c9533a` feat(plugins/grants): capability grant store + enforcement gate (v2.0.0 Slice 3)
+- `0bd7b75` feat(plugins/runtime): slab global skeleton + enable_plugin lifecycle (v2.0.0 Slice 4a)
+- `7cdec0e` feat(plugins/grants): plugin_grants_get/set/reset Tauri commands (v2.0.0 Slice 4b)
+- `6bd4cf7` feat(plugins/ts): TypeScript grant bindings (v2.0.0 Slice 4b cont'd)
 
-**Slice 1 (`bd00df0`) — rquickjs embedding:**
-- `rquickjs = "0.11"` (default-features=false, features=["std"]) added to `src-tauri/Cargo.toml`
-- New module `plugins/runtime/{mod.rs,sandbox.rs}`
-- `Runtime` newtype wraps `rquickjs::Runtime` with 16MB memory cap + 1s wall-clock interrupt
-- `execute_script(plugin_id, source)` builds a fresh `Context` per call → drops on return
-- `console.{log,warn,error}` wired into a per-call `Arc<Mutex<Vec<LogEntry>>>` shared buffer
-- Variadic args coerced via `Rest<Coerced<String>>` (JS `String(x)` semantics, space-joined)
-- `RuntimeError` enum: `Init` / `Syntax` / `Thrown` / `TimeLimit { limit_ms }` / `MemoryLimit { limit_bytes }`
-- Syntax-vs-thrown discrimination via `Exception.as_object().get(PredefinedAtom::Name) == "SyntaxError"`
-- 10 tests, all passing: console pipe, level tagging, type coercion, syntax/throw/time/memory error paths, fresh-context cross-Runtime and intra-Runtime, empty script, plugin_id propagation
+**Slice 4a (`0bd7b75`) — backend `slab` global + lifecycle:**
+- New `plugins/runtime/host_api.rs` — `Registrations`, `BeaconToolReg`, `BeaconAiProviderReg`, `UiPanelReg`, `UiToolReg`, `NotifyCall`, `NotifyLevel` (derive Default with Info variant)
+- New `plugins/runtime/slab_global.rs` — `install_slab()` builds the JS-side `slab` global with capability-gated `slab.beacon.{registerTool, registerAiProvider}`, `slab.ui.{registerPanel, registerTool, notify}`, plus reserved `slab.document.*` / `slab.storage.*` / `slab.fetch` that throw labelled "ships in Slice N" errors
+- `HostBindings { plugin_id, declared, granted, registrations }` cloned into each JS closure; descriptors round-trip through `JSON.stringify` for `.toJSON()` semantics
+- `Runtime::enable_plugin(plugin_id, declared, granted, source) -> Result<EnableOutput, RuntimeError>` mirrors `execute_script` lifecycle (16MB cap, 1s interrupt, fresh Context::full) and returns `{ logs, registrations }`
+- 8 new contract tests covering slab presence, capability gates, descriptor round-trip, reserved-surface throws, fresh-context isolation → 30/30 runtime tests pass
+- Persistent-function event dispatch (slab.document.onOpen handlers) deferred to a future slice — synchronous registration phase only
 
-**Slice 3 (`5c9533a`) — capability grants:**
-- New module `plugins/grants.rs` — pure backend, no IPC yet
-- `PluginGrants` — user-granted capabilities (separate axis from declared)
-- `PluginGrants::covers(declared)` — detects plugin escalation on update
-- `GrantStore` flat-map keyed by plugin_id, persists as TOML at `~/.slab/plugin-grants.toml`
-- `read_grants` / `write_grants` mirror enabled-state file pattern; corrupt file → empty (no lockout)
-- `CapabilityRequest` enum: `FsRead`, `FsWrite`, `NetFetch{host}`, `UiRegisterPanel`, `UiRegisterTool`, `BeaconRegisterTool`, `BeaconRegisterAiProvider`
-- `enforce(declared, granted, req)` — both must permit; returns `Result<(), DenyReason>`
-- `DenyReason`: `NotDeclared`, `NotGranted`, `GrantTooNarrow`, `HostNotAllowed`
-- Manifest re-exports widened to expose `Capabilities`, `FsCap`, `NetCap`, `UiCap`, `BeaconCap`, `RuntimeManifest` for host shim consumption
-- 21 tests, all passing
+**Slice 4b (`7cdec0e`) — Tauri grant commands:**
+- `plugin_grants_get(plugin_id) -> { has_decision, grants }` — bundled response so the consent modal can distinguish "never asked" from "user said no"
+- `plugin_grants_set(plugin_id, grants)` — RMW the toml file
+- `plugin_grants_reset(plugin_id)` — forget decision (uninstall path)
+- All three registered in `generate_handler!`; no new Rust tests (façades over already-tested `read_grants`/`write_grants`)
 
-**Quality gates on `feature/v2.0.0-workshop` HEAD `5c9533a`:**
+**Slice 4b cont'd (`6bd4cf7`) — TS adapter:**
+- `PluginGrants` / `PluginGrantsResponse` / `emptyPluginGrants()` exported from `src/lib/plugins.ts`
+- `getPluginGrants` / `setPluginGrants` / `resetPluginGrants` — async, gracefully degrade in browser dev mode
+- Pre-existing `Manifest.permissions` type kept; new grants are separate axis
+
+**Quality gates on `feature/v2.0.0-workshop` HEAD `6bd4cf7`:**
 - `cargo fmt --all -- --check` — clean
-- `cargo clippy --all-targets -- -D warnings` — clean (fixed two `match → matches!()` lints in grants.rs)
-- `cargo test --lib` — **785 passed / 0 failed** (up from 754: +10 runtime, +21 grants)
+- `cargo clippy --lib --all-targets -- -D warnings` — clean
+- `cargo test --lib` — **805 passed / 0 failed** (up from 785)
 - `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
 
 **Push:** pushed to origin/feature/v2.0.0-workshop.
-
-**Design notes from this tick:**
-- rquickjs 0.11 is the current crates.io release; 0.10 (from the plan doc) was wrong, 0.11 was selected. cc-compile of QuickJS is genuinely fast on M-series — incremental rebuilds <1s.
-- Fresh-context-per-execution is the v2.0.0 contract (verified by test). Long-lived contexts for stateful event handlers wait for Slice 4 lifecycle work.
-- Grants module is *backend only*. The actual Cabinet modal that lets users pick a granted set is folded into a new "Slice 3b" entry on the plan; that's pure Svelte work.
-- Manifest declared bound vs user grant are two independent axes. `enforce()` requires both to permit. This catches the "user granted X but plugin's manifest never declared X" case (returns `NotDeclared` — manifest is the contract).
 
 ---
 
@@ -66,26 +57,25 @@ Per Sanjay's "ship big things every tick" directive, used the full tick to land 
 
 ### Step 1 — MODE C continue v2.0.0 "Workshop"
 
-**Slice 4 (`slab` global skeleton + lifecycle)** is the next big chunk. From the spec proposal:
-1. Inside `runtime/sandbox.rs`, install a `slab` global Object on every fresh Context with these subsections (initially stub fns that return `undefined`):
-   - `slab.beacon.{registerTool, registerAiProvider}`
-   - `slab.ui.{registerPanel, registerTool}`
-   - `slab.document.{getActive, onOpen, onClose}`
-   - `slab.storage.{get, set, remove}` (Slice 8 wires the real sqlite)
-   - `slab.fetch(url, init?)` (Slice 7 wires real reqwest)
-2. Plumb the plugin_id + `(declared, granted)` capability refs through to each host shim via closure capture so calls can `enforce()` before doing work.
-3. Lifecycle hooks: a plugin's `script.js` should be evaluated once at *enable* time (not at every event). The eval result is the plugin's "registration phase"; subsequent host events (open document, run tool) dispatch to registered handlers via a per-plugin `Persistent<Function>` table.
-4. Tauri commands `plugin_grants_get(plugin_id)`, `plugin_grants_set(plugin_id, grants)`, `plugin_grants_reset(plugin_id)` for the Cabinet UI.
+**Slice 5 (Cabinet consent modal + plugin enable integration):**
+1. New Svelte component `src/lib/panels/PluginConsentModal.svelte` — reads manifest `[capabilities]` + calls `getPluginGrants(id)`; only renders when `has_decision === false`
+2. Render per-capability rows (fs, net, ui, beacon) with toggle/select controls; pre-fill with manifest's declared bounds
+3. On Save → call `setPluginGrants(id, grants)`; on Deny → `setPluginGrants(id, emptyPluginGrants())` and force-disable the plugin
+4. Wire into `PluginsPanel.svelte` enable toggle: before calling `setPluginEnabled(id, true)`, await consent; if `has_decision === false`, show modal first
+5. Add "Reset permissions" button in plugin detail view → `resetPluginGrants(id)`
 
-ETA: 5-6 commits. Reserve a full tick. Persistent lifetimes can be subtle, write tests early.
+ETA: 3-4 commits. Pure frontend slice — Rust already exposes everything needed.
 
-### Step 2 — Slice 3b (Cabinet modal) can ride along if budget allows
+**Slice 6 (real `slab.document` lifecycle + event dispatch):**
+- Per-plugin `Persistent<Function>` table in a `RuntimeRegistry` keyed by plugin_id
+- Fire `onOpen`/`onClose` from PDF loader sites
+- Requires `unsafe impl JsLifetime` for owned types (tricky — write tests first)
 
-Svelte modal that reads from `Manifest.runtime.capabilities` and writes a `PluginGrants` via the new Tauri commands. Trivial UI; depends on Slice 4 commands being live first.
+ETA: full tick, write tests upfront.
 
-### Step 3 — Watch for sibling subagent activity
+### Step 2 — Watch for sibling subagent activity
 
-Note: `/tmp/msg.txt` was touched by a sibling subagent (id `0aa53d4a-...`) during this tick — possibly a parallel Hermes run. No actual conflicts surfaced (the only shared file was `/tmp/msg.txt`, which I overwrote with my own commit message right before each commit). If future ticks see unexpected edits in `.cron-state/` or the active branch, check `process(action="list")` for active siblings.
+(Same warning as last tick — sibling subagents can touch `/tmp/msg.txt`. Always overwrite right before commit.)
 
 ---
 
@@ -98,7 +88,7 @@ Note: `/tmp/msg.txt` was touched by a sibling subagent (id `0aa53d4a-...`) durin
 ### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **RELEASED 2026-05-18**
 ### v1.9.2 "Voice Mode: Polish" — **RELEASED 2026-05-18** (6 assets on GH)
 ### v1.9.3 "Voice Mode: Windows-native" — Windows WASAPI recorder via cpal (T6 from v1.9.2 plan, plus real impl)
-### v2.0.0 "Workshop" — TypeScript Plugins (rquickjs). **In flight on `feature/v2.0.0-workshop`. Slices 1+2+3 shipped (3/12). Plan at `docs/plans/2026-05-18-v2.0.0-workshop.md`.**
+### v2.0.0 "Workshop" — TypeScript Plugins (rquickjs). **In flight on `feature/v2.0.0-workshop`. Slices 1+2+3+4 shipped (4/12). Plan at `docs/plans/2026-05-18-v2.0.0-workshop.md`.**
 
 ---
 
@@ -121,11 +111,12 @@ Note: `/tmp/msg.txt` was touched by a sibling subagent (id `0aa53d4a-...`) durin
 - ✅ Slice 2 (manifest schema + hash-pinned loader) — shipped 2026-05-18
 - ✅ Slice 1 (rquickjs embedding + sandboxed console) — shipped 2026-05-18
 - ✅ Slice 3 (capability grants backend + enforce()) — shipped 2026-05-18
-- ⏭ Slice 4 (`slab` global + lifecycle + Tauri grant commands) — NEXT
-- ⏭ Slice 3b (Cabinet prompt modal) — after Slice 4
-- ⏭ Slices 5-12 — see plan doc
+- ✅ Slice 4 (`slab` global + lifecycle + Tauri grant cmds + TS bindings) — shipped 2026-05-18
+- ⏭ Slice 5 (Cabinet consent modal + enable integration) — NEXT
+- ⏭ Slice 6 (Persistent<Function> event dispatch — onOpen/onClose) — after Slice 5
+- ⏭ Slices 7-12 — see plan doc
 
-Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle, 5→Beacon tool registration, 6→panel registration, 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
+Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal, 6→event dispatch, 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
 
 **v2.1.0 candidates (post-Workshop):**
 - **Forge** — author-signed plugins. Wants 10+ plugins in curated index before considering (Sanjay's flag).
