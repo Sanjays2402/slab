@@ -5,73 +5,71 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 "Voice Mode: Polish" 🎙 — MERGED + TAGGED + PUSHED, CI in flight
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 2 SHIPPED on `feature/v2.0.0-workshop`
 
-**Main HEAD**: `cc51f72` (merge commit v1.9.2).
+**Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
-**RELEASE_PENDING**: **v1.9.2** — merge SHA `cc51f72`, tag `v1.9.2`, CI run `26071609861`. Finalize next tick.
-
-**v2.0.0 spec authored** at `.cron-state/proposals/v2.0.0-workshop.md` (12 slices, ~48 commits, TypeScript Plugins via QuickJS). Pre-flight gate from previous STATE is now resolved.
+**Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets: macOS arm64 DMG, macOS x64 DMG, Linux deb, Linux AppImage, Windows MSI, Windows exe).
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `b3706d5`, 3 commits ahead of `main`.
+**RELEASE_PENDING**: *(none)*
 
 ---
 
-## TICK 2026-05-18 18:55 PT — MODE A merge v1.9.2 + author v2.0.0 spec (BIG ROADMAP)
+## TICK 2026-05-18 19:38 PT — MODE B finalize v1.9.2 + MODE C Slice 2 of v2.0.0 (vertical slice)
 
-Cron tick at 18:55 PT (5min into off-hours window). Shipped a release + a roadmap doc.
-
-**Descope decision**: v1.9.2 T6 (Windows-native cpal recorder scaffold) deferred to v1.9.3. Per plan §1327 explicit escape hatch — Tasks 1-5 ship as v1.9.2, T6 lands when WASAPI implementation is real (not a `todo!()` stub). Justification: T6 is perf-only delta on Windows (PowerShell shell-out from v1.9.1 still works fine); holding v1.9.2 for T6 robs macOS+Linux users of the polish slice; "scaffolding only" commit doesn't qualify as "big" per Sanjay's directive.
+Three-mode tick: finalized the v1.9.2 release pending from prior tick, synced local README back to main, and shipped Slice 2 of v2.0.0 Workshop end-to-end.
 
 **Commits this tick:**
-- `aad0b61` fix(clippy): drop useless into_iter() in list_whisper_models (uncommitted from prior tick)
-- `8f5d1df` chore(release): v1.9.2 — version bumps + release notes
-- `cc51f72` Merge v1.9.2 'Voice Mode: Polish' 🎙 (merge commit on main)
-- Plus `.cron-state/proposals/v2.0.0-workshop.md` (15 KB spec; not committed to git, lives in the proposals cabinet)
+- `11ba4fa` docs(README): bring front door up to v1.9.2 (on feature branch; cherry-picked to main as `18d4877`)
+- `18d4877` cherry-pick README catch-up onto main (resolved 2 conflict hunks taking incoming version)
+- `7915880` docs(plan): v2.0.0 Workshop — TypeScript Plugins implementation plan (`docs/plans/2026-05-18-v2.0.0-workshop.md`, 12 slices)
+- `43479e4` feat(plugins/runtime): manifest schema bump for v2.0.0 — RuntimeManifest, Capabilities, FsCap/NetCap/UiCap/BeaconCap, validate_runtime, +12 tests
+- `b3706d5` feat(plugins/runtime): hash-pinned script loading at discovery time — load_and_verify_script, hex_sha256, ScriptOutcome enum, +6 registry tests
 
-**Quality gates on main post-merge:**
+**v1.9.2 release finalized:**
+- CI run `26071609861` finished 7/7 green
+- Downloaded all 6 bundles via `gh run download` to `/tmp/slab-release-1.9.2/`
+- `gh release create v1.9.2 --title 'v1.9.2 — Voice Mode: Polish 🎙'` with notes from `docs/release-notes/v1.9.2.md`
+- All 6 assets uploaded
+
+**Quality gates on `feature/v2.0.0-workshop`:**
 - `cargo fmt --all -- --check` — clean
 - `cargo clippy --all-targets -- -D warnings` — clean
-- `cargo test --lib` — **736 passed / 0 failed**
+- `cargo test --lib` — **754 passed / 0 failed** (up from 736: +12 manifest tests, +6 registry runtime tests)
 - `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
 
-**Push:** `main` → `cc51f72` + tag `v1.9.2` via `--follow-tags`. CI run `26071609861` triggered (in_progress at tick end — first 3/4 jobs through "Cache cargo" step at end of tick window).
+**Push:** `feature/v2.0.0-workshop` pushed to origin. README cherry-pick pushed to main.
+
+**Slice 2 design notes:**
+- Trust-on-first-use today; pinned SHA-256 in manifest, loader enforces at discovery time
+- Hash mismatch = hard failure (parse-error-equivalent: `manifest = None`, `enabled = false`, descriptive error)
+- `Plugin.script_bytes: Option<Vec<u8>>` is `#[serde(skip)]` so raw source never reaches frontend
+- Forge author signing parked for v2.1 (gated on 10+ plugins in curated index)
+- Default-deny capabilities: every `*Cap::Default` is the most restrictive variant
+- Strict sha256 validation (64 lowercase hex) in manifest layer means loader does direct string compare
 
 ---
 
 ## NEXT TICK PLAYBOOK
 
-### Step 1 — MODE B finalize v1.9.2
+### Step 1 — MODE C continue v2.0.0 "Workshop"
 
-CI run `26071609861` for `main @ cc51f72`. Poll:
-```bash
-gh run view 26071609861 --json status,conclusion
-```
+Slice 1 (rquickjs C-FFI embedding) is the next deliverable. **Reserve a full tick** — initial cargo build with the rquickjs/quickjs-ng FFI is 3-5 minutes the first time, don't share budget with other work.
 
-If `conclusion = success`:
-```bash
-gh run download 26071609861 --dir /tmp/slab-release-1.9.2
-gh release create v1.9.2 \
-  --title 'v1.9.2 — Voice Mode: Polish 🎙' \
-  --notes-file docs/release-notes/v1.9.2.md \
-  /tmp/slab-release-1.9.2/macos-arm64/Slab_1.9.2_aarch64.dmg \
-  /tmp/slab-release-1.9.2/macos-x64/Slab_1.9.2_x64.dmg \
-  /tmp/slab-release-1.9.2/linux-x64/Slab_1.9.2_amd64.deb \
-  /tmp/slab-release-1.9.2/linux-x64/Slab_1.9.2_amd64.AppImage \
-  /tmp/slab-release-1.9.2/windows-x64/Slab_1.9.2_x64_en-US.msi \
-  /tmp/slab-release-1.9.2/windows-x64/Slab_1.9.2_x64-setup.exe
-```
-(Asset paths from v1.9.1 finalize tick. Adjust per `gh run download` actual layout.)
+Slice 1 deliverables (from `docs/plans/2026-05-18-v2.0.0-workshop.md`):
+1. Add `rquickjs = { version = "0.6", features = ["loader"] }` to `src-tauri/Cargo.toml`
+2. Create `src-tauri/src/plugins/runtime/mod.rs` with a `Runtime` newtype wrapping `rquickjs::Runtime`
+3. Create `src-tauri/src/plugins/runtime/sandbox.rs` — fresh `Context` per script, install minimal `console.{log,warn,error}` that pipes into Slab's `tracing` (target=`plugin`, fields include plugin_id)
+4. `execute_script(plugin_id, source) -> Result<(), RuntimeError>` API
+5. Memory limit (16 MB) + interrupt handler (1 s wall clock) per spec §3
+6. Tests: `console_log_pipes_to_tracing`, `script_syntax_error_returned_as_error`, `script_throws_propagates_as_error`, `memory_limit_kills_script`, `time_limit_interrupts_script`, `each_script_gets_fresh_context`
+7. Add `cargo test --lib plugins::runtime` to per-tick gate list
 
-Then clear `RELEASE_PENDING` line above + proceed to Step 2.
+Slice 3 (capability-prompt scaffold) can ride along if Slice 1 finishes fast.
 
-If CI fails: write `RELEASE_FAILED: v1.9.2 CI run 26071609861 — <failing job>` to STATE.md, fix on a follow-up branch.
+### Step 2 — Watch for sibling subagent activity
 
-### Step 2 — MODE C start v2.0.0 "Workshop"
-
-After v1.9.2 finalized:
-1. Promote `.cron-state/proposals/v2.0.0-workshop.md` → `docs/plans/2026-05-XX-v2.0.0-workshop.md` (commit as `docs(plan): v2.0.0 Workshop — TypeScript Plugins`).
-2. `git checkout -b feature/v2.0.0-workshop main`.
-3. Ship **Slice 1 — QuickJS embedding + sandboxed console.log** (4-5 commits, +6 tests). See spec for slice details.
-4. Aggressive: pair Slice 1 + Slice 2 (manifest schema bump + script load) in the same tick = 7-8 commits and ~+11 tests. That's BIG per Sanjay's directive.
+Note: `/tmp/msg.txt` was written by a sibling subagent (id `5b5e3304-...`) during this tick. No conflicts surfaced, but if future ticks see unexpected edits, check `process(action="list")` for active siblings.
 
 ---
 
@@ -82,9 +80,9 @@ After v1.9.2 finalized:
 ### v1.8.0 "Glossary" 📖 — **RELEASED 2026-05-18**
 ### v1.9.0 "Voice Mode" 🔊 (TTS-first) — **RELEASED 2026-05-18**
 ### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **RELEASED 2026-05-18**
-### v1.9.2 "Voice Mode: Polish" — **MERGED + TAGGED 2026-05-18, awaiting CI green to finalize**
+### v1.9.2 "Voice Mode: Polish" — **RELEASED 2026-05-18** (6 assets on GH)
 ### v1.9.3 "Voice Mode: Windows-native" — Windows WASAPI recorder via cpal (T6 from v1.9.2 plan, plus real impl)
-### v2.0.0 "Workshop" — TypeScript Plugins (QuickJS/rquickjs). **Spec at `.cron-state/proposals/v2.0.0-workshop.md`.** 12 slices, ~48 commits.
+### v2.0.0 "Workshop" — TypeScript Plugins (rquickjs). **In flight on `feature/v2.0.0-workshop`. Slice 2/12 shipped. Plan at `docs/plans/2026-05-18-v2.0.0-workshop.md`.**
 
 ---
 
@@ -103,10 +101,12 @@ After v1.9.2 finalized:
 
 **v1.9.3** — Windows-native STT (WASAPI via cpal). Real implementation, not the `todo!()` scaffold from v1.9.2 T6. Cargo feature `windows-stt`. ~3-4 commits + integration tests.
 
-**v2.0.0 "Workshop"** — spec is now real at `.cron-state/proposals/v2.0.0-workshop.md`. When ready to start:
-1. Promote to `docs/plans/`.
-2. Branch `feature/v2.0.0-workshop`.
-3. Ship slices in order: 1→QuickJS+console, 2→manifest schema, 3→capability prompt, 4→`slab` global, 5→Beacon tool registration, 6→panel registration, 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration (closes parked v1.3.x TODO), 12→release.
+**v2.0.0 "Workshop" slice progress:**
+- ✅ Slice 2 (manifest schema + hash-pinned loader) — shipped 2026-05-18
+- ⏭ Slice 1 (rquickjs embedding + sandboxed console) — NEXT
+- ⏭ Slices 3-12 — see plan doc
+
+Slices in target order: 1→rquickjs+console, 2→manifest schema ✅, 3→capability prompt, 4→`slab` global, 5→Beacon tool registration, 6→panel registration, 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
 
 **v2.1.0 candidates (post-Workshop):**
 - **Forge** — author-signed plugins. Wants 10+ plugins in curated index before considering (Sanjay's flag).
