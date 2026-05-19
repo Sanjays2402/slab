@@ -110,6 +110,13 @@ tar = "0.4"
 # array-buffer etc. can be turned on per-slice later if needed.
 rquickjs = { version = "0.11", default-features = false, features = ["std"] }
 
+# Workshop (v2.0.0 Slice 6) — per-plugin actor mailbox channel. We pick
+# crossbeam-channel over std::sync::mpsc for `Sender::send(&self)` (mpsc
+# requires `&mut`), bounded vs unbounded toggling, and a future `select!`
+# in the worker loop (Slice 6.5). Tiny crate, single-author, no transitive
+# bloat.
+crossbeam-channel = "0.5"
+
 [dev-dependencies]
 tempfile = "3"
 # Beacon mock HTTP server for provider unit tests (no real Ollama in CI).

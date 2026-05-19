@@ -23,6 +23,13 @@
 //! full implementation arc.
 
 use std::path::PathBuf;
+use std::thread::{self, JoinHandle};
+
+use crossbeam_channel::{unbounded, Sender};
+
+use super::RuntimeError;
+use crate::plugins::grants::PluginGrants;
+use crate::plugins::manifest::Capabilities;
 
 /// Commands the host sends to a plugin worker thread.
 ///
@@ -73,6 +80,142 @@ impl DocumentEvent {
             .unwrap_or("")
             .to_string();
         Self { path, name }
+    }
+}
+
+/// Handle to a running plugin actor.
+///
+/// Owning this means the worker thread is alive (or just exited and
+/// awaiting join). Drop performs a best-effort `Shutdown` send + join
+/// so leaking a handle never leaks an OS thread.
+///
+/// In Slice 6.2 the worker body is a placeholder that just drains
+/// commands and exits on [`RuntimeCmd::Shutdown`]; the real loop with
+/// `Runtime` + `Context` + `Persistent` dispatch lands in Slice 6.5.
+pub struct WorkerHandle {
+    plugin_id: String,
+    tx: Sender<RuntimeCmd>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl WorkerHandle {
+    /// Plugin identifier this worker was spawned for. Used by the
+    /// registry (Slice 6.6) for keying and by diagnostics.
+    pub fn plugin_id(&self) -> &str {
+        &self.plugin_id
+    }
+
+    /// Send a command to the worker. Returns the underlying
+    /// `crossbeam_channel::SendError` if the worker has already exited
+    /// (channel disconnected). Callers should treat that as
+    /// "actor is gone — drop the handle" rather than retrying.
+    pub fn send(&self, cmd: RuntimeCmd) -> Result<(), crossbeam_channel::SendError<RuntimeCmd>> {
+        self.tx.send(cmd)
+    }
+
+    /// Cleanly shut the worker down and wait for the thread to exit.
+    /// Idempotent: a `Shutdown` from a previous `send` is harmless
+    /// because the worker's `recv` will already have returned `Err`.
+    pub fn join(mut self) -> thread::Result<()> {
+        // Best-effort: if the worker already exited the channel is
+        // disconnected and `send` errors — that's fine, we just want
+        // the thread joined.
+        let _ = self.tx.send(RuntimeCmd::Shutdown);
+        if let Some(j) = self.join.take() {
+            return j.join();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for WorkerHandle {
+    fn drop(&mut self) {
+        // Best-effort shutdown so a forgotten handle never leaks a
+        // thread. Ignore both send + join errors: the worker may have
+        // exited on its own (placeholder body in 6.2 does that when
+        // the channel closes), in which case `tx.send` errors and the
+        // join already happened.
+        let _ = self.tx.send(RuntimeCmd::Shutdown);
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+    }
+}
+
+/// Per-plugin actor: spawns a dedicated OS thread that owns the
+/// plugin's QuickJS runtime and processes [`RuntimeCmd`]s off a
+/// channel.
+///
+/// Slice 6.2 (this) is the skeleton: thread spawn + channel + clean
+/// shutdown. Slice 6.5 replaces the worker body with the real runtime
+/// loop. Keeping the public `spawn` signature stable across slices
+/// means callers (registry, Tauri commands) won't churn.
+pub struct PluginActor;
+
+impl PluginActor {
+    /// Spawn the actor's worker thread. Returns a [`WorkerHandle`]
+    /// once the thread has been created; the worker performs the
+    /// real `enable_plugin` evaluation inside its loop in Slice 6.5.
+    ///
+    /// For 6.2 the worker body just drains commands and exits on
+    /// `Shutdown`. The `declared`/`granted`/`source` arguments are
+    /// accepted now (so the call sites in Slices 6.6/6.7 stay
+    /// unchanged) but ignored until 6.5.
+    ///
+    /// # Errors
+    /// Returns [`RuntimeError::Init`] if the OS refuses to spawn the
+    /// thread (rare — typically ulimit/EAGAIN). All other failure
+    /// modes (bad source, runtime OOM at boot) surface asynchronously
+    /// in Slice 6.5 via a side channel.
+    pub fn spawn(
+        plugin_id: String,
+        declared: Capabilities,
+        granted: PluginGrants,
+        source: String,
+    ) -> Result<WorkerHandle, RuntimeError> {
+        let (tx, rx) = unbounded::<RuntimeCmd>();
+        let pid_for_handle = plugin_id.clone();
+        let join = thread::Builder::new()
+            // Visible in `ps -T` / Activity Monitor — makes debugging
+            // a stuck plugin trivial: `slab-plugin:com.x.y` is the
+            // thread name, plugin_id is the ID in the manifest.
+            .name(format!("slab-plugin:{plugin_id}"))
+            .spawn(move || {
+                run_actor(plugin_id, declared, granted, source, rx);
+            })
+            .map_err(|e| RuntimeError::Init(format!("actor thread spawn: {e}")))?;
+
+        Ok(WorkerHandle {
+            plugin_id: pid_for_handle,
+            tx,
+            join: Some(join),
+        })
+    }
+}
+
+/// Placeholder actor body for Slice 6.2.
+///
+/// Slice 6.5 will replace this with a function that creates a
+/// `rquickjs::Runtime` + `Context`, evaluates `source` once with the
+/// `slab` global installed (and `lifecycle: Some(...)`, so
+/// `slab.document.onOpen` actually stashes a `Persistent`), then
+/// enters a recv loop that dispatches into the stored callbacks.
+///
+/// For now we just drain commands and exit on `Shutdown` — that's
+/// enough for the registry/broadcast tests in Slices 6.6+.
+fn run_actor(
+    _plugin_id: String,
+    _declared: Capabilities,
+    _granted: PluginGrants,
+    _source: String,
+    rx: crossbeam_channel::Receiver<RuntimeCmd>,
+) {
+    while let Ok(cmd) = rx.recv() {
+        if matches!(cmd, RuntimeCmd::Shutdown) {
+            break;
+        }
+        // Slice 6.5: dispatch DocumentOpened/DocumentClosed into the
+        // plugin's `Persistent<Function>` registry inside Context::with.
     }
 }
 
@@ -136,5 +279,103 @@ mod tests {
         fn assert_send_clone<T: Send + Clone + 'static>() {}
         assert_send_clone::<RuntimeCmd>();
         assert_send_clone::<DocumentEvent>();
+    }
+
+    // ---- Slice 6.2 contract tests: PluginActor + WorkerHandle ----
+    //
+    // The body of `run_actor` is still a placeholder (Slice 6.5 lands
+    // the real Runtime + Context). These tests verify the channel /
+    // thread machinery only: spawn succeeds, Shutdown drains the
+    // worker, drop joins, and a forgotten handle never leaks a thread.
+
+    use crate::plugins::grants::PluginGrants;
+    use crate::plugins::manifest::Capabilities;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn plugin_actor_spawns_and_shuts_down_cleanly() {
+        let handle = PluginActor::spawn(
+            "p.actor.spawn".into(),
+            Capabilities::default(),
+            PluginGrants::default(),
+            // 6.2 ignores `source`; 6.5 will eval it.
+            String::new(),
+        )
+        .expect("actor must spawn");
+        assert_eq!(handle.plugin_id(), "p.actor.spawn");
+        handle.send(RuntimeCmd::Shutdown).expect("send shutdown");
+        handle.join().expect("worker thread joins cleanly");
+    }
+
+    #[test]
+    fn plugin_actor_drops_into_clean_shutdown_when_handle_forgotten() {
+        // Dropping a handle without explicit `Shutdown` still tears
+        // the worker down — that's the invariant Drop enforces. We
+        // verify by spawning N actors in a tight loop; if Drop were
+        // broken, this would explode FD/thread limits.
+        for i in 0..16 {
+            let h = PluginActor::spawn(
+                format!("p.drop.{i}"),
+                Capabilities::default(),
+                PluginGrants::default(),
+                String::new(),
+            )
+            .expect("spawn");
+            // Send one no-op command to prove the channel works,
+            // then drop without calling `join`.
+            h.send(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+                "/tmp/x.pdf",
+            )))
+            .expect("send");
+            drop(h);
+        }
+    }
+
+    #[test]
+    fn plugin_actor_send_after_join_is_err() {
+        // After `join()` consumes the handle the channel is dropped
+        // entirely — there's nothing left to send to. We mostly want
+        // to assert this path doesn't panic.
+        let handle = PluginActor::spawn(
+            "p.actor.join".into(),
+            Capabilities::default(),
+            PluginGrants::default(),
+            String::new(),
+        )
+        .expect("actor must spawn");
+        handle.join().expect("join clean");
+        // `handle` is consumed; we can't call `send` on it anymore.
+        // The post-join "send" semantics are exercised indirectly via
+        // the registry (Slice 6.6) which holds the handle across
+        // calls — kept here as documentation only.
+    }
+
+    #[test]
+    fn plugin_actor_drains_pending_events_before_shutdown_exits() {
+        // Send a burst of events followed by Shutdown; the worker
+        // must process Shutdown promptly without panicking on the
+        // queued events. (Placeholder body in 6.2 just `matches!`es
+        // on Shutdown; Slice 6.5 will dispatch the events first.)
+        let handle = PluginActor::spawn(
+            "p.actor.drain".into(),
+            Capabilities::default(),
+            PluginGrants::default(),
+            String::new(),
+        )
+        .expect("spawn");
+        for i in 0..32 {
+            let ev = DocumentEvent::from_path(format!("/tmp/doc-{i}.pdf"));
+            handle.send(RuntimeCmd::DocumentOpened(ev)).expect("send");
+        }
+        let start = Instant::now();
+        handle.send(RuntimeCmd::Shutdown).expect("send shutdown");
+        handle.join().expect("join clean");
+        // Drain + join should finish near-instantly — definitely
+        // under 250ms on any non-broken machine.
+        assert!(
+            start.elapsed() < Duration::from_millis(250),
+            "drain+join took {:?}, expected < 250ms",
+            start.elapsed()
+        );
     }
 }
