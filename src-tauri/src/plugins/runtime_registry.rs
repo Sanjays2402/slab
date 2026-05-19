@@ -251,4 +251,318 @@ mod tests {
         assert_eq!(reg.len(), 8);
         drop(reg);
     }
+
+    // ---- Slice 6.7 integration: broadcast reaches real JS handlers ----
+    //
+    // The tests below spawn plugins with *non-empty* source that
+    // registers `slab.document.onOpen` / `onClose` handlers backed by
+    // `slab.ui.notify`. The registrations land in
+    // `ActorSharedState::registrations.notifications`, which we
+    // inspect after the actor joins to confirm the broadcast path
+    // exercised by `slab_plugins_document_{opened,closed}` actually
+    // reaches plugin code.
+
+    fn caps_ui_full() -> crate::plugins::manifest::Capabilities {
+        use crate::plugins::manifest::{Capabilities, UiCap};
+        Capabilities {
+            ui: UiCap::Both,
+            ..Default::default()
+        }
+    }
+
+    fn grants_ui_full() -> PluginGrants {
+        use crate::plugins::manifest::UiCap;
+        PluginGrants {
+            ui: UiCap::Both,
+            ..Default::default()
+        }
+    }
+
+    /// Spawn a plugin with explicit source + UI grants — used by the
+    /// broadcast integration tests below.
+    fn spawn_with_source(id: &str, source: &str) -> WorkerHandle {
+        crate::plugins::runtime::actor::PluginActor::spawn(
+            id.into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            source.into(),
+        )
+        .expect("spawn")
+    }
+
+    #[test]
+    fn broadcast_document_opened_reaches_every_registered_handler() {
+        // Two plugins, each with an onOpen handler. One broadcast call
+        // must invoke both. This is the Slice 6.7 Tauri-command path
+        // end to end.
+        let reg = PluginRuntimeRegistry::default();
+        let h_a = spawn_with_source(
+            "p.bcast.a",
+            r#"slab.document.onOpen(function (ev) {
+                 slab.ui.notify("a-saw:" + ev.name, "info");
+               });"#,
+        );
+        let h_b = spawn_with_source(
+            "p.bcast.b",
+            r#"slab.document.onOpen(function (ev) {
+                 slab.ui.notify("b-saw:" + ev.name, "info");
+               });"#,
+        );
+        let shared_a = h_a.shared_state();
+        let shared_b = h_b.shared_state();
+        reg.insert("p.bcast.a".into(), LiveEntry::new(h_a));
+        reg.insert("p.bcast.b".into(), LiveEntry::new(h_b));
+
+        // One broadcast — both plugins' handlers should observe it.
+        reg.broadcast(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/Gamma.pdf",
+        )));
+
+        // Drop the registry, which shutdowns + joins both workers,
+        // guaranteeing the notify() calls have landed before we read.
+        drop(reg);
+
+        let msgs_a: Vec<String> = shared_a
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        let msgs_b: Vec<String> = shared_b
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        assert!(
+            msgs_a.iter().any(|m| m == "a-saw:Gamma"),
+            "plugin a missed broadcast, got {msgs_a:?}"
+        );
+        assert!(
+            msgs_b.iter().any(|m| m == "b-saw:Gamma"),
+            "plugin b missed broadcast, got {msgs_b:?}"
+        );
+    }
+
+    #[test]
+    fn broadcast_document_closed_reaches_every_registered_handler() {
+        let reg = PluginRuntimeRegistry::default();
+        let h_a = spawn_with_source(
+            "p.bcast.cls.a",
+            r#"slab.document.onClose(function (ev) {
+                 slab.ui.notify("a-closed:" + ev.name, "info");
+               });"#,
+        );
+        let h_b = spawn_with_source(
+            "p.bcast.cls.b",
+            r#"slab.document.onClose(function (ev) {
+                 slab.ui.notify("b-closed:" + ev.name, "info");
+               });"#,
+        );
+        let shared_a = h_a.shared_state();
+        let shared_b = h_b.shared_state();
+        reg.insert("p.bcast.cls.a".into(), LiveEntry::new(h_a));
+        reg.insert("p.bcast.cls.b".into(), LiveEntry::new(h_b));
+
+        reg.broadcast(RuntimeCmd::DocumentClosed(DocumentEvent::from_path(
+            "/tmp/Delta.pdf",
+        )));
+        drop(reg);
+
+        let msgs_a: Vec<String> = shared_a
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        let msgs_b: Vec<String> = shared_b
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        assert!(msgs_a.iter().any(|m| m == "a-closed:Delta"));
+        assert!(msgs_b.iter().any(|m| m == "b-closed:Delta"));
+    }
+
+    #[test]
+    fn broadcast_skips_actor_after_remove() {
+        // After `remove(id)`, subsequent broadcasts must NOT reach the
+        // removed plugin's handlers. Mirrors the disable path used by
+        // `slab_plugins_set_enabled(id, false)`.
+        let reg = PluginRuntimeRegistry::default();
+        let h_keep = spawn_with_source(
+            "p.keep",
+            r#"slab.document.onOpen(function (ev) {
+                 slab.ui.notify("keep:" + ev.name, "info");
+               });"#,
+        );
+        let h_gone = spawn_with_source(
+            "p.gone",
+            r#"slab.document.onOpen(function (ev) {
+                 slab.ui.notify("gone:" + ev.name, "info");
+               });"#,
+        );
+        let shared_keep = h_keep.shared_state();
+        let shared_gone = h_gone.shared_state();
+        reg.insert("p.keep".into(), LiveEntry::new(h_keep));
+        reg.insert("p.gone".into(), LiveEntry::new(h_gone));
+
+        // First broadcast — both should observe it.
+        reg.broadcast(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/Before.pdf",
+        )));
+        // Remove "p.gone" — its worker shuts down and joins.
+        let removed = reg.remove("p.gone");
+        assert!(removed.is_some());
+        drop(removed); // explicit join before second broadcast
+
+        // Second broadcast — only "p.keep" should observe it.
+        reg.broadcast(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/After.pdf",
+        )));
+        drop(reg);
+
+        let msgs_keep: Vec<String> = shared_keep
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        let msgs_gone: Vec<String> = shared_gone
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        assert!(msgs_keep.iter().any(|m| m == "keep:Before"));
+        assert!(msgs_keep.iter().any(|m| m == "keep:After"));
+        assert!(msgs_gone.iter().any(|m| m == "gone:Before"));
+        // The removed plugin must NOT have observed After.
+        assert!(
+            !msgs_gone.iter().any(|m| m == "gone:After"),
+            "removed plugin should not receive broadcasts, got {msgs_gone:?}"
+        );
+    }
+
+    #[test]
+    fn re_insert_drops_old_actor_and_lets_new_actor_receive_broadcasts() {
+        // Toggling a plugin off → on (or hot-reload) is `insert` with
+        // the same key. The old worker must shut down cleanly; the new
+        // worker must be the broadcast target.
+        let reg = PluginRuntimeRegistry::default();
+        let h_old = spawn_with_source(
+            "p.reinsert",
+            r#"slab.document.onOpen(function (ev) {
+                 slab.ui.notify("old:" + ev.name, "info");
+               });"#,
+        );
+        let shared_old = h_old.shared_state();
+        reg.insert("p.reinsert".into(), LiveEntry::new(h_old));
+
+        // First broadcast — old handler observes it.
+        reg.broadcast(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/V1.pdf",
+        )));
+
+        // Replace with a fresh actor under the same key. The old
+        // worker's WorkerHandle::Drop sends Shutdown + joins before
+        // the new entry is reachable.
+        let h_new = spawn_with_source(
+            "p.reinsert",
+            r#"slab.document.onOpen(function (ev) {
+                 slab.ui.notify("new:" + ev.name, "info");
+               });"#,
+        );
+        let shared_new = h_new.shared_state();
+        reg.insert("p.reinsert".into(), LiveEntry::new(h_new));
+
+        // Second broadcast — only the new actor should see it.
+        reg.broadcast(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/V2.pdf",
+        )));
+        drop(reg);
+
+        let msgs_old: Vec<String> = shared_old
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        let msgs_new: Vec<String> = shared_new
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        assert!(msgs_old.iter().any(|m| m == "old:V1"));
+        assert!(
+            !msgs_old.iter().any(|m| m == "old:V2"),
+            "old actor should be shutdown before V2 broadcast, got {msgs_old:?}"
+        );
+        assert!(msgs_new.iter().any(|m| m == "new:V2"));
+    }
+
+    #[test]
+    fn open_then_close_sequence_fires_both_handlers_in_order() {
+        // Realistic viewer lifecycle: open A → close A. Verify the
+        // plugin's onOpen and onClose handlers see the right payloads
+        // through the registry's broadcast path.
+        let reg = PluginRuntimeRegistry::default();
+        let h = spawn_with_source(
+            "p.openclose",
+            r#"
+                slab.document.onOpen(function (ev) {
+                    slab.ui.notify("open:" + ev.name, "info");
+                });
+                slab.document.onClose(function (ev) {
+                    slab.ui.notify("close:" + ev.name, "info");
+                });
+            "#,
+        );
+        let shared = h.shared_state();
+        reg.insert("p.openclose".into(), LiveEntry::new(h));
+
+        reg.broadcast(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/Epsilon.pdf",
+        )));
+        reg.broadcast(RuntimeCmd::DocumentClosed(DocumentEvent::from_path(
+            "/tmp/Epsilon.pdf",
+        )));
+        drop(reg);
+
+        let msgs: Vec<String> = shared
+            .registrations
+            .lock()
+            .unwrap()
+            .notifications
+            .iter()
+            .map(|n| n.message.clone())
+            .collect();
+        // Find the index of each — open must precede close.
+        let idx_open = msgs.iter().position(|m| m == "open:Epsilon");
+        let idx_close = msgs.iter().position(|m| m == "close:Epsilon");
+        assert!(idx_open.is_some(), "missing open in {msgs:?}");
+        assert!(idx_close.is_some(), "missing close in {msgs:?}");
+        assert!(
+            idx_open.unwrap() < idx_close.unwrap(),
+            "open must precede close in {msgs:?}"
+        );
+    }
 }
