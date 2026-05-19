@@ -5,13 +5,84 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 7 SHIPPED 🛰️ slab.fetch live
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 8.1 SHIPPED 🗄️ storage backend scaffolding
 
 **Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
 **Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `3929d48`, 22 commits ahead of `main`.
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `26d498f`, 24 commits ahead of `main`.
 **RELEASE_PENDING**: *(none)*
+
+---
+
+## TICK 2026-05-19 01:40 PT — MODE C v2.0.0 Slice 8 plan + Slice 8.1 scaffolding
+
+Plan-first tick (writing-plans skill invoked). Slice 8 (`slab.storage.*`)
+ships a per-plugin, sqlite-backed key/value store with no manifest
+capability gate (scoping IS the security boundary) — a deliberate
+departure from the slab.fs/slab.net/slab.ui/slab.beacon pattern. Worth
+documenting before writing 1230 LOC of host code.
+
+**Commits this tick:**
+- `457503a` docs(plans): v2.0.0 Slice 8 sub-plan — slab.storage.* per-plugin KV store
+- `26d498f` feat(plugins/storage): PluginStorage skeleton + sqlite schema (v2.0.0 Slice 8.1)
+
+**Slice 8 plan (`docs/plans/2026-05-19-v2.0.0-workshop-slice-8.md`, 826 lines):**
+- 8 sub-tasks (8.1 module+schema ✅, 8.2 CRUD+quotas, 8.3 12 unit tests,
+  8.4 plumb into HostBindings, 8.5 5 JS bindings, 8.6 5 E2E tests, 8.7
+  flip reserved-surface sentinel, 8.8 gates+push).
+- Architecture: process-wide `OnceLock<Arc<Mutex<PluginStorage>>>` over
+  one `~/.slab/plugin-storage.sqlite`. Mirrors `fetch::shared_client()`
+  shape. Per-plugin scoping enforced in code — every WHERE clause pins
+  `plugin_id`.
+- Major divergence from Slice 7: NO actor round-trip for the JS API.
+  Sqlite k/v ops are microseconds; we run them synchronously inside
+  `Mutex::lock()` and wrap results in `Promise.resolve(...)` /
+  `Promise.reject(...)`. Forward-compatible — can switch to actor
+  bridging later without breaking the JS API.
+- Quota model: 8 MiB total per plugin / 1 MiB per value / 64 KiB per key.
+  Compile-time `const_assert!` chain enforces invariants between them
+  (e.g. value cap ≤ plugin cap, plugin cap is a multiple of value cap).
+
+**Slice 8.1 (`26d498f`) — module scaffolding (~480 LOC, 2 files):**
+- New `src-tauri/src/plugins/storage.rs`:
+  - `PluginStorage` owning handle wrapping `rusqlite::Connection`.
+  - Schema v1: `kv(plugin_id, key, value, value_size, updated_at)` with
+    `PRIMARY KEY (plugin_id, key)` + `idx_kv_plugin`. `value` is BLOB
+    (not TEXT) so arbitrary UTF-8 with embedded NULs round-trips.
+    `value_size` denormalised for fast `SUM()` quota queries.
+  - `open()` / `open_in_memory()` / `shared_storage()` / test-only
+    `shared_in_memory()`.
+  - `StorageError` enum pre-declares `KeyTooLong` / `ValueTooLarge` /
+    `QuotaExceeded` variants now (CRUD lands in 8.2; pre-declaration
+    keeps the Display assertions testable today).
+  - Public quota constants: `MAX_PLUGIN_BYTES` / `MAX_VALUE_BYTES` /
+    `MAX_KEY_BYTES`. Compile-time `const _: () = assert!(...)` chain
+    enforces the invariants between them.
+- Wired into `plugins/mod.rs`: `pub mod storage;` + re-exports.
+- 8 unit tests cover schema init, PRAGMA user_version stamping, index
+  existence, compound-PK behaviour (same key allowed across plugins),
+  init_schema idempotency, in-memory handle isolation, default path
+  lives under `~/.slab/`, and StorageError Display messages include the
+  numeric size info the JS binding embeds into rejected-Promise messages.
+
+**Why a plan tick (again) instead of full Slice 8:** Slice 8 has one
+non-obvious design decision worth pinning before writing code (no
+manifest cap), one structural divergence from Slice 7 (sync-then-wrap
+vs actor round-trip), and a security invariant (per-plugin scoping in
+SQL only — no other layer enforces it) that needs explicit
+documentation so a future maintainer doesn't refactor the WHERE
+clauses out. Plan first, ship the obvious scaffolding, dispatch
+focused sub-task subagents for 8.2-8.8 in future ticks.
+
+**Quality gates on `feature/v2.0.0-workshop` HEAD `26d498f`:**
+- `cargo fmt --all -- --check` — clean
+- `cargo clippy --lib --all-targets -- -D warnings` — clean
+- `cargo test --lib` — **879 passed / 0 failed** (871 prior + 8 new
+  storage scaffolding tests)
+- `pnpm check` — 0 errors, 35 pre-existing warnings (unchanged)
+
+**Push:** in progress (see below).
 
 ---
 
@@ -230,42 +301,33 @@ Big vertical slice: typed manifest surface + standalone modal component + parent
 
 ## NEXT TICK PLAYBOOK
 
-### Step 1 — MODE C continue v2.0.0 "Workshop" Slice 8 (storage shim)
+### Step 1 — MODE C continue v2.0.0 "Workshop" Slice 8.2 (CRUD + quotas)
 
-**Slice 8 (`slab.storage.{get,set,delete,list}` — per-plugin key-value) — NEXT:**
-- Goal: persistent key-value store scoped per plugin so authors can stash
-  cache / preferences / state across sessions without their own SQLite.
-- Sketch:
-  - Backing store: single `~/.slab/plugin-storage.db` (sqlite via rusqlite
-    + bundled feature), one table per plugin id (or a single `kv(plugin_id,
-    key, value)` table — TBD in the sub-plan).
-  - `slab.storage.get(key) → string | null` (async, returns Promise),
-    `slab.storage.set(key, value) → Promise<void>`,
-    `slab.storage.delete(key) → Promise<boolean>`,
-    `slab.storage.list() → Promise<string[]>`.
-  - Same pending-callbacks pattern as Slice 7: `RuntimeCmd::Storage*`
-    variants with request_id, callbacks stashed in a per-worker map.
-  - Capability: there's no existing manifest cap for storage. Either
-    (a) implicit (no gate; plugins always have their own scope) or
-    (b) introduce `storage: StorageCap { None, Allow }` in the manifest.
-    Lean toward (a) since scoping IS the security — but a separate
-    quota gate (`storage_max_kb`) might be useful for fairness.
-  - Sentinel placeholder: `slab.storage.get` still throws with "Slice 8"
-    label — `enable_plugin_reserved_surfaces_throw_with_slice_label`
-    pins this. Replace when the binding lands.
-- Want to write a sub-plan in `docs/plans/2026-05-19-v2.0.0-workshop-slice-8.md`
-  the same way Slice 7 was structured. 6-8 sub-tasks: backend storage layer
-  + sqlite migration, RuntimeCmd variants, dispatch helpers, JS binding,
-  per-plugin scoping enforcement, E2E tests.
-- ETA: 2 ticks (sub-plan + 7.x cleanup + Slice 8 backend in tick 1, JS
-  binding + E2E in tick 2).
+Slice 8 sub-plan is at `docs/plans/2026-05-19-v2.0.0-workshop-slice-8.md`.
+Scaffolding (8.1) shipped this tick. Remaining sub-tasks, each ship-ready:
 
-### Slice 7.x follow-ups (lower priority, not blocking)
+- **8.2** — add `kv_get` / `kv_set` / `kv_remove` / `kv_list` / `kv_clear` /
+  `kv_usage_bytes` to `impl PluginStorage`. Quota enforcement lives in
+  `kv_set` — read `current_total - prev_size + new_size` against
+  `MAX_PLUGIN_BYTES`. ~250 LOC, single file.
+- **8.3** — 14 unit tests covering scoping, quota arithmetic edge cases
+  (overwrite shouldn't double-count), and validation failures. Use
+  `MAX_VALUE_BYTES.repeat(...)` test fixture for the quota boundary.
+- **8.4** — plumb `Option<SharedPluginStorage>` through `HostBindings` +
+  `run_actor`. ~50 LOC across `slab_global.rs` + `actor.rs` + a few
+  test fixtures.
+- **8.5** — replace 5 `make_unavailable` placeholders with real
+  `make_storage_*` bindings using `Promise.resolve(...)` / `Promise.reject(...)`.
+  Pattern: lock store, call kv method, wrap result. ~280 LOC.
+- **8.6** — 5 E2E tests including the security-critical "two plugins
+  cannot see each other's keys" test. ~180 LOC.
+- **8.7** — flip `enable_plugin_reserved_surfaces_throw_with_slice_label`
+  test sentinel (delete or repoint).
+- **8.8** — quality gates + push.
 
-- Headers-array form support in `parse_headers` (tuple-array `[[k,v]]`)
-- Typed-array / ArrayBuffer bodies in `parse_body` (TODO marker in code)
-- Streaming bodies (Response.body as ReadableStream) — bigger lift, skip
-  unless plugin authors actually need it.
+ETA: 2 ticks (8.2+8.3+8.4 in tick 1; 8.5+8.6+8.7+8.8 in tick 2). Could
+collapse to 1 tick if subagent dispatch goes smoothly — sub-tasks 8.2-8.5
+have very narrow surface area.
 
 ### Step 2 — Watch for sibling subagent activity
 
@@ -282,7 +344,7 @@ Sibling subagents can touch `/tmp/msg.txt`. Always overwrite right before commit
 ### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **RELEASED 2026-05-18**
 ### v1.9.2 "Voice Mode: Polish" — **RELEASED 2026-05-18** (6 assets on GH)
 ### v1.9.3 "Voice Mode: Windows-native" — Windows WASAPI recorder via cpal (T6 from v1.9.2 plan, plus real impl)
-### v2.0.0 "Workshop" — TypeScript Plugins (rquickjs). **In flight on `feature/v2.0.0-workshop`. Slices 1-5 + 6.1 shipped (5.5/12). Plan at `docs/plans/2026-05-18-v2.0.0-workshop.md`; Slice 6 sub-plan at `docs/plans/2026-05-18-v2.0.0-workshop-slice-6.md`.**
+### v2.0.0 "Workshop" — TypeScript Plugins (rquickjs). **In flight on `feature/v2.0.0-workshop`. Slices 1-7 done + Slice 8.1 scaffolding (7.5/12). Plan at `docs/plans/2026-05-18-v2.0.0-workshop.md`; Slice 8 sub-plan at `docs/plans/2026-05-19-v2.0.0-workshop-slice-8.md`.**
 
 ---
 
@@ -309,9 +371,10 @@ Sibling subagents can touch `/tmp/msg.txt`. Always overwrite right before commit
 - ✅ Slice 5 (Cabinet consent modal + enable integration) — shipped 2026-05-18
 - ✅ Slice 6 (document lifecycle events) — **COMPLETE 2026-05-18** (6.1-6.6 actor system, 6.7 Tauri commands + enable-flow spawn/teardown, 6.8 ReaderPanel hook)
 - ✅ Slice 7 (`slab.fetch` shim — host-mediated HTTP) — **COMPLETE 2026-05-18** (7.1-7.4: process-shared reqwest client + Promise-bridging actor + JS binding + E2E)
-- ⏭ Slices 8-12 — see plan doc
+- 🟡 Slice 8 (`slab.storage.*` — per-plugin KV) — **IN FLIGHT 2026-05-19** (8.1 module+schema shipped; 8.2-8.8 next)
+- ⏭ Slices 9-12 — see plan doc
 
-Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch ✅, 7→fetch shim ✅, 8→storage 🟡 NEXT, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
+Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle ✅, 5→Cabinet consent modal ✅, 6→event dispatch ✅, 7→fetch shim ✅, 8→storage 🟡 IN FLIGHT, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
 
 **v2.1.0 candidates (post-Workshop):**
 - **Forge** — author-signed plugins. Wants 10+ plugins in curated index before considering (Sanjay's flag).
