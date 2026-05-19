@@ -13,6 +13,7 @@ pub mod locale_loader;
 pub mod manifest;
 pub mod registry;
 pub mod runner;
+pub mod runtime;
 
 pub use ai_materialize::{materialize_active, materialize_contribution};
 pub use command_runner::{
