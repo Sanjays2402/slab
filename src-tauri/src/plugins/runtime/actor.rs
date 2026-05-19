@@ -528,6 +528,35 @@ fn run_actor(
         }
     });
 
+    // Drain microtasks queued by the top-level eval. For
+    // `(async () => {...})()` IIFEs, awaits on already-resolved
+    // Promises (e.g. `slab.storage.*` sync resolutions, but also
+    // any pre-resolved value a plugin author parks at the top level)
+    // park their continuations as microtasks; if we never pump, the
+    // body never progresses past the first await and side-effect
+    // calls like `slab.ui.notify` never fire — breaking the most
+    // natural async-shaped plugin idiom.
+    //
+    // For Promises that settle out-of-band (`slab.fetch`) the pump
+    // happens after each `dispatch_fetch`; this initial pump catches
+    // everything that's already settled at eval time.
+    //
+    // Must run OUTSIDE the `ctx.with` block above — `execute_pending_job`
+    // grabs its own borrow internally, and nested `RefCell` borrows of
+    // the runtime would panic at runtime (rquickjs's `safe_ref` guard).
+    if init_result.is_ok() {
+        loop {
+            match rt.execute_pending_job() {
+                Ok(true) => continue,
+                Ok(false) => break,
+                Err(e) => {
+                    eprintln!("[plugin init] pending-job pump errored: {e}");
+                    break;
+                }
+            }
+        }
+    }
+
     rt.set_interrupt_handler(None);
 
     if let Err(e) = init_result {
@@ -1456,5 +1485,299 @@ mod tests {
             }
             other => panic!("expected Thrown, got {other:?}"),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Slice 8.6 — slab.storage.* E2E tests
+    // ------------------------------------------------------------------
+    //
+    // These tests hand the actor an in-memory `SharedPluginStorage`
+    // via `spawn_inner` so the assertions are deterministic and don't
+    // touch `~/.slab/`. They cover the contract surface from the JS
+    // side: round-trip set/get, list ordering, clear's row-count
+    // return, quota enforcement, per-plugin scoping, and the missing-
+    // key sentinel.
+    //
+    // Each test wraps its JS in a self-invoking async closure and uses
+    // `slab.ui.notify` as a side-channel to ferry the resolved value
+    // out to host code (top-level await is not supported by QuickJS
+    // in module-less mode, so `notify` is the cleanest way to observe
+    // an awaited result from the host).
+
+    /// Helper: spawn an actor with shared in-memory storage and the
+    /// UI capability needed to side-channel results out via notify.
+    fn spawn_with_storage(
+        plugin_id: &str,
+        storage: SharedPluginStorage,
+        script: String,
+    ) -> WorkerHandle {
+        PluginActor::spawn_inner(
+            plugin_id.into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script,
+            Some(storage),
+        )
+        .expect("spawn_inner")
+    }
+
+    /// Helper: wait up to `budget` for a notification matching `prefix`,
+    /// returning the full message. The notify side-channel is poll-based
+    /// because actor execution is async w.r.t. the host thread; 2s is
+    /// generous for sub-ms sqlite hits.
+    fn wait_for_notify(h: &WorkerHandle, prefix: &str, budget: Duration) -> Option<String> {
+        let shared = h.shared_state();
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            {
+                let regs = shared.registrations.lock().unwrap();
+                if let Some(m) = regs
+                    .notifications
+                    .iter()
+                    .find(|n| n.message.starts_with(prefix))
+                    .map(|n| n.message.clone())
+                {
+                    return Some(m);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        None
+    }
+
+    #[test]
+    fn slab_storage_set_then_get_round_trip_via_actor() {
+        // Round-trip: set('k', 'v') then get('k') resolves to 'v'.
+        // Proves the JS bindings drive the SQLite handle correctly
+        // and that Promise.resolve threading works inside the actor.
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+        let h = spawn_with_storage(
+            "p.storage.roundtrip",
+            storage,
+            r#"
+            (async () => {
+                try {
+                    await slab.storage.set('k', 'v');
+                    const got = await slab.storage.get('k');
+                    slab.ui.notify('got:' + got, 'info');
+                } catch (e) {
+                    slab.ui.notify('err:' + e.message, 'info');
+                }
+            })();
+            "#
+            .into(),
+        );
+
+        let msg = wait_for_notify(&h, "got:", Duration::from_secs(2))
+            .expect("storage round-trip notification");
+        assert_eq!(msg, "got:v");
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+    }
+
+    #[test]
+    fn slab_storage_get_missing_key_resolves_null() {
+        // Missing key resolves with `null` (the host explicitly uses
+        // `Value::new_null` rather than `undefined` so plugins can
+        // distinguish "no row" from "empty string row").
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+        let h = spawn_with_storage(
+            "p.storage.missing",
+            storage,
+            r#"
+            (async () => {
+                const got = await slab.storage.get('nope');
+                slab.ui.notify('type:' + (got === null ? 'null' : typeof got), 'info');
+            })();
+            "#
+            .into(),
+        );
+
+        let msg = wait_for_notify(&h, "type:", Duration::from_secs(2)).expect("type notification");
+        assert_eq!(msg, "type:null");
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+    }
+
+    #[test]
+    fn slab_storage_list_returns_sorted_keys_via_actor() {
+        // `list()` returns lexicographic-sorted keys. Insert out of
+        // order, expect sorted output.
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+        let h = spawn_with_storage(
+            "p.storage.list",
+            storage,
+            r#"
+            (async () => {
+                await slab.storage.set('z', '1');
+                await slab.storage.set('a', '2');
+                await slab.storage.set('m', '3');
+                const keys = await slab.storage.list();
+                slab.ui.notify('keys:' + JSON.stringify(keys), 'info');
+            })();
+            "#
+            .into(),
+        );
+
+        let msg = wait_for_notify(&h, "keys:", Duration::from_secs(2)).expect("keys notification");
+        assert_eq!(msg, r#"keys:["a","m","z"]"#);
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+    }
+
+    #[test]
+    fn slab_storage_remove_then_clear_returns_counts_via_actor() {
+        // `remove` resolves with `true` iff the key existed; `clear`
+        // resolves with the row count it deleted. We insert 3 rows,
+        // remove one (true), remove it again (false), then clear and
+        // expect 2.
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+        let h = spawn_with_storage(
+            "p.storage.remove",
+            storage,
+            r#"
+            (async () => {
+                await slab.storage.set('a', '1');
+                await slab.storage.set('b', '2');
+                await slab.storage.set('c', '3');
+                const r1 = await slab.storage.remove('a');
+                const r2 = await slab.storage.remove('a');
+                const cleared = await slab.storage.clear();
+                slab.ui.notify('rm:' + r1 + ':' + r2 + ':' + cleared, 'info');
+            })();
+            "#
+            .into(),
+        );
+
+        let msg = wait_for_notify(&h, "rm:", Duration::from_secs(2)).expect("rm notification");
+        assert_eq!(msg, "rm:true:false:2");
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+    }
+
+    #[test]
+    fn slab_storage_quota_exceeded_rejects_with_descriptive_error_via_actor() {
+        // Push a single value over `MAX_VALUE_BYTES` (1MiB). The
+        // Promise rejects with a JS Error whose message embeds the
+        // Display impl of `StorageError::ValueTooLarge` — useful for
+        // plugin authors to surface specific feedback to end users.
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+        let h = spawn_with_storage(
+            "p.storage.quota",
+            storage,
+            r#"
+            (async () => {
+                // 2MiB string — exceeds MAX_VALUE_BYTES = 1MiB.
+                const big = 'x'.repeat(2 * 1024 * 1024);
+                try {
+                    await slab.storage.set('k', big);
+                    slab.ui.notify('unexpected:resolved', 'info');
+                } catch (e) {
+                    slab.ui.notify('rej:' + e.message, 'info');
+                }
+            })();
+            "#
+            .into(),
+        );
+
+        let msg = wait_for_notify(&h, "rej:", Duration::from_secs(3)).expect("reject notification");
+        assert!(
+            msg.contains("value too large") || msg.contains("ValueTooLarge"),
+            "expected value-too-large rejection, got {msg:?}"
+        );
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+    }
+
+    #[test]
+    fn slab_storage_is_scoped_per_plugin_id_via_actor() {
+        // Two actors share the same backing store but use different
+        // `plugin_id`s — plugin A's writes must NOT be visible to
+        // plugin B. This is THE security boundary for the surface;
+        // a regression here is critical.
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+
+        // Plugin A writes a value, then notifies "done".
+        let h_a = spawn_with_storage(
+            "p.storage.tenant.a",
+            Arc::clone(&storage),
+            r#"
+            (async () => {
+                await slab.storage.set('secret', 'A-only');
+                slab.ui.notify('done', 'info');
+            })();
+            "#
+            .into(),
+        );
+        wait_for_notify(&h_a, "done", Duration::from_secs(2)).expect("A done");
+        h_a.send(RuntimeCmd::Shutdown).expect("shutdown A");
+        h_a.join().expect("join A");
+
+        // Plugin B (same store, different plugin_id) tries to read
+        // the same key — must resolve to `null`.
+        let h_b = spawn_with_storage(
+            "p.storage.tenant.b",
+            Arc::clone(&storage),
+            r#"
+            (async () => {
+                const got = await slab.storage.get('secret');
+                const keys = await slab.storage.list();
+                slab.ui.notify(
+                    'b:' + (got === null ? 'null' : got) + ':' + JSON.stringify(keys),
+                    'info'
+                );
+            })();
+            "#
+            .into(),
+        );
+        let msg = wait_for_notify(&h_b, "b:", Duration::from_secs(2)).expect("B notification");
+        assert_eq!(msg, "b:null:[]");
+        h_b.send(RuntimeCmd::Shutdown).expect("shutdown B");
+        h_b.join().expect("join B");
+
+        // Sanity: confirm plugin A's row is still there directly via
+        // the host-side handle (rules out "wiped by B" false positive).
+        let guard = storage.lock().unwrap();
+        assert_eq!(
+            guard
+                .kv_get("p.storage.tenant.a", "secret")
+                .expect("kv_get"),
+            Some("A-only".to_string()),
+        );
+        assert!(guard
+            .kv_get("p.storage.tenant.b", "secret")
+            .expect("kv_get")
+            .is_none());
+    }
+
+    #[test]
+    fn slab_storage_usage_tracks_bytes_via_actor() {
+        // `usage()` returns the current byte total. After two writes
+        // of known length it must equal their sum.
+        let storage = crate::plugins::storage::shared_in_memory().expect("in-mem storage");
+        let h = spawn_with_storage(
+            "p.storage.usage",
+            storage,
+            r#"
+            (async () => {
+                await slab.storage.set('a', 'hello');   // 5 bytes
+                await slab.storage.set('b', 'world!!'); // 7 bytes
+                const u = await slab.storage.usage();
+                slab.ui.notify('u:' + u, 'info');
+            })();
+            "#
+            .into(),
+        );
+
+        let msg = wait_for_notify(&h, "u:", Duration::from_secs(2)).expect("usage notification");
+        assert_eq!(msg, "u:12");
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
     }
 }

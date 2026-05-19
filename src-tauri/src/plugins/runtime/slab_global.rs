@@ -720,16 +720,18 @@ fn parse_body<'js>(init: &Object<'js>) -> Result<Option<Vec<u8>>> {
 ///
 /// Mirror image of [`reject_now`]. Used by the storage bindings so a
 /// sync sqlite hit doesn't have to round-trip through the runtime's
-/// pending-fetch table — we just splice a settled Promise into the
-/// JS world and return.
+/// pending-fetch table — we just create a fresh Promise, call its
+/// resolver with `value`, and hand the pending Promise back to JS.
+/// The resolver schedules its `.then` continuations as microtasks
+/// the same way `Promise.resolve(x).then(...)` does, so awaits on
+/// the returned Promise progress on the next pending-job pump.
 fn resolve_now<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Value<'js>> {
-    // Build `Promise.resolve(x)` by pulling the global Promise and
-    // calling its static `resolve`. `eval` would work too but would
-    // re-stringify `value` through JSON, losing fidelity for things
-    // like arrays of strings with weird unicode.
-    let globals = ctx.globals();
-    let promise: Function<'js> = globals.get::<_, Object<'js>>("Promise")?.get("resolve")?;
-    promise.call((value,))
+    let (promise, resolve, _reject) = Promise::new(ctx)?;
+    // `(value,)` as the call args; rquickjs's tuple-as-args impl
+    // expects each tuple element to be `IntoJs`, and `Value<'js>` is
+    // its own `IntoJs` identity, so this round-trips cleanly.
+    resolve.call::<_, ()>((value,))?;
+    Ok(promise.into_value())
 }
 
 fn make_storage_get<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
@@ -766,13 +768,14 @@ fn make_storage_get<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js
 fn make_storage_set<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
     Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, key: String, value: Coerced<String>| -> Result<Value<'js>> {
-            // `Coerced<String>` accepts non-string values and
-            // stringifies them per JS semantics (numbers → "42",
-            // objects → "[object Object]"). This matches what
-            // `localStorage.setItem` does in the browser and keeps
-            // the surface forgiving for typed-without-thinking
-            // plugin authors.
+        move |ctx: Ctx<'js>, key: String, value: String| -> Result<Value<'js>> {
+            // We take `value: String` rather than `Coerced<String>`
+            // because rquickjs's `Function::new` arg-tuple deserializer
+            // doesn't compose with `Coerced` for non-leading arg
+            // positions in 0.11. JS callers must pass a string;
+            // non-string types will surface as a `from_js` rejection
+            // — a slightly less forgiving surface than `localStorage`
+            // in the browser but a clean error message either way.
             let Some(storage) = &b.storage else {
                 return reject_now(
                     &ctx,
@@ -783,7 +786,7 @@ fn make_storage_set<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js
                 Ok(g) => g,
                 Err(_) => return reject_now(&ctx, "slab.storage: backing mutex poisoned"),
             };
-            match guard.kv_set(&b.plugin_id, &key, &value.0) {
+            match guard.kv_set(&b.plugin_id, &key, &value) {
                 Ok(()) => resolve_now(&ctx, Value::new_undefined(ctx.clone())),
                 Err(e) => reject_now(&ctx, &format!("slab.storage.set: {e}")),
             }
