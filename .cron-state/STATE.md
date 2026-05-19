@@ -5,73 +5,87 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 "Voice Mode: Polish" 🎙 — MERGED + TAGGED + PUSHED, CI in flight
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 1+3 SHIPPED on `feature/v2.0.0-workshop`
 
-**Main HEAD**: `cc51f72` (merge commit v1.9.2).
+**Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
-**RELEASE_PENDING**: **v1.9.2** — merge SHA `cc51f72`, tag `v1.9.2`, CI run `26071609861`. Finalize next tick.
-
-**v2.0.0 spec authored** at `.cron-state/proposals/v2.0.0-workshop.md` (12 slices, ~48 commits, TypeScript Plugins via QuickJS). Pre-flight gate from previous STATE is now resolved.
+**Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `5c9533a`, 5 commits ahead of `main`.
+**RELEASE_PENDING**: *(none)*
 
 ---
 
-## TICK 2026-05-18 18:55 PT — MODE A merge v1.9.2 + author v2.0.0 spec (BIG ROADMAP)
+## TICK 2026-05-18 19:56 PT — MODE C BIG vertical slice: v2.0.0 Slice 1 (rquickjs) + Slice 3 (grants)
 
-Cron tick at 18:55 PT (5min into off-hours window). Shipped a release + a roadmap doc.
-
-**Descope decision**: v1.9.2 T6 (Windows-native cpal recorder scaffold) deferred to v1.9.3. Per plan §1327 explicit escape hatch — Tasks 1-5 ship as v1.9.2, T6 lands when WASAPI implementation is real (not a `todo!()` stub). Justification: T6 is perf-only delta on Windows (PowerShell shell-out from v1.9.1 still works fine); holding v1.9.2 for T6 robs macOS+Linux users of the polish slice; "scaffolding only" commit doesn't qualify as "big" per Sanjay's directive.
+Per Sanjay's "ship big things every tick" directive, used the full tick to land **two** non-trivial v2.0.0 slices in one go. Slice 1 was projected as risky (3-5 min first rquickjs build) but actual cold compile was only ~17s on the M-series host, so I had budget for Slice 3 too.
 
 **Commits this tick:**
-- `aad0b61` fix(clippy): drop useless into_iter() in list_whisper_models (uncommitted from prior tick)
-- `8f5d1df` chore(release): v1.9.2 — version bumps + release notes
-- `cc51f72` Merge v1.9.2 'Voice Mode: Polish' 🎙 (merge commit on main)
-- Plus `.cron-state/proposals/v2.0.0-workshop.md` (15 KB spec; not committed to git, lives in the proposals cabinet)
+- `bd00df0` feat(plugins/runtime): sandboxed QuickJS interpreter for plugin scripts (v2.0.0 Slice 1)
+- `5c9533a` feat(plugins/grants): capability grant store + enforcement gate (v2.0.0 Slice 3)
 
-**Quality gates on main post-merge:**
+**Slice 1 (`bd00df0`) — rquickjs embedding:**
+- `rquickjs = "0.11"` (default-features=false, features=["std"]) added to `src-tauri/Cargo.toml`
+- New module `plugins/runtime/{mod.rs,sandbox.rs}`
+- `Runtime` newtype wraps `rquickjs::Runtime` with 16MB memory cap + 1s wall-clock interrupt
+- `execute_script(plugin_id, source)` builds a fresh `Context` per call → drops on return
+- `console.{log,warn,error}` wired into a per-call `Arc<Mutex<Vec<LogEntry>>>` shared buffer
+- Variadic args coerced via `Rest<Coerced<String>>` (JS `String(x)` semantics, space-joined)
+- `RuntimeError` enum: `Init` / `Syntax` / `Thrown` / `TimeLimit { limit_ms }` / `MemoryLimit { limit_bytes }`
+- Syntax-vs-thrown discrimination via `Exception.as_object().get(PredefinedAtom::Name) == "SyntaxError"`
+- 10 tests, all passing: console pipe, level tagging, type coercion, syntax/throw/time/memory error paths, fresh-context cross-Runtime and intra-Runtime, empty script, plugin_id propagation
+
+**Slice 3 (`5c9533a`) — capability grants:**
+- New module `plugins/grants.rs` — pure backend, no IPC yet
+- `PluginGrants` — user-granted capabilities (separate axis from declared)
+- `PluginGrants::covers(declared)` — detects plugin escalation on update
+- `GrantStore` flat-map keyed by plugin_id, persists as TOML at `~/.slab/plugin-grants.toml`
+- `read_grants` / `write_grants` mirror enabled-state file pattern; corrupt file → empty (no lockout)
+- `CapabilityRequest` enum: `FsRead`, `FsWrite`, `NetFetch{host}`, `UiRegisterPanel`, `UiRegisterTool`, `BeaconRegisterTool`, `BeaconRegisterAiProvider`
+- `enforce(declared, granted, req)` — both must permit; returns `Result<(), DenyReason>`
+- `DenyReason`: `NotDeclared`, `NotGranted`, `GrantTooNarrow`, `HostNotAllowed`
+- Manifest re-exports widened to expose `Capabilities`, `FsCap`, `NetCap`, `UiCap`, `BeaconCap`, `RuntimeManifest` for host shim consumption
+- 21 tests, all passing
+
+**Quality gates on `feature/v2.0.0-workshop` HEAD `5c9533a`:**
 - `cargo fmt --all -- --check` — clean
-- `cargo clippy --all-targets -- -D warnings` — clean
-- `cargo test --lib` — **736 passed / 0 failed**
+- `cargo clippy --all-targets -- -D warnings` — clean (fixed two `match → matches!()` lints in grants.rs)
+- `cargo test --lib` — **785 passed / 0 failed** (up from 754: +10 runtime, +21 grants)
 - `pnpm check` — 0 errors, 23 pre-existing warnings (unchanged)
 
-**Push:** `main` → `cc51f72` + tag `v1.9.2` via `--follow-tags`. CI run `26071609861` triggered (in_progress at tick end — first 3/4 jobs through "Cache cargo" step at end of tick window).
+**Push:** pushed to origin/feature/v2.0.0-workshop.
+
+**Design notes from this tick:**
+- rquickjs 0.11 is the current crates.io release; 0.10 (from the plan doc) was wrong, 0.11 was selected. cc-compile of QuickJS is genuinely fast on M-series — incremental rebuilds <1s.
+- Fresh-context-per-execution is the v2.0.0 contract (verified by test). Long-lived contexts for stateful event handlers wait for Slice 4 lifecycle work.
+- Grants module is *backend only*. The actual Cabinet modal that lets users pick a granted set is folded into a new "Slice 3b" entry on the plan; that's pure Svelte work.
+- Manifest declared bound vs user grant are two independent axes. `enforce()` requires both to permit. This catches the "user granted X but plugin's manifest never declared X" case (returns `NotDeclared` — manifest is the contract).
 
 ---
 
 ## NEXT TICK PLAYBOOK
 
-### Step 1 — MODE B finalize v1.9.2
+### Step 1 — MODE C continue v2.0.0 "Workshop"
 
-CI run `26071609861` for `main @ cc51f72`. Poll:
-```bash
-gh run view 26071609861 --json status,conclusion
-```
+**Slice 4 (`slab` global skeleton + lifecycle)** is the next big chunk. From the spec proposal:
+1. Inside `runtime/sandbox.rs`, install a `slab` global Object on every fresh Context with these subsections (initially stub fns that return `undefined`):
+   - `slab.beacon.{registerTool, registerAiProvider}`
+   - `slab.ui.{registerPanel, registerTool}`
+   - `slab.document.{getActive, onOpen, onClose}`
+   - `slab.storage.{get, set, remove}` (Slice 8 wires the real sqlite)
+   - `slab.fetch(url, init?)` (Slice 7 wires real reqwest)
+2. Plumb the plugin_id + `(declared, granted)` capability refs through to each host shim via closure capture so calls can `enforce()` before doing work.
+3. Lifecycle hooks: a plugin's `script.js` should be evaluated once at *enable* time (not at every event). The eval result is the plugin's "registration phase"; subsequent host events (open document, run tool) dispatch to registered handlers via a per-plugin `Persistent<Function>` table.
+4. Tauri commands `plugin_grants_get(plugin_id)`, `plugin_grants_set(plugin_id, grants)`, `plugin_grants_reset(plugin_id)` for the Cabinet UI.
 
-If `conclusion = success`:
-```bash
-gh run download 26071609861 --dir /tmp/slab-release-1.9.2
-gh release create v1.9.2 \
-  --title 'v1.9.2 — Voice Mode: Polish 🎙' \
-  --notes-file docs/release-notes/v1.9.2.md \
-  /tmp/slab-release-1.9.2/macos-arm64/Slab_1.9.2_aarch64.dmg \
-  /tmp/slab-release-1.9.2/macos-x64/Slab_1.9.2_x64.dmg \
-  /tmp/slab-release-1.9.2/linux-x64/Slab_1.9.2_amd64.deb \
-  /tmp/slab-release-1.9.2/linux-x64/Slab_1.9.2_amd64.AppImage \
-  /tmp/slab-release-1.9.2/windows-x64/Slab_1.9.2_x64_en-US.msi \
-  /tmp/slab-release-1.9.2/windows-x64/Slab_1.9.2_x64-setup.exe
-```
-(Asset paths from v1.9.1 finalize tick. Adjust per `gh run download` actual layout.)
+ETA: 5-6 commits. Reserve a full tick. Persistent lifetimes can be subtle, write tests early.
 
-Then clear `RELEASE_PENDING` line above + proceed to Step 2.
+### Step 2 — Slice 3b (Cabinet modal) can ride along if budget allows
 
-If CI fails: write `RELEASE_FAILED: v1.9.2 CI run 26071609861 — <failing job>` to STATE.md, fix on a follow-up branch.
+Svelte modal that reads from `Manifest.runtime.capabilities` and writes a `PluginGrants` via the new Tauri commands. Trivial UI; depends on Slice 4 commands being live first.
 
-### Step 2 — MODE C start v2.0.0 "Workshop"
+### Step 3 — Watch for sibling subagent activity
 
-After v1.9.2 finalized:
-1. Promote `.cron-state/proposals/v2.0.0-workshop.md` → `docs/plans/2026-05-XX-v2.0.0-workshop.md` (commit as `docs(plan): v2.0.0 Workshop — TypeScript Plugins`).
-2. `git checkout -b feature/v2.0.0-workshop main`.
-3. Ship **Slice 1 — QuickJS embedding + sandboxed console.log** (4-5 commits, +6 tests). See spec for slice details.
-4. Aggressive: pair Slice 1 + Slice 2 (manifest schema bump + script load) in the same tick = 7-8 commits and ~+11 tests. That's BIG per Sanjay's directive.
+Note: `/tmp/msg.txt` was touched by a sibling subagent (id `0aa53d4a-...`) during this tick — possibly a parallel Hermes run. No actual conflicts surfaced (the only shared file was `/tmp/msg.txt`, which I overwrote with my own commit message right before each commit). If future ticks see unexpected edits in `.cron-state/` or the active branch, check `process(action="list")` for active siblings.
 
 ---
 
@@ -82,9 +96,9 @@ After v1.9.2 finalized:
 ### v1.8.0 "Glossary" 📖 — **RELEASED 2026-05-18**
 ### v1.9.0 "Voice Mode" 🔊 (TTS-first) — **RELEASED 2026-05-18**
 ### v1.9.1 "Beacon Voice Mode: Listen" 🎙 — **RELEASED 2026-05-18**
-### v1.9.2 "Voice Mode: Polish" — **MERGED + TAGGED 2026-05-18, awaiting CI green to finalize**
+### v1.9.2 "Voice Mode: Polish" — **RELEASED 2026-05-18** (6 assets on GH)
 ### v1.9.3 "Voice Mode: Windows-native" — Windows WASAPI recorder via cpal (T6 from v1.9.2 plan, plus real impl)
-### v2.0.0 "Workshop" — TypeScript Plugins (QuickJS/rquickjs). **Spec at `.cron-state/proposals/v2.0.0-workshop.md`.** 12 slices, ~48 commits.
+### v2.0.0 "Workshop" — TypeScript Plugins (rquickjs). **In flight on `feature/v2.0.0-workshop`. Slices 1+2+3 shipped (3/12). Plan at `docs/plans/2026-05-18-v2.0.0-workshop.md`.**
 
 ---
 
@@ -103,10 +117,15 @@ After v1.9.2 finalized:
 
 **v1.9.3** — Windows-native STT (WASAPI via cpal). Real implementation, not the `todo!()` scaffold from v1.9.2 T6. Cargo feature `windows-stt`. ~3-4 commits + integration tests.
 
-**v2.0.0 "Workshop"** — spec is now real at `.cron-state/proposals/v2.0.0-workshop.md`. When ready to start:
-1. Promote to `docs/plans/`.
-2. Branch `feature/v2.0.0-workshop`.
-3. Ship slices in order: 1→QuickJS+console, 2→manifest schema, 3→capability prompt, 4→`slab` global, 5→Beacon tool registration, 6→panel registration, 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration (closes parked v1.3.x TODO), 12→release.
+**v2.0.0 "Workshop" slice progress:**
+- ✅ Slice 2 (manifest schema + hash-pinned loader) — shipped 2026-05-18
+- ✅ Slice 1 (rquickjs embedding + sandboxed console) — shipped 2026-05-18
+- ✅ Slice 3 (capability grants backend + enforce()) — shipped 2026-05-18
+- ⏭ Slice 4 (`slab` global + lifecycle + Tauri grant commands) — NEXT
+- ⏭ Slice 3b (Cabinet prompt modal) — after Slice 4
+- ⏭ Slices 5-12 — see plan doc
+
+Slices in target order: 1→rquickjs+console ✅, 2→manifest schema ✅, 3→capability backend ✅, 4→`slab` global + lifecycle, 5→Beacon tool registration, 6→panel registration, 7→fetch shim, 8→storage, 9→SDK npm pkg, 10→sample plugin+docs, 11→AI provider registration, 12→release.
 
 **v2.1.0 candidates (post-Workshop):**
 - **Forge** — author-signed plugins. Wants 10+ plugins in curated index before considering (Sanjay's flag).
