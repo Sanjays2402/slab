@@ -30,12 +30,12 @@ Eight pillars, all local:
 | **Manipulate** | Merge / Split / Pages / Compress / Extract / Encrypt / Watermark / Convert / Metadata / Numbers / Sign / Crop / Insert / Headers&Footers / Redact / N‑up |
 | **Document tools** | Markdown→PDF · Grayscale · Page Labels · Auto‑Redact · Polyglot (.docx/.xlsx/.epub/.html/...) · Flatten · Sanitize · Repair · Edit Text |
 | **OCR & vision** | Tesseract OCR plus batch queue, table extraction, language packs, preflight, and vision Q&A in Beacon |
-| **AI (local)** | **Beacon** — Chat / Summary / Semantic Search / PII Redact across the open PDF, on‑device only |
+| **AI (local)** | **Beacon** — Chat · Summary · Semantic Search · PII Redact · Smart Outline · Citations · Study Mode · Glossary · Voice Mode (TTS + STT), on‑device only |
 | **Productivity** | PDF Library · line‑level diff · presenter mode · settings + keyboard shortcuts · detachable panels |
 | **Reach** | Modal Vim mode · WCAG‑level a11y audit + fixes · i18n foundation |
-| **Extensible** | **Foundry** — declarative plugin system (themes, locales, commands, AI providers, PDF actions) via TOML manifest |
+| **Extensible** | **Foundry** + **Bench** — declarative plugin system with a signed, in‑app marketplace |
 
-A full Rust test suite passing, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
+A full Rust test suite (650+ tests) passing, clippy‑clean with `-D warnings`, type‑checked Svelte 5 front‑end. Cross‑platform CI on macOS, Windows, and Linux.
 
 ## The toolkit, one by one
 
@@ -56,14 +56,29 @@ A browsable library view across every PDF you've imported — folders, tags, sea
 
 ### Beacon — local AI
 
-Six AI features that run **entirely on your machine** by default. No API keys, no cloud, no telemetry — the same air‑gap promise as every other Slab tool.
+Eleven AI features that run **entirely on your machine** by default. No API keys, no cloud, no telemetry — the same air‑gap promise as every other Slab tool.
+
+**Core (since v0.10):**
 
 - **Beacon Chat** — Q&A against the open PDF. Citations point back to exact pages.
 - **Beacon Summary** — TL;DR / Short / Long summaries on demand.
 - **Beacon Search** — semantic search across every PDF you've opened, ranked by meaning instead of keyword.
 - **Beacon PII Redact** — one‑click prep for safe sharing: AI finds names, emails, addresses, account numbers, etc. and proposes redactions.
 - **Selection Actions** — floating LLM bubble appears on text highlight (Explain · Simplify · Translate · Define · custom).
-- **Pluggable AI provider** — Ollama is the default; any OpenAI‑compatible endpoint is a config away (LM Studio, vLLM, a remote host, or a Foundry plugin).
+
+**Reading & study (post‑Bench):**
+
+- **✦ Smart Outline** *(v1.5)* — Beacon proposes a clean H1/H2/H3 table of contents from the body text. Every page number is validated against the document; near‑duplicates are collapsed. Accept the whole proposal, edit inline, or reject. Save replaces the working outline.
+- **📑 Citations** *(v1.6)* — scans the body for author‑year, bracket‑number `[12]`, and bracket‑key `[smith2024]` inline cites, extracts the end‑matter bibliography with the LLM, and links every mention to its reference. Mention‑count badges, expandable inline‑cite chips, one‑click jump‑to‑page. Regex‑only fallback works offline.
+- **🎓 Study Mode** *(v1.7)* — turns the PDF into a flashcard deck. LLM extracts Q&A pairs from the body, you review one card at a time with a 4‑button ease scale, and an SM‑2‑lite scheduler decides when each card is due next. Cards persist in `~/.slab/study.sqlite`. Click a card's page number to jump straight back to the source.
+- **📖 Glossary** *(v1.8)* — high‑precision detector for jargon, ALL‑CAPS acronyms, *italic* term‑spans, and parenthetical acronym definitions. The LLM writes a one‑line definition for each candidate; the result is cached as a JSON sidecar next to the PDF so the second open is instant. Filterable, copyable, with a **Clear cache** button to rebuild.
+
+**Voice Mode (v1.9):**
+
+- **🔊 Speak (TTS)** *(v1.9.0)* — highlight a summary, an answer, or any selection and let your machine read it aloud through the native engine: **`say`** on macOS, **`espeak-ng`** on Linux, **PowerShell SpeechSynthesizer** on Windows. Voice + words‑per‑minute slider. Pressing speak twice cancels the in‑flight utterance — single‑slot, no queue.
+- **🎙 Listen (STT)** *(v1.9.1)* — tap the mic in Beacon Chat, dictate, and an on‑device **whisper.cpp** transcribes the audio straight into the composer. macOS uses `sox` to capture, Linux uses `arecord`; the WAV is unlinked unconditionally on every code path. Nothing is uploaded, nothing lingers on disk.
+
+**Pluggable AI provider** — Ollama is the default; any OpenAI‑compatible endpoint is a config away (LM Studio, vLLM, a remote host, or a Foundry plugin).
 
 ![Beacon AI Chat](docs/screenshots/03-beacon-ai.png)
 
@@ -225,8 +240,9 @@ A proper Settings system with theme + accent color + density (compact / cozy / c
 
 ![Settings](docs/screenshots/36-settings.png)
 
-### Plugins (Foundry)
-Drop a folder containing a `plugin.toml` manifest into `~/.slab/plugins/`, restart, done. No Rust compile, no native code. Five contribution kinds:
+### Plugins (Foundry + Bench)
+
+**Foundry** is the declarative plugin system: drop a folder containing a `plugin.toml` manifest into `~/.slab/plugins/`, restart, done. No Rust compile, no native code. Five contribution kinds:
 
 | Kind | What it does | Backed by |
 | --- | --- | --- |
@@ -236,13 +252,15 @@ Drop a folder containing a `plugin.toml` manifest into `~/.slab/plugins/`, resta
 | **AI provider** | Register any OpenAI‑compatible endpoint. Appears in Beacon. | TOML entry; Chat Completions wire format. |
 | **PDF action** | Reader toolbar dropdown that pipes the open PDF through a CLI. | TOML with `{in}` / `{out}` placeholders. |
 
-A **Settings → Plugins** panel lists every plugin with toggle, version, author, contribution counts, expandable drilldown, raw manifest errors, plus a **📁 Open plugins directory** button.
+**Bench** *(v1.4)* is the in‑app marketplace on top of Foundry: a curated, **Ed25519‑signed** index of plugins users can browse and install in one click — no terminal needed. Every entry is signed by the maintainer; before install Slab verifies the entry signature against the embedded public key, then verifies the tarball's SHA‑256 matches the signed `manifest_sha256`. If any step fails, install aborts and nothing is written. **Provenance** end‑to‑end.
+
+A **Settings → Plugins** panel lists every installed plugin with toggle, version, author, contribution counts, expandable drilldown, raw manifest errors, plus a **📁 Open plugins directory** button. A **Browse** tab surfaces the Bench index with one‑click install, update badges, and an uninstall affordance.
 
 ![Plugins — Installed](docs/screenshots/37-plugins.png)
 
 ![Plugins — Browse](docs/screenshots/37b-plugins-browse.png)
 
-**Honest security framing**: Foundry plugins run with Slab's permissions — there's no sandbox. Treat a plugin like a `bash` script you downloaded. Read the manifest before enabling; the panel shows the on‑disk path so you can `cat` it first.
+**Honest security framing**: Foundry plugins run with Slab's permissions — there's no sandbox. Bench gives you **who shipped it**, not **what it can do**. Treat a plugin like a `bash` script you downloaded. Read the manifest before enabling; the panel shows the on‑disk path so you can `cat` it first.
 
 📖 [Author guide: `docs/PLUGINS.md`](docs/PLUGINS.md)
 
@@ -330,6 +348,12 @@ pnpm tauri dev          # run in dev mode
 pnpm tauri build        # produce an installer / app bundle for your platform
 ```
 
+**Optional runtime deps** for the AI side:
+
+- **Beacon Chat/Search/Summary/etc.** — install [Ollama](https://ollama.com), then `ollama pull llama3.2:3b` (or any chat model). Slab also accepts any OpenAI‑compatible endpoint via Settings.
+- **Voice — Speak (TTS)** — `say` ships with macOS; Linux: `apt install espeak-ng`; Windows: built‑in PowerShell SAPI.
+- **Voice — Listen (STT)** — `brew install whisper-cpp sox` (macOS), `apt install whisper-cpp alsa-utils` (Linux). The capability probe in Beacon Voice settings tells you exactly what's missing.
+
 ## Tests
 
 ```bash
@@ -345,13 +369,14 @@ Foundry is Slab's declarative plugin system. Drop a folder into `~/.slab/plugins
 - **Author guide:** [`docs/PLUGINS.md`](docs/PLUGINS.md) — full manifest reference, contribution kinds, troubleshooting.
 - **Working example:** [`examples/plugins/hello-slab/`](examples/plugins/hello-slab/) — copy-paste-edit reference plugin that exercises all five contribution kinds.
 - **Manage plugins:** Settings → Plugins (or `Cmd-K` → "Open Settings → Plugins").
+- **Discover plugins:** Settings → Plugins → **Browse** (the Bench marketplace) — every entry signed by the maintainer, hash‑verified on install.
 
 ## Under the hood
 
 - **Shell:** [Tauri 2](https://tauri.app) — system webview, ~15–25 MB binaries, native menus.
 - **UI:** [SvelteKit](https://svelte.dev) + Svelte 5 runes + TypeScript.
 - **PDF core:** [`lopdf`](https://crates.io/crates/lopdf) (pure Rust) for manipulation, [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) for rendering in the Reader, [`pdf-lib`](https://pdf-lib.js.org) for client‑side composition (stamps, image embedding), [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) for Markdown → PDF, [`pdfium-render`](https://crates.io/crates/pdfium-render) + [`tesseract-rs`](https://crates.io/crates/tesseract-rs) for OCR.
-- **AI:** local embeddings + on‑device chat model for Beacon (configurable, network only touched during first model download).
+- **AI:** local embeddings + on‑device chat model for Beacon (configurable, network only touched during first model download). **Voice Mode** uses native OS engines (`say` / `espeak-ng` / PowerShell SAPI) for TTS and **whisper.cpp** for on‑device STT — Slab itself never holds your audio on disk longer than the transcription call.
 - **License:** GPL‑3.0 — free as in freedom. Fork it, ship it, just don't close‑source it.
 
 ## A small promise
