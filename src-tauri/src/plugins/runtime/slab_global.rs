@@ -23,10 +23,6 @@
 //!
 //! ## What this slice does NOT cover
 //!
-//! - `slab.document.{getActive,onOpen,onClose}` — needs the
-//!   `Persistent<Function>` lifecycle table from Slice 4b. Left as
-//!   stub-throws-error so plugins can detect non-availability at
-//!   runtime: `try { slab.document.getActive() } catch { /* fallback */ }`.
 //! - `slab.storage.{get,set,remove}` — Slice 8.
 //! - `slab.fetch` — Slice 7.
 //!
@@ -34,15 +30,29 @@
 //! plugin authors get a clear signal that the surface is reserved
 //! but not yet live, rather than the surface silently returning
 //! `undefined`.
+//!
+//! ## `slab.document.*` (live since Slice 6)
+//!
+//! `onOpen`, `onClose` register `Persistent<Function>` handlers into
+//! a per-plugin `LifecycleRegistry` (see `runtime/lifecycle.rs`).
+//! `getActive()` reads from a shared `Arc<Mutex<Option<DocumentEvent>>>`
+//! the actor (Slice 6.5) updates whenever the frontend opens/closes
+//! a PDF. When called from ephemeral `execute_script` / `enable_plugin`
+//! paths (where there's no long-lived runtime to host the callback)
+//! `onOpen`/`onClose` throw a clear "not available outside enable
+//! context" error and `getActive()` returns `null`.
 
 use std::sync::{Arc, Mutex};
 
-use rquickjs::{convert::Coerced, function::Rest, Ctx, Exception, Function, Object, Result, Value};
+use rquickjs::{
+    convert::Coerced, function::Rest, Ctx, Exception, Function, Object, Persistent, Result, Value,
+};
 
 use super::host_api::{
     BeaconAiProviderReg, BeaconToolReg, NotifyCall, NotifyLevel, Registrations, UiPanelReg,
     UiToolReg,
 };
+use super::lifecycle::{SharedActiveDoc, SharedLifecycle};
 use crate::plugins::grants::{enforce, CapabilityRequest, DenyReason, PluginGrants};
 use crate::plugins::manifest::Capabilities;
 
@@ -56,6 +66,16 @@ pub(super) struct HostBindings {
     pub declared: Arc<Capabilities>,
     pub granted: Arc<PluginGrants>,
     pub registrations: Arc<Mutex<Registrations>>,
+    /// Persistent callbacks registered via `slab.document.on*`.
+    /// `None` during ephemeral [`super::Runtime::execute_script`] /
+    /// [`super::Runtime::enable_plugin`] paths (no long-lived runtime
+    /// → no place to stash callbacks). `Some` only inside the
+    /// long-lived per-plugin actor (Slice 6.5).
+    pub lifecycle: Option<SharedLifecycle>,
+    /// Snapshot of the currently-active document, updated by the
+    /// actor whenever it processes a `DocumentOpened`/`DocumentClosed`.
+    /// `None` during ephemeral paths or when no PDF is loaded.
+    pub active_doc: Option<SharedActiveDoc>,
 }
 
 /// Install the `slab` global on the given context.
@@ -92,19 +112,20 @@ pub(super) fn install_slab(ctx: &Ctx<'_>, bindings: HostBindings) -> Result<()> 
     ui.set("notify", make_ui_notify(ctx, bindings.clone())?)?;
     slab.set("ui", ui)?;
 
-    // --- slab.document.* (Slice 4b — reserved-but-not-live) ----------------
+    // --- slab.document.* (Slice 6 — live!) ---------------------------------
+    // `onOpen` / `onClose` stash a `Persistent<Function>` into the shared
+    // lifecycle registry when called from inside the actor (Slice 6.5);
+    // they throw cleanly when called from ephemeral execute_script paths
+    // where there's no long-lived runtime to host the callback.
     let document = Object::new(ctx.clone())?;
-    document.set(
-        "getActive",
-        make_unavailable(ctx, "slab.document.getActive", "Slice 4b")?,
-    )?;
+    document.set("getActive", make_get_active(ctx, bindings.clone())?)?;
     document.set(
         "onOpen",
-        make_unavailable(ctx, "slab.document.onOpen", "Slice 4b")?,
+        make_on_event(ctx, bindings.clone(), LifecycleAxis::OnOpen)?,
     )?;
     document.set(
         "onClose",
-        make_unavailable(ctx, "slab.document.onClose", "Slice 4b")?,
+        make_on_event(ctx, bindings.clone(), LifecycleAxis::OnClose)?,
     )?;
     slab.set("document", document)?;
 
@@ -314,6 +335,99 @@ fn json_from_value<'js>(ctx: &Ctx<'js>, v: Value<'js>) -> Result<serde_json::Val
         .map_err(|e| Exception::throw_type(ctx, &format!("descriptor not JSON-serializable: {e}")))
 }
 
+/// Which lifecycle slot a `slab.document.on*` call writes to.
+/// Plain enum so the closure passed to `Function::new` can be a
+/// trivial `Copy`.
+#[derive(Clone, Copy)]
+enum LifecycleAxis {
+    OnOpen,
+    OnClose,
+}
+
+/// Build `slab.document.onOpen` / `slab.document.onClose`.
+///
+/// Behaviour:
+/// - When the host bindings carry a [`SharedLifecycle`] (i.e. we're
+///   inside the actor's long-lived context, Slice 6.5), the supplied
+///   `callback` is saved as `Persistent::save(&ctx, callback)` and
+///   appended to the relevant slot.
+/// - When `lifecycle` is `None` (ephemeral `execute_script` /
+///   `enable_plugin` paths), the call throws a clear "not available"
+///   error so plugin authors using these surfaces from one-shot
+///   scripts get an immediate signal rather than a silent no-op.
+///
+/// Capability gating is intentionally absent: the `ui` axis already
+/// gates *visible* surfaces (panels, tools), and document lifecycle
+/// events are purely observational — every plugin that's been enabled
+/// at all is implicitly granted the ability to observe document
+/// open/close. Restricting lifecycle visibility lands as a future
+/// "background" capability if Sanjay decides it's worth it.
+fn make_on_event<'js>(
+    ctx: &Ctx<'js>,
+    b: HostBindings,
+    axis: LifecycleAxis,
+) -> Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, callback: Function<'js>| -> Result<()> {
+            let Some(reg) = b.lifecycle.as_ref() else {
+                let surface = match axis {
+                    LifecycleAxis::OnOpen => "slab.document.onOpen",
+                    LifecycleAxis::OnClose => "slab.document.onClose",
+                };
+                return Err(Exception::throw_message(
+                    &ctx,
+                    &format!("{surface} is not available outside of plugin enable context"),
+                ));
+            };
+            // `Persistent::save` extends the function's lifetime to
+            // `'static` by bumping the QuickJS refcount. The matching
+            // refcount decrement happens via `Persistent::drop`,
+            // which the actor's shutdown path triggers BEFORE the
+            // runtime drops (see `LifecycleRegistry::clear`).
+            let persistent = Persistent::save(&ctx, callback);
+            let mut guard = reg
+                .lock()
+                .map_err(|_| Exception::throw_internal(&ctx, "lifecycle mutex poisoned"))?;
+            match axis {
+                LifecycleAxis::OnOpen => guard.push_on_open(persistent),
+                LifecycleAxis::OnClose => guard.push_on_close(persistent),
+            }
+            Ok(())
+        },
+    )
+}
+
+/// Build `slab.document.getActive()`.
+///
+/// Returns:
+/// - `{ path: string, name: string }` when a document is currently
+///   open in the viewer (actor has stamped its shared `active_doc`).
+/// - `null` when no document is open OR when called from a context
+///   without an `active_doc` snapshot (ephemeral runtimes).
+///
+/// We deliberately return `null` (not `undefined`) for the "no doc"
+/// case so plugin authors can use `=== null` checks unambiguously.
+fn make_get_active<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<Value<'js>> {
+        let Some(snap_arc) = b.active_doc.as_ref() else {
+            return Ok(Value::new_null(ctx));
+        };
+        let snap = snap_arc
+            .lock()
+            .map_err(|_| Exception::throw_internal(&ctx, "active_doc mutex poisoned"))?;
+        match snap.as_ref() {
+            None => Ok(Value::new_null(ctx)),
+            Some(ev) => {
+                let obj = Object::new(ctx.clone())?;
+                obj.set("path", ev.path.to_string_lossy().to_string())?;
+                obj.set("name", ev.name.clone())?;
+                Ok(obj.into_value())
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +484,8 @@ mod tests {
             declared: Arc::new(caps),
             granted: Arc::new(grants),
             registrations: Arc::new(Mutex::new(Registrations::default())),
+            lifecycle: None,
+            active_doc: None,
         };
         let b2 = b1.clone();
         b1.registrations.lock().unwrap().ui_panels.push(UiPanelReg {

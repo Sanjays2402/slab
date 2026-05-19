@@ -35,6 +35,7 @@
 
 pub mod actor;
 pub mod host_api;
+pub mod lifecycle;
 pub mod sandbox;
 pub mod slab_global;
 
@@ -223,8 +224,10 @@ impl Runtime {
     ///
     /// The fresh-context contract from [`Self::execute_script`] still
     /// holds — every call gets its own `Context`. State that needs to
-    /// persist between events (Slice 4b) will move to a long-lived
-    /// `Persistent<Function>` table built on top of this primitive.
+    /// persist between events (e.g. `slab.document.onOpen` callbacks)
+    /// lives in the per-plugin actor (Slice 6.5) built on top of this
+    /// primitive; the ephemeral `enable_plugin` here is only used for
+    /// one-shot smoke evaluation in tests.
     pub fn enable_plugin(
         &self,
         plugin_id: &str,
@@ -257,6 +260,12 @@ impl Runtime {
                 declared: declared_arc,
                 granted: granted_arc,
                 registrations: regs_for_closure,
+                // Ephemeral enable: no long-lived runtime, so no
+                // lifecycle / active_doc snapshots. The actor path
+                // (Slice 6.5) constructs HostBindings with Some(..)
+                // for both.
+                lifecycle: None,
+                active_doc: None,
             };
             slab_global::install_slab(&ctx, bindings)
                 .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;
@@ -756,5 +765,107 @@ mod tests {
         assert_eq!(d["parameters"]["properties"]["x"]["type"], "string");
         assert_eq!(d["tags"][1], "utility");
         assert_eq!(d["enabled"], true);
+    }
+
+    // ---- Slice 6.3/6.4 contract tests: slab.document.* surface ----
+
+    #[test]
+    fn enable_plugin_document_onopen_throws_outside_actor() {
+        // Ephemeral `enable_plugin` has `lifecycle: None` — calling
+        // `slab.document.onOpen` from a one-shot script must throw a
+        // clear "not available outside" error so plugin authors get
+        // an immediate signal. (Real callback storage lands in 6.5
+        // via PluginActor.)
+        let rt = Runtime::new().expect("runtime");
+        let err = rt
+            .enable_plugin(
+                "p.docopen",
+                &caps_full(),
+                &grants_full(),
+                "slab.document.onOpen(() => {});",
+            )
+            .expect_err("must throw outside enable context");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(m.contains("slab.document.onOpen"), "got {m:?}");
+                assert!(m.contains("not available outside"), "got {m:?}");
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enable_plugin_document_onclose_throws_outside_actor() {
+        let rt = Runtime::new().expect("runtime");
+        let err = rt
+            .enable_plugin(
+                "p.docclose",
+                &caps_full(),
+                &grants_full(),
+                "slab.document.onClose(() => {});",
+            )
+            .expect_err("must throw outside enable context");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(m.contains("slab.document.onClose"), "got {m:?}");
+                assert!(m.contains("not available outside"), "got {m:?}");
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enable_plugin_document_get_active_returns_null_without_actor() {
+        // With no `active_doc` snapshot (`None`), `getActive()` must
+        // return JS null — not undefined, not throw. Plugin authors
+        // can then write `if (slab.document.getActive() === null)`.
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.docga",
+                &caps_full(),
+                &grants_full(),
+                "console.log(slab.document.getActive() === null);",
+            )
+            .expect("script ran");
+        assert_eq!(out.log_messages(), vec!["true"]);
+    }
+
+    #[test]
+    fn enable_plugin_document_get_active_callable_without_throwing() {
+        // Belt-and-braces: `getActive()` is never supposed to throw,
+        // it just returns null when no doc is active. Make sure the
+        // wrapper doesn't accidentally surface an Exception variant.
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.docga2",
+                &caps_full(),
+                &grants_full(),
+                "let v = slab.document.getActive(); console.log(typeof v);",
+            )
+            .expect("script ran");
+        // `null` coerces to `"object"` in JS — that's the canonical
+        // typeof-null quirk; we verify the call shape, not the value.
+        assert_eq!(out.log_messages(), vec!["object"]);
+    }
+
+    #[test]
+    fn enable_plugin_document_surface_keys_exist() {
+        // Defensive check: regardless of the actor backing, the
+        // `slab.document` object must expose the three documented
+        // properties so plugins can `typeof` them at load.
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.docshape",
+                &caps_full(),
+                &grants_full(),
+                "console.log(typeof slab.document.getActive);\
+                 console.log(typeof slab.document.onOpen);\
+                 console.log(typeof slab.document.onClose);",
+            )
+            .expect("script ran");
+        assert_eq!(out.log_messages(), vec!["function", "function", "function"]);
     }
 }
