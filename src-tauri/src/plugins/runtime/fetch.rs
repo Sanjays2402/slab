@@ -85,9 +85,19 @@ pub type PendingCallbacks = (Persistent<Function<'static>>, Persistent<Function<
 #[derive(Default)]
 pub struct PendingFetches {
     by_id: HashMap<u64, PendingCallbacks>,
+    next_id: u64,
 }
 
 impl PendingFetches {
+    /// Allocate a fresh request id. Monotonically increasing per
+    /// actor; wraps after 2^64 calls which won't happen in any
+    /// realistic plugin lifetime.
+    pub fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        id
+    }
+
     /// Insert a `(resolve, reject)` pair. Returns the same id that
     /// was passed in — convenience for chained calls.
     pub fn insert(&mut self, id: u64, callbacks: PendingCallbacks) -> u64 {
@@ -128,6 +138,25 @@ pub fn take_pending(shared: &SharedPendingFetches, id: u64) -> Option<PendingCal
         Ok(mut g) => g.take(id),
         Err(_) => {
             eprintln!("[plugin fetch] pending-fetch mutex poisoned");
+            None
+        }
+    }
+}
+
+/// Convenience helper for the JS-binding side: atomically allocate
+/// a fresh id and insert the `(resolve, reject)` callbacks under
+/// it. Returns the id (which the caller stuffs into the outgoing
+/// `RuntimeCmd::Fetch`). Returns `None` if the mutex is poisoned
+/// — caller should reject the Promise synchronously in that case.
+pub fn enqueue_pending(shared: &SharedPendingFetches, callbacks: PendingCallbacks) -> Option<u64> {
+    match shared.lock() {
+        Ok(mut g) => {
+            let id = g.next_id();
+            g.insert(id, callbacks);
+            Some(id)
+        }
+        Err(_) => {
+            eprintln!("[plugin fetch] pending-fetch mutex poisoned (enqueue)");
             None
         }
     }

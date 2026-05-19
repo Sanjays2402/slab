@@ -262,11 +262,13 @@ impl Runtime {
                 granted: granted_arc,
                 registrations: regs_for_closure,
                 // Ephemeral enable: no long-lived runtime, so no
-                // lifecycle / active_doc snapshots. The actor path
-                // (Slice 6.5) constructs HostBindings with Some(..)
-                // for both.
+                // lifecycle / active_doc snapshots / fetch channel.
+                // The actor path (Slice 6.5+7) constructs
+                // HostBindings with Some(..) for all four.
                 lifecycle: None,
                 active_doc: None,
+                cmd_tx: None,
+                pending_fetches: None,
             };
             slab_global::install_slab(&ctx, bindings)
                 .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;
@@ -679,24 +681,46 @@ mod tests {
 
     #[test]
     fn enable_plugin_reserved_surfaces_throw_with_slice_label() {
-        // slab.fetch is reserved for Slice 7 — calling it should
-        // throw a recognizable message so plugin authors can probe.
+        // `slab.storage.*` is reserved for Slice 8 — calling it
+        // should throw a recognizable message so plugin authors can
+        // probe. (`slab.fetch` was the placeholder used here pre-
+        // Slice 7; it's now live so we use `storage.get` instead.)
         let rt = Runtime::new().expect("runtime");
         let err = rt
             .enable_plugin(
                 "p.future",
                 &caps_full(),
                 &grants_full(),
-                "slab.fetch('https://example.com');",
+                "slab.storage.get('k');",
             )
             .expect_err("must throw");
         match err {
             RuntimeError::Thrown(m) => {
-                assert!(m.contains("slab.fetch"), "got {m:?}");
-                assert!(m.contains("Slice 7"), "got {m:?}");
+                assert!(m.contains("slab.storage.get"), "got {m:?}");
+                assert!(m.contains("Slice 8"), "got {m:?}");
             }
             other => panic!("expected Thrown, got {other:?}"),
         }
+    }
+
+    /// Slice 7: in the ephemeral `enable_plugin` path there's no
+    /// actor, so `slab.fetch` exists but returns an immediately-
+    /// rejected Promise rather than throwing. The eval still
+    /// succeeds (a Promise return is not a throw) — the rejection
+    /// is asynchronous and only observable to plugin code that
+    /// `await`s or `.catch()`es the result. The actor-based tests
+    /// exercise the live behaviour; this one just pins the
+    /// no-throw contract for the ephemeral path.
+    #[test]
+    fn enable_plugin_fetch_does_not_throw_outside_actor_runtime() {
+        let rt = Runtime::new().expect("runtime");
+        rt.enable_plugin(
+            "p.fetch.ephemeral",
+            &caps_full(),
+            &grants_full(),
+            "slab.fetch('https://example.com');",
+        )
+        .expect("must succeed (Promise return is not a throw)");
     }
 
     #[test]

@@ -351,6 +351,12 @@ impl PluginActor {
         let shared = Arc::new(ActorSharedState::default());
         let shared_for_worker = Arc::clone(&shared);
         let pid_for_handle = plugin_id.clone();
+        // Cloned sender given to the worker so `slab.fetch` can
+        // enqueue `RuntimeCmd::Fetch` back into the same recv loop
+        // it's currently draining. The Promise resolves on the
+        // next loop iteration when the actor picks up its own
+        // message and runs `dispatch_fetch`.
+        let tx_for_worker = tx.clone();
 
         let join = thread::Builder::new()
             // Visible in `ps -T` / Activity Monitor — makes debugging
@@ -363,6 +369,7 @@ impl PluginActor {
                     declared,
                     granted,
                     source,
+                    tx_for_worker,
                     rx,
                     init_tx,
                     shared_for_worker,
@@ -407,6 +414,7 @@ fn run_actor(
     declared: Capabilities,
     granted: PluginGrants,
     source: String,
+    tx: Sender<RuntimeCmd>,
     rx: crossbeam_channel::Receiver<RuntimeCmd>,
     init_tx: std::sync::mpsc::SyncSender<Result<(), RuntimeError>>,
     shared: Arc<ActorSharedState>,
@@ -468,6 +476,11 @@ fn run_actor(
             // survive across event dispatches via these handles.
             lifecycle: Some(Arc::clone(&lifecycle)),
             active_doc: Some(Arc::clone(&active_doc)),
+            // Slice 7: enable `slab.fetch`. The worker pumps its own
+            // recv loop, so the cmd_tx clone delivers to the same
+            // thread it was sent from — Promise settles next tick.
+            cmd_tx: Some(tx.clone()),
+            pending_fetches: Some(Arc::clone(&pending_fetches)),
         };
         install_slab(&ctx, bindings)
             .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;
@@ -667,7 +680,7 @@ fn dispatch_lifecycle(
 fn dispatch_fetch(
     rt: &rquickjs::Runtime,
     ctx: &Context,
-    request: super::actor::FetchRequest,
+    request: FetchRequest,
     callbacks: Option<super::fetch::PendingCallbacks>,
 ) {
     // If the pending-fetch map has no entry for this request id
@@ -691,17 +704,16 @@ fn dispatch_fetch(
     // current-thread runtime for this one call. The latter path
     // exists so the actor remains usable from unit tests that
     // don't bring up Tauri.
-    let result: Result<super::actor::FetchResponse, String> =
-        match tokio::runtime::Handle::try_current() {
-            Ok(h) => h.block_on(super::fetch::do_fetch(request)),
-            Err(_) => match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt.block_on(super::fetch::do_fetch(request)),
-                Err(e) => Err(format!("tokio runtime build: {e}")),
-            },
-        };
+    let result: Result<FetchResponse, String> = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h.block_on(super::fetch::do_fetch(request)),
+        Err(_) => match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt.block_on(super::fetch::do_fetch(request)),
+            Err(e) => Err(format!("tokio runtime build: {e}")),
+        },
+    };
 
     // Settle the Promise inside the rquickjs context. Both
     // resolve and reject are `Persistent`s owned by us; restoring
@@ -750,6 +762,21 @@ fn dispatch_fetch(
             }
         }
     });
+
+    // Drain microtasks queued by `resolve.call` / `reject.call`
+    // (e.g. the awaiting `.then` body in plugin code). Bounded by
+    // `WALL_CLOCK_LIMIT` via the interrupt handler set above.
+    // `execute_pending_job` returns Ok(true) while jobs remain.
+    loop {
+        match rt.execute_pending_job() {
+            Ok(true) => continue,
+            Ok(false) => break,
+            Err(e) => {
+                eprintln!("[plugin fetch] pending-job pump errored: {e}");
+                break;
+            }
+        }
+    }
 
     rt.set_interrupt_handler(None);
 }
@@ -1218,5 +1245,179 @@ mod tests {
             messages.contains(&"hello from init"),
             "expected init log captured; got {messages:?}"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Slice 7 — slab.fetch end-to-end through the actor.
+    // ---------------------------------------------------------------
+
+    fn caps_net_local() -> Capabilities {
+        Capabilities {
+            fs: FsCap::None,
+            net: NetCap::Specific,
+            ui: UiCap::Both,
+            beacon: BeaconCap::None,
+            net_allow_hosts: vec!["127.0.0.1".to_string(), "localhost".to_string()],
+            fs_allow_paths: vec![],
+        }
+    }
+
+    fn grants_net_local() -> PluginGrants {
+        PluginGrants {
+            net: NetCap::Specific,
+            net_allow_hosts: vec!["127.0.0.1".to_string(), "localhost".to_string()],
+            ui: UiCap::Both,
+            beacon: BeaconCap::None,
+            ..PluginGrants::default()
+        }
+    }
+
+    /// Stand up a one-shot HTTP/1.1 server on `127.0.0.1:0` that
+    /// answers a single request with `200 OK\r\n\r\nhello-fetch`.
+    /// Returns the bound port. Server thread exits after one
+    /// accept — adequate for a single fetch round-trip.
+    fn spawn_oneshot_http_server(body: &'static str) -> u16 {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind oneshot http server");
+        let port = listener.local_addr().expect("local_addr").port();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut sock, _) = match listener.accept() {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            // Drain the request — we don't parse, just read until
+            // we see the end-of-headers sentinel or the read stalls.
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes());
+            let _ = sock.flush();
+        });
+        port
+    }
+
+    #[test]
+    fn slab_fetch_round_trip_resolves_with_body_via_actor() {
+        // E2E: plugin awaits slab.fetch against a local mock, then
+        // surfaces the body via slab.ui.notify. We observe the
+        // notification through the shared registrations.
+        let port = spawn_oneshot_http_server("hello-fetch");
+        let url = format!("http://127.0.0.1:{port}/");
+        // Top-level await isn't supported in QuickJS module-less
+        // mode, so we use a self-invoking async function and stash
+        // the result via the notify side-channel.
+        let script = format!(
+            r#"
+            (async () => {{
+                try {{
+                    const r = await slab.fetch('{url}');
+                    slab.ui.notify('status:' + r.status + ':' + r.text(), 'info');
+                }} catch (e) {{
+                    slab.ui.notify('err:' + e.message, 'info');
+                }}
+            }})();
+            "#
+        );
+        let h = PluginActor::spawn(
+            "p.fetch.e2e".into(),
+            caps_net_local(),
+            grants_net_local(),
+            script,
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+
+        // Give the actor a moment to (1) finish top-level eval —
+        // which queues the Fetch cmd — and (2) drain the cmd via
+        // recv. 2s budget is generous: do_fetch against localhost
+        // typically completes in <50ms.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut got = false;
+        while Instant::now() < deadline {
+            {
+                let regs = shared.registrations.lock().unwrap();
+                if regs
+                    .notifications
+                    .iter()
+                    .any(|n| n.message.starts_with("status:200:hello-fetch"))
+                {
+                    got = true;
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let msgs: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert!(
+            got,
+            "expected status:200:hello-fetch notification, got {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn slab_fetch_throws_sync_when_net_not_granted() {
+        // Without a NetFetch grant the gate fires *synchronously*
+        // inside the JS call — eval surfaces it as a Thrown error.
+        // No actor wait-loop required.
+        let err = PluginActor::spawn(
+            "p.fetch.nogrant".into(),
+            Capabilities {
+                fs: FsCap::None,
+                net: NetCap::None,
+                ui: UiCap::None,
+                beacon: BeaconCap::None,
+                net_allow_hosts: vec![],
+                fs_allow_paths: vec![],
+            },
+            PluginGrants::default(),
+            "slab.fetch('https://api.example.com/');".into(),
+        )
+        .expect_err("must throw at eval (sync gate)");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(
+                    m.contains("net fetch denied") && m.contains("does not declare"),
+                    "got {m:?}"
+                );
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slab_fetch_throws_sync_when_host_not_in_allowlist() {
+        // Net grant exists but the requested host is outside the
+        // allowlist — sync throw at the call site.
+        let err = PluginActor::spawn(
+            "p.fetch.wronghost".into(),
+            caps_net_local(),
+            grants_net_local(),
+            "slab.fetch('https://api.example.com/');".into(),
+        )
+        .expect_err("must throw at eval");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(
+                    m.contains("net fetch denied") && m.contains("allow-list"),
+                    "got {m:?}"
+                );
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
     }
 }

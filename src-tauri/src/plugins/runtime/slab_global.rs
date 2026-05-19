@@ -45,9 +45,12 @@
 use std::sync::{Arc, Mutex};
 
 use rquickjs::{
-    convert::Coerced, function::Rest, Ctx, Exception, Function, Object, Persistent, Result, Value,
+    convert::Coerced, function::Opt, function::Rest, Ctx, Exception, Function, Object, Persistent,
+    Promise, Result, Value,
 };
 
+use super::actor::{FetchRequest, RuntimeCmd};
+use super::fetch::SharedPendingFetches;
 use super::host_api::{
     BeaconAiProviderReg, BeaconToolReg, NotifyCall, NotifyLevel, Registrations, UiPanelReg,
     UiToolReg,
@@ -76,6 +79,15 @@ pub(super) struct HostBindings {
     /// actor whenever it processes a `DocumentOpened`/`DocumentClosed`.
     /// `None` during ephemeral paths or when no PDF is loaded.
     pub active_doc: Option<SharedActiveDoc>,
+    /// Channel back to the actor's recv loop, used by `slab.fetch`
+    /// to enqueue outbound HTTP. `None` during ephemeral paths
+    /// (no actor → fetch unavailable; the binding rejects the
+    /// Promise synchronously).
+    pub cmd_tx: Option<crossbeam_channel::Sender<RuntimeCmd>>,
+    /// Worker-local pending-fetch registry. `None` during
+    /// ephemeral paths. Same `Arc<Mutex<_>>` instance the actor
+    /// stores; both ends are on the same thread.
+    pub pending_fetches: Option<SharedPendingFetches>,
 }
 
 /// Install the `slab` global on the given context.
@@ -139,8 +151,8 @@ pub(super) fn install_slab(ctx: &Ctx<'_>, bindings: HostBindings) -> Result<()> 
     )?;
     slab.set("storage", storage)?;
 
-    // --- slab.fetch (Slice 7 — reserved-but-not-live) ----------------------
-    slab.set("fetch", make_unavailable(ctx, "slab.fetch", "Slice 7")?)?;
+    // --- slab.fetch (Slice 7) ----------------------------------------------
+    slab.set("fetch", make_fetch(ctx, bindings.clone())?)?;
 
     // --- slab.plugin metadata (read-only) ----------------------------------
     // Plugin scripts often want to know their own ID for log prefixes
@@ -168,8 +180,6 @@ fn make_unavailable<'js>(
     })
 }
 
-/// Build the `slab.beacon.registerTool` JS function. Capability gate
-/// is `BeaconRegisterTool`; on grant, the descriptor is recorded.
 fn make_register_beacon_tool<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
     Function::new(ctx.clone(), move |ctx: Ctx<'js>, descriptor: Value<'js>| {
         gate(&ctx, &b, &CapabilityRequest::BeaconRegisterTool)?;
@@ -428,6 +438,218 @@ fn make_get_active<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>
     })
 }
 
+/// `slab.fetch(url, init?)` — host-mediated HTTP fetch.
+///
+/// Returns a JS `Promise<Response>` where `Response` is a plain
+/// object shaped like the web Fetch `Response` interface:
+///
+/// ```js
+/// {
+///   ok: boolean,        // status in 200..=299
+///   status: number,     // HTTP status code
+///   statusText: string, // reason phrase (may be empty)
+///   url: string,        // final URL after redirects
+///   headers: Record<string, string>,
+///   body: string,       // utf-8 body; binary bodies arrive as
+///                       //   replacement-char-tolerated strings
+/// }
+/// ```
+///
+/// On network / capability / parse errors the Promise rejects with
+/// a JS `Error` whose message is the host's failure reason. HTTP
+/// 4xx and 5xx responses **resolve** with `ok=false` (per the web
+/// Fetch spec — only network-layer failures reject).
+///
+/// `init` accepts a subset of the web Fetch init bag:
+/// - `method`: string, default `"GET"`
+/// - `headers`: plain object `{ key: value }` (string values)
+/// - `body`: string OR null/undefined
+/// - `timeoutMs`: number, default 30_000, clamped to `[1, 120_000]`
+///
+/// Streaming bodies, AbortSignals, credentials, cache hints, and
+/// referrer policy are all deliberately unsupported. Plugins that
+/// need those should ship their own platform-specific bindings.
+fn make_fetch<'js>(ctx: &Ctx<'js>, b: HostBindings) -> Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, url: String, init: Opt<Object<'js>>| -> Result<Value<'js>> {
+            // 1. Extract host. Pre-flight parse — runs *before*
+            //    the capability gate so we can refuse junk URLs
+            //    without leaking grant info, and so the gate sees
+            //    a well-formed host string.
+            let host = match super::fetch::extract_host(&url) {
+                Ok(h) => h,
+                Err(e) => return reject_now(&ctx, &e),
+            };
+
+            // 2. Capability gate. Throws (not rejects) on deny so
+            //    plugin authors get a sync throw at the call site,
+            //    matching how every other gate in this module
+            //    fails. `try { await slab.fetch(...) }` still
+            //    catches it because async functions wrap throws.
+            gate(&ctx, &b, &CapabilityRequest::NetFetch { host: &host })?;
+
+            // 3. Build the request from `init`. Errors here
+            //    reject the Promise (input was syntactically a
+            //    valid call, semantically wrong → async reject).
+            let request = match build_fetch_request(&ctx, url, init.0) {
+                Ok(r) => r,
+                Err(e) => return reject_now(&ctx, &e),
+            };
+
+            // 4. Create a JS Promise, persist the resolve/reject
+            //    handles for cross-tick settlement.
+            let (promise, resolve, reject) = Promise::new(&ctx)?;
+            let resolve_p = Persistent::save(&ctx, resolve);
+            let reject_p = Persistent::save(&ctx, reject);
+
+            // 5. Enqueue into the worker-local pending map and
+            //    fire a `Fetch` command at our own recv loop. If
+            //    either side is `None` we're on the ephemeral
+            //    path (no actor) — reject synchronously.
+            let (tx, pending) = match (&b.cmd_tx, &b.pending_fetches) {
+                (Some(t), Some(p)) => (t, p),
+                _ => {
+                    return reject_now(
+                        &ctx,
+                        "slab.fetch unavailable outside the per-plugin runtime (enable the plugin first)",
+                    );
+                }
+            };
+
+            let request_id = match super::fetch::enqueue_pending(pending, (resolve_p, reject_p)) {
+                Some(id) => id,
+                None => {
+                    return reject_now(&ctx, "slab.fetch: internal pending-fetch table poisoned");
+                }
+            };
+
+            if let Err(e) = tx.send(RuntimeCmd::Fetch {
+                request_id,
+                request,
+            }) {
+                // Worker exited between binding install and send.
+                // Drop the now-unreferenced pending entry to keep
+                // the table from growing — and reject so the
+                // plugin doesn't await forever.
+                let _ = super::fetch::take_pending(pending, request_id);
+                return reject_now(&ctx, &format!("slab.fetch: actor send failed ({e})"));
+            }
+
+            Ok(promise.into_value())
+        },
+    )
+}
+
+/// Build a JS `Promise` that's already-rejected with a new `Error`
+/// whose message is `msg`. Returned as a `Value` so callers can
+/// `return reject_now(...)` directly.
+///
+/// We use `eval` rather than reaching for `Promise.reject` via the
+/// globals because (a) it's two fewer property lookups and (b) it
+/// makes the Error stack trace originate from a single, stable
+/// host-side source string instead of plugin-supplied input.
+fn reject_now<'js>(ctx: &Ctx<'js>, msg: &str) -> Result<Value<'js>> {
+    let escaped = serde_json::to_string(msg).unwrap_or_else(|_| "\"<unprintable>\"".to_string());
+    let src = format!("Promise.reject(new Error({escaped}))");
+    ctx.eval::<Value<'js>, _>(src.as_bytes())
+}
+
+/// Translate a JS `init` object into a [`FetchRequest`].
+///
+/// Returns a host-side `String` on error (not an rquickjs `Result`)
+/// so the caller can fold both "missing init" and "malformed init"
+/// branches into a single `reject_now` call.
+fn build_fetch_request<'js>(
+    ctx: &Ctx<'js>,
+    url: String,
+    init: Option<Object<'js>>,
+) -> std::result::Result<FetchRequest, String> {
+    let Some(init) = init else {
+        return Ok(FetchRequest {
+            method: "GET".to_string(),
+            url,
+            headers: vec![],
+            body: None,
+            timeout_ms: 30_000,
+        });
+    };
+
+    let method = init
+        .get::<_, Option<String>>("method")
+        .map_err(|e| format!("init.method: {e}"))?
+        .unwrap_or_else(|| "GET".to_string())
+        .to_uppercase();
+
+    let headers = parse_headers(ctx, &init).map_err(|e| format!("init.headers: {e}"))?;
+    let body = parse_body(&init).map_err(|e| format!("init.body: {e}"))?;
+
+    let timeout_ms = init
+        .get::<_, Option<u64>>("timeoutMs")
+        .map_err(|e| format!("init.timeoutMs: {e}"))?
+        .unwrap_or(30_000)
+        .clamp(1, 120_000);
+
+    Ok(FetchRequest {
+        method,
+        url,
+        headers,
+        body,
+        timeout_ms,
+    })
+}
+
+/// Pull a `Record<string, string>` from `init.headers`.
+///
+/// Tuple-array form (`[["k", "v"]]`) is accepted by the web Fetch
+/// spec but unused in practice by Slab plugin authors; we skip it
+/// for Slice 7 and fall through to empty headers. A future cleanup
+/// slice can add it if anyone asks.
+fn parse_headers<'js>(_ctx: &Ctx<'js>, init: &Object<'js>) -> Result<Vec<(String, String)>> {
+    let h: Option<Value<'js>> = init.get("headers")?;
+    let Some(h) = h else {
+        return Ok(vec![]);
+    };
+    let Some(obj) = h.as_object() else {
+        return Ok(vec![]);
+    };
+    let mut out = Vec::new();
+    for k in obj.keys::<String>() {
+        let k = k?;
+        let v: String = obj.get(&k)?;
+        // Lowercase header names so the host can match them
+        // case-insensitively (HTTP/1.1 names are case-insensitive
+        // and reqwest preserves whatever case the caller used —
+        // normalising here gives plugin authors predictable echo
+        // behaviour).
+        out.push((k.to_lowercase(), v));
+    }
+    Ok(out)
+}
+
+/// Pull a string body from `init.body`. ArrayBuffer / Uint8Array
+/// bodies are deferred to a future slice — plugin authors who need
+/// to send binary should stringify it (base64 etc.) themselves for
+/// now.
+fn parse_body<'js>(init: &Object<'js>) -> Result<Option<Vec<u8>>> {
+    let b: Option<Value<'js>> = init.get("body")?;
+    let Some(b) = b else {
+        return Ok(None);
+    };
+    if b.is_null() || b.is_undefined() {
+        return Ok(None);
+    }
+    if let Some(s) = b.as_string() {
+        let s = s.to_string()?;
+        return Ok(Some(s.into_bytes()));
+    }
+    // Silently ignore typed-array / arraybuffer bodies for Slice 7.
+    // Plugin authors get an empty body, which the host will surface
+    // back as `Content-Length: 0` — surprising but not dangerous.
+    // TODO(slice-7.x): wire `rquickjs::ArrayBuffer` and `TypedArray`.
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +708,8 @@ mod tests {
             registrations: Arc::new(Mutex::new(Registrations::default())),
             lifecycle: None,
             active_doc: None,
+            cmd_tx: None,
+            pending_fetches: None,
         };
         let b2 = b1.clone();
         b1.registrations.lock().unwrap().ui_panels.push(UiPanelReg {
