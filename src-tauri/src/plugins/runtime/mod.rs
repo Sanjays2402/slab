@@ -33,6 +33,7 @@
 //! - It does **not** invoke async hooks; everything runs to completion
 //!   synchronously inside [`Context::with`].
 
+pub mod actor;
 pub mod host_api;
 pub mod sandbox;
 pub mod slab_global;
