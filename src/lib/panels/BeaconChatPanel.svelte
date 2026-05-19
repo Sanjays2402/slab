@@ -107,6 +107,37 @@
   let isTranscribing = $state(false);
   let sttCapable = $state(false);
   let sttHint = $state<string | null>(null);
+  // v1.9.2 — auto-send trigger settings loaded from ~/.slab/config.toml.
+  // When `sttSendOnTrigger` is true and a transcript ends with
+  // `sttTriggerWord` (word-boundary, case-insensitive, ignoring a
+  // single trailing punctuation char), Beacon auto-submits the
+  // composer after stripping the trigger phrase.
+  let sttTriggerWord = $state<string | null>(null);
+  let sttSendOnTrigger = $state(false);
+
+  async function loadVoiceCfg() {
+    try {
+      // slab_beacon_config_read returns CmdResult<SlabConfig>; pull
+      // the voice block. Quietly defaults to "off" if the call fails,
+      // returns Err, or the section is missing.
+      const res = await invoke<
+        CmdResult<{
+          beacon?: {
+            voice?: {
+              stt_trigger_word?: string | null;
+              stt_send_on_trigger?: boolean;
+            };
+          };
+        }>
+      >("slab_beacon_config_read");
+      if (res.kind === "ok") {
+        sttTriggerWord = res.value?.beacon?.voice?.stt_trigger_word ?? null;
+        sttSendOnTrigger = !!res.value?.beacon?.voice?.stt_send_on_trigger;
+      }
+    } catch {
+      // Missing config just means defaults (off). Quiet.
+    }
+  }
 
   async function probeStt() {
     try {
@@ -143,26 +174,57 @@
           "slab_beacon_voice_stt_stop",
         );
         if (res.kind === "ok") {
-          // Append transcript to textarea. If the user already typed a
-          // stem ("Summarise this:"), pad with a space so the result
-          // flows naturally.
-          const cleaned = res.value.text.trim();
-          if (cleaned) {
+          const rawText = res.value.text.trim();
+
+          // v1.9.2 — apply trigger-word detection BEFORE inserting
+          // into the textarea. Mirrors the backend's pure
+          // `detect_send_trigger` helper so the UI stays
+          // unit-testable without an IPC round-trip. If the user
+          // opted out we fall through to the v1.9.1 behaviour.
+          let dictated = rawText;
+          let shouldAutoSend = false;
+          if (sttSendOnTrigger && sttTriggerWord && rawText) {
+            const trig = sttTriggerWord.trim().toLowerCase();
+            if (trig) {
+              // Strip a single trailing punctuation char then check
+              // the suffix with a whitespace-boundary requirement.
+              const stripped = rawText.replace(/[.,!?;:]\s*$/, "").trimEnd();
+              const lcStripped = stripped.toLowerCase();
+              if (lcStripped.endsWith(trig)) {
+                const prefixLen = lcStripped.length - trig.length;
+                const boundaryOk =
+                  prefixLen === 0 || /\s/.test(stripped[prefixLen - 1]);
+                if (boundaryOk) {
+                  dictated = stripped.slice(0, prefixLen).trimEnd();
+                  shouldAutoSend = true;
+                }
+              }
+            }
+          }
+
+          if (dictated) {
             question = question
-              ? `${question.trimEnd()} ${cleaned}`
-              : cleaned;
+              ? `${question.trimEnd()} ${dictated}`
+              : dictated;
           }
           const dur = (res.value.duration_ms / 1000).toFixed(1);
-          status = cleaned
-            ? { kind: "ok", msg: `Heard ${dur}s — ready to send.` }
-            : { kind: "err", msg: "Couldn't hear anything." };
-          // Focus the textarea so the user can keep typing or hit Enter.
-          await tick();
-          inputEl?.focus();
-          // Place caret at the end of the now-extended text.
-          if (inputEl) {
-            const len = inputEl.value.length;
-            inputEl.setSelectionRange(len, len);
+          if (shouldAutoSend) {
+            // Auto-send path: brief status flip then fire send().
+            status = { kind: "ok", msg: `Heard ${dur}s — sending…` };
+            await tick();
+            await send();
+          } else {
+            status = dictated
+              ? { kind: "ok", msg: `Heard ${dur}s — ready to send.` }
+              : { kind: "err", msg: "Couldn't hear anything." };
+            // Focus the textarea so the user can keep typing or hit Enter.
+            await tick();
+            inputEl?.focus();
+            // Place caret at the end of the now-extended text.
+            if (inputEl) {
+              const len = inputEl.value.length;
+              inputEl.setSelectionRange(len, len);
+            }
           }
         } else {
           status = { kind: "err", msg: res.message };
@@ -227,6 +289,7 @@
     // v1.9.1 — probe STT capabilities so we know whether to show the
     // mic button. Cheap (a few $PATH stat calls) and fire-and-forget.
     probeStt();
+    loadVoiceCfg();
     return () => {
       window.removeEventListener("slab:open-recent", onOpenRecent);
       window.removeEventListener("slab:beacon-vision-rect", onVisionRect);

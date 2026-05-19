@@ -213,6 +213,57 @@ fn cancel_inflight(mut in_flight: InFlight) {
     let _ = std::fs::remove_file(&in_flight.recording.wav_path);
 }
 
+/// Pure helper (v1.9.2): if `text` ends with `trigger`
+/// (case-insensitive, whitespace-boundary-aware, ignoring a single
+/// trailing punctuation char), return the text with the trigger
+/// stripped + `true`. Otherwise return the trimmed text + `false`.
+///
+/// `trigger == None` always yields `(trimmed_text, false)` — that's
+/// the "auto-send disabled" path.
+///
+/// Used by `BeaconChatPanel` after `stop()` to decide whether to
+/// invoke `send()` automatically. Lives here (not in the panel) so
+/// the algorithm can be exhaustively unit-tested without spinning up
+/// the frontend, and so a future server-side auto-send command can
+/// reuse the same logic.
+pub fn detect_send_trigger(text: &str, trigger: Option<&str>) -> (String, bool) {
+    let trimmed = text.trim();
+    let Some(trig) = trigger else {
+        return (trimmed.to_string(), false);
+    };
+    let trig = trig.trim();
+    if trig.is_empty() || trimmed.is_empty() {
+        return (trimmed.to_string(), false);
+    }
+
+    // Strip a single trailing punctuation char (.,!?;:) so transcripts
+    // like "...send it." still fire. whisper.cpp commonly appends a
+    // period to short utterances.
+    let body = trimmed
+        .strip_suffix(['.', ',', '!', '?', ';', ':'])
+        .unwrap_or(trimmed)
+        .trim_end();
+
+    let body_lc = body.to_lowercase();
+    let trig_lc = trig.to_lowercase();
+    if !body_lc.ends_with(&trig_lc) {
+        return (trimmed.to_string(), false);
+    }
+    // Word-boundary check: the char immediately before the suffix
+    // must be whitespace or absent (whole-text-is-trigger case). Stops
+    // "Tango" from firing a trigger of "go".
+    let prefix_len = body_lc.len() - trig_lc.len();
+    if prefix_len > 0 {
+        let prev = body[..prefix_len].chars().next_back();
+        match prev {
+            Some(c) if c.is_whitespace() => {}
+            _ => return (trimmed.to_string(), false),
+        }
+    }
+    let cleaned = body[..prefix_len].trim_end().to_string();
+    (cleaned, true)
+}
+
 /// Run the transcription engine on a captured WAV. Public so the
 /// Tauri command layer (Task 4) can invoke it directly for the
 /// "transcribe existing file" workflow (e.g. drag-and-drop a voice
@@ -482,5 +533,112 @@ whisper_print_timings: total time = 1234.5 ms
         s.cancel();
         s.cancel();
         assert!(!s.is_recording());
+    }
+
+    /// Cancelling then stopping returns NotRecording — confirms that
+    /// the slot was actually cleared (not just the recording flag).
+    /// This is what the Tauri command surface relies on for the
+    /// "ESC after start, then no more transcribes" UX.
+    #[test]
+    fn cancel_then_stop_returns_not_recording() {
+        let s = SttSession::new();
+        s.install_fake_inflight_for_test();
+        assert!(s.is_recording());
+        s.cancel();
+        assert!(matches!(s.stop(), Err(SttError::NotRecording)));
+    }
+
+    // ---- v1.9.2 — detect_send_trigger() tests ----------------------
+
+    /// Basic happy path: trigger appears at the end with a space
+    /// boundary. Strip the phrase, return `fire == true`.
+    #[test]
+    fn detect_send_trigger_matches_trailing_phrase() {
+        let (text, fire) = detect_send_trigger("Summarise this please send it", Some("send it"));
+        assert!(fire);
+        assert_eq!(text, "Summarise this please");
+    }
+
+    /// Match is case-insensitive on both sides. "Go" with trigger
+    /// "go" must fire.
+    #[test]
+    fn detect_send_trigger_case_insensitive() {
+        let (text, fire) = detect_send_trigger("Tell me what page 5 says Go", Some("go"));
+        assert!(fire);
+        assert_eq!(text, "Tell me what page 5 says");
+    }
+
+    /// Word-boundary check: trigger "go" must NOT fire on "Tango".
+    /// This is the failure mode that motivates the boundary check.
+    #[test]
+    fn detect_send_trigger_requires_word_boundary() {
+        let (text, fire) = detect_send_trigger("I love Tango", Some("go"));
+        assert!(!fire, "trigger must require a whitespace boundary");
+        assert_eq!(text, "I love Tango");
+    }
+
+    /// No trigger configured → never fire, return the trimmed text.
+    /// This is the "auto-send disabled" code path.
+    #[test]
+    fn detect_send_trigger_no_trigger_configured() {
+        let (text, fire) = detect_send_trigger("hello send it", None);
+        assert!(!fire);
+        assert_eq!(text, "hello send it");
+    }
+
+    /// Trailing period (whisper.cpp often adds one) doesn't block
+    /// detection. The stripped text retains commas/etc. that aren't
+    /// the final char.
+    #[test]
+    fn detect_send_trigger_trims_trailing_punctuation() {
+        let (text, fire) = detect_send_trigger("page 3 summary, send it.", Some("send it"));
+        assert!(fire);
+        assert_eq!(text, "page 3 summary,");
+    }
+
+    /// Trigger appearing mid-sentence is not a send signal. Only the
+    /// trailing position counts.
+    #[test]
+    fn detect_send_trigger_not_at_end_no_fire() {
+        let (text, fire) = detect_send_trigger("send it tomorrow", Some("send it"));
+        assert!(!fire);
+        assert_eq!(text, "send it tomorrow");
+    }
+
+    /// Empty input → never fires. Defensive: avoids index math on an
+    /// empty slice.
+    #[test]
+    fn detect_send_trigger_empty_input() {
+        let (text, fire) = detect_send_trigger("", Some("go"));
+        assert!(!fire);
+        assert_eq!(text, "");
+    }
+
+    /// Whitespace-only input is treated as empty after trimming.
+    #[test]
+    fn detect_send_trigger_whitespace_only() {
+        let (text, fire) = detect_send_trigger("   ", Some("go"));
+        assert!(!fire);
+        assert_eq!(text, "");
+    }
+
+    /// Whole-text-is-trigger edge case. The cleaned text becomes
+    /// empty but `fire == true` so the caller can decide what to do
+    /// (we currently treat it as "user wanted to send their existing
+    /// composer contents").
+    #[test]
+    fn detect_send_trigger_whole_text_is_trigger() {
+        let (text, fire) = detect_send_trigger("send it", Some("send it"));
+        assert!(fire);
+        assert_eq!(text, "");
+    }
+
+    /// Empty trigger string is treated the same as `None` — never
+    /// fires. Defensive against accidentally-empty config values.
+    #[test]
+    fn detect_send_trigger_empty_trigger_no_fire() {
+        let (text, fire) = detect_send_trigger("hello world", Some(""));
+        assert!(!fire);
+        assert_eq!(text, "hello world");
     }
 }
