@@ -25,6 +25,10 @@ pub use contributions::{
     active_ai_providers, active_commands, active_locales, active_pdf_actions, active_themes,
     read_asset, ActiveAiProvider, ActiveCommand, ActiveLocale, ActivePdfAction, ActiveTheme,
 };
+pub use grants::{
+    default_grants_path, enforce, read_grants, write_grants, CapabilityRequest, DenyReason,
+    GrantStore, PluginGrants,
+};
 pub use locale_loader::load_locale_bundle;
 pub use manifest::{
     AiProviderContribution, BeaconCap, Capabilities, CommandContribution, Contributions, FsCap,
@@ -36,3 +40,7 @@ pub use registry::{
     EnabledState, Plugin, PluginRegistry,
 };
 pub use runner::{run_pdf_action, ActionError, ActionReport, ActionStatus};
+pub use runtime::{
+    BeaconAiProviderReg, BeaconToolReg, EnableOutput, NotifyCall, NotifyLevel, Registrations,
+    Runtime, RuntimeError, ScriptOutput, UiPanelReg, UiToolReg,
+};

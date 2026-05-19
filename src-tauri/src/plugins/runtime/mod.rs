@@ -33,14 +33,23 @@
 //! - It does **not** invoke async hooks; everything runs to completion
 //!   synchronously inside [`Context::with`].
 
+pub mod host_api;
 pub mod sandbox;
+pub mod slab_global;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rquickjs::{CatchResultExt, CaughtError, Context};
 
+pub use host_api::{
+    BeaconAiProviderReg, BeaconToolReg, NotifyCall, NotifyLevel, Registrations, UiPanelReg,
+    UiToolReg,
+};
 pub use sandbox::{LogEntry, LogLevel};
+
+use crate::plugins::grants::PluginGrants;
+use crate::plugins::manifest::Capabilities;
 
 /// Hard cap on heap memory used by a single plugin script.
 /// 16 MiB is generous for the kinds of glue/transform plugins Workshop
@@ -64,6 +73,31 @@ pub struct ScriptOutput {
 impl ScriptOutput {
     /// Convenience: just the message strings of `console.log` calls.
     /// Useful for tests; production code should use `logs` directly.
+    pub fn log_messages(&self) -> Vec<String> {
+        self.logs
+            .iter()
+            .filter(|e| e.level == LogLevel::Log)
+            .map(|e| e.message.clone())
+            .collect()
+    }
+}
+
+/// Result of [`Runtime::enable_plugin`]. Carries everything the host
+/// needs to wire a freshly-enabled plugin into the rest of Slab:
+/// console output (for diagnostics + cabinet UI), and the plugin's
+/// declared registrations (tools, panels, AI providers, ...).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct EnableOutput {
+    /// Captured `console.*` calls during top-level evaluation.
+    pub logs: Vec<LogEntry>,
+    /// Tools / panels / providers / notifications the plugin
+    /// registered during top-level eval.
+    pub registrations: Registrations,
+}
+
+impl EnableOutput {
+    /// Convenience mirroring [`ScriptOutput::log_messages`]: just the
+    /// message strings of `console.log` calls. Used in tests.
     pub fn log_messages(&self) -> Vec<String> {
         self.logs
             .iter()
@@ -173,6 +207,78 @@ impl Runtime {
             .map(|m| m.into_inner().unwrap_or_default())
             .unwrap_or_else(|arc| arc.lock().unwrap().clone());
         Ok(ScriptOutput { logs })
+    }
+
+    /// Evaluate a plugin's `script.js` at enable time, with the
+    /// `slab` global installed and capability enforcement wired
+    /// through.
+    ///
+    /// This is the v2.0.0 lifecycle entrypoint: the host calls this
+    /// exactly once when a user enables a plugin (or at boot for
+    /// already-enabled plugins). The plugin's top-level code is
+    /// expected to declare its contributions via `slab.beacon.*`,
+    /// `slab.ui.*`, etc. These calls accumulate into [`Registrations`]
+    /// inside the returned [`EnableOutput`].
+    ///
+    /// The fresh-context contract from [`Self::execute_script`] still
+    /// holds — every call gets its own `Context`. State that needs to
+    /// persist between events (Slice 4b) will move to a long-lived
+    /// `Persistent<Function>` table built on top of this primitive.
+    pub fn enable_plugin(
+        &self,
+        plugin_id: &str,
+        declared: &Capabilities,
+        granted: &PluginGrants,
+        source: &str,
+    ) -> Result<EnableOutput, RuntimeError> {
+        let deadline = Instant::now() + WALL_CLOCK_LIMIT;
+        self.inner
+            .set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+
+        let context =
+            Context::full(&self.inner).map_err(|e| RuntimeError::Init(format!("context: {e}")))?;
+
+        let log_buffer: Arc<Mutex<Vec<LogEntry>>> = Arc::new(Mutex::new(Vec::new()));
+        let registrations: Arc<Mutex<Registrations>> =
+            Arc::new(Mutex::new(Registrations::default()));
+
+        let plugin_id_string = plugin_id.to_string();
+        let declared_arc = Arc::new(declared.clone());
+        let granted_arc = Arc::new(granted.clone());
+        let regs_for_closure = Arc::clone(&registrations);
+
+        let result: Result<(), RuntimeError> = context.with(|ctx| {
+            sandbox::install_console(&ctx, plugin_id_string.clone(), Arc::clone(&log_buffer))
+                .map_err(|e| RuntimeError::Init(format!("console install: {e}")))?;
+
+            let bindings = slab_global::HostBindings {
+                plugin_id: plugin_id_string.clone(),
+                declared: declared_arc,
+                granted: granted_arc,
+                registrations: regs_for_closure,
+            };
+            slab_global::install_slab(&ctx, bindings)
+                .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;
+
+            match ctx.eval::<rquickjs::Value, _>(source).catch(&ctx) {
+                Ok(_) => Ok(()),
+                Err(caught) => Err(classify_error(caught)),
+            }
+        });
+
+        self.inner.set_interrupt_handler(None);
+        result?;
+
+        let logs = Arc::try_unwrap(log_buffer)
+            .map(|m| m.into_inner().unwrap_or_default())
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        let registrations = Arc::try_unwrap(registrations)
+            .map(|m| m.into_inner().unwrap_or_default())
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+        Ok(EnableOutput {
+            logs,
+            registrations,
+        })
     }
 }
 
@@ -387,5 +493,267 @@ mod tests {
             .execute_script("com.example.tagme", "console.log('a'); console.warn('b');")
             .expect("script ran");
         assert!(out.logs.iter().all(|e| e.plugin_id == "com.example.tagme"));
+    }
+
+    // ---- Slice 4 contract tests: enable_plugin + slab global ----
+
+    use crate::plugins::grants::PluginGrants;
+    use crate::plugins::manifest::{BeaconCap, Capabilities, FsCap, NetCap, UiCap};
+
+    fn caps_full() -> Capabilities {
+        Capabilities {
+            fs: FsCap::ReadWrite,
+            net: NetCap::Any,
+            ui: UiCap::Both,
+            beacon: BeaconCap::Both,
+            net_allow_hosts: vec![],
+            fs_allow_paths: vec![],
+        }
+    }
+
+    fn grants_full() -> PluginGrants {
+        PluginGrants {
+            fs: FsCap::ReadWrite,
+            net: NetCap::Any,
+            ui: UiCap::Both,
+            beacon: BeaconCap::Both,
+            net_allow_hosts: vec![],
+            fs_allow_paths: vec![],
+        }
+    }
+
+    #[test]
+    fn enable_plugin_installs_slab_global() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p1",
+                &caps_full(),
+                &grants_full(),
+                "console.log(typeof slab); console.log(slab.pluginId);",
+            )
+            .expect("enable ran");
+        // Two log messages: "object" + "p1".
+        let msgs = out.log_messages();
+        assert_eq!(msgs, vec!["object", "p1"]);
+    }
+
+    #[test]
+    fn enable_plugin_captures_beacon_tool_registration() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.tool",
+                &caps_full(),
+                &grants_full(),
+                "slab.beacon.registerTool({ id: 'translate', name: 'Translate' });",
+            )
+            .expect("enable ran");
+        assert_eq!(out.registrations.beacon_tools.len(), 1);
+        let t = &out.registrations.beacon_tools[0];
+        assert_eq!(t.plugin_id, "p.tool");
+        assert_eq!(t.descriptor["id"], "translate");
+        assert_eq!(t.descriptor["name"], "Translate");
+    }
+
+    #[test]
+    fn enable_plugin_captures_ai_provider_registration() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.ai",
+                &caps_full(),
+                &grants_full(),
+                "slab.beacon.registerAiProvider({ id: 'my-llm', kind: 'chat' });",
+            )
+            .expect("enable ran");
+        assert_eq!(out.registrations.beacon_ai_providers.len(), 1);
+        assert_eq!(
+            out.registrations.beacon_ai_providers[0].descriptor["id"],
+            "my-llm"
+        );
+    }
+
+    #[test]
+    fn enable_plugin_captures_panel_and_ui_tool() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.panel",
+                &caps_full(),
+                &grants_full(),
+                "slab.ui.registerPanel({ id: 'stats' });\
+                 slab.ui.registerTool({ id: 'quick-redact' });",
+            )
+            .expect("enable ran");
+        assert_eq!(out.registrations.ui_panels.len(), 1);
+        assert_eq!(out.registrations.ui_tools.len(), 1);
+        assert_eq!(out.registrations.ui_panels[0].descriptor["id"], "stats");
+        assert_eq!(
+            out.registrations.ui_tools[0].descriptor["id"],
+            "quick-redact"
+        );
+    }
+
+    #[test]
+    fn enable_plugin_captures_notify_calls_with_level() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.notify",
+                &caps_full(),
+                &grants_full(),
+                "slab.ui.notify('hello');\
+                 slab.ui.notify('be careful', 'warn');\
+                 slab.ui.notify('boom', 'error');\
+                 slab.ui.notify('huh', 'wat');",
+            )
+            .expect("enable ran");
+        let n = &out.registrations.notifications;
+        assert_eq!(n.len(), 4);
+        assert_eq!(n[0].message, "hello");
+        assert_eq!(n[0].level, NotifyLevel::Info);
+        assert_eq!(n[1].level, NotifyLevel::Warn);
+        assert_eq!(n[2].level, NotifyLevel::Error);
+        // unknown level degrades to Info, no throw.
+        assert_eq!(n[3].level, NotifyLevel::Info);
+    }
+
+    #[test]
+    fn enable_plugin_throws_when_capability_not_declared() {
+        // Manifest declares beacon=none — plugin tries to register a
+        // tool anyway. Should throw with a NotDeclared-shaped error.
+        let mut declared = caps_full();
+        declared.beacon = BeaconCap::None;
+        let rt = Runtime::new().expect("runtime");
+        let err = rt
+            .enable_plugin(
+                "p.bad",
+                &declared,
+                &grants_full(),
+                "slab.beacon.registerTool({ id: 'x' });",
+            )
+            .expect_err("must reject");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(m.contains("beacon.registerTool"), "got {m:?}");
+                assert!(m.contains("does not declare"), "got {m:?}");
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enable_plugin_throws_when_capability_not_granted() {
+        // Manifest declares it; user grant is empty.
+        let declared = caps_full();
+        let granted = PluginGrants::default(); // deny-all
+        let rt = Runtime::new().expect("runtime");
+        let err = rt
+            .enable_plugin(
+                "p.ungranted",
+                &declared,
+                &granted,
+                "slab.ui.registerPanel({ id: 'x' });",
+            )
+            .expect_err("must reject");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(m.contains("ui.registerPanel"), "got {m:?}");
+                assert!(m.contains("not granted"), "got {m:?}");
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enable_plugin_reserved_surfaces_throw_with_slice_label() {
+        // slab.fetch is reserved for Slice 7 — calling it should
+        // throw a recognizable message so plugin authors can probe.
+        let rt = Runtime::new().expect("runtime");
+        let err = rt
+            .enable_plugin(
+                "p.future",
+                &caps_full(),
+                &grants_full(),
+                "slab.fetch('https://example.com');",
+            )
+            .expect_err("must throw");
+        match err {
+            RuntimeError::Thrown(m) => {
+                assert!(m.contains("slab.fetch"), "got {m:?}");
+                assert!(m.contains("Slice 7"), "got {m:?}");
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enable_plugin_fresh_context_per_call() {
+        let rt = Runtime::new().expect("runtime");
+        rt.enable_plugin(
+            "p.a",
+            &caps_full(),
+            &grants_full(),
+            "globalThis.poison = 42;",
+        )
+        .expect("first plugin");
+        let out = rt
+            .enable_plugin(
+                "p.b",
+                &caps_full(),
+                &grants_full(),
+                "console.log(typeof globalThis.poison);",
+            )
+            .expect("second plugin");
+        assert_eq!(out.log_messages(), vec!["undefined"]);
+    }
+
+    #[test]
+    fn enable_plugin_empty_script_returns_empty_registrations() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin("p.empty", &caps_full(), &grants_full(), "")
+            .expect("enable ran");
+        assert!(out.registrations.is_empty());
+        assert_eq!(out.registrations.total(), 0);
+        assert!(out.logs.is_empty());
+    }
+
+    #[test]
+    fn enable_plugin_console_logs_propagated() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.log",
+                &caps_full(),
+                &grants_full(),
+                "console.log('top-level eval ran');",
+            )
+            .expect("enable ran");
+        assert_eq!(out.log_messages(), vec!["top-level eval ran"]);
+    }
+
+    #[test]
+    fn enable_plugin_descriptor_can_be_complex_nested_object() {
+        let rt = Runtime::new().expect("runtime");
+        let out = rt
+            .enable_plugin(
+                "p.complex",
+                &caps_full(),
+                &grants_full(),
+                "slab.beacon.registerTool({\
+                    id: 'foo',\
+                    parameters: { type: 'object', properties: { x: { type: 'string' } } },\
+                    tags: ['math', 'utility'],\
+                    enabled: true,\
+                });",
+            )
+            .expect("enable ran");
+        let d = &out.registrations.beacon_tools[0].descriptor;
+        assert_eq!(d["id"], "foo");
+        assert_eq!(d["parameters"]["properties"]["x"]["type"], "string");
+        assert_eq!(d["tags"][1], "utility");
+        assert_eq!(d["enabled"], true);
     }
 }
