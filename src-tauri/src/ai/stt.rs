@@ -268,7 +268,7 @@ pub fn list_whisper_models() -> Vec<WhisperModelInfo> {
     }
     // Append any user-supplied on-disk models that didn't match a
     // built-in (e.g. "medium.en", "large-v3", custom-trained).
-    out.extend(on_disk.into_iter());
+    out.extend(on_disk);
     out
 }
 
