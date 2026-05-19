@@ -139,6 +139,63 @@ impl SttSession {
         let slot = self.current.lock().expect("SttSession mutex poisoned");
         slot.is_some()
     }
+
+    /// Cancel an in-flight recording: kill the recorder subprocess,
+    /// unlink the WAV, drop the slot. Returns silently (no error,
+    /// no transcript) regardless of state — calling `cancel()` on an
+    /// idle session is a deliberate no-op so the frontend can wire
+    /// ESC unconditionally.
+    ///
+    /// v1.9.2 — pairs with the new `slab_beacon_voice_stt_cancel`
+    /// Tauri command. Discards audio bytes immediately for privacy.
+    pub fn cancel(&self) {
+        let prev = {
+            let mut slot = self.current.lock().expect("SttSession mutex poisoned");
+            slot.take()
+        };
+        if let Some(in_flight) = prev {
+            cancel_inflight(in_flight);
+        }
+    }
+
+    /// Test-only helper: stuff a dummy `InFlight` into the session so
+    /// we can exercise the cancel/stop paths without spawning a real
+    /// recorder. Uses `sleep 30` (or `cmd /c timeout`) as a stand-in
+    /// for a long-lived recorder process. The WAV path is unique per
+    /// call so parallel tests don't collide.
+    #[cfg(test)]
+    pub(crate) fn install_fake_inflight_for_test(&self) {
+        use std::process::{Command, Stdio};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let wav_path = std::env::temp_dir().join(format!(
+            "slab-stt-fake-test-{}-{}.wav",
+            std::process::id(),
+            seq
+        ));
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/c", "ping -n 30 127.0.0.1 > nul"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = cmd.spawn().expect("spawn fake recorder for test");
+        // Create the dummy WAV so the unlink branch has something to chew on.
+        std::fs::write(&wav_path, b"RIFF").expect("write fake wav");
+        let mut slot = self.current.lock().expect("SttSession mutex poisoned");
+        *slot = Some(InFlight {
+            recording: Recording { child, wav_path },
+            started_at: Instant::now(),
+            engine: SttEngine::WhisperCpp,
+        });
+    }
 }
 
 impl Default for SttSession {
@@ -374,5 +431,56 @@ whisper_print_timings: total time = 1234.5 ms
         assert!(e.to_string().contains("whisper-cli"));
         let e = SttError::Empty;
         assert!(e.to_string().contains("no text"));
+    }
+
+    // ---- v1.9.2 — cancel() tests ----------------------------------
+
+    /// `cancel()` on an idle session must be a deliberate no-op:
+    /// no panic, no state change. Lets the frontend wire ESC
+    /// unconditionally.
+    #[test]
+    fn cancel_on_idle_session_is_noop() {
+        let s = SttSession::new();
+        assert!(!s.is_recording());
+        s.cancel();
+        assert!(!s.is_recording(), "cancel must not synthesise a slot");
+    }
+
+    /// `cancel()` after a (fake) start clears the in-flight slot and
+    /// unlinks the WAV file. Exercises the kill + reap + unlink path
+    /// without depending on real audio hardware.
+    #[test]
+    fn cancel_clears_recording_flag_and_unlinks_wav() {
+        let s = SttSession::new();
+        s.install_fake_inflight_for_test();
+        assert!(s.is_recording());
+
+        // Snapshot the WAV path so we can check unlink afterwards.
+        let wav_path = {
+            let slot = s.current.lock().expect("poisoned");
+            slot.as_ref()
+                .map(|f| f.recording.wav_path.clone())
+                .expect("slot populated")
+        };
+        assert!(wav_path.exists(), "fake WAV should exist pre-cancel");
+
+        s.cancel();
+        assert!(!s.is_recording(), "cancel must drop the slot");
+        assert!(
+            !wav_path.exists(),
+            "cancel must unlink the WAV (privacy guarantee)"
+        );
+    }
+
+    /// `cancel()` twice in a row is fine — the second call is a no-op.
+    /// Idempotency matters because the frontend may double-fire ESC if
+    /// the user spams it.
+    #[test]
+    fn cancel_is_idempotent() {
+        let s = SttSession::new();
+        s.install_fake_inflight_for_test();
+        s.cancel();
+        s.cancel();
+        assert!(!s.is_recording());
     }
 }
