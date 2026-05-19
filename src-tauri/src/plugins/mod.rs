@@ -16,6 +16,7 @@ pub mod registry;
 pub mod runner;
 pub mod runtime;
 pub mod runtime_registry;
+pub mod storage;
 
 pub use ai_materialize::{materialize_active, materialize_contribution};
 pub use command_runner::{
@@ -46,3 +47,7 @@ pub use runtime::{
     Runtime, RuntimeError, ScriptOutput, UiPanelReg, UiToolReg,
 };
 pub use runtime_registry::{LiveEntry, PluginRuntimeRegistry};
+pub use storage::{
+    default_db_path as default_plugin_storage_path, shared_storage, PluginStorage,
+    SharedPluginStorage, StorageError, MAX_KEY_BYTES, MAX_PLUGIN_BYTES, MAX_VALUE_BYTES,
+};
