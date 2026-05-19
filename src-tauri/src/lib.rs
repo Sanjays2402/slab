@@ -2473,6 +2473,10 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(windows::WindowRegistry::new())
         .manage(plugins::PluginRegistry::new())
+        // Workshop (v2.0.0 Slice 6.6): process-global registry of live
+        // plugin actor handles. Slice 6.7 wires Tauri commands that
+        // broadcast document-open/close events to every live actor.
+        .manage(plugins::PluginRuntimeRegistry::default())
         .manage(std::sync::Arc::new(VoiceSession::new()))
         .manage(std::sync::Arc::new(SttSession::new()))
         .setup(|app| {

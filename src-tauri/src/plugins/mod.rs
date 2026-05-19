@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod registry;
 pub mod runner;
 pub mod runtime;
+pub mod runtime_registry;
 
 pub use ai_materialize::{materialize_active, materialize_contribution};
 pub use command_runner::{
@@ -44,3 +45,4 @@ pub use runtime::{
     BeaconAiProviderReg, BeaconToolReg, EnableOutput, NotifyCall, NotifyLevel, Registrations,
     Runtime, RuntimeError, ScriptOutput, UiPanelReg, UiToolReg,
 };
+pub use runtime_registry::{LiveEntry, PluginRuntimeRegistry};
