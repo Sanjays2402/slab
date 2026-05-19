@@ -211,6 +211,80 @@ export async function validatePluginAiProvider(
   await invoke<void>("slab_plugins_validate_ai_provider", { pluginId, providerId });
 }
 
+// ---------- Workshop (v2.0.0) — capability grants ----------
+
+/**
+ * Per-plugin capability grant — the user's *decision* about what a
+ * plugin is actually allowed to do, as opposed to the manifest's
+ * declaration of what it *might* do.
+ *
+ * Shape mirrors `plugins::PluginGrants` on the Rust side. `Default`
+ * is "deny all" — every field absent serialises to all-`none`.
+ */
+export interface PluginGrants {
+  /** File-system read/write scope. */
+  fs: "none" | "read" | "read-write";
+  /** Network reach. */
+  net: "none" | "specific" | "any";
+  /** UI surfaces the plugin may install. */
+  ui: "none" | "panel" | "tool" | "both";
+  /** Beacon hooks the plugin may register. */
+  beacon: "none" | "tool-provider" | "ai-provider" | "both";
+  /** Allow-listed hosts when `net === "specific"`. */
+  net_allow_hosts: string[];
+  /** Allow-listed paths when `fs !== "none"`. */
+  fs_allow_paths: string[];
+}
+
+/** Shape returned by `plugin_grants_get`. */
+export interface PluginGrantsResponse {
+  /** Has the user ever made an explicit grant decision for this plugin? */
+  has_decision: boolean;
+  /** Current grants (default = deny-all when `has_decision` is false). */
+  grants: PluginGrants;
+}
+
+/** Deny-all default — useful as a baseline for the consent modal. */
+export function emptyPluginGrants(): PluginGrants {
+  return {
+    fs: "none",
+    net: "none",
+    ui: "none",
+    beacon: "none",
+    net_allow_hosts: [],
+    fs_allow_paths: [],
+  };
+}
+
+/**
+ * Fetch the user's grant decision for `pluginId`. Returns
+ * `has_decision: false` + default grants when the user has never
+ * decided. Cabinet's consent modal uses the flag to know whether to
+ * show itself on plugin enable.
+ */
+export async function getPluginGrants(pluginId: string): Promise<PluginGrantsResponse> {
+  if (!isInTauri()) return { has_decision: false, grants: emptyPluginGrants() };
+  return invoke<PluginGrantsResponse>("plugin_grants_get", { pluginId });
+}
+
+/**
+ * Persist a grant decision. Overwrites any previous decision. Rejects
+ * with an error string on IO failure (e.g. read-only HOME).
+ */
+export async function setPluginGrants(pluginId: string, grants: PluginGrants): Promise<void> {
+  if (!isInTauri()) return;
+  await invoke<void>("plugin_grants_set", { pluginId, grants });
+}
+
+/**
+ * Forget a plugin's grant decision. Triggers the consent modal on the
+ * next enable. No-op when the plugin has no entry.
+ */
+export async function resetPluginGrants(pluginId: string): Promise<void> {
+  if (!isInTauri()) return;
+  await invoke<void>("plugin_grants_reset", { pluginId });
+}
+
 /** Run a plugin command (shell or url). */
 export async function runPluginCommand(
   pluginId: string,
