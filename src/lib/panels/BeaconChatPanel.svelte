@@ -181,7 +181,7 @@
         );
         if (res.kind === "ok") {
           isRecording = true;
-          status = { kind: "working", msg: "Recording… click mic to stop." };
+          status = { kind: "working", msg: "Recording… click mic to stop, ESC to discard." };
         } else {
           status = { kind: "err", msg: res.message };
         }
@@ -189,6 +189,21 @@
         status = { kind: "err", msg: `${e}` };
       }
     }
+  }
+
+  // v1.9.2 — discard the in-flight recording. Called from ESC and the
+  // mic's context-menu. Idempotent: safe to call when not recording.
+  async function cancelMic() {
+    if (!isRecording) return;
+    try {
+      await invoke<CmdResult<null>>("slab_beacon_voice_stt_cancel");
+    } catch (e) {
+      // Best-effort — if the backend hiccups we still clear the UI.
+      console.warn("voice_stt_cancel failed:", e);
+    }
+    isRecording = false;
+    isTranscribing = false;
+    status = { kind: "ok", msg: "Recording discarded." };
   }
 
   // Subscribe to the same recent-file channel the Reader uses, so opening a
@@ -333,6 +348,13 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // v1.9.2 — ESC while recording cancels the in-flight take. Has
+    // priority over send shortcuts so a panicked ESC always works.
+    if (e.key === "Escape" && isRecording) {
+      e.preventDefault();
+      cancelMic();
+      return;
+    }
     // Enter sends (Shift+Enter newlines).
     // The customisable `beacon.send` action (defaults to Mod+Enter) also
     // sends — that lets users rebind to e.g. Mod+Shift+Enter if they want
@@ -807,9 +829,13 @@
           class="mic"
           class:recording={isRecording}
           onclick={toggleMic}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            if (isRecording) cancelMic();
+          }}
           disabled={isTranscribing}
           title={isRecording
-            ? "Stop recording (transcribes via whisper.cpp)"
+            ? "Stop recording (transcribes). ESC or right-click to discard."
             : "Dictate your question (whisper.cpp, on-device)"}
           aria-label={isRecording ? "Stop recording" : "Start dictation"}
         >

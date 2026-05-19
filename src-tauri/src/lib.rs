@@ -2350,6 +2350,22 @@ fn slab_beacon_voice_stt_is_recording(
     session.is_recording()
 }
 
+/// Discard the in-flight recording without transcribing. Kills the
+/// recorder, deletes the WAV, drops the slot. No-op if not recording.
+/// Returns `()` on success — there's nothing to report.
+///
+/// Frontend invokes this on ESC while recording, or via right-click
+/// → "Cancel recording" on the mic button (v1.9.2). Mirrors the privacy
+/// guarantee of `stop()`: the WAV is unlinked before this returns,
+/// audio bytes never persist or leave the device.
+#[tauri::command]
+fn slab_beacon_voice_stt_cancel(
+    session: tauri::State<'_, std::sync::Arc<SttSession>>,
+) -> CmdResult<()> {
+    session.cancel();
+    CmdResult::Ok { value: () }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2510,6 +2526,7 @@ pub fn run() {
             slab_beacon_voice_stt_start,
             slab_beacon_voice_stt_stop,
             slab_beacon_voice_stt_is_recording,
+            slab_beacon_voice_stt_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
