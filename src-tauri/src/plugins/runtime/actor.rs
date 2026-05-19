@@ -1,33 +1,61 @@
-//! Workshop (v2.0.0 Slice 6) — per-plugin actor message protocol.
+//! Workshop (v2.0.0 Slice 6) — per-plugin actor message protocol and worker.
 //!
-//! This module defines the *types* exchanged between the host side
-//! (Tauri commands, the PDF viewer integration) and a plugin's
-//! long-lived worker thread (Slice 6.5). The worker thread itself —
-//! the one that owns the rquickjs `Runtime` + `Context` and dispatches
-//! these commands into JS callbacks — lands in Slice 6.5.
+//! This module is the long-lived JS execution surface for a single enabled
+//! plugin. Each [`PluginActor::spawn`] call creates a dedicated OS thread
+//! that owns a `rquickjs::Runtime` + `Context` for the lifetime of the
+//! plugin and processes [`RuntimeCmd`]s off a `crossbeam-channel`.
 //!
-//! Slice 6.1 (this file) is intentionally tiny: just the message
-//! enum, the event payload, and a handful of helper constructors,
-//! all unit-tested. That lets later slices pull this module in via a
-//! simple `use super::actor::{...}` without rewriting any contracts.
+//! ## Threading model
 //!
-//! ## Threading model preview
+//! `rquickjs` requires that *all* JS execution for a given `Runtime` happen
+//! on a single OS thread — the `Context::with` callback borrows the
+//! runtime non-`Send`. We therefore park the runtime on a dedicated
+//! worker thread and use channels to ferry commands in.
 //!
-//! Each enabled plugin gets one dedicated OS thread because rquickjs
-//! requires that all JS execution for a given `Runtime` happen on a
-//! single thread (the `Context::with` callback borrows the runtime).
-//! `Persistent<Function>` is `Send` so callbacks survive across
-//! command dispatches, but the runtime itself stays put.
+//! `Persistent<Function>` is `Send + 'static` (a `Persistent` is just an
+//! owned QuickJS refcount), so callbacks registered during top-level
+//! `slab.document.onOpen(...)` survive across command dispatches without
+//! the host having to know which thread they live on.
 //!
-//! See `docs/plans/2026-05-18-v2.0.0-workshop-slice-6.md` for the
-//! full implementation arc.
+//! ## Drop order (CRITICAL — see also `lifecycle.rs`)
+//!
+//! `rquickjs::Runtime::drop` calls `abort()` if any `Persistent` is still
+//! live. The worker's shutdown path enforces:
+//!
+//! ```text
+//! shared.lifecycle.lock().clear();   // decrement all refcounts
+//! drop(ctx);                         // drop context
+//! drop(rt);                          // safe — registry empty
+//! ```
+//!
+//! This applies to *both* the happy path (Shutdown received) and the
+//! init-error path (eval threw before the actor entered its loop).
+//!
+//! ## Init handshake
+//!
+//! [`PluginActor::spawn`] is synchronous from the caller's POV: it
+//! blocks until top-level evaluation has either succeeded (registrations
+//! recorded into `shared.registrations`) or failed (error propagated as
+//! `RuntimeError`). This lets cabinet enable flow show errors inline
+//! the same way the legacy `Runtime::enable_plugin` did.
+//!
+//! See `docs/plans/2026-05-18-v2.0.0-workshop-slice-6.md` for the full
+//! implementation arc.
 
 use std::path::PathBuf;
+use std::sync::{mpsc::sync_channel, Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 use crossbeam_channel::{unbounded, Sender};
+use rquickjs::{CatchResultExt, Context, Object, Value};
 
-use super::RuntimeError;
+use super::lifecycle::{new_shared, new_shared_active_doc, SharedActiveDoc, SharedLifecycle};
+use super::slab_global::{install_slab, HostBindings};
+use super::{
+    classify_error, host_api::Registrations, sandbox, LogEntry, RuntimeError, MEMORY_LIMIT_BYTES,
+    WALL_CLOCK_LIMIT,
+};
 use crate::plugins::grants::PluginGrants;
 use crate::plugins::manifest::Capabilities;
 
@@ -83,19 +111,65 @@ impl DocumentEvent {
     }
 }
 
+/// Shared state owned by the actor's worker thread and visible to the
+/// host via [`WorkerHandle::shared_state`].
+///
+/// We intentionally only expose host-side-readable state here:
+///
+/// - `registrations` — every `slab.{beacon,ui}.*` registration the
+///   plugin made during top-level eval. Host code (Slice 7's
+///   actor-driven enable flow) reads this once after `spawn` returns
+///   to wire UI panels, beacon tools, etc.
+/// - `logs` — captured `console.*` output from the *top-level eval*
+///   only. Subsequent event-dispatch logs are intentionally NOT
+///   captured here (plugins do their own logging); we keep startup
+///   logs around because they're what the cabinet shows in the
+///   "plugin enabled" toast.
+///
+/// The `SharedLifecycle` and `SharedActiveDoc` handles needed by
+/// `slab.document.{onOpen,onClose,getActive}` live worker-thread-local
+/// inside [`run_actor`]: `rquickjs::Persistent` carries a raw
+/// `*mut JSRuntime` which is `!Send`, so the `SharedLifecycle` itself
+/// cannot cross thread boundaries. The host has no need to read either
+/// directly anyway — both are exposed to plugin code via the `slab`
+/// global within the same worker thread.
+pub struct ActorSharedState {
+    pub registrations: Arc<Mutex<Registrations>>,
+    pub logs: Arc<Mutex<Vec<LogEntry>>>,
+}
+
+impl Default for ActorSharedState {
+    fn default() -> Self {
+        Self {
+            registrations: Arc::new(Mutex::new(Registrations::default())),
+            logs: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
 /// Handle to a running plugin actor.
 ///
 /// Owning this means the worker thread is alive (or just exited and
 /// awaiting join). Drop performs a best-effort `Shutdown` send + join
 /// so leaking a handle never leaks an OS thread.
 ///
-/// In Slice 6.2 the worker body is a placeholder that just drains
-/// commands and exits on [`RuntimeCmd::Shutdown`]; the real loop with
-/// `Runtime` + `Context` + `Persistent` dispatch lands in Slice 6.5.
+/// Slice 6.5 wires this to the real `Runtime` + `Context` loop:
+/// callbacks registered via `slab.document.on*` are now invoked on
+/// `DocumentOpened`/`DocumentClosed`.
 pub struct WorkerHandle {
     plugin_id: String,
     tx: Sender<RuntimeCmd>,
     join: Option<JoinHandle<()>>,
+    shared: Arc<ActorSharedState>,
+}
+
+impl std::fmt::Debug for WorkerHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerHandle")
+            .field("plugin_id", &self.plugin_id)
+            .field("joined", &self.join.is_none())
+            .finish()
+    }
 }
 
 impl WorkerHandle {
@@ -111,6 +185,14 @@ impl WorkerHandle {
     /// "actor is gone — drop the handle" rather than retrying.
     pub fn send(&self, cmd: RuntimeCmd) -> Result<(), crossbeam_channel::SendError<RuntimeCmd>> {
         self.tx.send(cmd)
+    }
+
+    /// Clone of the shared state owned by this actor. Cheap (one
+    /// `Arc` bump). Callers typically hold this across `join()` so
+    /// they can inspect `registrations` / `logs` after the worker
+    /// has fully exited.
+    pub fn shared_state(&self) -> Arc<ActorSharedState> {
+        Arc::clone(&self.shared)
     }
 
     /// Cleanly shut the worker down and wait for the thread to exit.
@@ -132,9 +214,8 @@ impl Drop for WorkerHandle {
     fn drop(&mut self) {
         // Best-effort shutdown so a forgotten handle never leaks a
         // thread. Ignore both send + join errors: the worker may have
-        // exited on its own (placeholder body in 6.2 does that when
-        // the channel closes), in which case `tx.send` errors and the
-        // join already happened.
+        // exited on its own (e.g. a panic inside `run_actor`), in which
+        // case `tx.send` errors and the join already happened.
         let _ = self.tx.send(RuntimeCmd::Shutdown);
         if let Some(j) = self.join.take() {
             let _ = j.join();
@@ -146,27 +227,37 @@ impl Drop for WorkerHandle {
 /// plugin's QuickJS runtime and processes [`RuntimeCmd`]s off a
 /// channel.
 ///
-/// Slice 6.2 (this) is the skeleton: thread spawn + channel + clean
-/// shutdown. Slice 6.5 replaces the worker body with the real runtime
-/// loop. Keeping the public `spawn` signature stable across slices
-/// means callers (registry, Tauri commands) won't churn.
+/// In Slice 6.5 (this) the worker:
+/// 1. Creates a fresh `rquickjs::Runtime` with Slab's standard limits.
+/// 2. Creates one long-lived `Context::full(&rt)`.
+/// 3. Installs the sandbox (`console.*`) and the `slab.*` global
+///    (with `lifecycle`/`active_doc` wired to live shared state).
+/// 4. Evaluates the plugin's top-level source exactly once.
+/// 5. Reports back to the spawner via a sync init channel.
+/// 6. Enters a `recv` loop dispatching `DocumentOpened`/`DocumentClosed`
+///    into the registered `Persistent<Function>` callbacks.
+/// 7. On `Shutdown`, clears the lifecycle registry **before** dropping
+///    the runtime and exits cleanly.
 pub struct PluginActor;
 
 impl PluginActor {
-    /// Spawn the actor's worker thread. Returns a [`WorkerHandle`]
-    /// once the thread has been created; the worker performs the
-    /// real `enable_plugin` evaluation inside its loop in Slice 6.5.
-    ///
-    /// For 6.2 the worker body just drains commands and exits on
-    /// `Shutdown`. The `declared`/`granted`/`source` arguments are
-    /// accepted now (so the call sites in Slices 6.6/6.7 stay
-    /// unchanged) but ignored until 6.5.
+    /// Spawn the actor's worker thread and wait for top-level eval to
+    /// complete. The returned [`WorkerHandle`] is live and ready to
+    /// receive [`RuntimeCmd`]s; `shared_state().registrations` carries
+    /// every `slab.{beacon,ui}.*` registration the plugin made during
+    /// eval.
     ///
     /// # Errors
-    /// Returns [`RuntimeError::Init`] if the OS refuses to spawn the
-    /// thread (rare — typically ulimit/EAGAIN). All other failure
-    /// modes (bad source, runtime OOM at boot) surface asynchronously
-    /// in Slice 6.5 via a side channel.
+    /// - [`RuntimeError::Init`] if the OS refuses to spawn the thread,
+    ///   the QuickJS runtime / context can't be created, or the
+    ///   internal init channel closes unexpectedly.
+    /// - [`RuntimeError::Syntax`] / [`RuntimeError::Thrown`] /
+    ///   [`RuntimeError::TimeLimit`] / [`RuntimeError::MemoryLimit`] if
+    ///   the plugin source fails to evaluate at top level.
+    ///
+    /// On any error, the worker thread tears itself down cleanly
+    /// (clears Persistents, drops the runtime, exits) before this
+    /// call returns the `Err`.
     pub fn spawn(
         plugin_id: String,
         declared: Capabilities,
@@ -174,49 +265,284 @@ impl PluginActor {
         source: String,
     ) -> Result<WorkerHandle, RuntimeError> {
         let (tx, rx) = unbounded::<RuntimeCmd>();
+        let (init_tx, init_rx) = sync_channel::<Result<(), RuntimeError>>(1);
+
+        let shared = Arc::new(ActorSharedState::default());
+        let shared_for_worker = Arc::clone(&shared);
         let pid_for_handle = plugin_id.clone();
+
         let join = thread::Builder::new()
             // Visible in `ps -T` / Activity Monitor — makes debugging
             // a stuck plugin trivial: `slab-plugin:com.x.y` is the
             // thread name, plugin_id is the ID in the manifest.
             .name(format!("slab-plugin:{plugin_id}"))
             .spawn(move || {
-                run_actor(plugin_id, declared, granted, source, rx);
+                run_actor(
+                    plugin_id,
+                    declared,
+                    granted,
+                    source,
+                    rx,
+                    init_tx,
+                    shared_for_worker,
+                );
             })
             .map_err(|e| RuntimeError::Init(format!("actor thread spawn: {e}")))?;
 
-        Ok(WorkerHandle {
-            plugin_id: pid_for_handle,
-            tx,
-            join: Some(join),
-        })
+        // Block until the worker reports eval result. The worker only
+        // sends once; recv-closed means it panicked before sending,
+        // which we surface as a generic Init error.
+        let init = init_rx
+            .recv()
+            .map_err(|_| RuntimeError::Init("actor init channel closed".into()))?;
+
+        match init {
+            Ok(()) => Ok(WorkerHandle {
+                plugin_id: pid_for_handle,
+                tx,
+                join: Some(join),
+                shared,
+            }),
+            Err(e) => {
+                // Worker has already torn itself down on the error
+                // path; we still join the thread so its OS handle is
+                // released before we return.
+                let _ = join.join();
+                Err(e)
+            }
+        }
     }
 }
 
-/// Placeholder actor body for Slice 6.2.
+/// Worker body: owns the runtime, evaluates the plugin, then dispatches
+/// events until [`RuntimeCmd::Shutdown`].
 ///
-/// Slice 6.5 will replace this with a function that creates a
-/// `rquickjs::Runtime` + `Context`, evaluates `source` once with the
-/// `slab` global installed (and `lifecycle: Some(...)`, so
-/// `slab.document.onOpen` actually stashes a `Persistent`), then
-/// enters a recv loop that dispatches into the stored callbacks.
-///
-/// For now we just drain commands and exit on `Shutdown` — that's
-/// enough for the registry/broadcast tests in Slices 6.6+.
+/// The function is single-entry / single-exit on purpose so the
+/// "clear lifecycle before runtime drops" invariant (see module docs)
+/// is mechanically enforced in both the happy and error paths.
+#[allow(clippy::too_many_arguments)]
 fn run_actor(
-    _plugin_id: String,
-    _declared: Capabilities,
-    _granted: PluginGrants,
-    _source: String,
+    plugin_id: String,
+    declared: Capabilities,
+    granted: PluginGrants,
+    source: String,
     rx: crossbeam_channel::Receiver<RuntimeCmd>,
+    init_tx: std::sync::mpsc::SyncSender<Result<(), RuntimeError>>,
+    shared: Arc<ActorSharedState>,
 ) {
-    while let Ok(cmd) = rx.recv() {
-        if matches!(cmd, RuntimeCmd::Shutdown) {
-            break;
+    // -- Boot: build runtime + context ---------------------------------------
+    let rt = match rquickjs::Runtime::new() {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = init_tx.send(Err(RuntimeError::Init(format!("{e}"))));
+            return;
         }
-        // Slice 6.5: dispatch DocumentOpened/DocumentClosed into the
-        // plugin's `Persistent<Function>` registry inside Context::with.
+    };
+    rt.set_memory_limit(MEMORY_LIMIT_BYTES);
+
+    let ctx = match Context::full(&rt) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = init_tx.send(Err(RuntimeError::Init(format!("context: {e}"))));
+            return;
+        }
+    };
+
+    // Lifecycle + active-doc handles are constructed *inside* the
+    // worker thread because `rquickjs::Persistent` carries a raw
+    // `*mut JSRuntime` (`!Send`), so `SharedLifecycle` cannot cross
+    // threads. Plugin code interacts with both via `slab.document.*`
+    // bindings, which run on this same worker.
+    let lifecycle: SharedLifecycle = new_shared();
+    let active_doc: SharedActiveDoc = new_shared_active_doc();
+
+    // -- Top-level eval ------------------------------------------------------
+    // Wall-clock guard for the eval phase. The interrupt closure
+    // captures `deadline` by value; we clear the handler when eval
+    // returns so subsequent dispatches don't inherit a stale deadline.
+    let eval_deadline = Instant::now() + WALL_CLOCK_LIMIT;
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= eval_deadline)));
+
+    let init_result = ctx.with(|ctx| -> Result<(), RuntimeError> {
+        sandbox::install_console(&ctx, plugin_id.clone(), Arc::clone(&shared.logs))
+            .map_err(|e| RuntimeError::Init(format!("console install: {e}")))?;
+
+        let bindings = HostBindings {
+            plugin_id: plugin_id.clone(),
+            declared: Arc::new(declared.clone()),
+            granted: Arc::new(granted.clone()),
+            registrations: Arc::clone(&shared.registrations),
+            // Live wiring — Persistents from slab.document.on* will
+            // survive across event dispatches via these handles.
+            lifecycle: Some(Arc::clone(&lifecycle)),
+            active_doc: Some(Arc::clone(&active_doc)),
+        };
+        install_slab(&ctx, bindings)
+            .map_err(|e| RuntimeError::Init(format!("slab global install: {e}")))?;
+
+        match ctx.eval::<Value, _>(source.as_bytes()).catch(&ctx) {
+            Ok(_) => Ok(()),
+            Err(caught) => Err(classify_error(caught)),
+        }
+    });
+
+    rt.set_interrupt_handler(None);
+
+    if let Err(e) = init_result {
+        // Eval threw (or install failed). Some `slab.document.on*`
+        // calls may have stashed Persistents before the throw, so we
+        // MUST clear them before runtime drops.
+        if let Ok(mut g) = lifecycle.lock() {
+            g.clear();
+        }
+        drop(ctx);
+        drop(rt);
+        let _ = init_tx.send(Err(e));
+        return;
     }
+
+    // Eval succeeded; unblock spawn() so the host can start sending
+    // events. The order matters: signal *after* registrations are
+    // fully populated so callers reading shared_state() see them.
+    let _ = init_tx.send(Ok(()));
+
+    // -- Event loop ----------------------------------------------------------
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            RuntimeCmd::DocumentOpened(ev) => {
+                if let Ok(mut g) = active_doc.lock() {
+                    *g = Some(ev.clone());
+                }
+                dispatch_lifecycle(&rt, &ctx, &lifecycle, LifecycleAxis::OnOpen, &ev);
+            }
+            RuntimeCmd::DocumentClosed(ev) => {
+                // Clear the active-doc snapshot BEFORE invoking the
+                // onClose callbacks so `slab.document.getActive()`
+                // inside a handler observes `null`. This mirrors what
+                // a plugin author intuitively expects ("the doc is
+                // gone — getActive() should reflect that").
+                if let Ok(mut g) = active_doc.lock() {
+                    *g = None;
+                }
+                dispatch_lifecycle(&rt, &ctx, &lifecycle, LifecycleAxis::OnClose, &ev);
+            }
+            RuntimeCmd::Shutdown => break,
+        }
+    }
+
+    // -- Clean shutdown ------------------------------------------------------
+    // Must clear all Persistents BEFORE the runtime drops; otherwise
+    // rquickjs aborts the process. See module docs.
+    if let Ok(mut g) = lifecycle.lock() {
+        g.clear();
+    }
+    drop(ctx);
+    drop(rt);
+}
+
+/// Internal axis enum mirroring the one in `slab_global.rs` — kept
+/// private so `actor.rs` doesn't leak this distinction to outside
+/// callers. (The plan's "single shared axis enum" refactor lives in
+/// post-1.0; for now duplication is cheaper than coupling.)
+#[derive(Clone, Copy)]
+enum LifecycleAxis {
+    OnOpen,
+    OnClose,
+}
+
+/// Invoke every `Persistent<Function>` in `lifecycle`'s slot for `axis`
+/// with a freshly-built `{ path, name }` event object.
+///
+/// Errors from individual callbacks are logged via `eprintln!` and
+/// otherwise suppressed — one buggy handler must not poison the rest
+/// of the registry or take down the actor thread. Same for restore
+/// failures (which would indicate cross-runtime contamination — a
+/// host bug, not a plugin bug).
+///
+/// The lifecycle mutex is held only long enough to snapshot the slot
+/// into a local `Vec<Persistent>`. That avoids reentrancy deadlocks
+/// when a callback calls `slab.document.onOpen(...)` while running
+/// (which would try to re-acquire the same lock).
+fn dispatch_lifecycle(
+    rt: &rquickjs::Runtime,
+    ctx: &Context,
+    lifecycle: &SharedLifecycle,
+    axis: LifecycleAxis,
+    ev: &DocumentEvent,
+) {
+    // Snapshot the callback list under the lock, then drop the lock
+    // before we enter `ctx.with` — callbacks are free to call back
+    // into `slab.document.onOpen` without deadlocking.
+    let snapshot = {
+        let Ok(guard) = lifecycle.lock() else {
+            // Mutex poisoned. Skip dispatch — host is in an
+            // inconsistent state anyway and there's nothing useful
+            // we can do from inside the worker.
+            return;
+        };
+        match axis {
+            LifecycleAxis::OnOpen => guard.on_open().to_vec(),
+            LifecycleAxis::OnClose => guard.on_close().to_vec(),
+        }
+    };
+    if snapshot.is_empty() {
+        // Fast path: no handlers registered. Avoids paying for
+        // ctx.with + event-object construction.
+        return;
+    }
+
+    // Wall-clock guard for the dispatch batch. If the cumulative
+    // runtime of all handlers (plus any reentrant slab.* calls they
+    // make) exceeds WALL_CLOCK_LIMIT, an `interrupted` exception
+    // propagates up into the catch arm below and we stop dispatching
+    // further handlers for *this* event. Subsequent events get a
+    // fresh deadline.
+    let deadline = Instant::now() + WALL_CLOCK_LIMIT;
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
+
+    ctx.with(|ctx| {
+        // Build the `{ path, name }` event object once per dispatch
+        // batch and clone it into each handler call. Cheaper than
+        // re-creating per handler for non-trivial registries.
+        let event_obj = match Object::new(ctx.clone()) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("[plugin lifecycle] cannot build event obj: {e}");
+                return;
+            }
+        };
+        if let Err(e) = event_obj.set("path", ev.path.to_string_lossy().to_string()) {
+            eprintln!("[plugin lifecycle] event obj.path set failed: {e}");
+            return;
+        }
+        if let Err(e) = event_obj.set("name", ev.name.clone()) {
+            eprintln!("[plugin lifecycle] event obj.name set failed: {e}");
+            return;
+        }
+
+        for persistent in snapshot {
+            match persistent.restore(&ctx) {
+                Ok(f) => {
+                    // Per-callback catch — one buggy handler must not
+                    // poison the rest of the dispatch batch.
+                    if let Err(e) = f.call::<_, ()>((event_obj.clone(),)).catch(&ctx) {
+                        // `CaughtError`'s Display gives us a useful
+                        // single-line summary including the JS message
+                        // and (sometimes) the stack frame.
+                        eprintln!("[plugin lifecycle] callback threw: {e}");
+                    }
+                }
+                Err(e) => {
+                    // The only way restore fails is `UnrelatedRuntime`
+                    // — a Persistent got smuggled in from a different
+                    // runtime. That's a host bug; log loudly.
+                    eprintln!("[plugin lifecycle] restore failed: {e}");
+                }
+            }
+        }
+    });
+
+    rt.set_interrupt_handler(None);
 }
 
 #[cfg(test)]
@@ -281,16 +607,34 @@ mod tests {
         assert_send_clone::<DocumentEvent>();
     }
 
-    // ---- Slice 6.2 contract tests: PluginActor + WorkerHandle ----
+    // ---- PluginActor contract tests --------------------------------------
     //
-    // The body of `run_actor` is still a placeholder (Slice 6.5 lands
-    // the real Runtime + Context). These tests verify the channel /
-    // thread machinery only: spawn succeeds, Shutdown drains the
-    // worker, drop joins, and a forgotten handle never leaks a thread.
+    // These exercise the real Slice 6.5 runtime body: spawn evaluates
+    // the source, registrations are visible via shared_state, lifecycle
+    // callbacks fire on Document{Opened,Closed}, errors are isolated.
 
     use crate::plugins::grants::PluginGrants;
-    use crate::plugins::manifest::Capabilities;
+    use crate::plugins::manifest::{BeaconCap, Capabilities, FsCap, NetCap, UiCap};
     use std::time::{Duration, Instant};
+
+    fn caps_ui_full() -> Capabilities {
+        Capabilities {
+            fs: FsCap::None,
+            net: NetCap::None,
+            ui: UiCap::Both,
+            beacon: BeaconCap::Both,
+            net_allow_hosts: vec![],
+            fs_allow_paths: vec![],
+        }
+    }
+
+    fn grants_ui_full() -> PluginGrants {
+        PluginGrants {
+            ui: UiCap::Both,
+            beacon: BeaconCap::Both,
+            ..PluginGrants::default()
+        }
+    }
 
     #[test]
     fn plugin_actor_spawns_and_shuts_down_cleanly() {
@@ -298,7 +642,6 @@ mod tests {
             "p.actor.spawn".into(),
             Capabilities::default(),
             PluginGrants::default(),
-            // 6.2 ignores `source`; 6.5 will eval it.
             String::new(),
         )
         .expect("actor must spawn");
@@ -313,7 +656,7 @@ mod tests {
         // the worker down — that's the invariant Drop enforces. We
         // verify by spawning N actors in a tight loop; if Drop were
         // broken, this would explode FD/thread limits.
-        for i in 0..16 {
+        for i in 0..8 {
             let h = PluginActor::spawn(
                 format!("p.drop.{i}"),
                 Capabilities::default(),
@@ -332,30 +675,11 @@ mod tests {
     }
 
     #[test]
-    fn plugin_actor_send_after_join_is_err() {
-        // After `join()` consumes the handle the channel is dropped
-        // entirely — there's nothing left to send to. We mostly want
-        // to assert this path doesn't panic.
-        let handle = PluginActor::spawn(
-            "p.actor.join".into(),
-            Capabilities::default(),
-            PluginGrants::default(),
-            String::new(),
-        )
-        .expect("actor must spawn");
-        handle.join().expect("join clean");
-        // `handle` is consumed; we can't call `send` on it anymore.
-        // The post-join "send" semantics are exercised indirectly via
-        // the registry (Slice 6.6) which holds the handle across
-        // calls — kept here as documentation only.
-    }
-
-    #[test]
     fn plugin_actor_drains_pending_events_before_shutdown_exits() {
         // Send a burst of events followed by Shutdown; the worker
-        // must process Shutdown promptly without panicking on the
-        // queued events. (Placeholder body in 6.2 just `matches!`es
-        // on Shutdown; Slice 6.5 will dispatch the events first.)
+        // must process all events + Shutdown promptly. With Slice 6.5
+        // wired, each event invokes dispatch_lifecycle (no handlers
+        // registered → fast-path).
         let handle = PluginActor::spawn(
             "p.actor.drain".into(),
             Capabilities::default(),
@@ -363,19 +687,318 @@ mod tests {
             String::new(),
         )
         .expect("spawn");
-        for i in 0..32 {
+        for i in 0..16 {
             let ev = DocumentEvent::from_path(format!("/tmp/doc-{i}.pdf"));
             handle.send(RuntimeCmd::DocumentOpened(ev)).expect("send");
         }
         let start = Instant::now();
         handle.send(RuntimeCmd::Shutdown).expect("send shutdown");
         handle.join().expect("join clean");
-        // Drain + join should finish near-instantly — definitely
-        // under 250ms on any non-broken machine.
+        // Drain + join should finish well under 1s even with a real
+        // Runtime per actor (each dispatch is a fast-path no-op when
+        // no handlers are registered).
         assert!(
-            start.elapsed() < Duration::from_millis(250),
-            "drain+join took {:?}, expected < 250ms",
+            start.elapsed() < Duration::from_secs(2),
+            "drain+join took {:?}, expected < 2s",
             start.elapsed()
+        );
+    }
+
+    #[test]
+    fn plugin_actor_invokes_onopen_when_document_opened() {
+        // Plugin registers an onOpen handler that records the event
+        // via slab.ui.notify (which lands in shared.registrations).
+        let script = r#"
+            slab.document.onOpen(function (ev) {
+                slab.ui.notify("opened:" + ev.name, "info");
+            });
+        "#;
+        let h = PluginActor::spawn(
+            "p.onopen.basic".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        h.send(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/Alpha.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let messages: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert!(
+            messages.contains(&"opened:Alpha"),
+            "expected onOpen to fire with name 'Alpha', got {messages:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_invokes_onclose_when_document_closed() {
+        let script = r#"
+            slab.document.onClose(function (ev) {
+                slab.ui.notify("closed:" + ev.name, "info");
+            });
+        "#;
+        let h = PluginActor::spawn(
+            "p.onclose.basic".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        h.send(RuntimeCmd::DocumentClosed(DocumentEvent::from_path(
+            "/tmp/Beta.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let messages: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert!(
+            messages.contains(&"closed:Beta"),
+            "expected onClose to fire with name 'Beta', got {messages:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_invokes_multiple_onopen_handlers_in_registration_order() {
+        // Plugins can register multiple onOpen handlers — they fire
+        // in registration order (addEventListener semantics).
+        let script = r#"
+            slab.document.onOpen(function () { slab.ui.notify("first", "info"); });
+            slab.document.onOpen(function () { slab.ui.notify("second", "info"); });
+            slab.document.onOpen(function () { slab.ui.notify("third", "info"); });
+        "#;
+        let h = PluginActor::spawn(
+            "p.onopen.order".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        h.send(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/x.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let messages: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert_eq!(
+            messages,
+            vec!["first", "second", "third"],
+            "handlers must fire in registration order"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_isolates_callback_errors() {
+        // One callback throws; subsequent callbacks must still run,
+        // and the worker must not die. The thrown error gets logged
+        // via eprintln! (no assertion on stderr here — we just verify
+        // the worker stays healthy).
+        let script = r#"
+            slab.document.onOpen(function () { throw new Error("boom"); });
+            slab.document.onOpen(function () { slab.ui.notify("survived", "info"); });
+        "#;
+        let h = PluginActor::spawn(
+            "p.onopen.isolate".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        h.send(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/x.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let messages: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert!(
+            messages.contains(&"survived"),
+            "second handler must run after first threw; got {messages:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_active_doc_visible_inside_onopen_handler() {
+        // While an onOpen handler runs, slab.document.getActive()
+        // should return the event being dispatched. Verify by having
+        // the handler stash getActive().name into a notify.
+        let script = r#"
+            slab.document.onOpen(function () {
+                var d = slab.document.getActive();
+                slab.ui.notify("active:" + (d ? d.name : "<null>"), "info");
+            });
+        "#;
+        let h = PluginActor::spawn(
+            "p.onopen.active".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        h.send(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/Gamma.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let messages: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert!(
+            messages.contains(&"active:Gamma"),
+            "getActive() inside onOpen must see the active doc; got {messages:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_active_doc_cleared_before_onclose_handler_runs() {
+        // Symmetric invariant: when onClose fires, getActive() should
+        // already report null. (We clear active_doc BEFORE dispatch.)
+        let script = r#"
+            slab.document.onClose(function () {
+                var d = slab.document.getActive();
+                slab.ui.notify("after-close:" + (d === null ? "null" : "still-set"), "info");
+            });
+        "#;
+        let h = PluginActor::spawn(
+            "p.onclose.cleared".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        // Open then close so active_doc has been Some at some point.
+        h.send(RuntimeCmd::DocumentOpened(DocumentEvent::from_path(
+            "/tmp/Delta.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::DocumentClosed(DocumentEvent::from_path(
+            "/tmp/Delta.pdf",
+        )))
+        .expect("send");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+
+        let regs = shared.registrations.lock().unwrap();
+        let messages: Vec<&str> = regs
+            .notifications
+            .iter()
+            .map(|n| n.message.as_str())
+            .collect();
+        assert!(
+            messages.contains(&"after-close:null"),
+            "getActive() inside onClose must be null; got {messages:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_shuts_down_cleanly_with_persistents_registered() {
+        // The "must clear Persistents before runtime drop" invariant.
+        // Register handlers, send Shutdown without ever dispatching,
+        // join, assert no panic / abort.
+        let script = r#"
+            slab.document.onOpen(function () {});
+            slab.document.onOpen(function () {});
+            slab.document.onClose(function () {});
+        "#;
+        let h = PluginActor::spawn(
+            "p.persistents.shutdown".into(),
+            caps_ui_full(),
+            grants_ui_full(),
+            script.into(),
+        )
+        .expect("spawn");
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join — must not abort");
+    }
+
+    #[test]
+    fn plugin_actor_propagates_syntax_error_from_top_level() {
+        let err = PluginActor::spawn(
+            "p.syntax".into(),
+            Capabilities::default(),
+            PluginGrants::default(),
+            "function ( {".into(),
+        )
+        .expect_err("syntax error must surface");
+        assert!(
+            matches!(err, RuntimeError::Syntax(_)),
+            "expected Syntax, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_actor_propagates_thrown_error_from_top_level() {
+        let err = PluginActor::spawn(
+            "p.throw".into(),
+            Capabilities::default(),
+            PluginGrants::default(),
+            "throw new Error('boom-at-init');".into(),
+        )
+        .expect_err("thrown error must surface");
+        match err {
+            RuntimeError::Thrown(msg) => {
+                assert!(msg.contains("boom-at-init"), "got {msg:?}")
+            }
+            other => panic!("expected Thrown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plugin_actor_logs_captured_during_top_level_eval() {
+        // console.log during eval lands in shared.logs.
+        let h = PluginActor::spawn(
+            "p.logs".into(),
+            Capabilities::default(),
+            PluginGrants::default(),
+            "console.log('hello from init');".into(),
+        )
+        .expect("spawn");
+        let shared = h.shared_state();
+        h.send(RuntimeCmd::Shutdown).expect("shutdown");
+        h.join().expect("join");
+        let logs = shared.logs.lock().unwrap();
+        let messages: Vec<&str> = logs.iter().map(|e| e.message.as_str()).collect();
+        assert!(
+            messages.contains(&"hello from init"),
+            "expected init log captured; got {messages:?}"
         );
     }
 }

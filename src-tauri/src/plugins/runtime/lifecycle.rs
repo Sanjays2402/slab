@@ -125,6 +125,16 @@ pub type SharedLifecycle = Arc<Mutex<LifecycleRegistry>>;
 /// Construct a fresh, empty [`SharedLifecycle`]. Slice 6.5 calls
 /// this once per actor; ephemeral `execute_script` paths pass `None`
 /// for `lifecycle` and the `slab.document.on*` calls throw cleanly.
+///
+/// Note: we use `Arc` here even though `LifecycleRegistry` is
+/// `!Send + !Sync` (it transitively holds `rquickjs::Persistent`,
+/// which carries a raw `*mut JSRuntime`). The `Arc` is purely for
+/// *intra-thread* refcounting between the worker thread and the
+/// `slab.document.on*` closures it captures via `Function::new` —
+/// never crosses thread boundaries. `Rc` would also work but `Arc`
+/// keeps the type alias `SharedLifecycle` ergonomic for callers
+/// that thread it through closure captures.
+#[allow(clippy::arc_with_non_send_sync)]
 pub fn new_shared() -> SharedLifecycle {
     Arc::new(Mutex::new(LifecycleRegistry::default()))
 }
