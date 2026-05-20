@@ -32,6 +32,18 @@ export interface IndexEntry {
   slab_compat: string;
   /** Base64-encoded Ed25519 signature over the canonical unsigned form. */
   signature: string;
+  // -------- v2 fields (Workshop Marketplace, schema_version=2) --------
+  // All four are optional on the wire: a v1 entry deserialises as a v2
+  // entry with empty arrays / installs=0. UI code should always default
+  // these defensively (use `?? []` / `?? 0`) so it works on either schema.
+  /** Browsable taxonomy (e.g. ["Editing", "Productivity"]). */
+  categories?: string[];
+  /** Free-form discovery keywords (e.g. ["redact", "pii", "privacy"]). */
+  tags?: string[];
+  /** Optional preview image URLs. Up to 5 typically. */
+  screenshots?: string[];
+  /** Aggregate install counter (server-curated; 0 = no data). */
+  installs?: number;
 }
 
 /** Top-level index envelope. */

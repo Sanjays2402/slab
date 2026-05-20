@@ -52,6 +52,29 @@ pub fn default_cache_path() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".slab").join(CACHE_FILE_NAME))
 }
 
+/// Marketplace index that ships baked into the Slab binary
+/// (`assets/marketplace/seed-index.json`). This guarantees the Browse
+/// tab has *something* to render on first launch — before the first
+/// successful network fetch — and during permanent-offline scenarios
+/// (air-gapped machines, captive portals).
+///
+/// All entries here MUST carry `signature: "BUNDLED"` and a
+/// `download_url` that starts with `bundled://`. The verifier
+/// recognises that pair as trusted-by-construction.
+const EMBEDDED_SEED_INDEX_BYTES: &[u8] =
+    include_bytes!("../../../assets/marketplace/seed-index.json");
+
+/// Parse the bundled seed index. Returns `Err` only if the bundled
+/// JSON itself is malformed — which would be a build-time bug, since
+/// the file is shipped inside the binary. The function returns
+/// `Result` rather than panicking so callers in async contexts can
+/// log the failure gracefully and continue with an empty index.
+pub fn embedded_seed_index() -> Result<Index, FetchError> {
+    let body = std::str::from_utf8(EMBEDDED_SEED_INDEX_BYTES)
+        .map_err(|e| FetchError::Utf8(e.to_string()))?;
+    parse_index(body)
+}
+
 #[derive(Debug, Error)]
 pub enum FetchError {
     #[error("network request failed: {0}")]
@@ -88,8 +111,18 @@ pub enum FetchOutcome {
         index: Index,
         network_error: FetchError,
     },
-    /// Network failed AND there was no usable cache. The caller has
-    /// nothing to show.
+    /// Network and cache both failed (no cache yet, or corrupt cache),
+    /// but the binary's embedded seed index is being shown instead.
+    /// UI should display a "showing built-in plugins — connect to see
+    /// more" banner. Introduced by v2.0.2 Workshop Marketplace so
+    /// Browse never goes blank on first launch / air-gapped machines.
+    EmbeddedSeed {
+        index: Index,
+        network_error: FetchError,
+    },
+    /// Network failed AND there was no usable cache AND the embedded
+    /// seed itself failed to parse (build-time bug — should never
+    /// happen). The caller has nothing to show.
     Failed(FetchError),
 }
 
@@ -98,11 +131,18 @@ impl FetchOutcome {
         matches!(self, FetchOutcome::Fresh(_))
     }
 
-    /// Borrow the inner index if there is one (Fresh or Stale).
+    /// True when the index being shown is the bundled seed (Browse tab
+    /// shows the "connect to see more" banner).
+    pub fn is_embedded_seed(&self) -> bool {
+        matches!(self, FetchOutcome::EmbeddedSeed { .. })
+    }
+
+    /// Borrow the inner index if there is one (Fresh, Stale, EmbeddedSeed).
     pub fn index(&self) -> Option<&Index> {
         match self {
             FetchOutcome::Fresh(i) => Some(i),
             FetchOutcome::Stale { index, .. } => Some(index),
+            FetchOutcome::EmbeddedSeed { index, .. } => Some(index),
             FetchOutcome::Failed(_) => None,
         }
     }
@@ -158,7 +198,17 @@ pub async fn fetch_index_with_cache(
                 index: idx,
                 network_error,
             },
-            None => FetchOutcome::Failed(network_error),
+            // No usable cache — fall back to the embedded seed index
+            // bundled into the binary. The Browse tab still shows
+            // *something* useful (first-party examples + curated
+            // community plugins) on first launch / offline.
+            None => match embedded_seed_index() {
+                Ok(idx) => FetchOutcome::EmbeddedSeed {
+                    index: idx,
+                    network_error,
+                },
+                Err(_) => FetchOutcome::Failed(network_error),
+            },
         },
     }
 }
@@ -352,18 +402,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_index_with_cache_failed_when_no_cache_and_no_network() {
+    async fn fetch_index_with_cache_falls_back_to_embedded_seed_when_no_cache_and_no_network() {
+        // v2.0.2 Workshop Marketplace: when both the network AND the
+        // on-disk cache are unavailable, fetch_index_with_cache now
+        // falls back to the embedded seed bundled into the binary
+        // rather than returning Failed. This guarantees the Browse
+        // tab is never blank on first launch / air-gapped machines.
         let tmp = TempDir::new().unwrap();
         let cache_path = tmp.path().join("does-not-exist.json");
 
         let client = reqwest::Client::new();
         let outcome =
             fetch_index_with_cache(&client, "http://127.0.0.1:1/no-such", Some(&cache_path)).await;
-        assert!(matches!(outcome, FetchOutcome::Failed(_)));
+        match outcome {
+            FetchOutcome::EmbeddedSeed { index, .. } => {
+                assert_eq!(index.schema_version, 2);
+                assert!(!index.plugins.is_empty(), "seed index must not be empty");
+                assert!(
+                    index.plugins.iter().all(|p| p.signature == "BUNDLED"),
+                    "all seed entries must carry the BUNDLED sentinel"
+                );
+            }
+            other => panic!("expected EmbeddedSeed, got {other:?}"),
+        }
     }
 
     #[tokio::test]
-    async fn fetch_index_with_cache_corrupt_cache_acts_like_no_cache() {
+    async fn fetch_index_with_cache_corrupt_cache_falls_back_to_embedded_seed() {
         let tmp = TempDir::new().unwrap();
         let cache_path = tmp.path().join("marketplace-cache.json");
         fs::write(&cache_path, "{not json at all").unwrap();
@@ -371,8 +436,17 @@ mod tests {
         let client = reqwest::Client::new();
         let outcome =
             fetch_index_with_cache(&client, "http://127.0.0.1:1/no-such", Some(&cache_path)).await;
-        // No usable cache → Failed.
-        assert!(matches!(outcome, FetchOutcome::Failed(_)));
+        // Corrupt cache → no usable cached index → embedded seed served.
+        assert!(matches!(outcome, FetchOutcome::EmbeddedSeed { .. }));
+    }
+
+    #[test]
+    fn embedded_seed_index_parses_and_has_v2_entries() {
+        let idx = embedded_seed_index().expect("embedded seed must parse");
+        assert_eq!(idx.schema_version, 2);
+        assert!(idx.plugins.len() >= 3, "seed must ship at least 3 plugins");
+        assert!(idx.plugins.iter().any(|p| !p.categories.is_empty()));
+        assert!(idx.plugins.iter().any(|p| !p.tags.is_empty()));
     }
 
     #[test]
