@@ -164,9 +164,36 @@ fn seed_one(root: &Path, p: &BundledPlugin) -> std::io::Result<bool> {
     }
 
     fs::create_dir_all(&dir)?;
-    fs::write(&manifest_dst, p.manifest_toml)?;
-    fs::write(&script_dst, p.script_js)?;
+    // Normalize CRLF -> LF on write. The bundled strings come from
+    // `include_str!`, which reads the source file *byte for byte* at
+    // compile time. If a contributor's checkout has CRLF endings (e.g.
+    // Windows + `core.autocrlf=true`, or a `.gitattributes` regression),
+    // the embedded bytes will be CRLF and the on-disk file we seed will
+    // also be CRLF. The pinned `runtime.sha256` in manifest.toml is
+    // computed against the LF form, so any CRLF byte slips the hash
+    // verifier into rejecting a legitimate bundled plugin.
+    //
+    // Forcing LF on write means: regardless of the CI runner's line
+    // endings, the seeded file matches the LF hash. The repo also
+    // pins these paths to `binary` in `.gitattributes` as the primary
+    // defense — this is the belt-and-suspenders backup.
+    fs::write(&manifest_dst, normalize_lf(p.manifest_toml))?;
+    fs::write(&script_dst, normalize_lf(p.script_js))?;
     Ok(true)
+}
+
+/// Strip `\r` so the on-disk bytes match the LF-canonicalized hash
+/// pinned in `manifest.toml`. Cheap: a single allocation + linear scan,
+/// runs once per bundled plugin per seed call (which itself is once
+/// per boot).
+fn normalize_lf(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    for b in s.bytes() {
+        if b != b'\r' {
+            out.push(b);
+        }
+    }
+    out
 }
 
 /// Cheap one-pass scan for the first `version = "..."` line in a
@@ -386,5 +413,55 @@ mod tests {
                 p.id, manifest_id
             );
         }
+    }
+
+    /// Regression: Windows runners with `core.autocrlf=true` were
+    /// checking out bundled scripts as CRLF, so `include_str!` baked
+    /// in CRLF bytes and the seeded file no longer matched the LF
+    /// `runtime.sha256` pin. `.gitattributes` now marks these paths
+    /// as `binary` (primary fix); this test pins the belt-and-
+    /// suspenders `normalize_lf` writer behavior.
+    #[test]
+    fn normalize_lf_strips_carriage_returns() {
+        assert_eq!(normalize_lf("a\r\nb\r\n"), b"a\nb\n");
+        assert_eq!(normalize_lf("plain\n"), b"plain\n");
+        assert_eq!(normalize_lf(""), b"");
+        // Stray `\r` (old-mac-style, very rare but possible) is also
+        // dropped — we want byte-for-byte LF output.
+        assert_eq!(normalize_lf("a\rb"), b"ab");
+    }
+
+    /// Regression: simulates the Windows CRLF checkout failure mode
+    /// without needing a Windows runner. If we ever stop normalizing
+    /// CRLF -> LF on write, this test fires before CI does.
+    #[test]
+    fn seed_produces_lf_only_files_even_when_in_memory_source_has_crlf() {
+        // Build a fake bundled plugin whose embedded strings contain
+        // CRLF — this is exactly what `include_str!` produces on a
+        // CRLF-converted checkout on Windows.
+        let manifest_lf =
+            "id = \"com.slab.examples.test-crlf\"\nname = \"T\"\nversion = \"0.0.1\"\n";
+        let script_lf = "// hello\nexport default {};\n";
+        let manifest_crlf = manifest_lf.replace('\n', "\r\n");
+        let script_crlf = script_lf.replace('\n', "\r\n");
+
+        // Static lifetimes for the struct — Box::leak is fine in a test.
+        let p = BundledPlugin {
+            id: "com.slab.examples.test-crlf",
+            manifest_toml: Box::leak(manifest_crlf.into_boxed_str()),
+            script_js: Box::leak(script_crlf.into_boxed_str()),
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let written = seed_one(tmp.path(), &p).unwrap();
+        assert!(written, "fresh dir should seed");
+
+        let dir = tmp.path().join(p.id);
+        let m = fs::read(dir.join("plugin.toml")).unwrap();
+        let s = fs::read(dir.join("script.js")).unwrap();
+        assert_eq!(m, manifest_lf.as_bytes(), "manifest written as LF");
+        assert_eq!(s, script_lf.as_bytes(), "script written as LF");
+        assert!(!m.contains(&b'\r'), "no \\r in seeded manifest");
+        assert!(!s.contains(&b'\r'), "no \\r in seeded script");
     }
 }

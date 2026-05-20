@@ -1,0 +1,48 @@
+# Default: let Git handle text auto-detection.
+* text=auto
+
+# --- Bundled plugin scripts are hash-pinned -----------------------------------
+# These files are embedded into the binary via `include_str!` and their bytes
+# are verified against a sha256 stored in manifest.toml. ANY line-ending
+# conversion (LF -> CRLF on Windows checkouts) silently breaks the hash and
+# fails `bundled_plugins_pass_discover_hash_verification` on windows-x64 CI.
+#
+# Marking them `binary` disables BOTH eol conversion AND text diffing,
+# guaranteeing byte-for-byte identical content on every platform.
+sdk/slab-plugin-sdk/examples/*/script.js  binary
+sdk/slab-plugin-sdk/examples/*/script.ts  binary
+
+# Manifests are read into the same hash check + parsed by the registry; pin LF
+# so cross-platform parse + hash behaviour stays deterministic.
+sdk/slab-plugin-sdk/examples/*/manifest.toml  text eol=lf
+
+# --- Shell / config that must stay LF on Windows ------------------------------
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile* text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+
+# --- Windows-native files keep CRLF -------------------------------------------
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# --- Binaries (no diff, no eol conversion) ------------------------------------
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.icns      binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary
+*.dmg       binary
+*.exe       binary
+*.msi       binary
+*.deb       binary
+*.rpm       binary
+*.AppImage  binary
