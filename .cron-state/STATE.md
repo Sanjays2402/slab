@@ -5,14 +5,71 @@
 
 ---
 
-## STATUS: ✅ v2.0.0 "Workshop" RELEASED on GitHub. 📋 v2.0.1 "Bundled Hello Workshop" planned + pushed (1 commit) — Slice 1 ready to ship next tick.
+## STATUS: 🧩 v2.0.1 "Bundled Hello Workshop" MERGED + TAGGED + PUSHED — CI building, awaiting MODE B finalize
 
-**Main HEAD**: `303c43d` (fix-forward CI run).
-**Latest release**: `v2.0.0` — Workshop 🔧 — 7 artifacts on GH Releases (macOS arm64 + x64 dmg, linux deb + AppImage + rpm, windows msi + nsis-exe, SHA256SUMS).
-**Previous tag**: `v1.9.2` (Voice Mode polish).
-**Active dev branch**: `feature/v2.0.1-bundled-hello-workshop` — pushed.
-**RELEASE_PENDING**: *(none — v2.0.0 released)*
-**LAST_WOW_TICK_AT**: 2026-05-19 23:10 PT — v2.0.0 Workshop release itself.
+**Main HEAD**: `9780273` (merge of feature/v2.0.1-bundled-hello-workshop).
+**Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
+**Latest release**: `v2.0.0` — Workshop 🔧 (v2.0.1 release pending CI).
+**Previous tag**: `v2.0.0` (Workshop — plugin platform).
+**Active dev branch**: *(none — Bundled Hello Workshop folded into main)*
+**RELEASE_PENDING**: v2.0.1 — merge `9780273`, tag `v2.0.1`, CI run `26147660187` (in_progress at push).
+**LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment. Brand-new Slab now opens with three real, sandboxed, source-readable plugins already in the panel. Adobe / PDF Expert / Foxit all ship zero plugins for end users. Pick-us pass.
+
+---
+
+## TICK 2026-05-20 00:??-01:?? PT — MODE C → MODE A v2.0.1 SHIPPED 🧩 (6 commits + merge, +1700 LOC)
+
+Plan-then-execute mega-tick. The v2.0.1 plan (1024 lines) was already on
+disk from the previous tick; this tick executed Slices 2–7 in one
+session, ran quality gates on the feature branch AND on main after the
+merge, tagged v2.0.1, and pushed everything.
+
+**Headline:** Three example plugins — `com.slab.examples.hello-workshop`,
+`com.slab.examples.storage-counter`, `com.slab.examples.url-fetch` — now
+ship in the Slab binary itself. On first boot a tiny seeder
+(`plugins::bundled`) `include_str!`s manifest+script for all three and
+materializes them under `~/.slab/plugins/<id>/` *before* the registry
+discovery scan, so a brand-new install has three real, working plugins
+in the panel on day one. No marketplace round-trip required.
+
+**Commits this tick (6 on feature branch, 1 merge on main):**
+- `91f3d55` feat(plugins): bundle storage-counter + url-fetch (v2.0.1 Slice 2)
+- `8853fd1` feat(plugins/ui): "Bundled" pill on first-party plugins (v2.0.1 Slice 3)
+- `1741af0` feat(onboarding): "Plugins, included" tour step (v2.0.1 Slice 4)
+- `67d2051` test(plugins): pin BUNDLED roster + manifest-id parity (v2.0.1 Slice 5)
+- `1c79f51` docs: v2.0.1 CHANGELOG.md + README bundled-plugins blurb (Slice 6)
+- `de8ec72` chore(release): bump tauri.conf.json to 2.0.1 (Slice 7)
+- `9780273` Merge v2.0.1 'Bundled Hello Workshop' (MODE A, on main)
+
+**What landed:**
+- `src-tauri/src/plugins/bundled.rs` — extended `BUNDLED` from 1 → 3 plugins (Slice 2). All three sha256 hashes verified against the actual `script.js` bytes.
+- `src/lib/plugins.ts` — `BUNDLED_PLUGIN_IDS` readonly const + `isBundled(id)` helper (Slice 3).
+- `src/lib/panels/PluginsPanel.svelte` — accent-tinted "Bundled" pill next to plugin name in Installed tab, with tooltip explaining seed semantics (Slice 3).
+- `src/lib/i18n/en.json` — two new strings `plugins.installed.bundled_pill` + `plugins.installed.bundled_tooltip` (Slice 3).
+- `src/lib/OnboardingTour.svelte` — new "🧩 Plugins, included" step between Beacon AI and Command Palette steps; tour grew from 5 → 6 steps (Slice 4).
+- Two new bundled unit tests: `bundled_roster_contains_all_three_v2_0_1_examples` (pins roster contents — catches removal regressions) and `bundled_manifest_ids_match_roster_entries` (parity between rust roster ids and embedded manifest ids — catches the silent-invisibility bug class) (Slice 5).
+- `CHANGELOG.md` — new top-level file, Keep a Changelog 1.1.0 format, [2.0.1] + [2.0.0] entries + compare-link footers (Slice 6).
+- `README.md` — "Extensible" highlight expanded to mention 3 example plugins ship in the binary (Slice 6).
+- `src-tauri/tauri.conf.json` — version 2.0.0 → 2.0.1 (Slice 7). All three version sources (package.json, Cargo.toml, tauri.conf.json) now in sync.
+
+**Quality gates after merge on `main` HEAD `9780273`:**
+- `cargo fmt --all -- --check` → clean
+- `cargo clippy --all-targets -- -D warnings` → clean
+- `cargo test --lib` → **911 passed / 0 failed** (was 909 before Slice 5; +2 from `bundled_roster_*` + `bundled_manifest_ids_*` tests)
+- `pnpm check` → 0 errors, 35 pre-existing warnings (unchanged)
+
+**Buy-Button verdict:**
+- **Pick-us (PASS)** — Adobe, PDF Expert, Foxit ship zero bundled plugins for end users. We ship three with source code on disk.
+- **Tell-a-friend (PASS)** — "Look, I downloaded a free PDF reader and it came with three example plugins I can read and modify" is genuinely HN-screenshot-worthy for the developer audience.
+- **Notice-it (PASS)** — Anyone upgrading from v2.0.0 will see 3 new plugins in Cabinet where they had 0.
+- **Pay-for-it (n/a)** — table-stakes onboarding moment, not a power feature, but it makes the entire v2.0 Workshop release land.
+
+**WOW moment:** The Cabinet quick-action bar now populates itself with three real plugin tools ("Say Hi", "Counter +1", "Fetch URL…") before the user has done anything. First-time user fires a real plugin within 5 seconds of opening the app.
+
+**Next ticks:**
+1. **MODE B finalize v2.0.1** once CI run `26147660187` goes green — `gh release create v2.0.1` with the customer-facing notes drafted in `CHANGELOG.md`. Curate the 7 best artifacts (linux: AppImage + deb + rpm; macos: arm64 dmg + x86 dmg; windows: msi + setup.exe).
+2. **v2.0.2 candidates:** Plugin Store UI polish (categorize bundled vs third-party in the discover tab); Foundry plugin marketplace listings for the 3 bundled plugins so they show up as "first-party" entries; settings panel section for "Manage bundled plugins" (toggle bundle-on-first-boot off if user is a power dev who hates pre-installs).
+3. **v0.10.0 "Beacon" AI spec** still queued at `.cron-state/proposals/v0.10.0-beacon-ai.md` — the buyer-magnet release. Could pivot to this after v2.0.1 finalize if the Workshop arc feels feature-complete enough.
 
 ---
 
