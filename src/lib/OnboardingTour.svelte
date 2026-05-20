@@ -56,6 +56,13 @@
       hint: "Try: Beacon AI → 'Summarize this page'.",
     },
     {
+      icon: "🧩",
+      title: "Plugins, included",
+      body:
+        "Slab ships with three example plugins — Hello Workshop, Storage Counter, URL Fetch. Open Cabinet → Plugins to see them, peek at their source under ~/.slab/plugins/, or write your own with the TypeScript SDK. The plugin marketplace is one click away.",
+      hint: "Plugins are sandboxed and ask permission before they touch the network or your files.",
+    },
+    {
       icon: "⌘",
       title: "Command Palette",
       body:
