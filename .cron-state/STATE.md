@@ -5,17 +5,94 @@
 
 ---
 
-## STATUS: 🧩 v2.0.1 "Bundled Hello Workshop" MERGED + TAGGED + PUSHED — CI building, awaiting MODE B finalize
+## STATUS: 📋 v2.0.2 "Workshop Marketplace" PLAN PUSHED — Slice 0 (Windows CI hotfix) next
 
-**Main HEAD**: `9780273` (merge of feature/v2.0.1-bundled-hello-workshop).
+**Main HEAD**: `d9239f1` (plan commit on top of v2.0.1 merge `9780273`).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
-**Latest release**: `v2.0.0` — Workshop 🔧 (v2.0.1 release pending CI).
+**Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
-**Active dev branch**: *(none — Bundled Hello Workshop folded into main)*
-**RELEASE_PENDING**: v2.0.1 — merge `9780273`, tag `v2.0.1`, CI run `26147660187` (in_progress at push).
+**Active dev branch**: *(none yet — Slice 0 lands on `main`, then `feature/v2.0.2-workshop-marketplace` opens at Slice 1)*
+**RELEASE_BLOCKED**: v2.0.1 CI run `26147660187` FAILED on Windows — `bundled_plugins_pass_discover_hash_verification` sha256 mismatch on `script.js` (CRLF on Windows checkout). Fix = `.gitattributes` pinning *.js to eol=lf. Documented as Slice 0 of v2.0.2 plan; will roll into v2.0.2 rather than re-finalize v2.0.1.
+**v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW moment = Fuse.js live-highlight search in Slice 6.
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment. Brand-new Slab now opens with three real, sandboxed, source-readable plugins already in the panel. Adobe / PDF Expert / Foxit all ship zero plugins for end users. Pick-us pass.
 
 ---
+
+## TICK 2026-05-20 00:42 PT — MODE C writing-plans skill — v2.0.2 plan promoted 📋
+
+User invoked the `writing-plans` skill. Tick deliverable is a plan, not
+running code. Plan target: **v2.0.2 "Workshop Marketplace"** — leads with
+a Slice 0 hotfix for the v2.0.1 Windows CI failure, then ships the
+Plugin Store revamp on `feature/v2.0.2-workshop-marketplace`.
+
+**Why v2.0.2 and not v0.10.0 Beacon?** Two reasons:
+1. v2.0.1's CI is *blocked* on Windows (run `26147660187` failed on a
+   sha256 mismatch — CRLF-in-Windows-checkout vs. LF-on-disk-hash). That
+   blocker has to land somewhere before any new release, and it folds
+   naturally into the front of the next release.
+2. STATE.md (previous tick) flagged v2.0.2 candidate = Plugin Store UX
+   polish. v0.10.0 Beacon is also queued but per the cron mandate
+   ("BUY-BUTTON, BIG features, customer-would-pay") a *real Plugin Store*
+   is a more obvious "would-pay" upgrade for v2.0.x than another AI
+   slice on top of an already-shipped Beacon stack (v1.7-v1.9 already
+   shipped chat, citations, glossary, study, voice, PII, vision).
+
+**Commit this tick (1 on main):**
+- `d9239f1` docs(plans): v2.0.2 "Workshop Marketplace" implementation plan
+- Plan file: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines).
+
+**Plan structure — 9 slices, ~1140 LOC, ~10 commits:**
+- **Slice 0** (hotfix on main): `.gitattributes` pinning *.js / *.toml /
+  *.json to `eol=lf`. Unblocks Windows CI. 2 commits.
+- **Slice 1**: marketplace::index schema v2 — `IndexEntryV2` wraps
+  `IndexEntry` via `#[serde(flatten)]` + new fields `categories`,
+  `tags`, `screenshots`, `installs`. Backwards-compatible signing
+  payload via `IndexEntryUnsignedV2`. +4 unit tests.
+- **Slice 2**: TS mirror in `src/lib/types/marketplace.ts` + store update.
+- **Slice 3**: Embedded `seed-index.json` so Browse is useful offline on
+  day one. New `BUNDLED` signature sentinel for in-binary entries.
+- **Slice 4**: Category chip filters w/ live counts (Liquid Glass styles).
+- **Slice 5**: Sort dropdown — Popular / A-Z / Updates First.
+- **Slice 6** ⭐ WOW: Fuse.js fuzzy search w/ live match highlighting.
+  Typing "hello" instantly narrows results AND highlights matched chars
+  in plugin names with accent-tinted `<mark>` spans.
+- **Slice 7**: Hero card on empty Browse + install-count social proof
+  (only shown when `installs >= 10` to avoid the "1 install" anti-pattern).
+- **Slice 8**: Version bump 2.0.1→2.0.2 + CHANGELOG.md entry +
+  customer-facing release notes at `docs/release-notes/v2.0.2.md` +
+  onboarding-tour copy update + MODE A merge + tag.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Adobe / PDF Expert / Foxit ship no plugin stores.
+- **Tell-a-friend PASS** — categorized, searchable, sortable storefront
+  is screenshot-worthy.
+- **Notice-it PASS** — v2.0.1 users see the flat grid become a real
+  store on upgrade.
+
+**Decisions documented in the plan:**
+- Schema v2 as `flatten`-wrapper rather than mutating `IndexEntry`
+  preserves v1-signed-index verification.
+- `BUNDLED` sentinel signature short-circuits Ed25519 verification only
+  when paired with `download_url: "bundled://..."` — defense in depth.
+- Fuse.js (6 KB gzipped) is the only new runtime dep; hand-roll fallback
+  documented as Step 6.1 alternate.
+- YAGNI: drop "Newest" sort until publisher emits `published_at`.
+
+**Next ticks:**
+1. **Slice 0** — `.gitattributes` + renormalize + push on main; wait for
+   CI green; then v2.0.1 is unblocked (or we just roll into v2.0.2).
+2. **Slice 1** — cut `feature/v2.0.2-workshop-marketplace`, schema v2.
+3. Slices 2-7 — likely fold 2-3 per tick (each is below cron's
+   buy-button bar individually but the WOW slice 6 is its own tick).
+4. Slice 8 — MODE A merge + tag + release.
+
+**Open questions for Sanjay (only if he wants to weigh in):**
+- Re-finalize v2.0.1 GitHub release after Slice 0, or roll the hotfix
+  directly into v2.0.2? Plan defaults to v2.0.2 (no force-pushed tags).
+- Fuse.js vs hand-roll? Plan documents both; default = Fuse.js.
+
+---
+
 
 ## TICK 2026-05-20 00:??-01:?? PT — MODE C → MODE A v2.0.1 SHIPPED 🧩 (6 commits + merge, +1700 LOC)
 
