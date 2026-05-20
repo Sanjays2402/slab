@@ -26,6 +26,7 @@
     type Plugin,
     type PluginGrants,
     type PluginsSnapshot,
+    isBundled,
   } from "$lib/plugins";
   import {
     marketplaceStore,
@@ -611,7 +612,18 @@
           <li class="plugin-row" class:has-error={!!p.error}>
             <div class="plugin-head">
               <div class="plugin-meta">
-                <h2>{p.manifest?.name ?? p.id}</h2>
+                <h2>
+                  {p.manifest?.name ?? p.id}
+                  {#if isBundled(p.id)}
+                    <span
+                      class="bundled-pill"
+                      title={t("plugins.installed.bundled_tooltip")}
+                      aria-label={t("plugins.installed.bundled_tooltip")}
+                    >
+                      {t("plugins.installed.bundled_pill")}
+                    </span>
+                  {/if}
+                </h2>
                 <p class="muted">
                   {#if p.manifest}
                     <span>{t("plugins.version", { version: p.manifest.version })}</span>
@@ -1433,5 +1445,24 @@
   .update-badge:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+
+  /* v2.0.1 — "Bundled" pill for first-party plugins seeded by the
+     binary on first boot. Subtle: doesn't try to compete with the
+     plugin name, but is visible enough to answer "why is this here?". */
+  .bundled-pill {
+    display: inline-block;
+    padding: 1px 6px;
+    margin-left: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 999px;
+    cursor: help;
   }
 </style>

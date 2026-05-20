@@ -137,6 +137,8 @@
 
   "plugins.installed.updateAvailable": "Update available",
   "plugins.installed.updateBadge": "Update available — v{version}",
+  "plugins.installed.bundled_pill": "Bundled",
+  "plugins.installed.bundled_tooltip": "Ships with Slab — seeded on first launch. Safe to disable, safe to uninstall (it'll come back on a fresh install).",
 
   "plugins.uninstallConfirm.title": "Uninstall {name}?",
   "plugins.uninstallConfirm.body": "This removes the plugin files from your machine. You can reinstall it from the marketplace at any time.",
