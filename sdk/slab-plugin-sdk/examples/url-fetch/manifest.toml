@@ -1,6 +1,6 @@
-id = "url-fetch"
+id = "com.slab.examples.url-fetch"
 name = "URL Fetch Demo"
-version = "0.1.0"
+version = "0.2.0"
 slab_compat = ">=2.0.0 <3.0.0"
 description = "Demo of slab.fetch — pings a URL and reports the status. Shows off the capability + allow-list flow."
 author = "Slab Plugin SDK examples"
@@ -16,7 +16,7 @@ ai_providers = []
 
 [runtime]
 entry = "script.js"
-sha256 = "REPLACE_ME_AT_BUILD_TIME_64_HEX_CHARS_REPLACE_ME_AT_BUILD_TIME_xx"
+sha256 = "e35c7835b5c5abc42f1b1c5423279acd24504d490ee62d0a2067f4f065a65a1c"
 
   [runtime.capabilities]
   fs = "none"

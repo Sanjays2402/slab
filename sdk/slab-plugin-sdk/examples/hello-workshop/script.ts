@@ -10,7 +10,7 @@
 import { definePlugin } from "@slab/plugin-sdk";
 
 export default definePlugin({
-  id: "hello-workshop",
+  id: "com.slab.examples.hello-workshop",
   onLoad(slab) {
     slab.ui.notify(`Hello from ${slab.pluginId}!`);
     slab.ui.registerTool({

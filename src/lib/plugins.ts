@@ -172,6 +172,26 @@ const EMPTY: PluginsSnapshot = {
 
 export const pluginsStore = writable<PluginsSnapshot>({ ...EMPTY });
 
+/**
+ * Plugin ids that ship in the Slab binary itself and are seeded into
+ * ~/.slab/plugins/<id>/ on first boot. Used by PluginsPanel to render
+ * a "Bundled" pill so users understand why these plugins are
+ * pre-installed — they came from Slab, not from a marketplace install.
+ *
+ * Must stay in sync with `BUNDLED` in `src-tauri/src/plugins/bundled.rs`.
+ * If you bundle a new plugin, add its id here too.
+ */
+export const BUNDLED_PLUGIN_IDS: readonly string[] = [
+  "com.slab.examples.hello-workshop",
+  "com.slab.examples.storage-counter",
+  "com.slab.examples.url-fetch",
+] as const;
+
+/** True iff the given plugin id is a bundled (first-party) plugin. */
+export function isBundled(pluginId: string): boolean {
+  return BUNDLED_PLUGIN_IDS.includes(pluginId);
+}
+
 // ---------- commands ----------
 
 /** Returns whether the plugin system is even reachable (we're in Tauri). */

@@ -1,6 +1,6 @@
-id = "hello-workshop"
+id = "com.slab.examples.hello-workshop"
 name = "Hello Workshop"
-version = "0.1.0"
+version = "0.2.0"
 slab_compat = ">=2.0.0 <3.0.0"
 description = "Smallest possible Slab v2.0.0 plugin — registers a 'Say Hi' tool."
 author = "Slab Plugin SDK examples"
@@ -18,7 +18,7 @@ ai_providers = []
 entry = "script.js"
 # Computed at build time from the bundled script.js. Update if you
 # regenerate the script; the host hard-fails on hash mismatch.
-sha256 = "REPLACE_ME_AT_BUILD_TIME_64_HEX_CHARS_REPLACE_ME_AT_BUILD_TIME_xx"
+sha256 = "ca687208c1316e39d05a02c6122fba252ac59683331412971206797e9dd0f83c"
 
   [runtime.capabilities]
   fs = "none"

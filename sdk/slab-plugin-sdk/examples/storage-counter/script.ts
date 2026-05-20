@@ -14,7 +14,7 @@ import { definePlugin } from "@slab/plugin-sdk";
 const COUNT_KEY = "open_count";
 
 export default definePlugin({
-  id: "storage-counter",
+  id: "com.slab.examples.storage-counter",
   onLoad(slab) {
     slab.document.onOpen(async (doc) => {
       const prev = Number((await slab.storage.get(COUNT_KEY)) ?? "0");
