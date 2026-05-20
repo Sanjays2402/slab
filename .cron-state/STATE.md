@@ -5,20 +5,162 @@
 
 ---
 
-## STATUS: 📋 Three release plans on disk — pipeline ready to execute
+## STATUS: 📋 Four release plans on disk — pipeline ready to execute
 
-**Main HEAD**: `a3fa231` (v2.0.3 plan commit, ff-merged onto LF hotfix `1a28a5f`).
+**Main HEAD**: `a0d1133` (v2.0.4 plan commit chore; v2.0.4 plan at `94d9970`).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
-**Active dev branch**: *(none — three pipeline items on disk as plans; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
-**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of last tick. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
+**Active dev branch**: *(none — four pipeline items on disk as plans; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
+**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of two ticks ago. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
 **v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW = Fuse.js live-highlight search in Slice 6.
 **v2.0.3 PLAN**: `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
-**v2.0.4 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines, 6 slices + pre-flight, ~580-720 LOC). WOW = SVG progress rings on Recents grid (Slice 4). Codename "Memory" 📖 — closes the "remember where I left off" table-stakes gap vs Adobe / PDF Expert / Foxit. **Must ship AFTER v2.0.3 — both touch `src/lib/i18n/en.json`, though in disjoint namespaces (palette.resume / reader.progress / onboarding.memory vs settings.beacon).**
+**v2.0.4 PLAN**: `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines, 6 slices + pre-flight, ~580-720 LOC). WOW = SVG progress rings on Recents grid (Slice 4). Codename "Memory" 📖 — closes the "remember where I left off" table-stakes gap vs Adobe / PDF Expert / Foxit. **Must ship AFTER v2.0.3 — both touch `src/lib/i18n/en.json`, though in disjoint namespaces (palette.resume / reader.progress / onboarding.memory vs settings.beacon).**
+**v2.0.5 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.5-bookmarks.md` (~62 KB, 1932 lines, 6 slices + pre-flight, ~980 LOC). WOW = drag-to-reorder bookmark slots with HTML5 drag API + accent-tinted drop indicators (Slice 4). Codename "Bookmarks" ★ — closes the "save my spot" companion gap to v2.0.4's "remember last page". **Must ship AFTER v2.0.4 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + i18n/en.json (disjoint namespaces: bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
 
 ---
+
+## TICK 2026-05-20 07:23 PT — MODE C writing-plans skill — v2.0.5 plan promoted ★
+
+User invoked the `writing-plans` skill a **fourth** consecutive tick.
+Pattern firmly established: each writing-plans tick promotes the next
+release in the pipeline. v2.0.2, v2.0.3, v2.0.4 all already on disk;
+this tick: **v2.0.5 "Bookmarks" ★** — companion feature to v2.0.4's
+"Memory" — Slab gains real per-document user bookmarks.
+
+**Why v2.0.5 next?**
+1. v2.0.4 plan flagged this explicitly: "Bundle per-page bookmarks
+   into v2.0.4 or defer to v2.0.5? Plan defaults to deferring
+   (separate `bookmarks.v1` store, ~150 LOC, out of scope for
+   'Memory')." That is now redeemed as a real plan.
+2. Buy-Button verdict **passes 3/4 tests** — Adobe, PDF Expert,
+   Foxit all ship per-page user bookmarks. Slab today maps Cmd+D to
+   *nothing* in the Reader. That is launch-blocker territory for any
+   reviewer who tries v2.0 expecting parity with paid products.
+3. Surfaces are designed to be **as DRY as possible against v2.0.4**:
+   `bookmarks.ts` deliberately mirrors `readingPosition.ts` line for
+   line (same eviction policy, same retry-on-quota, same listener
+   pattern). A reader who's read v2.0.4 can read this plan in half
+   the time.
+4. Disjoint i18n namespaces (`bookmarks.*`, `palette.bookmark.*`)
+   ensure no JSON merge conflict with v2.0.4's
+   `reader.progress.*` / `palette.resume.*` / `onboarding.memory.*`,
+   provided the strict-order pipeline holds (see scheduling note).
+
+**Commit this tick (1 on main):**
+- `<HASH>` docs(plans): v2.0.5 "Bookmarks" implementation plan
+- Plan file: `docs/plans/2026-05-20-v2.0.5-bookmarks.md` (~62 KB, 1932 lines).
+
+**Plan structure — 6 slices + pre-flight, ~980 LOC, 6 commits:**
+- **Slice 0** (pre-flight): 5 verification checks — bookmark namespace
+  unclaimed, Mod+D unclaimed, sidebar toggle pattern intact,
+  pdfjs thumbnail surface available, no surface collision with
+  v2.0.2/v2.0.3/v2.0.4.
+- **Slice 1**: pure-TS `src/lib/bookmarks.ts` (~250 LOC incl. header)
+  — per-path localStorage store under `slab.bookmarks.v1`, 100
+  bookmarks/doc cap, 2_000 total cap with oldest-doc-first eviction
+  on quota crash. Idempotent addBookmark, toggle/rename/reorder/
+  subscribe round out the public API. Mirrors readingPosition.ts
+  shape line-for-line (deliberate DRY against v2.0.4).
+- **Slice 2**: Mod+D keymap action (real Rust ActionId variant +
+  ACTIONS row, NOT a hardcoded handler — survives Settings remap)
+  + toolbar ★/☆ button + `⊕` sidebar toggle in new tb-group between
+  page-nav and zoom. Toast confirmation via notify.ts.
+- **Slice 3**: Right-rail 280px frosted-glass bookmarks sidebar with
+  56x72 pdfjs-rendered thumbnails (lazy + cached per session),
+  inline-editable name (click to rename, Enter to save, Esc to
+  cancel), one-click jump, hover-reveal delete, accent-tinted
+  border on the current page's slot.
+- **Slice 4 ⭐ WOW**: Drag-to-reorder via HTML5 drag API. Pointer-Y
+  relative drop indicators (accent line above OR below the target
+  slot) make insertion unambiguous. 220ms ease-out slot animation.
+  `renamingId == null` gates `draggable={}` so rename input clicks
+  don't start a drag. Subtle ↕ hint chip appears in the header
+  once there are 2+ bookmarks.
+- **Slice 5**: Three command-palette entries under a new
+  "Bookmarks" group — "Bookmark this page" (toggle, label flips),
+  "Jump to: <name>" (one per bookmark, top 12), all gated on
+  `readerCtx` (new Props field passing the active Reader tab's
+  path/page). Includes a static subscription so palette listings
+  stay live as the user toggles via Cmd+D elsewhere.
+- **Slice 6**: onboarding tour step #5 (★ Bookmarks), version bumps
+  (2.0.4 → 2.0.5 in package.json/Cargo.toml/tauri.conf.json),
+  CHANGELOG entry, customer-facing release notes at
+  `docs/release-notes/v2.0.5.md`, MODE A merge + tag + push, queue
+  `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Adobe / PDF Expert / Foxit all ship per-page
+  user bookmarks. Closing this gap is a hard prerequisite for the
+  v1.0.0 launch narrative.
+- **Notice-it PASS** — every returning user sees: (a) new ★/☆
+  toolbar toggle, (b) new ⊕ sidebar toggle, (c) new "Bookmarks"
+  group in Cmd+K palette, (d) new ★ onboarding-tour step.
+- **Tell-a-friend PASS** — drag-to-reorder bookmark slots with
+  thumbnails and inline rename in a free PDF reader is a genuine
+  screenshot moment. "Try doing this in Adobe Acrobat (you can't
+  even drag in their bookmarks panel — right-click → Move →
+  destination → OK)."
+
+**Codebase-discovery decisions baked into the plan:**
+- `Mod+D` is registered as a real `ActionId::BookmarksToggle`
+  variant (not hardcoded) so it survives Settings remap. Verified
+  not already in use across `keymap/action.rs`, `keymap.ts`, or
+  `ReaderPanel.svelte`.
+- Sidebar markup follows the existing
+  `<aside class="outline-sidebar">` / `class="thumbs"` / `class="info-sidebar"`
+  pattern, sitting alongside them in the same flex row. New CSS
+  block at end of `<style>`.
+- pdfjs thumbnail render piggybacks on whatever `getPage().render`
+  helper the existing thumbs sidebar already uses (DRY — bookmarks
+  must not ship a parallel thumbnail pipeline). Slice 3 documents
+  the fallback (inline a small `renderThumb` helper) if no shared
+  helper exists.
+- `bookmarks.ts` deliberately mirrors `readingPosition.ts` API
+  shape (same listener pattern, same eviction strategy, same
+  retry-on-quota). A future v2.0.6 could merge them into a single
+  `perDocStore<T>()` factory if pattern stabilises.
+- Dynamic `import()` for `renameBookmark` + `removeBookmarkById` +
+  `reorderBookmarks` in the Reader sidebar — these are rare paths;
+  the bundler can defer them. (If tree-shaking is already good,
+  these can be folded into the Slice 2 static import block — call
+  flagged in the plan as an "if".)
+
+**Scheduling note (critical, documented in the plan):**
+**Do not start v2.0.5 Slice 1 until v2.0.4 ships and is tagged.**
+Both versions touch `ReaderPanel.svelte`, `CommandPalette.svelte`,
+`OnboardingTour.svelte`, and `i18n/en.json` (disjoint namespaces
+but git's textual three-way merge doesn't know JSON structure).
+Strict order: v2.0.2 → v2.0.3 → v2.0.4 → v2.0.5, each cut from
+`main` after the previous merges.
+
+**Next ticks (in order):**
+1. **v2.0.2 Slices 1-8** on `feature/v2.0.2-workshop-marketplace`. WOW = Fuse.js search w/ live highlighting (Slice 6).
+2. **v2.0.2 MODE A merge + tag + release**.
+3. **v2.0.3 Slices 1-6** on `feature/v2.0.3-beacon-settings`.
+4. **v2.0.3 MODE A merge + tag + release**.
+5. **v2.0.4 Slices 1-6** on `feature/v2.0.4-memory`.
+6. **v2.0.4 MODE A merge + tag + release**.
+7. **v2.0.5 Slices 1-6** on `feature/v2.0.5-bookmarks`. WOW = drag-to-reorder (Slice 4).
+8. **v2.0.5 MODE A merge + tag + release**.
+
+**Open questions for Sanjay (only if he wants to weigh in):**
+- Pinboard view (all bookmarks across all docs in one grid) into
+  v2.0.5 or defer to v2.0.6? Plan defers — adds another ~250 LOC
+  and a new top-level panel.
+- Bookmark export to Markdown / JSON in v2.0.5? Plan defers —
+  small but adds a new menu/button to the sidebar header.
+- Auto-section detection (auto-name from PDF outline crumb)?
+  Plan defers — needs a dest-to-page resolver pass on every
+  outline node (would more than double Slice 3's scope).
+- **Four-plan backlog is now on disk.** At what point does Sanjay
+  want the next tick to switch from "planning" to "executing"
+  (i.e. start a subagent against v2.0.2 Slice 1)?
+
+---
+
+
 
 ## TICK 2026-05-20 05:37 PT — MODE C writing-plans skill — v2.0.4 plan promoted 📖
 
