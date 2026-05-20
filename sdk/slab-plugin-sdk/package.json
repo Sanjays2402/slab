@@ -1,0 +1,67 @@
+{
+  "name": "@slab/plugin-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for authoring Slab plugins (v2.0.0 Workshop runtime). Full IntelliSense + type-checking against the slab.* global surface.",
+  "license": "MIT",
+  "author": "Sanjay (Sanjays2402)",
+  "homepage": "https://github.com/Sanjays2402/slab",
+  "bugs": {
+    "url": "https://github.com/Sanjays2402/slab/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sanjays2402/slab.git",
+    "directory": "sdk/slab-plugin-sdk"
+  },
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    },
+    "./manifest": {
+      "types": "./dist/types/types/manifest.d.ts",
+      "import": "./dist/esm/types/manifest.js",
+      "require": "./dist/cjs/types/manifest.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:esm": "tsc -p tsconfig.build.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node scripts/rename-cjs.mjs",
+    "build:types": "tsc -p tsconfig.types.json",
+    "build": "pnpm run clean && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "slab",
+    "pdf",
+    "plugin",
+    "sdk",
+    "typescript",
+    "quickjs",
+    "workshop"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
