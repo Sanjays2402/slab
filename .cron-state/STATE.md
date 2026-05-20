@@ -5,16 +5,86 @@
 
 ---
 
-## STATUS: 📋 v2.0.2 "Workshop Marketplace" PLAN PUSHED — Slice 0 (Windows CI hotfix) next
+## STATUS: 🚀 Windows-EOL hotfix + v2.0.3 plan landed on main — RELEASE_BLOCKED clearing
 
-**Main HEAD**: `d9239f1` (plan commit on top of v2.0.1 merge `9780273`).
+**Main HEAD**: `a3fa231` (v2.0.3 plan commit, ff-merged onto LF hotfix `1a28a5f`).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
-**Active dev branch**: *(none yet — Slice 0 lands on `main`, then `feature/v2.0.2-workshop-marketplace` opens at Slice 1)*
-**RELEASE_BLOCKED**: v2.0.1 CI run `26147660187` FAILED on Windows — `bundled_plugins_pass_discover_hash_verification` sha256 mismatch on `script.js` (CRLF on Windows checkout). Fix = `.gitattributes` pinning *.js to eol=lf. Documented as Slice 0 of v2.0.2 plan; will roll into v2.0.2 rather than re-finalize v2.0.1.
-**v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW moment = Fuse.js live-highlight search in Slice 6.
-**LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment. Brand-new Slab now opens with three real, sandboxed, source-readable plugins already in the panel. Adobe / PDF Expert / Foxit all ship zero plugins for end users. Pick-us pass.
+**Active dev branch**: *(none — both pipeline items now on `main`; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
+**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of this tick. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred to next tick (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
+**v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW = Fuse.js live-highlight search in Slice 6.
+**v2.0.3 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
+**LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-20 01:05 PT — MODE C writing-plans skill — v2.0.3 plan promoted 📋
+
+User invoked the `writing-plans` skill again. Following the same
+pattern as the previous tick (which wrote v2.0.2), this tick wrote the
+**next** release plan in the pipeline: **v2.0.3 "Beacon Settings"**.
+
+**Why v2.0.3 next instead of more v2.0.2 slices?**
+1. v2.0.2 plan is already on disk and ready for subagent execution —
+   future ticks just need to run it. No more planning needed there.
+2. v2.0.3 fills an objectively glaring gap: Beacon (Slab's AI layer)
+   has shipped 9 features across v1.5–v1.9 with **zero UI to
+   configure it**. Today users must hand-edit `~/.slab/config.toml`
+   to switch providers or models. That fails the buy-button test
+   loudly — Adobe's AI is *cloud-locked + paid* but it has a UI; ours
+   is *local + free* and has no UI. Easy fix, huge perceived-quality
+   uplift.
+3. Plans cluster on the same files (SettingsPanel.svelte + i18n).
+   Writing the v2.0.3 plan now while the codebase is fresh in
+   context — including its real CmdResult tagged-enum shape, the
+   `From<Result, AiError>` idiom, the existing `slab_beacon_config_*`
+   command pair — is cheaper than re-discovering all that two ticks
+   later.
+
+**Commit this tick (1 on main):**
+- `a3fa231` docs(plans): v2.0.3 "Beacon Settings" implementation plan
+- Plan file: `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines).
+
+**Also landed on main this tick** (sibling subagent prepared on `fix/windows-eol-bundled-scripts`, this tick ff-merged):
+- `1a28a5f` fix(ci): pin bundled plugin files to LF on Windows checkouts — `.gitattributes` (48 LOC) marks bundled plugin scripts as binary so git never touches line endings, plus `normalize_lf` belt-and-suspenders helper in seeder + 2 regression tests. Author claims 913/913 lib tests green locally. Unblocks v2.0.1 Windows CI.
+
+**Plan structure — 6 slices + pre-flight, ~1030 LOC, 7 commits:**
+- **Slice 0** (pre-flight): 4 verification checks before any code lands. Specifically pins the `CmdResult` tagged-enum shape, the `SettingsPanel` section pattern, the existing `slab_beacon_config_*` cmds.
+- **Slice 1**: pure-Rust `ai::introspect` module — `models()` + `ping()` + `IntrospectError` + `is_embedding_model()` heuristic. 8 mockito-backed tests for Ollama + OpenAI happy paths, connection-refused, 5xx, invalid JSON, `/v1` path handling, ping semantics. +280 LOC.
+- **Slice 2**: three Tauri commands (`slab_beacon_list_models`, `slab_beacon_provider_test`, `slab_beacon_default_config`) + the matching `From<Result, IntrospectError>` impl. +1 unit test pinning defaults.
+- **Slice 3**: `src/lib/beacon-settings.ts` TS client wrapper + 26 i18n strings under `settings.beacon.*`.
+- **Slice 4 ⭐ WOW**: `BeaconSettingsSection.svelte` (~340 LOC). Live Ollama-introspection model dropdown with disk-size badges, green/red/amber status dot, debounced refresh on base-URL edits, "No models installed" empty state with copy-pull-command button, auto-save 500ms after changes. Wired into `SettingsPanel.svelte` between Language and Theme sections.
+- **Slice 5**: onboarding step #4 + 2 command-palette entries + 9 more i18n strings. Discoverability multiplier on Slice 4.
+- **Slice 6**: version bumps (2.0.2 → 2.0.3 in package.json/Cargo.toml/tauri.conf.json), CHANGELOG entry, customer-facing release notes at `docs/release-notes/v2.0.3.md`, MODE A merge + tag + push, queue `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Adobe ships paid cloud-only AI; PDF Expert ships none. We give away a local-first AI config UI for free.
+- **Notice-it PASS** — every returning user sees a new "Beacon AI" Settings section the moment they upgrade.
+- **Tell-a-friend PASS** — "look, my PDF reader auto-finds my installed Ollama models." Genuine /r/LocalLLaMA + HN-grade screenshot.
+
+**Codebase-discovery decisions baked into the plan:**
+- `CmdResult` is `{ kind: "ok", value: T } | { kind: "err", message: string }` (tagged serde enum, NOT a Result alias). All 5 plan code blocks corrected mid-write to match this exactly.
+- `.into()` requires a `From<Result<T, MyError>>` impl. Plan adds the `IntrospectError` variant alongside the existing 6 (AiError, PdfError, StudyError, IndexError, PiiError, LibraryError).
+- `mockito` already a dev-dep — no new Cargo deps required.
+- `SettingsPanel.svelte` insertion uses surrounding-line anchors (between Language `</section>` and Theme `<h2>`), not absolute line numbers, so the plan survives drift.
+
+**Scheduling note (critical, documented in the plan):**
+**Do not start v2.0.3 Slice 1 until v2.0.2 ships and is tagged.** Both
+versions modify `SettingsPanel.svelte` + `src/lib/i18n/en.json` — running
+in parallel branches = merge conflicts. Strict order: v2.0.2 Slice 0
+(gitattributes hotfix on main) → v2.0.2 Slices 1–8 on feature branch →
+v2.0.2 merge + tag → THEN cut `feature/v2.0.3-beacon-settings` from main.
+
+**Next ticks (in order):**
+1. **v2.0.2 Slice 0**: `.gitattributes` LF pin on `main` to unblock Windows CI. ~2 commits.
+2. **v2.0.2 Slices 1–8** on `feature/v2.0.2-workshop-marketplace`. WOW = Fuse.js search w/ live highlighting (Slice 6).
+3. **v2.0.2 MODE A merge + tag + release**.
+4. **v2.0.3 Slices 1–6** on `feature/v2.0.3-beacon-settings`.
+
+**Open questions for Sanjay (only if he wants to weigh in):**
+- Fold auto-download Ollama + model-autopull-from-dropdown into v2.0.3, or keep them parked for v2.0.4? Plan defaults to deferring (both add ~150 LOC each and v2.0.3 is already ~1030 LOC).
+- Release-notes framing names Adobe explicitly as the comparison. OK or soften?
 
 ---
 
