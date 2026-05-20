@@ -5,15 +5,59 @@
 
 ---
 
-## STATUS: 🚀 v2.0.0 "Workshop" MERGED + TAGGED + PUSHED — CI building, awaiting MODE B finalize
+## STATUS: ✅ v2.0.0 "Workshop" RELEASED on GitHub. 📋 v2.0.1 "Bundled Hello Workshop" planned + pushed (1 commit) — Slice 1 ready to ship next tick.
 
-**Main HEAD**: `c270a8d` (version bump 1.9.2 → 2.0.0).
-**Merge SHA**: `5c1354e` (45 commits from feature/v2.0.0-workshop).
-**Latest tag**: `v2.0.0` (annotated, pushed) — Workshop release.
+**Main HEAD**: `303c43d` (fix-forward CI run).
+**Latest release**: `v2.0.0` — Workshop 🔧 — 7 artifacts on GH Releases (macOS arm64 + x64 dmg, linux deb + AppImage + rpm, windows msi + nsis-exe, SHA256SUMS).
 **Previous tag**: `v1.9.2` (Voice Mode polish).
-**Active dev branch**: *(none — Workshop is folded into main)*
-**RELEASE_PENDING**: v2.0.0 — merge SHA `5c1354e`, tag `v2.0.0`, CI run `26145019423` (queued at push).
-**LAST_WOW_TICK_AT**: 2026-05-19 23:10 PT — v2.0.0 Workshop release itself. Slab now has a free, MIT-licensed, sandboxed TypeScript plugin platform; Adobe charges enterprise licensing for theirs; PDF Expert + Foxit don't have one at all.
+**Active dev branch**: `feature/v2.0.1-bundled-hello-workshop` — pushed.
+**RELEASE_PENDING**: *(none — v2.0.0 released)*
+**LAST_WOW_TICK_AT**: 2026-05-19 23:10 PT — v2.0.0 Workshop release itself.
+
+---
+
+## TICK 2026-05-19 23:?? PT — MODE B+C v2.0.0 RELEASE FINALIZED 🚀 + v2.0.1 PLAN PUSHED 📋
+
+**Two MODEs in one tick:**
+
+### MODE B finalize: v2.0.0 Workshop release published
+- Polled CI run `26145461445` (the fix-forward after `26145019423` was killed by a pnpm.overrides CI lint). All 7 jobs green:
+  - `cargo test` x3 OS (macos-arm64, windows-x64, linux-x64)
+  - `bundle` x4 (macos-arm64, macos-x64, windows-x64, linux-x64)
+- `gh release view v2.0.0` shows the release was auto-published by the build workflow with **7 artifacts** (macOS arm64+x64 dmg, linux deb+AppImage+rpm, windows msi+nsis-exe) plus SHA256SUMS. URL: https://github.com/Sanjays2402/slab/releases/tag/v2.0.0
+- `RELEASE_PENDING` cleared.
+- Customer-facing release notes drafted at `/tmp/slab-v2.0.0-release-notes.md` (the auto-published notes are already on GH, but the long-form pitch is available for HN/Twitter/Product Hunt if Sanjay wants to use it).
+
+### MODE C: writing-plans skill — v2.0.1 "Bundled Hello Workshop" plan
+Sanjay invoked the writing-plans skill against the next release. WIP for v2.0.1 was already on disk (319-line `src-tauri/src/plugins/bundled.rs` untracked + modifications to lib.rs, plugins/mod.rs, and the three SDK example manifests/scripts) but no formal plan existed. Promoted the WIP to a full sliced plan.
+
+**Plan file**: `docs/plans/2026-05-19-v2.0.1-bundled-hello-workshop.md` — 1024 lines, 38 KB.
+
+**Commit this tick**:
+- `ff4f52b` docs(plans): v2.0.1 "Bundled Hello Workshop" implementation plan
+
+**The release in one sentence**: every fresh Slab install now ships with three working runtime plugins (`com.slab.examples.{hello-workshop,storage-counter,url-fetch}`) seeded into `~/.slab/plugins/` on first launch — closing the "platform without plugins" gap v2.0.0 left behind.
+
+**Plan covers 7 slices on `feature/v2.0.1-bundled-hello-workshop`:**
+1. Commit existing WIP — hello-workshop seeder + lib.rs wiring (~340 LOC, 7 unit tests).
+2. Extend BUNDLED roster to three plugins (~30 LOC).
+3. "Bundled" pill in PluginsPanel + i18n strings (~90 LOC).
+4. New OnboardingTour step ("Try a plugin — three are already installed") (~70 LOC).
+5. Integration smoke test guarding TS/Rust/manifest id alignment (~50 LOC).
+6. CHANGELOG.md v2.0.1 entry + README bullet (~30 LOC).
+7. Version bump 2.0.0 → 2.0.1 (~10 LOC).
+8. Then MODE A merge to main + tag v2.0.1.
+
+**Buy-Button verdict (documented in the plan):**
+- **Pick-us PASS** — Adobe, PDF Expert, Foxit ship zero plugins to end users.
+- **Tell-a-friend PASS** — three working plugins + colocated SDK source is a screenshot-worthy "developer respect" moment.
+- **Notice-it PASS** — anyone who updated v2.0.0 → v2.0.1 will see 3 new plugins in the panel.
+
+**WOW for v2.0.1**: Cabinet quick-action bar populates itself with "Say Hi", "Counter +1", and "Fetch URL…" before the user does anything. First-time user fires a plugin within 5 seconds.
+
+**Push**: `feature/v2.0.1-bundled-hello-workshop` pushed to origin with the plan commit.
+
+**Next tick**: dispatch a subagent against Slice 1 of the plan (hello-workshop seeder commit). Existing WIP on disk already satisfies most of the slice — the tick will be cargo gates + git add + commit.
 
 ---
 
