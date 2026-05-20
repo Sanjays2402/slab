@@ -70,6 +70,10 @@ export interface InstallReport {
 export interface MarketplaceFetchResult {
   is_fresh: boolean;
   is_stale: boolean;
+  /** v2.0.2 Workshop Marketplace — network+cache both unavailable;
+   *  the binary's embedded seed index is being served. Optional on the
+   *  wire so older backends that don't emit it still parse cleanly. */
+  is_embedded_seed?: boolean;
   index: Index | null;
   error: string | null;
 }
@@ -95,8 +99,13 @@ export interface MarketplaceState {
    *  network failed this call. UI shows a "showing cached results"
    *  banner with a Refresh button. */
   isStale: boolean;
+  /** v2.0.2 Workshop Marketplace — true when the bundled seed-index
+   *  baked into the binary is being shown (network + cache both
+   *  unavailable). UI shows a "showing built-in plugins — connect to
+   *  see more" banner. */
+  isEmbeddedSeed: boolean;
   /** Human-readable error string when `phase === 'error'` (or the
-   *  underlying network error when `isStale`). */
+   *  underlying network error when `isStale` / `isEmbeddedSeed`). */
   error: string | null;
   /** ms-epoch of the last successful refresh attempt. 0 = never. */
   loadedAt: number;
@@ -109,6 +118,7 @@ const EMPTY: MarketplaceState = {
   phase: "idle",
   index: null,
   isStale: false,
+  isEmbeddedSeed: false,
   error: null,
   loadedAt: 0,
   busy: {},
@@ -146,7 +156,8 @@ export async function refreshMarketplace(): Promise<void> {
         phase: "ready",
         index: result.index,
         isStale: result.is_stale,
-        error: result.is_stale ? result.error : null,
+        isEmbeddedSeed: !!result.is_embedded_seed,
+        error: result.is_stale || result.is_embedded_seed ? result.error : null,
         loadedAt: Date.now(),
       }));
     } else {
@@ -155,6 +166,7 @@ export async function refreshMarketplace(): Promise<void> {
         phase: "error",
         index: null,
         isStale: false,
+        isEmbeddedSeed: false,
         error: result.error ?? "Failed to fetch marketplace index",
         loadedAt: Date.now(),
       }));
