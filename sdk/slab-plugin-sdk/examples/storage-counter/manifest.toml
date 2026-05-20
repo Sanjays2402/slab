@@ -1,0 +1,27 @@
+id = "storage-counter"
+name = "Storage Counter"
+version = "0.1.0"
+slab_compat = ">=2.0.0 <3.0.0"
+description = "Counts how many PDFs you've opened — demo of slab.storage + slab.document event lifecycle."
+author = "Slab Plugin SDK examples"
+homepage = "https://github.com/Sanjays2402/slab/tree/main/sdk/slab-plugin-sdk/examples/storage-counter"
+permissions = []
+
+[contributions]
+themes = []
+locales = []
+pdf_actions = []
+commands = []
+ai_providers = []
+
+[runtime]
+entry = "script.js"
+sha256 = "REPLACE_ME_AT_BUILD_TIME_64_HEX_CHARS_REPLACE_ME_AT_BUILD_TIME_xx"
+
+  [runtime.capabilities]
+  fs = "none"
+  net = "none"
+  ui = "tool"
+  beacon = "none"
+  net_allow_hosts = []
+  fs_allow_paths = []

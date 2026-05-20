@@ -1,0 +1,27 @@
+id = "url-fetch"
+name = "URL Fetch Demo"
+version = "0.1.0"
+slab_compat = ">=2.0.0 <3.0.0"
+description = "Demo of slab.fetch — pings a URL and reports the status. Shows off the capability + allow-list flow."
+author = "Slab Plugin SDK examples"
+homepage = "https://github.com/Sanjays2402/slab/tree/main/sdk/slab-plugin-sdk/examples/url-fetch"
+permissions = []
+
+[contributions]
+themes = []
+locales = []
+pdf_actions = []
+commands = []
+ai_providers = []
+
+[runtime]
+entry = "script.js"
+sha256 = "REPLACE_ME_AT_BUILD_TIME_64_HEX_CHARS_REPLACE_ME_AT_BUILD_TIME_xx"
+
+  [runtime.capabilities]
+  fs = "none"
+  net = "specific"
+  ui = "tool"
+  beacon = "none"
+  net_allow_hosts = ["example.com", "httpbin.org"]
+  fs_allow_paths = []
