@@ -2590,7 +2590,17 @@ pub fn run() {
             // at boot. Quiet on error — if HOME is unset or the dir is
             // missing, registry stays empty and the UI shows an empty
             // panel rather than crashing.
+            //
+            // Workshop (v2.0.1 — Slice 11): before discovery, seed any
+            // bundled plugins so first boot has a working example
+            // installed. seed_bundled_plugins is idempotent: it only
+            // writes when the destination is missing OR when the
+            // shipped version differs from the on-disk one, so
+            // repeated boots are no-ops and user-uninstalled bundled
+            // plugins stay uninstalled for the lifetime of the
+            // current install.
             if let Some(root) = plugins::default_plugins_root() {
+                let _seeded = plugins::seed_bundled_plugins(&root);
                 let enabled = plugins::default_state_path()
                     .as_deref()
                     .map(plugins::read_enabled_state)

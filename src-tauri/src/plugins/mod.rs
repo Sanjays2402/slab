@@ -7,6 +7,7 @@
 //! for the active-list views that feature code consumes.
 
 pub mod ai_materialize;
+pub mod bundled;
 pub mod command_runner;
 pub mod contributions;
 pub mod grants;
@@ -19,6 +20,7 @@ pub mod runtime_registry;
 pub mod storage;
 
 pub use ai_materialize::{materialize_active, materialize_contribution};
+pub use bundled::seed_bundled_plugins;
 pub use command_runner::{
     run_command, CommandError, CommandOutcome, CommandStatus, ShellReport,
     DEFAULT_COMMAND_TIMEOUT_MS,
