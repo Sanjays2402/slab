@@ -68,13 +68,29 @@ struct BundledPlugin {
 /// bundled `manifest.toml` — the registry hashes by manifest id, not
 /// by directory name, so a mismatch here would make integration tests
 /// fail to look up the plugin after discovery.
-const BUNDLED: &[BundledPlugin] = &[BundledPlugin {
-    id: "com.slab.examples.hello-workshop",
-    manifest_toml: include_str!(
-        "../../../sdk/slab-plugin-sdk/examples/hello-workshop/manifest.toml"
-    ),
-    script_js: include_str!("../../../sdk/slab-plugin-sdk/examples/hello-workshop/script.js"),
-}];
+const BUNDLED: &[BundledPlugin] = &[
+    BundledPlugin {
+        id: "com.slab.examples.hello-workshop",
+        manifest_toml: include_str!(
+            "../../../sdk/slab-plugin-sdk/examples/hello-workshop/manifest.toml"
+        ),
+        script_js: include_str!("../../../sdk/slab-plugin-sdk/examples/hello-workshop/script.js"),
+    },
+    BundledPlugin {
+        id: "com.slab.examples.storage-counter",
+        manifest_toml: include_str!(
+            "../../../sdk/slab-plugin-sdk/examples/storage-counter/manifest.toml"
+        ),
+        script_js: include_str!("../../../sdk/slab-plugin-sdk/examples/storage-counter/script.js"),
+    },
+    BundledPlugin {
+        id: "com.slab.examples.url-fetch",
+        manifest_toml: include_str!(
+            "../../../sdk/slab-plugin-sdk/examples/url-fetch/manifest.toml"
+        ),
+        script_js: include_str!("../../../sdk/slab-plugin-sdk/examples/url-fetch/script.js"),
+    },
+];
 
 /// Seed all bundled plugins into `root` (typically `~/.slab/plugins`).
 ///
