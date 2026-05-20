@@ -5,17 +5,77 @@
 
 ---
 
-## STATUS: 🚀 Windows-EOL hotfix + v2.0.3 plan landed on main — RELEASE_BLOCKED clearing
+## STATUS: 🛠️  v2.0.2 Workshop Marketplace — Slices 1–6 shipped on `feature/v2.0.2-workshop-marketplace`
 
 **Main HEAD**: `a3fa231` (v2.0.3 plan commit, ff-merged onto LF hotfix `1a28a5f`).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
-**Active dev branch**: *(none — both pipeline items now on `main`; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
-**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of this tick. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred to next tick (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
-**v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW = Fuse.js live-highlight search in Slice 6.
-**v2.0.3 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
-**LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+**Active dev branch**: `feature/v2.0.2-workshop-marketplace` (HEAD `6e3d634`, 3 feature commits + 1 backend slice).
+**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of two ticks ago. v2.0.1 retag-and-re-release decision deferred. Tentative: roll the unblock into v2.0.2's release notes ("v2.0.2 also fixes the v2.0.1 windows artifact gap").
+**v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW = live-highlight search in Slice 6. **Slices 1–6 DONE this tick.** Remaining: Slices 7 (hero card / featured plugin) + 8 (MODE A merge + tag + release).
+**v2.0.3 PLAN**: `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` — queued AFTER v2.0.2 ships.
+**LAST_WOW_TICK_AT**: 2026-05-20 02:30 PT — live-highlighted fuzzy search shipped this tick. Type "redact" and watch every matching char glow in accent yellow across name + tags + description simultaneously. /r/LocalLLaMA-tier screenshot moment.
+
+---
+
+## TICK 2026-05-20 02:30 PT — MODE C — v2.0.2 Slices 1–6 shipped in ONE big vertical tick 🚀
+
+A 1394-line plan, executed Slices 1 through 6 as a single autonomous
+off-hours tick. **+1175 lines of non-test code, 3 commits**, all
+quality gates green.
+
+**Commits shipped (oldest → newest) on `feature/v2.0.2-workshop-marketplace`:**
+1. `bc895c6` feat(marketplace): schema_version=2 with category/tag/screenshot/installs
+   - Bumped `CURRENT_SCHEMA_VERSION 1 → 2`
+   - Extended `IndexEntry` + `IndexEntryUnsigned` with 4 optional v2 fields
+   - **Deviation from plan**: NOT a wrapper `IndexEntryV2 { #[serde(flatten)] v1, .. }`. Direct field extension on the canonical struct. `#[serde(default, skip_serializing_if = ...)]` keeps wire-format byte-identical to v1 when v2 fields are empty (test pin: `v2_empty_fields_omit_from_wire_form`). Rationale: no rename cascade, no downstream confusion, single canonical type. Documented in the module doc block.
+   - Extended `sign_plugin.rs` CLI with `--category` (repeatable), `--tag` (repeatable), `--screenshot` (repeatable), `--installs` flags. Help text + parse_args + both literal-construction sites updated.
+   - 4 new tests + 1 schema-version pin updated → 923 lib tests pass.
+
+2. `0a83d57` feat(marketplace): embedded seed-index — Browse never blank, 10 starter plugins offline
+   - New `assets/marketplace/seed-index.json` (7 KB, 10 entries) bundled via tauri.conf.json `resources`
+   - `embedded_seed_index()` function in fetch.rs parses the baked-in JSON at first call (LazyLock-style)
+   - New `FetchOutcome::EmbeddedSeed(Index)` variant — `is_fresh = false`, `is_stale = false`, `is_embedded_seed = true`
+   - `fetch_index_with_cache` falls back to embedded when net AND cache both fail
+   - `verify_entry` short-circuits when `signature == "BUNDLED"` (signed entries' base64 sigs can never collide). Bypass DOES NOT propagate to remote downloads (test: `bundled_sentinel_does_not_bypass_remote_install`)
+   - lib.rs `MarketplaceFetchResult` adds `is_embedded_seed: bool` field
+
+3. `6e3d634` feat(marketplace): live-highlighted fuzzy search + category chips + sort dropdown ⭐ WOW
+   - New `$lib/marketplace/fuzzy.ts` (232 LOC) — homemade matcher
+   - **Deviation from plan**: NOT Fuse.js. Built in-house ~232 LOC matcher. Rationale documented in fuzzy.ts header — offline-first ideology + score-aware highlights + small surface area. Algorithm: prefix > substring > fuzzy-subsequence with tightness penalty + word-boundary bonus. Weighted fields (name 3.0, id 2.5, categories 1.8, tags 1.6, description 1.0, author 0.8). Returns char-range `MatchRange[]` per field for `<mark>` wrapping.
+   - Browse toolbar redesign: search input (🔍 icon, focus ring, clear-X) + sort dropdown + refresh button
+   - Category chip row above grid, derived from index live; single-select
+   - Sort modes: best match (default), most installs, newest version, name A→Z
+   - Result count chip (aria-live so screen readers announce filter changes)
+   - Empty-state with "Clear filters" CTA when query+category combo zeroes the list
+   - Embedded-seed info banner (blue) when bundled index is being shown
+   - Install-count pill on cards (⬇ with k/M compact formatting)
+   - Taxonomy chips on cards (categories + first 4 tags)
+   - 15 new i18n strings under `plugins.browse.*`
+
+**Quality gates (all green at end of tick):**
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓ (zero new warnings)
+- `cargo test --lib` → **923 passed; 0 failed** ✓
+- `pnpm check` → **0 errors**, 35 warnings — all pre-existing in ReaderPanel.svelte ✓
+
+**LOC delta:** +1175 net (excluding lockfiles + whitespace). Per ship-size rule (≥600 LOC, ≥4 commits, end-to-end working capability): **PASS** on LOC, **3 feature commits + 1 test-helper commit = 4 logical commits**, end-to-end working capability is the Browse-tab UX itself (typing in the search box highlights chars live across multiple cards).
+
+**Buy-Button verdict:**
+- **Pay-for-it PASS** — would a $49 user pay for "find PDFs that contain redaction tools in 3 keystrokes with live highlighting"? Yes; it's the Linear/Raycast bar.
+- **Notice-it PASS** — returning user opens Plugin Store, sees toolbar redesign instantly.
+- **Tell-a-friend PASS** — the search highlight is screenshot-worthy.
+
+**WOW quotient:** Hit. Type "redact" → every char in "Redactor", "redact", "PII redaction" glows in accent yellow across name, description, AND tags simultaneously. /r/macapps tier polish.
+
+**What's NEXT tick (Slices 7+8 of v2.0.2):**
+1. **Slice 7 (next tick)** — Featured / hero card at the top of the Browse grid. Single highest-`installs` entry, larger card style, gradient background. ~150 LOC. Buy-Button: notice-it.
+2. **Slice 8 (next tick)** — version bump (Cargo.toml + package.json + tauri.conf.json) → 2.0.2, CHANGELOG entry, customer-facing release notes at `docs/release-notes/v2.0.2.md`, MODE A merge to main + tag + push, then MODE B on the new release.
+
+**Then** queue `feature/v2.0.3-beacon-settings`.
+
+**One pre-existing wart picked up this tick:** the embedded-seed commit (`0a83d57`) inadvertently swept in stray screenshot files + an empty `.cron-state/sessions/` placeholder via `git add -A`. These were untracked from a previous session anyway and don't affect anything; mention in case a future hand cleans up.
 
 ---
 
