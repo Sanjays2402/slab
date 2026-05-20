@@ -18,7 +18,7 @@ Slab is a desktop PDF app that runs **entirely on your machine.** No accounts. N
 - **Tiny.** Installers are ~15–25 MB depending on platform.
 - **Honest.** Free forever. GPL‑3.0. No "Pro tier." No telemetry. No upsells.
 - **Beautiful.** A dark‑first interface with themeable accent colors and three density modes.
-- **Extensible.** A declarative plugin system (Foundry) lets you add themes, locales, commands, AI providers, and PDF actions without writing Rust.
+- **Extensible.** A declarative plugin system (Foundry) lets you add themes, locales, commands, AI providers, and PDF actions without writing Rust. A typed TypeScript SDK (Workshop, v2.0+) ships three example plugins right in the binary — fully working, sandboxed, source-readable — so you can poke at the plugin system the moment you open the app.
 
 ## What Slab does
 
