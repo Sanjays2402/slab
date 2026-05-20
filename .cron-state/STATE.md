@@ -5,14 +5,15 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 8 + 9 **DONE on `feature/v2.0.0-workshop`** 📦
+## STATUS: 🚀 v2.0.0 "Workshop" MERGED + TAGGED + PUSHED — CI building, awaiting MODE B finalize
 
-**Main HEAD**: `18d4877` (README catch-up for v1.9.2).
-**Latest tag**: `v1.9.2` (annotated, pushed).
-**Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `fef65de`, **44 commits ahead of `main`**.
-**RELEASE_PENDING**: *(none)*
-**LAST_WOW_TICK_AT**: 2026-05-19 21:?? PT — `@slab/plugin-sdk` IntelliSense over entire `slab.*` surface (screenshot-able).
+**Main HEAD**: `c270a8d` (version bump 1.9.2 → 2.0.0).
+**Merge SHA**: `5c1354e` (45 commits from feature/v2.0.0-workshop).
+**Latest tag**: `v2.0.0` (annotated, pushed) — Workshop release.
+**Previous tag**: `v1.9.2` (Voice Mode polish).
+**Active dev branch**: *(none — Workshop is folded into main)*
+**RELEASE_PENDING**: v2.0.0 — merge SHA `5c1354e`, tag `v2.0.0`, CI run `26145019423` (queued at push).
+**LAST_WOW_TICK_AT**: 2026-05-19 23:10 PT — v2.0.0 Workshop release itself. Slab now has a free, MIT-licensed, sandboxed TypeScript plugin platform; Adobe charges enterprise licensing for theirs; PDF Expert + Foxit don't have one at all.
 
 ---
 
