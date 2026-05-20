@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -57,7 +57,13 @@ jobs:
   bundle:
     name: bundle (${{ matrix.platform.name }})
     needs: test
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Bundle only on main pushes / manual dispatch / PRs targeting main.
+    # Feature branch pushes get test + clippy + fmt validation only — bundling
+    # the full cross-platform matrix on every cron tick is wasteful CI minutes.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
