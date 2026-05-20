@@ -43,7 +43,8 @@
     "build:cjs": "tsc -p tsconfig.cjs.json && node scripts/rename-cjs.mjs",
     "build:types": "tsc -p tsconfig.types.json",
     "build": "pnpm run clean && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.tests.json",
+    "test": "tsc --noEmit -p tsconfig.tests.json",
     "prepublishOnly": "pnpm run build"
   },
   "devDependencies": {
