@@ -1836,11 +1836,26 @@ fn slab_plugins_list(reg: tauri::State<'_, plugins::PluginRegistry>) -> Vec<plug
 
 /// Flip a plugin's enabled flag and persist the new state to
 /// `~/.slab/plugin-state.toml`. Returns `false` if the ID is unknown.
+///
+/// **Workshop Slice 6.7 wiring:** when the flag flips to `true` for a
+/// plugin whose manifest declares a `[runtime]` section AND whose
+/// script bytes verified at discover time, we spawn a long-lived
+/// [`PluginActor`](plugins::runtime::actor::PluginActor) into the
+/// process-wide [`PluginRuntimeRegistry`]. Flipping back to `false`
+/// removes the entry, which drops the [`WorkerHandle`] and Shutdowns
+/// the worker thread. Pure declarative plugins (no `[runtime]`) take
+/// the legacy path — the flag flip is the entire effect.
+///
+/// Spawn failures are surfaced as errors but the enabled flag is still
+/// persisted (the user expressed intent to enable; failing silently
+/// would be worse than a stale flag). Diagnostics live in the
+/// registry's emptiness check.
 #[tauri::command]
 fn slab_plugins_set_enabled(
     id: String,
     enabled: bool,
     reg: tauri::State<'_, plugins::PluginRegistry>,
+    runtime_reg: tauri::State<'_, plugins::PluginRuntimeRegistry>,
 ) -> Result<bool, String> {
     if !reg.set_enabled(&id, enabled) {
         return Ok(false);
@@ -1851,6 +1866,48 @@ fn slab_plugins_set_enabled(
             return Err(format!("could not persist plugin state: {e}"));
         }
     }
+
+    // Workshop Slice 6.7: actor lifecycle follows the enabled flag.
+    if enabled {
+        // Only spawn for plugins with a verified `[runtime]` section.
+        // Everything else (declarative-only, parse-broken, runtime
+        // hash mismatch) is a no-op here.
+        let plugin = reg.get(&id);
+        let to_spawn = plugin.as_ref().and_then(|p| {
+            let manifest = p.manifest.as_ref()?;
+            let runtime_manifest = manifest.runtime.as_ref()?;
+            let bytes = p.script_bytes.as_ref()?;
+            let source = String::from_utf8(bytes.clone()).ok()?;
+            Some((runtime_manifest.capabilities.clone(), source))
+        });
+        if let Some((declared, source)) = to_spawn {
+            // Pull current grants from the on-disk store; default
+            // (deny-all) when the user hasn't decided yet. The consent
+            // modal already persists a decision before flipping
+            // enabled — see Slice 5c — so deny-all here means either
+            // the user pressed Deny or the modal was bypassed.
+            let granted = plugins::default_grants_path()
+                .map(|p| plugins::read_grants(&p).get(&id))
+                .unwrap_or_default();
+            match plugins::runtime::actor::PluginActor::spawn(id.clone(), declared, granted, source)
+            {
+                Ok(handle) => {
+                    runtime_reg.insert(id.clone(), plugins::LiveEntry::new(handle));
+                }
+                Err(e) => {
+                    // Worker has already torn itself down; bubble the
+                    // failure up so the UI can surface it.
+                    return Err(format!("could not spawn plugin runtime: {e}"));
+                }
+            }
+        }
+    } else {
+        // Disabling: drop the live handle if we had one. `remove`
+        // returns the entry; dropping it triggers Shutdown + join on
+        // the worker thread. Safe to call even when no entry exists.
+        let _ = runtime_reg.remove(&id);
+    }
+
     Ok(true)
 }
 
@@ -2031,6 +2088,125 @@ fn slab_plugins_validate_ai_provider(
     plugins::materialize_active(&entry)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+// ---------- Workshop (v2.0.0) — plugin grant Tauri commands ----------
+
+/// Fetch the user's grant decision for `plugin_id`. Returns the
+/// persisted [`PluginGrants`] when one exists, otherwise the empty
+/// "deny-all" default — callers treat default + `has_decision == false`
+/// as "show the consent prompt".
+///
+/// We bundle the explicit-decision flag alongside the grants so the
+/// frontend can distinguish "user pressed Deny" from "first run, never
+/// asked". Both serialise as the same default `PluginGrants`, so we
+/// need a discriminator.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PluginGrantsResponse {
+    /// Has the user ever made an explicit grant decision for this
+    /// plugin? `false` ⇒ prompt the user.
+    has_decision: bool,
+    /// Current grants (default = deny-all when `has_decision` is false).
+    grants: plugins::PluginGrants,
+}
+
+/// Read the grant store from `~/.slab/plugin-grants.toml` and return
+/// the entry for `plugin_id`. Missing file or missing plugin both
+/// surface as `has_decision = false` with default grants.
+///
+/// Cabinet wires this to the consent modal: on first plugin enable the
+/// modal calls `plugin_grants_get` and only shows up when
+/// `has_decision == false`. Re-running an already-decided plugin skips
+/// the modal.
+#[tauri::command]
+fn plugin_grants_get(plugin_id: String) -> Result<PluginGrantsResponse, String> {
+    let path = plugins::default_grants_path().ok_or_else(|| {
+        "HOME env var not set; cannot locate ~/.slab/plugin-grants.toml".to_string()
+    })?;
+    let store = plugins::read_grants(&path);
+    Ok(PluginGrantsResponse {
+        has_decision: store.has_decision(&plugin_id),
+        grants: store.get(&plugin_id),
+    })
+}
+
+/// Persist a user grant decision for `plugin_id`. Overwrites any
+/// previous decision. Returns `()` on success; serialise/IO errors
+/// bubble up as a string so the Cabinet modal can surface them.
+///
+/// We re-read the on-disk store, mutate the one entry, then write the
+/// whole file back. The store is small (one row per plugin) so the
+/// extra read is cheap compared to keeping a long-lived in-memory copy
+/// behind a Mutex.
+#[tauri::command]
+fn plugin_grants_set(plugin_id: String, grants: plugins::PluginGrants) -> Result<(), String> {
+    let path = plugins::default_grants_path().ok_or_else(|| {
+        "HOME env var not set; cannot locate ~/.slab/plugin-grants.toml".to_string()
+    })?;
+    let mut store = plugins::read_grants(&path);
+    store.set(plugin_id, grants);
+    plugins::write_grants(&path, &store)
+        .map_err(|e| format!("could not persist plugin grants: {e}"))
+}
+
+/// Forget a plugin's grant decision. Used by the uninstall path and by
+/// the "Reset permissions" button in the plugin detail panel. After
+/// reset, the next enable triggers the consent modal again.
+///
+/// No-op when the plugin has no entry (still returns Ok).
+#[tauri::command]
+fn plugin_grants_reset(plugin_id: String) -> Result<(), String> {
+    let path = plugins::default_grants_path().ok_or_else(|| {
+        "HOME env var not set; cannot locate ~/.slab/plugin-grants.toml".to_string()
+    })?;
+    let mut store = plugins::read_grants(&path);
+    store.remove(&plugin_id);
+    plugins::write_grants(&path, &store)
+        .map_err(|e| format!("could not persist plugin grants: {e}"))
+}
+
+// ---------- Workshop (v2.0.0 Slice 6.7) — document lifecycle broadcast ----------
+//
+// The viewer calls these two commands whenever a PDF enters or leaves
+// the active tab. Each call fan-outs the corresponding `RuntimeCmd`
+// to every live plugin actor managed by `PluginRuntimeRegistry`.
+//
+// Lifecycle dispatch is best-effort: send failures are swallowed by
+// the registry (means the worker thread already exited), and bad
+// paths never throw — `DocumentEvent::from_path` accepts any string.
+// The frontend treats both calls as fire-and-forget.
+
+/// Notify all live plugin actors that a PDF was loaded into the viewer.
+///
+/// `path` is the absolute filesystem path of the freshly loaded PDF.
+/// We derive a display `name` from the file stem; both fields land in
+/// the `slab.document.onOpen` callback payload plugins observe.
+///
+/// Returns immediately — actual JS callback dispatch happens on each
+/// plugin's worker thread asynchronously.
+#[tauri::command]
+fn slab_plugins_document_opened(
+    path: String,
+    registry: tauri::State<'_, plugins::PluginRuntimeRegistry>,
+) {
+    let ev = plugins::runtime::actor::DocumentEvent::from_path(path);
+    registry.broadcast(plugins::runtime::actor::RuntimeCmd::DocumentOpened(ev));
+}
+
+/// Notify all live plugin actors that a previously open PDF was
+/// closed or replaced. Mirror of [`slab_plugins_document_opened`];
+/// invokes `slab.document.onClose` callbacks on every live plugin.
+///
+/// The viewer should call this on tab close, on document replacement
+/// inside a tab (the symmetric `_opened` then fires for the new doc),
+/// and on application shutdown.
+#[tauri::command]
+fn slab_plugins_document_closed(
+    path: String,
+    registry: tauri::State<'_, plugins::PluginRuntimeRegistry>,
+) {
+    let ev = plugins::runtime::actor::DocumentEvent::from_path(path);
+    registry.broadcast(plugins::runtime::actor::RuntimeCmd::DocumentClosed(ev));
 }
 
 // ---------- Bench (v1.4.0) — marketplace Tauri commands ----------
@@ -2398,6 +2574,10 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(windows::WindowRegistry::new())
         .manage(plugins::PluginRegistry::new())
+        // Workshop (v2.0.0 Slice 6.6): process-global registry of live
+        // plugin actor handles. Slice 6.7 wires Tauri commands that
+        // broadcast document-open/close events to every live actor.
+        .manage(plugins::PluginRuntimeRegistry::default())
         .manage(std::sync::Arc::new(VoiceSession::new()))
         .manage(std::sync::Arc::new(SttSession::new()))
         .setup(|app| {
@@ -2537,6 +2717,11 @@ pub fn run() {
             slab_plugins_load_locale_bundle,
             slab_plugins_run_command,
             slab_plugins_validate_ai_provider,
+            plugin_grants_get,
+            plugin_grants_set,
+            plugin_grants_reset,
+            slab_plugins_document_opened,
+            slab_plugins_document_closed,
             slab_marketplace_index,
             slab_marketplace_install,
             slab_marketplace_uninstall,

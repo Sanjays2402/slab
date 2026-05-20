@@ -19,7 +19,12 @@
     reloadPlugins,
     setPluginEnabled,
     pluginsDir,
+    getPluginGrants,
+    setPluginGrants,
+    resetPluginGrants,
+    emptyPluginGrants,
     type Plugin,
+    type PluginGrants,
     type PluginsSnapshot,
   } from "$lib/plugins";
   import {
@@ -38,6 +43,7 @@
   import PluginDetailDrawer from "$lib/components/PluginDetailDrawer.svelte";
   import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
   import UninstallConfirmModal from "$lib/components/UninstallConfirmModal.svelte";
+  import PluginConsentModal from "$lib/components/PluginConsentModal.svelte";
 
   // ---------------- Installed-tab state (unchanged from Foundry) ----
   // Local mirror of the store so we can render reactively.
@@ -103,6 +109,33 @@
     busy: boolean;
   } | null;
   let uninstallModal = $state<UninstallModalState>(null);
+
+  // ---------------- Slice 5 (v2.0.0) — consent modal state ----------
+  /**
+   * When set, render the PluginConsentModal. The modal is opened in
+   * two scenarios:
+   *
+   *   1. First-enable flow — `toggleEnabled(p, true)` checked
+   *      `getPluginGrants(id).has_decision` and got `false`. The
+   *      enable is *pending* until the user approves; we stash the
+   *      callback in `onResolve` so we can resume.
+   *   2. Re-review flow — user clicked "Review permissions" on an
+   *      already-enabled plugin. `initial` is pre-filled with their
+   *      current grants and `onResolve` is `null` (we just persist
+   *      the new grants, no enable flow to resume).
+   *
+   * `busy` flips true during the `setPluginGrants` write so the
+   * modal can disable its buttons.
+   */
+  type ConsentModalState = {
+    plugin: Plugin;
+    initial: PluginGrants | null;
+    /** Called after grants are written. `approved` distinguishes
+     *  Approve from Deny so the parent can decide whether to flip
+     *  the enable flag. `null` for the re-review flow. */
+    onResolve: ((approved: boolean) => void) | null;
+  } | null;
+  let consentModal = $state<ConsentModalState>(null);
 
   $effect(() => {
     const unsubPlugins = pluginsStore.subscribe((v) => (snap = v));
@@ -312,6 +345,33 @@
 
   async function toggleEnabled(p: Plugin, next: boolean) {
     if (busy[p.id]) return;
+
+    // Slice 5 (v2.0.0): when *enabling* a v2.0.0 runtime plugin for
+    // the first time, gate on the user's consent. We only ask for
+    // plugins with a `[runtime]` section — declarative-only v1.x
+    // plugins skip this entirely (no JS, no caps to grant).
+    //
+    // The flag we check is `has_decision`, not "grants are non-zero":
+    // an explicit "deny everything" decision should be remembered so
+    // we don't badger the user every enable cycle. They can clear it
+    // via "Reset permissions".
+    if (next && p.manifest?.runtime) {
+      try {
+        const resp = await getPluginGrants(p.id);
+        if (!resp.has_decision) {
+          await openConsentForEnable(p);
+          return; // openConsentForEnable resumes the toggle on approve
+        }
+      } catch (e) {
+        // If the grants subsystem is broken, fail loud rather than
+        // silently enabling without consent — that would be worse.
+        notify.error(t("plugins.error"), {
+          detail: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
+    }
+
     busy[p.id] = true;
     try {
       const ok = await setPluginEnabled(p.id, next);
@@ -323,6 +383,135 @@
     } finally {
       busy[p.id] = false;
     }
+  }
+
+  // ---------------- Slice 5 (v2.0.0) — consent flow helpers --------
+
+  /**
+   * Open the consent modal in *first-enable* mode. Returns to the
+   * caller immediately; the actual `setPluginEnabled` call happens
+   * inside `onConsentApprove` once the user clicks Approve.
+   */
+  function openConsentForEnable(p: Plugin): Promise<void> {
+    return new Promise((resolve) => {
+      consentModal = {
+        plugin: p,
+        initial: null,
+        onResolve: async (approved) => {
+          if (approved) {
+            busy[p.id] = true;
+            try {
+              const ok = await setPluginEnabled(p.id, true);
+              if (!ok) {
+                notify.error(t("plugins.error"), { detail: `Plugin ${p.id} not found` });
+              }
+            } catch (e) {
+              notify.error(t("plugins.error"), {
+                detail: e instanceof Error ? e.message : String(e),
+              });
+            } finally {
+              busy[p.id] = false;
+            }
+          }
+          resolve();
+        },
+      };
+    });
+  }
+
+  /**
+   * Re-review path — user clicked "Review permissions" on a
+   * currently-installed plugin. Pre-fills the modal with their
+   * existing grants. No enable side effect; Approve just writes
+   * the (possibly updated) grants, Deny closes without writing.
+   */
+  async function onReviewPermissions(p: Plugin) {
+    if (!p.manifest?.runtime) return;
+    let initial: PluginGrants | null = null;
+    try {
+      const resp = await getPluginGrants(p.id);
+      initial = resp.has_decision ? resp.grants : null;
+    } catch (e) {
+      notify.error(t("plugins.error"), {
+        detail: e instanceof Error ? e.message : String(e),
+      });
+      return;
+    }
+    consentModal = {
+      plugin: p,
+      initial,
+      onResolve: null, // re-review: no enable flow to resume
+    };
+  }
+
+  /**
+   * Forget the user's grant decision for this plugin. Next time
+   * they enable it, the consent modal re-appears. Doesn't change
+   * the enable state itself — Sanjay's design is "permissions are
+   * an axis orthogonal to enabled/disabled".
+   */
+  async function onResetPermissions(p: Plugin) {
+    if (!p.manifest?.runtime) return;
+    try {
+      await resetPluginGrants(p.id);
+      notify.success(t("plugins.consent.notify.reset", { name: p.manifest.name }));
+    } catch (e) {
+      notify.error(t("plugins.error"), {
+        detail: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  /**
+   * Modal Approve callback. Writes the chosen grants, fires the
+   * resume callback (which decides whether to flip enable), shows a
+   * success toast.
+   */
+  async function onConsentApprove(grants: PluginGrants) {
+    if (!consentModal) return;
+    const { plugin, onResolve } = consentModal;
+    try {
+      await setPluginGrants(plugin.id, grants);
+      notify.success(
+        t("plugins.consent.notify.approved", { name: plugin.manifest?.name ?? plugin.id }),
+      );
+    } catch (e) {
+      notify.error(t("plugins.error"), {
+        detail: e instanceof Error ? e.message : String(e),
+      });
+      consentModal = null;
+      return;
+    }
+    consentModal = null;
+    if (onResolve) await onResolve(true);
+  }
+
+  /**
+   * Modal Deny callback. Persists an explicit deny-all decision so
+   * we remember the user's choice (and don't re-prompt on every
+   * subsequent enable attempt). Aborts the enable flow if one is
+   * pending.
+   */
+  async function onConsentDeny() {
+    if (!consentModal) return;
+    const { plugin, onResolve } = consentModal;
+    // Only persist a deny-all decision in the first-enable flow.
+    // For re-review, Deny means "I changed my mind, keep existing
+    // grants" — we just close.
+    if (onResolve) {
+      try {
+        await setPluginGrants(plugin.id, emptyPluginGrants());
+      } catch (e) {
+        notify.error(t("plugins.error"), {
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+      notify.info(
+        t("plugins.consent.notify.denied", { name: plugin.manifest?.name ?? plugin.id }),
+      );
+    }
+    consentModal = null;
+    if (onResolve) await onResolve(false);
   }
 
   async function onReload() {
@@ -525,6 +714,30 @@
                         (<span class="mono">{pa.cli}</span>)
                       </div>
                     {/each}
+                    {#if p.manifest.runtime}
+                      <div class="permissions-row">
+                        <div class="permissions-meta">
+                          <span class="kind">{$tStore("plugins.permissions.granted")}</span>
+                          <code class="mono">{p.manifest.runtime.entry}</code>
+                        </div>
+                        <div class="permissions-actions">
+                          <button
+                            type="button"
+                            class="linkish"
+                            onclick={() => onReviewPermissions(p)}
+                          >
+                            {$tStore("plugins.permissions.review")}
+                          </button>
+                          <button
+                            type="button"
+                            class="linkish danger"
+                            onclick={() => onResetPermissions(p)}
+                          >
+                            {$tStore("plugins.permissions.reset")}
+                          </button>
+                        </div>
+                      </div>
+                    {/if}
                   </div>
                 {/if}
               {/if}
@@ -707,6 +920,15 @@
   />
 {/if}
 
+{#if consentModal && consentModal.plugin.manifest}
+  <PluginConsentModal
+    manifest={consentModal.plugin.manifest}
+    initial={consentModal.initial}
+    onApprove={onConsentApprove}
+    onDeny={onConsentDeny}
+  />
+{/if}
+
 <style>
   .plugins-panel {
     max-width: 820px;
@@ -883,6 +1105,48 @@
     border-radius: 3px;
     font-size: 11px;
     color: var(--text);
+  }
+  .permissions-row {
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .permissions-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .permissions-meta .kind {
+    min-width: 80px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .permissions-meta code {
+    background: var(--bg-2);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--text);
+  }
+  .permissions-actions {
+    display: flex;
+    gap: 12px;
+  }
+  .permissions-actions .linkish {
+    font-size: 12px;
+  }
+  .permissions-actions .linkish.danger {
+    color: var(--danger, #e54);
   }
   .error-detail {
     margin-top: 12px;

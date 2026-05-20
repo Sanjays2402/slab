@@ -438,6 +438,14 @@
       void runScanAudit(path);
       // Slide-deck audit (Theater Slice 4) — same fire-and-forget pattern.
       void runSlideAudit(path);
+      // Workshop v2.0.0 Slice 6.8: notify any enabled plugins with a
+      // runtime that this document just opened. Fire-and-forget —
+      // dispatch is best-effort and asynchronous on the Rust side.
+      // `lastPluginPath` tracks the most recent path we announced an
+      // open for so a subsequent load/teardown in this panel can pair
+      // it with a `_closed` event. We capture path-at-call-time to
+      // avoid losing the value across reactive updates.
+      void notifyPluginsDocumentOpened(path);
     } catch (e: any) {
       // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
       // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
@@ -601,6 +609,16 @@
   }
 
   function tearDownDoc() {
+    // Workshop v2.0.0 Slice 6.8: fire `slab.document.onClose` for the
+    // previously-open doc (if any) before we tear down its state.
+    // Must run BEFORE we null out `doc` so we can read the path; plugin
+    // handlers observe `getActive() === null` because the actor's
+    // event loop clears `active_doc` before dispatching onClose (see
+    // `run_actor` in src-tauri/src/plugins/runtime/actor.rs).
+    if (lastPluginPath) {
+      void notifyPluginsDocumentClosed(lastPluginPath);
+      lastPluginPath = null;
+    }
     thumbsAbortController?.abort();
     thumbsAbortController = null;
     thumbCanvases.clear();
@@ -614,6 +632,42 @@
     pdfDocument = null;
     outline = [];
     docMeta = null;
+  }
+
+  // ---------- Workshop v2.0.0 Slice 6.8: plugin document lifecycle ----------
+  //
+  // Two tiny helpers around the Tauri commands `slab_plugins_document_opened`
+  // and `slab_plugins_document_closed`. Both are fire-and-forget: failures
+  // are swallowed (a missing Tauri context, e.g. SSR or unit test, must
+  // not break the viewer) and never block the load path.
+  //
+  // We track the last path we announced via `lastPluginPath` so the close
+  // event always pairs with a real open: tearDownDoc fires close BEFORE
+  // loadBytes fires open for the next doc, matching the pattern
+  // "every open has a matching close eventually".
+
+  let lastPluginPath: string | null = null;
+
+  async function notifyPluginsDocumentOpened(path: string): Promise<void> {
+    lastPluginPath = path;
+    if (!isInTauri()) return;
+    try {
+      await invoke("slab_plugins_document_opened", { path });
+    } catch (e) {
+      // Plugin lifecycle dispatch is best-effort. Log to console for
+      // diagnostics but never surface to the user — a buggy plugin
+      // shouldn't break the viewer.
+      console.debug("[plugins] document_opened dispatch failed:", e);
+    }
+  }
+
+  async function notifyPluginsDocumentClosed(path: string): Promise<void> {
+    if (!isInTauri()) return;
+    try {
+      await invoke("slab_plugins_document_closed", { path });
+    } catch (e) {
+      console.debug("[plugins] document_closed dispatch failed:", e);
+    }
   }
 
   function buildViewer() {

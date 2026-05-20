@@ -25,6 +25,12 @@ pub struct Manifest {
     pub permissions: Vec<Permission>,
     #[serde(default)]
     pub contributions: Contributions,
+    /// Optional v2.0.0 runtime section. Absent ⇒ declarative-only
+    /// plugin (v1.x behavior preserved). Present ⇒ Slab loads a
+    /// `script.js` from the plugin dir, hash-pins it, and (slice 3+)
+    /// spawns a QuickJS VM with the declared capability set.
+    #[serde(default)]
+    pub runtime: Option<RuntimeManifest>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -33,6 +39,98 @@ pub enum Permission {
     Fs,
     Net,
     Spawn,
+}
+
+/// v2.0.0 plugin runtime descriptor. Pointer + integrity + capabilities.
+///
+/// `entry` is a relative path within the plugin directory (typically
+/// `script.js`). `sha256` is the lowercase hex digest of the entry
+/// file's bytes; the loader verifies this at discovery time and
+/// refuses to attach script bytes to a plugin if the digest doesn't
+/// match. This is **TOFU + pin**: the manifest carries the expected
+/// hash, the loader enforces it. The Forge author-signing model in
+/// v2.1 will layer on top — verifying both manifest *and* hash via
+/// a publisher key — but TOFU is the v2.0 baseline.
+///
+/// `capabilities` defaults to "all none" — declared capabilities are
+/// the *upper bound* the plugin can request from the user; the actual
+/// grant happens at install time in the Cabinet UI (slice 3).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RuntimeManifest {
+    /// Path to the JS entry file, relative to the plugin directory.
+    /// Must end with `.js`. No path traversal — must be a simple
+    /// filename or a forward-slash relative path with no `..`.
+    pub entry: String,
+    /// Lowercase hex SHA-256 of the entry file. Exactly 64 chars,
+    /// `[0-9a-f]`. Validation is strict because a bad hash is
+    /// always a tooling bug, never a user bug.
+    pub sha256: String,
+    #[serde(default)]
+    pub capabilities: Capabilities,
+}
+
+/// Plugin-declared capability *upper bounds*. The user grants the
+/// actual set on first enable (slice 3). All fields default to the
+/// most restrictive variant — Slab plugins are default-deny.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Capabilities {
+    #[serde(default)]
+    pub fs: FsCap,
+    #[serde(default)]
+    pub net: NetCap,
+    #[serde(default)]
+    pub ui: UiCap,
+    #[serde(default)]
+    pub beacon: BeaconCap,
+    /// When `net = "specific"`, the allow-list of hosts (e.g.
+    /// `["api.openai.com", "huggingface.co"]`). Ignored unless
+    /// `net = "specific"`.
+    #[serde(default)]
+    pub net_allow_hosts: Vec<String>,
+    /// When `fs != "none"`, the allow-list of path globs (e.g.
+    /// `["~/Documents/**"]`). Ignored when `fs = "none"`.
+    #[serde(default)]
+    pub fs_allow_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum FsCap {
+    #[default]
+    None,
+    Read,
+    ReadWrite,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetCap {
+    #[default]
+    None,
+    /// Allow requests only to hosts in `Capabilities::net_allow_hosts`.
+    Specific,
+    /// Allow any host. **Discouraged** — surfaces a louder grant prompt.
+    Any,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UiCap {
+    #[default]
+    None,
+    Panel,
+    Tool,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum BeaconCap {
+    #[default]
+    None,
+    ToolProvider,
+    AiProvider,
+    Both,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -187,8 +285,55 @@ impl Manifest {
                 )));
             }
         }
+        if let Some(rt) = &self.runtime {
+            validate_runtime(rt)?;
+        }
         Ok(())
     }
+}
+
+/// Strict checks on a `[runtime]` section. Called from `Manifest::validate`.
+fn validate_runtime(rt: &RuntimeManifest) -> Result<(), ManifestError> {
+    let entry = rt.entry.trim();
+    if entry.is_empty() {
+        return Err(ManifestError::Validation(
+            "runtime.entry must not be empty".into(),
+        ));
+    }
+    if !entry.ends_with(".js") {
+        return Err(ManifestError::Validation(format!(
+            "runtime.entry must end with .js (got {:?})",
+            rt.entry
+        )));
+    }
+    if entry.starts_with('/')
+        || entry.starts_with('\\')
+        || entry.contains("..")
+        || entry.contains(":\\")
+    {
+        return Err(ManifestError::Validation(format!(
+            "runtime.entry must be a relative path inside the plugin dir (got {:?})",
+            rt.entry
+        )));
+    }
+    if rt.sha256.len() != 64 || !rt.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ManifestError::Validation(format!(
+            "runtime.sha256 must be a 64-char lowercase hex string (got {} chars)",
+            rt.sha256.len()
+        )));
+    }
+    if rt.sha256.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err(ManifestError::Validation(
+            "runtime.sha256 must be lowercase hex".into(),
+        ));
+    }
+    if matches!(rt.capabilities.net, NetCap::Specific) && rt.capabilities.net_allow_hosts.is_empty()
+    {
+        return Err(ManifestError::Validation(
+            "runtime.capabilities.net = \"specific\" requires non-empty net_allow_hosts".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn is_reverse_dns(s: &str) -> bool {
@@ -388,5 +533,223 @@ mod tests {
         assert_eq!(m.contributions.commands.len(), 2);
         assert_eq!(m.contributions.ai_providers.len(), 1);
         assert_eq!(m.contributions.pdf_actions.len(), 1);
+    }
+
+    // -------- v2.0.0 Workshop runtime section tests --------
+
+    /// Declarative-only manifests (the v1.x norm) must continue to
+    /// parse without a `[runtime]` block. Backward compatibility is
+    /// non-negotiable.
+    #[test]
+    fn declarative_only_manifest_has_no_runtime() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.1.0"
+            slab_compat = ">=1.3.0"
+        "#;
+        let m = Manifest::from_toml(src).unwrap();
+        assert!(m.runtime.is_none());
+    }
+
+    #[test]
+    fn runtime_section_parses_with_capabilities() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+            [runtime.capabilities]
+            fs = "read"
+            net = "specific"
+            net_allow_hosts = ["api.openai.com"]
+            ui = "panel"
+            beacon = "tool-provider"
+        "#;
+        let m = Manifest::from_toml(src).unwrap();
+        let rt = m.runtime.expect("runtime section should parse");
+        assert_eq!(rt.entry, "script.js");
+        assert_eq!(rt.capabilities.fs, FsCap::Read);
+        assert_eq!(rt.capabilities.net, NetCap::Specific);
+        assert_eq!(rt.capabilities.net_allow_hosts, vec!["api.openai.com"]);
+        assert_eq!(rt.capabilities.ui, UiCap::Panel);
+        assert_eq!(rt.capabilities.beacon, BeaconCap::ToolProvider);
+    }
+
+    #[test]
+    fn runtime_capabilities_default_to_none() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        let m = Manifest::from_toml(src).unwrap();
+        let caps = m.runtime.unwrap().capabilities;
+        assert_eq!(caps.fs, FsCap::None);
+        assert_eq!(caps.net, NetCap::None);
+        assert_eq!(caps.ui, UiCap::None);
+        assert_eq!(caps.beacon, BeaconCap::None);
+        assert!(caps.net_allow_hosts.is_empty());
+        assert!(caps.fs_allow_paths.is_empty());
+    }
+
+    #[test]
+    fn runtime_rejects_non_js_entry() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.py"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains(".js"));
+    }
+
+    #[test]
+    fn runtime_rejects_empty_entry() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = ""
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("entry"));
+    }
+
+    #[test]
+    fn runtime_rejects_path_traversal_in_entry() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "../../etc/passwd.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("relative"));
+    }
+
+    #[test]
+    fn runtime_rejects_absolute_entry() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "/etc/passwd.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("relative"));
+    }
+
+    #[test]
+    fn runtime_rejects_short_sha256() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "deadbeef"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("sha256"));
+    }
+
+    #[test]
+    fn runtime_rejects_uppercase_sha256() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("lowercase"));
+    }
+
+    #[test]
+    fn runtime_rejects_non_hex_sha256() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "zzzz0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("hex"));
+    }
+
+    #[test]
+    fn runtime_specific_net_requires_allow_hosts() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+            [runtime.capabilities]
+            net = "specific"
+        "#;
+        let err = Manifest::from_toml(src).unwrap_err();
+        assert!(format!("{err}").contains("net_allow_hosts"));
+    }
+
+    #[test]
+    fn runtime_any_net_does_not_require_allow_hosts() {
+        let src = r#"
+            id = "com.example.hello"
+            name = "Hello"
+            version = "0.2.0"
+            slab_compat = ">=2.0.0"
+
+            [runtime]
+            entry = "script.js"
+            sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+            [runtime.capabilities]
+            net = "any"
+        "#;
+        let m = Manifest::from_toml(src).expect("net = any should not require hosts list");
+        assert_eq!(m.runtime.unwrap().capabilities.net, NetCap::Any);
     }
 }

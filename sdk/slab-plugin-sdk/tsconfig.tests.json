@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@slab/plugin-sdk": ["./src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "tests/**/*", "examples/**/script.ts"]
+}
