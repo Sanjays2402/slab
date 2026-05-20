@@ -332,4 +332,59 @@ mod tests {
             );
         }
     }
+
+    /// v2.0.1 Slice 5: explicit roster smoke. The hash-verification test
+    /// above iterates whatever happens to be in `BUNDLED` and asserts it
+    /// loads cleanly. This test pins the *contents* of the roster — if
+    /// someone removes a bundled plugin from `BUNDLED` (e.g. forgets to
+    /// re-add url-fetch after a refactor) the panel will silently lose a
+    /// plugin and no other test will catch it. This one will.
+    #[test]
+    fn bundled_roster_contains_all_three_v2_0_1_examples() {
+        let ids: Vec<&'static str> = BUNDLED.iter().map(|p| p.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "com.slab.examples.hello-workshop",
+                "com.slab.examples.storage-counter",
+                "com.slab.examples.url-fetch",
+            ],
+            "v2.0.1 ships exactly these three bundled plugins; if you \
+             intentionally added/removed one, update this test and the \
+             BUNDLED_PLUGIN_IDS const in src/lib/plugins.ts too."
+        );
+    }
+
+    /// v2.0.1 Slice 5: each bundled manifest must declare an id that
+    /// matches the BUNDLED entry's `id` field (registry hashes by
+    /// manifest id, not directory name). Detects roster/manifest drift
+    /// at the binary level — much earlier than the discover-level test.
+    #[test]
+    fn bundled_manifest_ids_match_roster_entries() {
+        for p in BUNDLED {
+            let id_line = p
+                .manifest_toml
+                .lines()
+                .find(|l| l.trim_start().starts_with("id"))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bundled manifest for {:?} is missing an `id = \"...\"` line",
+                        p.id
+                    )
+                });
+            // Quick'n'dirty: pull the value between the first pair of
+            // double quotes after `id`.
+            let manifest_id = id_line
+                .split('"')
+                .nth(1)
+                .unwrap_or_else(|| panic!("can't parse id from {:?}", id_line));
+            assert_eq!(
+                manifest_id, p.id,
+                "BUNDLED roster id {:?} mismatches manifest id {:?} — \
+                 the registry keys by manifest id, so this plugin would \
+                 not be findable after discover().",
+                p.id, manifest_id
+            );
+        }
+    }
 }
