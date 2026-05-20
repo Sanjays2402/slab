@@ -224,7 +224,7 @@ mod tests {
 
     fn sample_index_json() -> String {
         let idx = Index {
-            schema_version: 1,
+            schema_version: 2,
             signing_key_id: MAINTAINER_KEY_ID.into(),
             plugins: vec![IndexEntry {
                 id: "com.example.hello".into(),
@@ -237,6 +237,10 @@ mod tests {
                 size_bytes: 1024,
                 slab_compat: ">=1.4.0".into(),
                 signature: "AAAA".into(),
+                categories: Vec::new(),
+                tags: Vec::new(),
+                screenshots: Vec::new(),
+                installs: 0,
             }],
         };
         serde_json::to_string_pretty(&idx).unwrap()
@@ -245,7 +249,9 @@ mod tests {
     #[test]
     fn parse_index_accepts_known_envelope() {
         let idx = parse_index(&sample_index_json()).unwrap();
-        assert_eq!(idx.schema_version, 1);
+        // v2.0.2 Workshop Marketplace bumped CURRENT_SCHEMA_VERSION to 2.
+        // sample_index_json() above mirrors that bump.
+        assert_eq!(idx.schema_version, 2);
         assert_eq!(idx.plugins.len(), 1);
     }
 

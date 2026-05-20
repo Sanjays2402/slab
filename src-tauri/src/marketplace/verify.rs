@@ -122,6 +122,13 @@ mod tests {
             size_bytes: 1024,
             slab_compat: ">=1.4.0".into(),
             signature: String::new(),
+            // v2 fields default to empty/zero so the canonical signing
+            // payload remains byte-identical to a v1 entry. This is
+            // intentional — the v2.0.2 backward-compat invariant.
+            categories: Vec::new(),
+            tags: Vec::new(),
+            screenshots: Vec::new(),
+            installs: 0,
         }
     }
 

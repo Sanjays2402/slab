@@ -57,6 +57,14 @@ struct Args {
     print_public_key: bool,
     print_fixture_signature: bool,
     help: bool,
+    // v2 fields (Workshop Marketplace 2026-05-20). All optional —
+    // a sign command issued without any of them produces a
+    // canonical-payload that is byte-identical to a v1 entry, so
+    // v1-signed indices remain valid under v2 semantics.
+    categories: Vec<String>,
+    tags: Vec<String>,
+    screenshots: Vec<String>,
+    installs: Option<u64>,
 }
 
 fn main() -> ExitCode {
@@ -97,6 +105,9 @@ fn main() -> ExitCode {
     if args.print_fixture_signature {
         // Mirrors the test fixture in marketplace::verify::tests::fixture_entry.
         // Keep these field values in lockstep with that fixture.
+        // v2 fields are intentionally empty so the canonical bytes signed
+        // here are byte-identical to the v1 fixture's canonical bytes —
+        // the backward-compat invariant of schema_version=2.
         let unsigned = IndexEntryUnsigned {
             id: "com.example.hello".into(),
             name: "Hello".into(),
@@ -107,6 +118,10 @@ fn main() -> ExitCode {
             sha256: "deadbeef".repeat(8),
             size_bytes: 1024,
             slab_compat: ">=1.4.0".into(),
+            categories: Vec::new(),
+            tags: Vec::new(),
+            screenshots: Vec::new(),
+            installs: 0,
         };
         let canonical = match serde_json::to_vec(&unsigned) {
             Ok(c) => c,
@@ -179,6 +194,10 @@ fn main() -> ExitCode {
         sha256: sha256.clone(),
         size_bytes,
         slab_compat: slab_compat.clone(),
+        categories: args.categories.clone(),
+        tags: args.tags.clone(),
+        screenshots: args.screenshots.clone(),
+        installs: args.installs.unwrap_or(0),
     };
     let canonical = match serde_json::to_vec(&unsigned) {
         Ok(c) => c,
@@ -201,6 +220,10 @@ fn main() -> ExitCode {
         size_bytes,
         slab_compat,
         signature,
+        categories: args.categories,
+        tags: args.tags,
+        screenshots: args.screenshots,
+        installs: args.installs.unwrap_or(0),
     };
     match serde_json::to_string_pretty(&signed) {
         Ok(s) => {
@@ -243,6 +266,16 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--author" => args.author = Some(next_value(argv, &mut i, a)?),
             "--download-url" => args.download_url = Some(next_value(argv, &mut i, a)?),
             "--slab-compat" => args.slab_compat = Some(next_value(argv, &mut i, a)?),
+            "--category" => args.categories.push(next_value(argv, &mut i, a)?),
+            "--tag" => args.tags.push(next_value(argv, &mut i, a)?),
+            "--screenshot" => args.screenshots.push(next_value(argv, &mut i, a)?),
+            "--installs" => {
+                let raw = next_value(argv, &mut i, a)?;
+                args.installs = Some(
+                    raw.parse::<u64>()
+                        .map_err(|e| format!("--installs requires a non-negative integer: {e}"))?,
+                );
+            }
             "--key" => args.key_path = Some(PathBuf::from(next_value(argv, &mut i, a)?)),
             other => return Err(format!("unknown argument: {other}")),
         }
@@ -327,12 +360,23 @@ USAGE:
   slab-sign-plugin --tarball <path> --id <id> --name <name> \\
                    --version <version> --description <text> \\
                    --author <name> --download-url <url> \\
-                   --slab-compat <semver-req> [--key <path>]
+                   --slab-compat <semver-req> [--key <path>] \\
+                   [--category <c>]... [--tag <t>]... \\
+                   [--screenshot <url>]... [--installs <n>]
 
 UTILITIES:
   slab-sign-plugin --print-public-key           Print maintainer pubkey
   slab-sign-plugin --print-fixture-signature    Re-sign verifier fixture
   slab-sign-plugin --help                       This message
+
+V2 METADATA (Workshop Marketplace, schema_version=2):
+  --category <c>        Add a category (repeatable). e.g. 'Editing'.
+  --tag <t>             Add a tag (repeatable). e.g. 'redaction'.
+  --screenshot <url>    Add a screenshot URL (repeatable).
+  --installs <n>        Seed install count (non-negative integer).
+
+Omitting all v2 flags produces a canonical payload byte-identical to a
+v1 entry — useful for re-signing legacy plugins under the v2 schema.
 
 Key file format: base64-encoded 32-byte Ed25519 seed (lines starting
 with '#' ignored). Default path: ~/.slab-maintainer-key.
@@ -500,6 +544,10 @@ mod tests {
             sha256: sha256_hex(b"some-tarball-bytes"),
             size_bytes: 17,
             slab_compat: ">=1.4.0".into(),
+            categories: Vec::new(),
+            tags: Vec::new(),
+            screenshots: Vec::new(),
+            installs: 0,
         };
         let canonical = serde_json::to_vec(&unsigned).unwrap();
         let sig = sk.sign(&canonical);
@@ -515,6 +563,10 @@ mod tests {
             size_bytes: unsigned.size_bytes,
             slab_compat: unsigned.slab_compat.clone(),
             signature: B64.encode(sig.to_bytes()),
+            categories: unsigned.categories.clone(),
+            tags: unsigned.tags.clone(),
+            screenshots: unsigned.screenshots.clone(),
+            installs: unsigned.installs,
         };
 
         verify_entry(&entry, sk.verifying_key().as_bytes()).unwrap();

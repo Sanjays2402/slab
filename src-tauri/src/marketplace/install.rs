@@ -455,6 +455,12 @@ mod tests {
             size_bytes,
             slab_compat: ">=1.4.0".into(),
             signature: String::new(),
+            // v2 fields default empty — install path is schema-version
+            // agnostic and these don't affect download/verify behaviour.
+            categories: Vec::new(),
+            tags: Vec::new(),
+            screenshots: Vec::new(),
+            installs: 0,
         }
     }
 
