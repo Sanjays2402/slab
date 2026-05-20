@@ -5,13 +5,74 @@
 
 ---
 
-## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slice 8 **DONE on `feature/v2.0.0-workshop`** 🗄️
+## STATUS: ✦ v1.9.2 RELEASED 🎙 — v2.0.0 "Workshop" Slices 8 + 9 **DONE on `feature/v2.0.0-workshop`** 📦
 
 **Main HEAD**: `18d4877` (README catch-up for v1.9.2).
 **Latest tag**: `v1.9.2` (annotated, pushed).
 **Latest release**: https://github.com/Sanjays2402/slab/releases/tag/v1.9.2 (6 assets).
-**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `73d2210`, **28 commits ahead of `main`**.
+**Active dev branch**: `feature/v2.0.0-workshop` — HEAD `fef65de`, **44 commits ahead of `main`**.
 **RELEASE_PENDING**: *(none)*
+**LAST_WOW_TICK_AT**: 2026-05-19 21:?? PT — `@slab/plugin-sdk` IntelliSense over entire `slab.*` surface (screenshot-able).
+
+---
+
+## TICK 2026-05-19 21:?? PT — MODE C v2.0.0 Slice 9 SHIPPED 📦 (@slab/plugin-sdk npm package, 5 commits, ~1200 LOC)
+
+**Branch**: `feature/v2.0.0-workshop` — pushed to origin.
+**Plan**: `docs/plans/2026-05-19-v2.0.0-workshop-slice-9.md` (20.8 KB).
+
+The plugin authoring SDK is **done**. Third-party authors no longer need
+to read Rust source to write a Slab plugin — they `npm i -D @slab/plugin-sdk`,
+type `import { definePlugin } from "@slab/plugin-sdk"`, and the entire
+`slab.*` surface lights up in IntelliSense. **Buy-Button: Pick-us pass** —
+Adobe doesn't ship a plugin SDK; PDF Expert/Foxit don't even have a
+plugin model. **WOW**: ambient `declare global` propagates into the
+emitted `.d.ts` so a single import wires up the whole surface.
+
+**Commits this tick (5):**
+- `2c464c5` feat(sdk): @slab/plugin-sdk package skeleton (Slice 9.1)
+- `7970e12` feat(sdk): typed mirrors for slab.{manifest,beacon,ui,document,storage,fetch} (Slice 9.2)
+- `e0baad9` feat(sdk): definePlugin + assertSlab + global ambient + smoke test (Slice 9.3)
+- `b3b7787` feat(sdk): three example plugins — hello-workshop, storage-counter, url-fetch (Slice 9.4)
+- `fef65de` docs(sdk): top-level README + CHANGELOG for @slab/plugin-sdk (Slice 9.5)
+
+**What's at `sdk/slab-plugin-sdk/`:**
+- `package.json` — `@slab/plugin-sdk@0.1.0`, MIT license, dual ESM+CJS+`.d.ts` exports.
+- `src/types/` — 7 modules (manifest, beacon, ui, document, storage, fetch, global) totaling ~23 KB, every type with `@see` JSDoc pointing at the Rust ground-truth file:line.
+- `src/define.ts` — `definePlugin(spec)`, `assertSlab(slab)`, `trySlab(slab)` (~85 LOC, ~0.5 KB gzipped).
+- `src/index.ts` — public re-exports + ambient `declare global { var slab: SlabGlobal }` block (tsc propagates into emitted `.d.ts`).
+- `tests/typecheck-smoke.ts` — 170 LOC exhaustive consumer-side test with positive + `@ts-expect-error` negative cases.
+- `examples/{hello-workshop,storage-counter,url-fetch}/` — three reference plugins, < 100 LOC each, manifest + script + README.
+- `scripts/rename-cjs.mjs` — post-build CJS extension fixer (TS #54573 workaround); handles `.js → .cjs`, `.js.map → .cjs.map`, and rewrites `require()` + `sourceMappingURL` refs.
+- `README.md` (7.5 KB) — install, quickstart, API tour, capability lattice table, security model, examples links.
+- `CHANGELOG.md` (3.3 KB) — Keep-a-Changelog 1.1.0 format, 0.1.0 entry documenting every addition.
+- 4 tsconfig files: base, `.build.json` (ESM), `.cjs.json`, `.types.json`, `.tests.json` (with path-mapping so examples typecheck in-tree).
+
+**Build verification:** clean dist = 54 files / 220 KB.
+- `dist/esm/` 9 `.js` + 9 `.js.map`
+- `dist/cjs/` 9 `.cjs` + 9 `.cjs.map`
+- `dist/types/` 9 `.d.ts` + 9 `.d.ts.map`
+
+**Quality gates (all green):**
+- `tsc --noEmit -p tsconfig.tests.json` → exit 0
+- `cargo fmt --all -- --check` → clean
+- `cargo clippy --all-targets -- -D warnings` → clean (no rust touched, but verified)
+- `pnpm check` → 0 errors, 35 pre-existing CSS warnings (unrelated)
+
+**Key design decisions:**
+- **MIT license for SDK** (vs GPL-3.0 parent): keeps plugin-author friction low, no copyleft contamination of third-party plugin source.
+- **`declare global` inline in `src/index.ts`** (not a separate `ambient.d.ts`): tsc emits broken runtime `require("./ambient.cjs")` for side-effect imports. Inline declaration propagates cleanly into `dist/types/index.d.ts`.
+- **CJS rename via post-build script**: tsc still doesn't honor `outFileExtension` (TS #54573). Tiny node script handles it.
+- **Tests path-mapped via `tsconfig.tests.json`**: `paths: { "@slab/plugin-sdk": ["./src/index.ts"] }` so examples can `import from "@slab/plugin-sdk"` and typecheck without `pnpm install`.
+
+**Out of scope (Slice 9 follow-up):**
+- `npm publish @slab/plugin-sdk` — requires `@slab` org ownership.
+- Foundry Plugin Store UI panel (planned next as part of v2.0.0 finalize).
+
+**Next ticks:**
+1. **Merge `feature/v2.0.0-workshop` → main** as v2.0.0 "Workshop" release. 44 commits ahead of main. Run full quality gates on main first.
+2. **Foundry Plugin Store UI** — discover/install/uninstall plugin panel; first-party listing for the 3 example plugins from Slice 9.
+3. **v0.10.0 "Beacon"** spec is queued at `.cron-state/proposals/v0.10.0-beacon-ai.md`.
 
 ---
 
