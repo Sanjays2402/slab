@@ -5,19 +5,134 @@
 
 ---
 
-## STATUS: 🚀 Windows-EOL hotfix + v2.0.3 plan landed on main — RELEASE_BLOCKED clearing
+## STATUS: 📋 Three release plans on disk — pipeline ready to execute
 
 **Main HEAD**: `a3fa231` (v2.0.3 plan commit, ff-merged onto LF hotfix `1a28a5f`).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
-**Active dev branch**: *(none — both pipeline items now on `main`; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
-**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of this tick. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred to next tick (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
+**Active dev branch**: *(none — three pipeline items on disk as plans; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
+**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of last tick. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
 **v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW = Fuse.js live-highlight search in Slice 6.
-**v2.0.3 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
+**v2.0.3 PLAN**: `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
+**v2.0.4 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines, 6 slices + pre-flight, ~580-720 LOC). WOW = SVG progress rings on Recents grid (Slice 4). Codename "Memory" 📖 — closes the "remember where I left off" table-stakes gap vs Adobe / PDF Expert / Foxit. **Must ship AFTER v2.0.3 — both touch `src/lib/i18n/en.json`, though in disjoint namespaces (palette.resume / reader.progress / onboarding.memory vs settings.beacon).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
 
 ---
+
+## TICK 2026-05-20 05:37 PT — MODE C writing-plans skill — v2.0.4 plan promoted 📖
+
+User invoked the `writing-plans` skill a third consecutive tick.
+Pattern holds: each writing-plans tick promotes the next release in
+the pipeline. Two ticks ago: v2.0.2. Last tick: v2.0.3. This tick:
+**v2.0.4 "Memory" 📖** — Slab remembers where you left off.
+
+**Why v2.0.4 next?**
+1. v2.0.2 and v2.0.3 plans are already on disk and ready for subagent
+   execution. Writing them in advance lets future ticks just run
+   plans without re-discovering codebase context.
+2. v2.0.4 fills a *table-stakes* Buy-Button gap: Adobe Acrobat,
+   PDF Expert, and Foxit all remember last page. Slab today opens
+   every doc on page 1, even ones the user just had open. That's a
+   launch-blocker for v1.0.0 — no serious PDF-reader review forgives
+   it. Cheap fix (no Tauri / Rust changes), huge perceived-quality
+   uplift.
+3. Surfaces are clean: `src/lib/recent.ts`, a new
+   `src/lib/readingPosition.ts`, `ReaderPanel.svelte`,
+   `CommandPalette.svelte`, `OnboardingTour.svelte`, and disjoint
+   i18n namespaces. **Zero collision with v2.0.2 (marketplace) or
+   v2.0.3 (Settings Beacon section).**
+
+**Commit this tick (1 on main):**
+- `<HASH>` docs(plans): v2.0.4 "Memory" implementation plan
+- Plan file: `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines).
+
+**Plan structure — 6 slices + pre-flight, ~580-720 LOC, 6-7 commits:**
+- **Slice 0** (pre-flight): 4 verification checks — `RecentFile` shape,
+  pdfjs event names, vitest availability, surface-collision audit
+  against v2.0.2/v2.0.3.
+- **Slice 1**: pure-TS `src/lib/readingPosition.ts` (~150 LOC) —
+  per-path localStorage store under `slab.reading.positions.v1`,
+  capped at 200 entries with oldest-first eviction on quota crash.
+  Optionally ships with 9 vitest unit tests (~120 LOC) if test
+  runner is wired.
+- **Slice 2**: Save+restore hooks in `ReaderPanel.svelte` — debounced
+  500ms write on `pagechanging` / `scalechanging`; restore page +
+  zoom on `pagesinit` with defensive clamp to `1..pageCount`. Flush
+  on `tearDownDoc` to avoid losing the last write.
+- **Slice 3**: Reader-toolbar pill chip — accent-tinted percent
+  badge right of the page-number input. Tooltip = "Page N of M · X%
+  read". Two new i18n strings under `reader.progress.*`.
+- **Slice 4 ⭐ WOW**: SVG progress rings on every Recents card.
+  Frosted-glass backdrop, accent-tinted arc, integer percent label,
+  220ms ease-out arc transition. Cards subscribe to
+  `subscribeReadingPosition` so the ring updates the moment the user
+  finishes reading and closes a tab.
+- **Slice 5**: Command-palette "Resume reading…" group — top 3
+  in-progress docs (sorted by recency, filtered to 2-99% progress).
+  Cmd+K → "r" → Enter resumes the most-recent read. Three new i18n
+  strings under `palette.resume.*`.
+- **Slice 6**: onboarding tour step #4 (📖 Memory), version bumps
+  (2.0.3 → 2.0.4 in package.json/Cargo.toml/tauri.conf.json),
+  CHANGELOG entry, customer-facing release notes at
+  `docs/release-notes/v2.0.4.md`, MODE A merge + tag + push, queue
+  `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Adobe / PDF Expert / Foxit all ship this.
+  Closing the gap is a hard prerequisite for the v1.0.0 launch
+  narrative.
+- **Notice-it PASS** — every returning user sees: (a) new toolbar
+  pill chip, (b) progress rings on every recent card, (c) the exact
+  page they closed at restored on every reopen.
+- **Tell-a-friend PASS** — the progress-ring grid visualizes your
+  reading life. /r/macapps + Twitter-grade screenshot. **None of
+  Adobe / PDF Expert / Foxit do this.**
+
+**Codebase-discovery decisions baked into the plan:**
+- `RecentFile` shape is left alone — the new store is a *separate*
+  module so a future Pro-tier sync layer can swap the backend
+  cleanly without touching `recent.ts`.
+- `currentScaleValue` restore wrapped in `try { } catch {}` — pdfjs
+  accepts both named tokens (`"page-width"`, `"auto"`) and numeric
+  strings; invalid stored zoom silently falls back to default.
+- `pagesinit` is the right hook for restore (not `pagesloaded`,
+  which is later). Verified at line ~694 of ReaderPanel.svelte.
+- Recents grid currently lives *inside* `ReaderPanel.svelte` (not
+  a separate component) — Slice 4's markup edit is local to one
+  file.
+- `subscribeReadingPosition` is the right pattern (vs polling) — the
+  ring needs to refresh on every position write, and the existing
+  recents `subscribeRecent` proves the listener pattern is clean
+  inside the component.
+
+**Scheduling note (critical, documented in the plan):**
+**Do not start v2.0.4 Slice 1 until v2.0.3 ships and is tagged.**
+Both versions touch `src/lib/i18n/en.json` (disjoint namespaces, but
+git's textual three-way merge doesn't know JSON). Strict order:
+v2.0.2 → v2.0.3 → v2.0.4, each cut from `main` after the previous
+merges.
+
+**Next ticks (in order):**
+1. **v2.0.2 Slices 1-8** on `feature/v2.0.2-workshop-marketplace`. WOW = Fuse.js search w/ live highlighting (Slice 6).
+2. **v2.0.2 MODE A merge + tag + release**.
+3. **v2.0.3 Slices 1-6** on `feature/v2.0.3-beacon-settings`.
+4. **v2.0.3 MODE A merge + tag + release**.
+5. **v2.0.4 Slices 1-6** on `feature/v2.0.4-memory`.
+6. **v2.0.4 MODE A merge + tag + release**.
+
+**Open questions for Sanjay (only if he wants to weigh in):**
+- Bundle per-page bookmarks into v2.0.4 or defer to v2.0.5? Plan
+  defaults to deferring (separate `bookmarks.v1` store, ~150 LOC,
+  out of scope for "Memory").
+- Add reading-time estimates ("3 min left at your reading speed")?
+  Plan defers — needs cross-session reading-speed tracking.
+- Three-plan backlog ready to execute. Any preference on next tick's
+  mode (start *executing* v2.0.2 vs continue planning v2.0.5)?
+
+---
+
+
 
 ## TICK 2026-05-20 01:05 PT — MODE C writing-plans skill — v2.0.3 plan promoted 📋
 
