@@ -2220,9 +2220,14 @@ struct MarketplaceFetchResult {
     is_fresh: bool,
     /// Network failed but a cached copy was returned.
     is_stale: bool,
-    /// The index itself when present (Fresh or Stale).
+    /// Network + cache both unavailable; binary's embedded seed index
+    /// is being shown. UI surfaces a "connect to see more" banner.
+    /// (v2.0.2 Workshop Marketplace.)
+    is_embedded_seed: bool,
+    /// The index itself when present (Fresh, Stale, or EmbeddedSeed).
     index: Option<marketplace::Index>,
-    /// Last-error string when present (Stale.network_error or Failed).
+    /// Last-error string when present (Stale.network_error,
+    /// EmbeddedSeed.network_error, or Failed).
     error: Option<String>,
 }
 
@@ -2247,6 +2252,7 @@ async fn slab_marketplace_index() -> MarketplaceFetchResult {
         marketplace::FetchOutcome::Fresh(index) => MarketplaceFetchResult {
             is_fresh: true,
             is_stale: false,
+            is_embedded_seed: false,
             index: Some(index),
             error: None,
         },
@@ -2256,12 +2262,24 @@ async fn slab_marketplace_index() -> MarketplaceFetchResult {
         } => MarketplaceFetchResult {
             is_fresh: false,
             is_stale: true,
+            is_embedded_seed: false,
+            index: Some(index),
+            error: Some(network_error.to_string()),
+        },
+        marketplace::FetchOutcome::EmbeddedSeed {
+            index,
+            network_error,
+        } => MarketplaceFetchResult {
+            is_fresh: false,
+            is_stale: false,
+            is_embedded_seed: true,
             index: Some(index),
             error: Some(network_error.to_string()),
         },
         marketplace::FetchOutcome::Failed(e) => MarketplaceFetchResult {
             is_fresh: false,
             is_stale: false,
+            is_embedded_seed: false,
             index: None,
             error: Some(e.to_string()),
         },

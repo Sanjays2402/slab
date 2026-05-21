@@ -32,6 +32,18 @@ export interface IndexEntry {
   slab_compat: string;
   /** Base64-encoded Ed25519 signature over the canonical unsigned form. */
   signature: string;
+  // -------- v2 fields (Workshop Marketplace, schema_version=2) --------
+  // All four are optional on the wire: a v1 entry deserialises as a v2
+  // entry with empty arrays / installs=0. UI code should always default
+  // these defensively (use `?? []` / `?? 0`) so it works on either schema.
+  /** Browsable taxonomy (e.g. ["Editing", "Productivity"]). */
+  categories?: string[];
+  /** Free-form discovery keywords (e.g. ["redact", "pii", "privacy"]). */
+  tags?: string[];
+  /** Optional preview image URLs. Up to 5 typically. */
+  screenshots?: string[];
+  /** Aggregate install counter (server-curated; 0 = no data). */
+  installs?: number;
 }
 
 /** Top-level index envelope. */
@@ -58,6 +70,10 @@ export interface InstallReport {
 export interface MarketplaceFetchResult {
   is_fresh: boolean;
   is_stale: boolean;
+  /** v2.0.2 Workshop Marketplace — network+cache both unavailable;
+   *  the binary's embedded seed index is being served. Optional on the
+   *  wire so older backends that don't emit it still parse cleanly. */
+  is_embedded_seed?: boolean;
   index: Index | null;
   error: string | null;
 }
@@ -83,8 +99,13 @@ export interface MarketplaceState {
    *  network failed this call. UI shows a "showing cached results"
    *  banner with a Refresh button. */
   isStale: boolean;
+  /** v2.0.2 Workshop Marketplace — true when the bundled seed-index
+   *  baked into the binary is being shown (network + cache both
+   *  unavailable). UI shows a "showing built-in plugins — connect to
+   *  see more" banner. */
+  isEmbeddedSeed: boolean;
   /** Human-readable error string when `phase === 'error'` (or the
-   *  underlying network error when `isStale`). */
+   *  underlying network error when `isStale` / `isEmbeddedSeed`). */
   error: string | null;
   /** ms-epoch of the last successful refresh attempt. 0 = never. */
   loadedAt: number;
@@ -97,6 +118,7 @@ const EMPTY: MarketplaceState = {
   phase: "idle",
   index: null,
   isStale: false,
+  isEmbeddedSeed: false,
   error: null,
   loadedAt: 0,
   busy: {},
@@ -134,7 +156,8 @@ export async function refreshMarketplace(): Promise<void> {
         phase: "ready",
         index: result.index,
         isStale: result.is_stale,
-        error: result.is_stale ? result.error : null,
+        isEmbeddedSeed: !!result.is_embedded_seed,
+        error: result.is_stale || result.is_embedded_seed ? result.error : null,
         loadedAt: Date.now(),
       }));
     } else {
@@ -143,6 +166,7 @@ export async function refreshMarketplace(): Promise<void> {
         phase: "error",
         index: null,
         isStale: false,
+        isEmbeddedSeed: false,
         error: result.error ?? "Failed to fetch marketplace index",
         loadedAt: Date.now(),
       }));

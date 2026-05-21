@@ -27,6 +27,7 @@
     type PluginGrants,
     type PluginsSnapshot,
     isBundled,
+    BUNDLED_PLUGIN_IDS,
   } from "$lib/plugins";
   import {
     marketplaceStore,
@@ -45,6 +46,7 @@
   import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
   import UninstallConfirmModal from "$lib/components/UninstallConfirmModal.svelte";
   import PluginConsentModal from "$lib/components/PluginConsentModal.svelte";
+  import { fuzzyMatchEntry, highlightHTML, type EntryFuzzyResult } from "$lib/marketplace/fuzzy";
 
   // ---------------- Installed-tab state (unchanged from Foundry) ----
   // Local mirror of the store so we can render reactively.
@@ -72,10 +74,104 @@
     phase: "idle",
     index: null,
     isStale: false,
+    isEmbeddedSeed: false,
     error: null,
     loadedAt: 0,
     busy: {},
   });
+
+  // ---------------- v2.0.2 "Workshop Marketplace" — Browse-tab UX -----
+  /** Free-text query typed into the Browse search box. Empty = show all. */
+  let browseQuery = $state<string>("");
+  /** Category chip filter. `null` = "All categories". Single-select. */
+  let browseCategory = $state<string | null>(null);
+  /**
+   * Sort mode for the Browse tab.
+   * - `relevance` — default when a query is active; falls back to
+   *   `popular` when query is empty.
+   * - `popular`   — sort by `installs` descending.
+   * - `newest`    — sort by `version` (semver-aware) descending then name.
+   * - `name`      — A→Z by name (case-insensitive).
+   */
+  let browseSort = $state<"relevance" | "popular" | "newest" | "name">("relevance");
+
+  /** Distinct, sorted list of categories present in the current index. */
+  let browseCategories = $derived<string[]>(
+    (() => {
+      const set = new Set<string>();
+      for (const p of marketplace.index?.plugins ?? []) {
+        for (const c of p.categories ?? []) set.add(c);
+      }
+      return Array.from(set).sort((a, b) => a.localeCompare(b));
+    })()
+  );
+
+  /**
+   * Filtered + sorted Browse list. Each entry is bundled with the
+   * field-level highlight ranges from the fuzzy matcher so the
+   * template can render <mark>-wrapped HTML inline.
+   */
+  type RankedEntry = {
+    entry: IndexEntry;
+    score: number;
+    matches: EntryFuzzyResult["fieldRanges"];
+  };
+  let browseRanked = $derived<RankedEntry[]>(
+    (() => {
+      const all = marketplace.index?.plugins ?? [];
+      const q = browseQuery.trim();
+      const filteredByCategory = browseCategory
+        ? all.filter((p) => (p.categories ?? []).includes(browseCategory!))
+        : all;
+
+      const scored = filteredByCategory
+        .map((entry) => {
+          const r = fuzzyMatchEntry(q, entry);
+          return { entry, score: r.score, matches: r.fieldRanges };
+        })
+        // When a query is active, drop non-matching entries.
+        .filter((r) => (q ? r.score > 0 : true));
+
+      // Sort mode resolution. With an active query, default "relevance"
+      // truly means relevance; without a query we don't have a useful
+      // relevance signal so we fall back to "popular".
+      const effectiveSort =
+        browseSort === "relevance" && !q ? "popular" : browseSort;
+
+      switch (effectiveSort) {
+        case "popular":
+          scored.sort(
+            (a, b) =>
+              (b.entry.installs ?? 0) - (a.entry.installs ?? 0) ||
+              a.entry.name.localeCompare(b.entry.name)
+          );
+          break;
+        case "newest":
+          scored.sort(
+            (a, b) =>
+              compareSemver(b.entry.version, a.entry.version) ||
+              a.entry.name.localeCompare(b.entry.name)
+          );
+          break;
+        case "name":
+          scored.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
+          break;
+        case "relevance":
+        default:
+          scored.sort(
+            (a, b) =>
+              b.score - a.score ||
+              (b.entry.installs ?? 0) - (a.entry.installs ?? 0) ||
+              a.entry.name.localeCompare(b.entry.name)
+          );
+      }
+      return scored;
+    })()
+  );
+
+  /** Total count of plugins matching the current filter, for the
+   *  result-count chip in the toolbar. */
+  let browseResultCount = $derived(browseRanked.length);
 
   // ---------------- Slice 8 — drawer + install modal state ---------
   /** When set, render the PluginDetailDrawer for this entry. */
@@ -210,6 +306,23 @@
     const cur = installedVersion[entry.id];
     if (!cur) return "install";
     return compareSemver(entry.version, cur) > 0 ? "update" : "installed";
+  }
+
+  /**
+   * Format an install count for the Browse-card pill. Compact form
+   * for big numbers so the chip stays one line wide on small windows.
+   *   42       → "42"
+   *   1_234    → "1.2k"
+   *   1_500_000 → "1.5M"
+   */
+  function formatInstalls(n: number): string {
+    if (n < 1000) return n.toString();
+    if (n < 1_000_000) {
+      const k = n / 1000;
+      return (k < 10 ? k.toFixed(1) : Math.round(k).toString()) + "k";
+    }
+    const m = n / 1_000_000;
+    return (m < 10 ? m.toFixed(1) : Math.round(m).toString()) + "M";
   }
 
   // ---------------- Slice 8a — drawer helpers ----------------------
@@ -773,8 +886,40 @@
       </p>
     {/if}
   {:else if tab === "browse"}
-    <!-- Bench (v1.4.0): Browse tab — curated marketplace. -->
-    <div class="toolbar">
+    <!-- Bench (v1.4.0) → Workshop Marketplace (v2.0.2): Browse tab. -->
+    <div class="browse-toolbar">
+      <div class="browse-search">
+        <span class="browse-search-icon" aria-hidden="true">🔍</span>
+        <input
+          type="search"
+          class="browse-search-input"
+          placeholder={$tStore("plugins.browse.searchPlaceholder")}
+          aria-label={$tStore("plugins.browse.searchAriaLabel")}
+          bind:value={browseQuery}
+        />
+        {#if browseQuery}
+          <button
+            type="button"
+            class="browse-search-clear"
+            aria-label={$tStore("plugins.browse.clearSearch")}
+            onclick={() => (browseQuery = "")}
+          >
+            ✕
+          </button>
+        {/if}
+      </div>
+
+      <select
+        class="browse-sort"
+        aria-label={$tStore("plugins.browse.sortAriaLabel")}
+        bind:value={browseSort}
+      >
+        <option value="relevance">{$tStore("plugins.browse.sort.relevance")}</option>
+        <option value="popular">{$tStore("plugins.browse.sort.popular")}</option>
+        <option value="newest">{$tStore("plugins.browse.sort.newest")}</option>
+        <option value="name">{$tStore("plugins.browse.sort.name")}</option>
+      </select>
+
       <button
         type="button"
         class="ghost"
@@ -783,10 +928,71 @@
       >
     </div>
 
+    {#if browseCategories.length > 0}
+      <div class="browse-chips" role="tablist" aria-label={$tStore("plugins.browse.categoriesLabel")}>
+        <button
+          type="button"
+          class="browse-chip"
+          class:active={browseCategory === null}
+          role="tab"
+          aria-selected={browseCategory === null}
+          onclick={() => (browseCategory = null)}
+        >
+          {$tStore("plugins.browse.allCategories")}
+        </button>
+        {#each browseCategories as cat (cat)}
+          <button
+            type="button"
+            class="browse-chip"
+            class:active={browseCategory === cat}
+            role="tab"
+            aria-selected={browseCategory === cat}
+            onclick={() => (browseCategory = browseCategory === cat ? null : cat)}
+          >
+            {cat}
+          </button>
+        {/each}
+      </div>
+    {/if}
+
     {#if marketplace.isStale && marketplace.error}
       <div class="banner banner-warn" role="status">
         {t("plugins.browse.stale", { error: marketplace.error })}
       </div>
+    {/if}
+
+    {#if marketplace.isEmbeddedSeed}
+      <div class="banner banner-info" role="status">
+        {$tStore("plugins.browse.embeddedSeed")}
+      </div>
+    {/if}
+
+    <!-- v2.0.2 Slice 7: hero card on empty Browse state (no query, no filter,
+         index loaded, has entries) -->
+    {#if !browseQuery && browseCategory === null && marketplace.index && marketplace.index.plugins.length > 0}
+      {@const bundledEntries = marketplace.index.plugins
+        .filter((p) => BUNDLED_PLUGIN_IDS.includes(p.id))
+        .slice(0, 3)}
+      {#if bundledEntries.length > 0}
+        <section class="browse-hero" aria-labelledby="browse-hero-title">
+          <div class="browse-hero-icon" aria-hidden="true">🧩</div>
+          <div class="browse-hero-body">
+            <h2 id="browse-hero-title">{$tStore("plugins.browse.hero.title")}</h2>
+            <p>{$tStore("plugins.browse.hero.body")}</p>
+            <div class="browse-hero-quickpicks" role="group" aria-label={$tStore("plugins.browse.hero.quickpicksLabel")}>
+              {#each bundledEntries as quick (quick.id)}
+                <button
+                  type="button"
+                  class="browse-hero-chip"
+                  onclick={() => openDrawer(quick)}
+                >
+                  {quick.name}
+                </button>
+              {/each}
+            </div>
+          </div>
+        </section>
+      {/if}
     {/if}
 
     {#if marketplace.phase === "loading" && !marketplace.index}
@@ -808,55 +1014,94 @@
         <p>{$tStore("plugins.browse.empty.body")}</p>
       </div>
     {:else if marketplace.index}
-      <div class="market-grid">
-        {#each marketplace.index.plugins as entry (entry.id)}
-          {@const status = entryStatus(entry)}
-          {@const inFlight = !!marketplace.busy[entry.id]}
-          <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
-          <article
-            class="market-card"
-            class:status-installed={status === "installed"}
-            class:status-update={status === "update"}
-            role="button"
-            tabindex="0"
-            onclick={() => openDrawer(entry)}
-            onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                openDrawer(entry);
-              }
-            }}
-          >
-            <header class="market-card-head">
-              <h3>{entry.name}</h3>
-              <span class="chip ver-pill">v{entry.version}</span>
-            </header>
-            <p class="market-card-meta">
-              {t("plugins.browse.author", { author: entry.author })} ·
-              <span class="mono">{entry.id}</span>
-            </p>
-            <p class="market-card-desc">{entry.description}</p>
-            <footer class="market-card-foot">
-              <span class="market-card-spec mono">
-                {t("plugins.browse.size", { size: formatBytes(entry.size_bytes) })}
-                · {t("plugins.browse.compat", { compat: entry.slab_compat })}
-              </span>
-              <div
-                class="market-card-actions"
-                role="presentation"
-                onclick={(e) => e.stopPropagation()}
-                onkeydown={(e) => e.stopPropagation()}
-              >
-                {#if status === "installed"}
-                  <span class="chip status-pill">{$tStore("plugins.browse.installed")}</span>
-                  <button
-                    type="button"
-                    class="ghost danger"
-                    disabled={inFlight}
-                    onclick={() => onUninstall(entry)}
-                  >
-                    {inFlight
-                      ? $tStore("plugins.browse.uninstalling")
+      {#if browseRanked.length === 0}
+        <div class="empty-state">
+          <h2>{$tStore("plugins.browse.noMatches.title")}</h2>
+          <p>{$tStore("plugins.browse.noMatches.body")}</p>
+          {#if browseQuery || browseCategory}
+            <button
+              type="button"
+              class="ghost"
+              onclick={() => {
+                browseQuery = "";
+                browseCategory = null;
+              }}>{$tStore("plugins.browse.clearFilters")}</button
+            >
+          {/if}
+        </div>
+      {:else}
+        <p class="browse-count" aria-live="polite">
+          {t("plugins.browse.resultsCount", { count: String(browseResultCount) })}
+        </p>
+        <div class="market-grid">
+          {#each browseRanked as ranked (ranked.entry.id)}
+            {@const entry = ranked.entry}
+            {@const status = entryStatus(entry)}
+            {@const inFlight = !!marketplace.busy[entry.id]}
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+            <article
+              class="market-card"
+              class:status-installed={status === "installed"}
+              class:status-update={status === "update"}
+              role="button"
+              tabindex="0"
+              onclick={() => openDrawer(entry)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openDrawer(entry);
+                }
+              }}
+            >
+              <header class="market-card-head">
+                <h3>{@html highlightHTML(entry.name, ranked.matches.name)}</h3>
+                <span class="chip ver-pill">v{entry.version}</span>
+              </header>
+              <p class="market-card-meta">
+                {@html t("plugins.browse.author", {
+                  author: highlightHTML(entry.author, ranked.matches.author),
+                })} ·
+                <span class="mono">{@html highlightHTML(entry.id, ranked.matches.id)}</span>
+              </p>
+              <p class="market-card-desc">
+                {@html highlightHTML(entry.description, ranked.matches.description)}
+              </p>
+              {#if (entry.categories ?? []).length > 0 || (entry.tags ?? []).length > 0}
+                <div class="market-card-taxonomy">
+                  {#each entry.categories ?? [] as c (c)}
+                    <span class="chip category-chip">{c}</span>
+                  {/each}
+                  {#each (entry.tags ?? []).slice(0, 4) as tag (tag)}
+                    <span class="chip tag-chip">#{tag}</span>
+                  {/each}
+                </div>
+              {/if}
+              {#if (entry.installs ?? 0) >= 10}
+                <p class="market-card-installs" aria-label={$tStore("plugins.browse.installsLabel")}>
+                  ⬇ {formatInstalls(entry.installs ?? 0)}
+                </p>
+              {/if}
+              <footer class="market-card-foot">
+                <span class="market-card-spec mono">
+                  {t("plugins.browse.size", { size: formatBytes(entry.size_bytes) })}
+                  · {t("plugins.browse.compat", { compat: entry.slab_compat })}
+                </span>
+                <div
+                  class="market-card-actions"
+                  role="presentation"
+                  onclick={(e) => e.stopPropagation()}
+                  onkeydown={(e) => e.stopPropagation()}
+                >
+                  {#if status === "installed"}
+                    <span class="chip status-pill">{$tStore("plugins.browse.installed")}</span>
+                    <button
+                      type="button"
+                      class="ghost danger"
+                      disabled={inFlight}
+                      onclick={() => onUninstall(entry)}
+                    >
+                      {inFlight
+                        ? $tStore("plugins.browse.uninstalling")
                       : $tStore("plugins.browse.uninstall")}
                   </button>
                 {:else if status === "update"}
@@ -887,6 +1132,7 @@
           </article>
         {/each}
       </div>
+      {/if}
     {/if}
   {/if}
 </section>
@@ -1282,6 +1528,199 @@
     background: rgba(255, 180, 60, 0.08);
     border-color: rgba(255, 180, 60, 0.32);
     color: var(--text);
+  }
+  .banner-info {
+    background: rgba(96, 165, 250, 0.08);
+    border-color: rgba(96, 165, 250, 0.32);
+    color: var(--text);
+  }
+
+  /* ---- v2.0.2 Workshop Marketplace — Browse toolbar / chips / sort ---- */
+  .browse-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .browse-search {
+    position: relative;
+    flex: 1 1 280px;
+    min-width: 200px;
+    display: flex;
+    align-items: center;
+  }
+  .browse-search-icon {
+    position: absolute;
+    left: 12px;
+    pointer-events: none;
+    opacity: 0.55;
+    font-size: 13px;
+  }
+  .browse-search-input {
+    width: 100%;
+    padding: 9px 36px 9px 34px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-1);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .browse-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+  .browse-search-clear {
+    position: absolute;
+    right: 6px;
+    border: 0;
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+  }
+  .browse-search-clear:hover {
+    background: var(--bg-2);
+    color: var(--text);
+  }
+  .browse-sort {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-1);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .browse-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .browse-chip {
+    border: 1px solid var(--border);
+    background: var(--bg-1);
+    color: var(--text-2);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+  .browse-chip:hover {
+    background: var(--bg-2);
+    color: var(--text);
+  }
+  .browse-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .browse-count {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+
+  /* v2.0.2 Slice 7 — hero card on empty Browse */
+  .browse-hero {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin: 0 0 16px;
+    padding: 14px 16px;
+    border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+    border-radius: var(--r-md);
+    background: color-mix(in oklab, var(--accent) 8%, var(--bg-2));
+  }
+  .browse-hero-icon {
+    font-size: 28px;
+    line-height: 1;
+    flex: 0 0 auto;
+    margin-top: 2px;
+  }
+  .browse-hero-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .browse-hero-body h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .browse-hero-body p {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--text-2);
+    line-height: 1.45;
+  }
+  .browse-hero-quickpicks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .browse-hero-chip {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
+  }
+  .browse-hero-chip:hover {
+    background: color-mix(in oklab, var(--accent) 16%, var(--bg-2));
+    border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+  }
+  .browse-hero-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Highlighted matched substrings inside Browse cards. The mark
+     wrapper is generated by `highlightHTML` in $lib/marketplace/fuzzy. */
+  .market-card :global(mark) {
+    background: color-mix(in oklab, var(--accent) 25%, transparent);
+    color: var(--text);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+
+  .market-card-taxonomy {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0 0;
+  }
+  .category-chip {
+    background: color-mix(in oklab, var(--accent) 14%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 26%, transparent);
+    color: var(--text);
+    font-size: 11px;
+  }
+  .tag-chip {
+    background: var(--bg-2);
+    color: var(--text-2);
+    font-size: 11px;
+  }
+  .market-card-installs {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--text-2);
   }
 
   .error-state p {

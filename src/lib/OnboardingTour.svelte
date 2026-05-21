@@ -57,9 +57,9 @@
     },
     {
       icon: "🧩",
-      title: "Plugins, included",
+      title: "Plugins, included — and a whole store",
       body:
-        "Slab ships with three example plugins — Hello Workshop, Storage Counter, URL Fetch. Open Cabinet → Plugins to see them, peek at their source under ~/.slab/plugins/, or write your own with the TypeScript SDK. The plugin marketplace is one click away.",
+        "Slab ships with three example plugins — Hello Workshop, Storage Counter, URL Fetch. Open Cabinet → Plugins to see them, peek at their source under ~/.slab/plugins/, or write your own with the TypeScript SDK. Hit Browse to see categories, search, and install more with one click.",
       hint: "Plugins are sandboxed and ask permission before they touch the network or your files.",
     },
     {
