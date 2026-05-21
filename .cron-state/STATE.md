@@ -5,9 +5,9 @@
 
 ---
 
-## STATUS: 📋 Five release plans on disk — pipeline deep, ready to execute
+## STATUS: 📋 Six release plans on disk — pipeline goes through v2.0.7
 
-**Main HEAD**: `d0a5560` (v2.0.5 plan commit chore; v2.0.5 plan at `5149218`). Will advance by 2 commits this tick (v2.0.6 plan + STATE chore).
+**Main HEAD**: `d4c176c` (v2.0.6 plan commit chore). Will advance by 2 commits this tick (v2.0.7 plan + STATE chore).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
@@ -17,8 +17,124 @@
 **v2.0.3 PLAN**: `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
 **v2.0.4 PLAN**: `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines, 6 slices + pre-flight, ~580-720 LOC). WOW = SVG progress rings on Recents grid (Slice 4). Codename "Memory" 📖 — closes the "remember where I left off" table-stakes gap vs Adobe / PDF Expert / Foxit.
 **v2.0.5 PLAN**: `docs/plans/2026-05-20-v2.0.5-bookmarks.md` (~62 KB, 1932 lines, 6 slices + pre-flight, ~980 LOC). WOW = drag-to-reorder bookmark slots with HTML5 drag API + accent-tinted drop indicators (Slice 4). Codename "Bookmarks" ★ — closes the "save my spot" companion gap to v2.0.4's "remember last page".
-**v2.0.6 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
+**v2.0.7 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines, 6 slices + pre-flight, ~1080 LOC, 8 commits). WOW = single-key `d` drawing mode + 220ms ink-trail-shimmer SVG sweep on stroke commit (Slice 4). Codename "Inkwell" 🖊️ — adds freehand ink/drawing as the third annotation primitive, reusing v2.0.6's sidecar JSON store via a new `kind: "ink"` discriminator. Rust gets a third `Annotation::Ink` enum variant emitting PDF spec §12.5.6.13 `/Subtype /Ink` w/ `/InkList`. **Must ship AFTER v2.0.6 — touches every file v2.0.6 touches (annotations.ts, AnnotateLayer.svelte, ReaderPanel.svelte, CommandPalette.svelte, OnboardingTour.svelte, SettingsPanel.svelte, i18n/en.json, src-tauri/src/pdf/annotations.rs, src-tauri/src/keymap/action.rs). Disjoint namespaces (`annotations.draw.*` / `palette.draw.*` / `settings.annotations.draw.*` / `onboarding.draw.*`) + appended-at-end keys keep merge clean; strict order is the insurance policy.**
+**v2.0.6 PLAN**: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-20 22:33 PT — MODE C writing-plans skill — v2.0.7 plan promoted 🖊️
+
+User invoked the `writing-plans` skill a **sixth** consecutive tick.
+Pattern is now firm: each writing-plans tick promotes the next release
+plan in the pipeline. v2.0.2–v2.0.6 all on disk; this tick:
+**v2.0.7 "Inkwell" 🖊️** — freehand ink/drawing as the third annotation
+primitive, the exact item v2.0.6's plan flagged as "defer to v2.0.7".
+
+**Why v2.0.7 next?**
+1. v2.0.6's open-questions block explicitly named drawings as
+   v2.0.7. Redeeming that pledge.
+2. v2.0.6's sidecar JSON store (`annotations.ts`) + `AnnotateLayer.svelte`
+   mode union + Rust `Annotation` tagged enum are all freshly extended —
+   v2.0.7 adds exactly one new variant in each, ~30% cheaper now than
+   after they cool.
+3. Reviewer expectation: Acrobat/PDF Expert/Foxit/Preview all ship
+   freehand ink. Apple-Pencil-on-iPad demo failing on Slab today is a
+   v1.0.0 launch-blocker.
+
+**Commits this tick (2 on main):**
+- `<HASH>` docs(plans): v2.0.7 "Inkwell" implementation plan 🖊️
+- `<HASH>` chore(cron): STATE.md + session log — v2.0.7 plan promoted
+- Plan file: `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines).
+
+**Plan structure — 6 slices + pre-flight, ~1080 LOC, 8 commits:**
+- **Slice 0** (pre-flight): 5 checks — v2.0.6 tag exists, annotations.ts
+  shape intact, Rust `Annotation` enum still tagged-union, `ActionId::
+  AnnotHighlight`+`AnnotNote` siblings present, draw-namespace i18n
+  unclaimed.
+- **Slice 1**: pure-TS `annotations.ts` extension (~250 LOC + 150 LOC
+  vitest, 11 tests) — `InkAnnotation` variant, Ramer-Douglas-Peucker
+  simplifier (ε≈0.5px), CSS→PDF batch convert, `addInkAnnotation()`
+  with width clamping.
+- **Slice 2**: Rust `Annotation::Ink` variant + `build_annotation_dict`
+  arm emitting `/Subtype /Ink` with `/InkList`, bounding `/Rect` w/
+  width/2+1 pad, `/BS` border style. +2 unit tests.
+- **Slice 3**: `DrawLayer.svelte` (~280 LOC) — pointer-event capture
+  with Apple-Pencil pressure/tilt, RDP on pointer-up, render-layer
+  integration in ReaderPanel paints persisted strokes on
+  `pagerendered`. Eraser sub-mode with per-segment hit-test.
+- **Slice 4 ⭐ WOW**: Single-key `d` mode (~140 LOC). 220ms
+  ink-trail-shimmer via SVG `<linearGradient>` sweep masking a
+  re-traced stroke. Respects `prefers-reduced-motion`. Real
+  `ActionId::AnnotDraw` (Mod+I) for keymap-remap survivability.
+- **Slice 5**: Settings → Annotations → Drawings subsection
+  (color/width/eraser/opacity/pencil-pressure/burn-width) +
+  Command-Palette "Annotations · Drawing" group (5 entries gated on
+  readerCtx) + 18 new i18n keys.
+- **Slice 6**: OnboardingTour step #11, version bumps (2.0.6 → 2.0.7
+  in three files), CHANGELOG entry, customer-facing release notes at
+  `docs/release-notes/v2.0.7.md`, MODE A merge + tag + push, queue
+  `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Acrobat/PDF Expert/Foxit/Preview all ship ink.
+  Launch-blocker for v1.0.0.
+- **Notice-it PASS** — Draw toolbar button + `d` shortcut + Settings →
+  Drawings + palette group + OnboardingTour step #11.
+- **Tell-a-friend PASS** — single-key `d` + 220ms ink-trail-shimmer +
+  Apple-Pencil tilt in a free, offline reader is a true screenshot
+  moment.
+- **Pay-for-it PASS** — Adobe Comment tier (with Pencil) is $239/yr.
+
+**Codebase-discovery decisions baked in:**
+- `Annotation` Rust enum tagged-union confirmed at line 27-29 of
+  `src-tauri/src/pdf/annotations.rs`. Adding `Ink` is a pure variant
+  extension; `slab_append_annotations` Tauri command signature
+  unchanged.
+- `build_annotation_dict()` is a single match — new arm slots in next
+  to Highlight + Note.
+- `AnnotateLayer.svelte` mode union `"off" | "highlight" | "note"`
+  extends to `"draw"` (line 19).
+- pdfjs `eventBus.pagerendered` again the right hook for persisted-ink
+  overlay (same as v2.0.6 highlight overlay, ReaderPanel.svelte:677-688).
+- Vim-style single-letter `d` mirrors v2.0.6's `h` and existing
+  `src/lib/vim/keymap.ts` pattern.
+- Onboarding step math: 6 → 7 → 8 → 9 → 10 → **11** (v2.0.7).
+- i18n namespaces `annotations.draw.*` / `palette.draw.*` /
+  `settings.annotations.draw.*` / `onboarding.draw.*` all greenfield.
+
+**Scheduling note (critical, documented in plan):**
+**Do not start v2.0.7 Slice 1 until v2.0.6 ships and is tagged.**
+v2.0.7 touches every file v2.0.6 touches. Strict order:
+v2.0.2 → v2.0.3 → v2.0.4 → v2.0.5 → v2.0.6 → v2.0.7, each cut from
+`main` after the previous merges.
+
+**Next ticks (in order):**
+1. **v2.0.2 Slices 1-8** on `feature/v2.0.2-workshop-marketplace`.
+2. **v2.0.2 MODE A merge + tag + release**.
+3. **v2.0.3 Slices 1-6** on `feature/v2.0.3-beacon-settings`.
+4. **v2.0.3 MODE A merge + tag + release**.
+5. **v2.0.4 Slices 1-6** on `feature/v2.0.4-memory`.
+6. **v2.0.4 MODE A merge + tag + release**.
+7. **v2.0.5 Slices 1-6** on `feature/v2.0.5-bookmarks`.
+8. **v2.0.5 MODE A merge + tag + release**.
+9. **v2.0.6 Slices 1-6** on `feature/v2.0.6-margin`.
+10. **v2.0.6 MODE A merge + tag + release**.
+11. **v2.0.7 Slices 1-6** on `feature/v2.0.7-inkwell`. WOW = ink-trail-shimmer + single-key `d` (Slice 4).
+12. **v2.0.7 MODE A merge + tag + release**.
+
+**Open questions for Sanjay:**
+- Shape primitives (rect/ellipse/arrow) in v2.0.7 or defer to v2.0.8?
+  Plan defers (~250 LOC).
+- Apple-Pencil pressure default on? Plan says on.
+- Ink smoothing (Catmull-Rom)? Plan defers — RDP + SVG line-caps
+  already look smooth enough.
+- Layered drawing groups (multi-stroke "drawings")? Plan defers to
+  v2.0.8.
+- **Six-plan backlog now on disk** — ~7 weeks of execution ticks
+  front-loaded. At what point does Sanjay want the next tick to
+  switch from "planning" to "executing" (subagent against v2.0.2
+  Slice 0)?
 
 ---
 
