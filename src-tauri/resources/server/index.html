@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Slab Server — Self-Hosted PDF Toolkit</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --panel-2: #1b2128;
+    --border: #2a323c;
+    --fg: #e6edf3;
+    --fg-dim: #97a3b1;
+    --accent: #ff8c42;
+    --accent-2: #ffb074;
+    --ok: #4ade80;
+    --err: #f87171;
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 20% -10%, rgba(255, 140, 66, 0.12), transparent 60%),
+      radial-gradient(900px 500px at 110% 20%, rgba(255, 176, 116, 0.07), transparent 60%),
+      var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .shell { max-width: 1100px; margin: 0 auto; padding: 32px 28px 80px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 24px; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand .logo { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .brand h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .brand .tag { color: var(--fg-dim); font-size: 12px; margin-top: 1px; }
+  .badge { padding: 4px 10px; border-radius: 999px; background: rgba(74, 222, 128, 0.12); color: var(--ok); font-size: 12px; font-family: var(--mono); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .op {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+    cursor: pointer; transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+    display: flex; flex-direction: column; gap: 6px; text-align: left;
+  }
+  .op:hover { transform: translateY(-2px); border-color: var(--accent); background: var(--panel-2); }
+  .op .title { font-weight: 600; font-size: 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .op .title .verb { color: var(--accent); font-family: var(--mono); font-size: 11px; }
+  .op .desc { color: var(--fg-dim); font-size: 12.5px; }
+  .op .path { color: var(--fg-dim); font-family: var(--mono); font-size: 11.5px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-top: 20px; }
+  .panel h2 { margin: 0 0 14px 0; font-size: 16px; letter-spacing: -0.01em; }
+  .panel h2 small { color: var(--fg-dim); font-weight: normal; margin-left: 8px; font-size: 12px; font-family: var(--mono); }
+  label { display: block; font-size: 12px; color: var(--fg-dim); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  input[type="text"], input[type="password"], input[type="number"], select, textarea {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); font: inherit; font-family: var(--mono); font-size: 13px;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 28px 14px; text-align: center;
+    color: var(--fg-dim); transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .drop.drag { border-color: var(--accent); background: rgba(255, 140, 66, 0.08); color: var(--fg); }
+  .drop input[type="file"] { display: none; }
+  .files { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .file-pill { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
+  .file-pill .name { flex: 1; font-family: var(--mono); }
+  .file-pill .size { color: var(--fg-dim); font-family: var(--mono); }
+  .file-pill button { background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 18px; line-height: 1; }
+  .file-pill button:hover { color: var(--err); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #1a1208; border: none;
+    border-radius: 10px; padding: 11px 18px; font-weight: 700; cursor: pointer; font-size: 13.5px;
+    letter-spacing: 0.01em; transition: filter 0.12s ease, transform 0.12s ease;
+  }
+  button.primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  button.primary:disabled { filter: grayscale(0.5) brightness(0.6); cursor: not-allowed; transform: none; }
+  button.ghost { background: transparent; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; cursor: pointer; font-size: 13px; }
+  button.ghost:hover { color: var(--fg); border-color: var(--fg-dim); }
+  .out { margin-top: 16px; padding: 14px; border-radius: 10px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+  .out.ok { background: rgba(74, 222, 128, 0.08); border: 1px solid rgba(74, 222, 128, 0.25); color: #b2f5c8; }
+  .out.err { background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.25); color: #fca5a5; }
+  .out.info { background: var(--bg); border: 1px solid var(--border); color: var(--fg-dim); }
+  .links { margin-top: 28px; color: var(--fg-dim); font-size: 12.5px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .links a { color: var(--accent-2); text-decoration: none; border-bottom: 1px dotted rgba(255, 176, 116, 0.4); }
+  .links a:hover { color: var(--accent); border-color: var(--accent); }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--fg-dim); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hint { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .field-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="brand">
+      <div class="logo">🍞</div>
+      <div>
+        <h1>Slab Server</h1>
+        <div class="tag">Self-hosted PDF toolkit — same Rust core, headless</div>
+      </div>
+    </div>
+    <div class="badge" id="health">checking…</div>
+  </header>
+
+  <div class="panel">
+    <h2>Pick an operation <small id="op-count"></small></h2>
+    <div class="grid" id="ops"></div>
+  </div>
+
+  <div class="panel" id="form-panel" style="display:none;">
+    <h2 id="form-title">Operation</h2>
+    <div id="form-desc" class="hint" style="margin-bottom:14px;"></div>
+
+    <label>PDF file(s)</label>
+    <label class="drop" id="drop">
+      <input type="file" id="file-in" accept="application/pdf" multiple />
+      <div><strong>Drop PDFs here</strong> or <span style="color:var(--accent)">click to browse</span></div>
+      <div class="hint" style="margin-top:6px;">Files stay on this server. Nothing leaves the machine.</div>
+    </label>
+    <div class="files" id="files"></div>
+
+    <div id="dynamic-fields"></div>
+
+    <div class="row" style="margin-top: 18px;">
+      <button class="primary" id="run">Run operation</button>
+      <button class="ghost" id="reset">Reset</button>
+      <span id="status" class="hint"></span>
+    </div>
+
+    <div class="out info" id="output" style="display:none;"></div>
+  </div>
+
+  <div class="links">
+    <a href="/api/v1/ops" target="_blank">/api/v1/ops</a>
+    <a href="/healthz" target="_blank">/healthz</a>
+    <a href="https://github.com/Sanjays2402/slab" target="_blank">GitHub</a>
+    <a href="https://github.com/Sanjays2402/slab/blob/main/docs/server.md" target="_blank">API docs</a>
+    <span>·</span>
+    <span>v<span id="ver">?</span></span>
+  </div>
+</div>
+
+<script>
+const FIELDS = {
+  "merge":          [],
+  "split-every":    [{name:"chunk_size", label:"Chunk size (pages)", type:"number", value:1, min:1}],
+  "split-ranges":   [{name:"ranges", label:"Ranges (e.g. 1-3,5,7-9)", type:"text", placeholder:"1-3,5,7-9"}],
+  "rotate":         [{name:"pages", label:"Pages (csv)", type:"text", placeholder:"1,2,3"},
+                     {name:"degrees", label:"Degrees", type:"select", options:[90, 180, 270, -90], value:90}],
+  "delete-pages":   [{name:"pages", label:"Pages to delete (csv)", type:"text", placeholder:"2,4"}],
+  "reorder-pages":  [{name:"order", label:"New order (csv, every page once)", type:"text", placeholder:"3,1,2,4"}],
+  "compress":       [],
+  "encrypt":        [{name:"password", label:"Password", type:"password"}],
+  "decrypt":        [{name:"password", label:"Password", type:"password"}],
+  "watermark":      [{name:"text", label:"Watermark text", type:"text", placeholder:"CONFIDENTIAL"},
+                     {name:"opacity", label:"Opacity (0.0–1.0)", type:"number", value:0.3, min:0, max:1, step:0.05}],
+  "extract-text":   [],
+  "info":           [],
+  "page-count":     [],
+  "strip-metadata": [],
+};
+
+const MULTI_FILE_OPS = new Set(["merge"]);
+
+let currentOp = null;
+let files = [];
+
+async function loadOps() {
+  try {
+    const r = await fetch("/api/v1/ops");
+    const data = await r.json();
+    document.getElementById("ver").textContent = data.version;
+    document.getElementById("op-count").textContent = `(${data.operations.length} available)`;
+    const grid = document.getElementById("ops");
+    grid.innerHTML = data.operations.map(op => `
+      <button class="op" data-name="${op.name}">
+        <div class="title"><span>${op.name}</span><span class="verb">${op.method}</span></div>
+        <div class="desc">${op.description}</div>
+        <div class="path">${op.path}</div>
+      </button>
+    `).join("");
+    grid.querySelectorAll(".op").forEach(el => el.addEventListener("click", () => selectOp(el.dataset.name)));
+  } catch (e) {
+    document.getElementById("ops").innerHTML = `<div class="out err">Failed to load operations: ${e.message}</div>`;
+  }
+}
+
+async function checkHealth() {
+  try {
+    const r = await fetch("/healthz");
+    const data = await r.json();
+    const b = document.getElementById("health");
+    b.textContent = `${data.service} v${data.version} ✓`;
+    b.style.background = "rgba(74, 222, 128, 0.12)";
+    b.style.color = "var(--ok)";
+  } catch {
+    const b = document.getElementById("health");
+    b.textContent = "offline";
+    b.style.background = "rgba(248, 113, 113, 0.12)";
+    b.style.color = "var(--err)";
+  }
+}
+
+function selectOp(name) {
+  currentOp = name;
+  files = [];
+  const op = (FIELDS[name] || []);
+  document.getElementById("form-panel").style.display = "block";
+  document.getElementById("form-title").textContent = name;
+  document.getElementById("form-desc").textContent =
+    MULTI_FILE_OPS.has(name)
+      ? "Drag in 2 or more PDFs in the order you want them merged."
+      : "Drop in a single PDF (drag-reorder is for multi-file ops).";
+  const fileInput = document.getElementById("file-in");
+  fileInput.multiple = MULTI_FILE_OPS.has(name);
+  const dyn = document.getElementById("dynamic-fields");
+  if (op.length === 0) {
+    dyn.innerHTML = "";
+  } else {
+    const wrap = op.length > 1 ? "field-grid" : "";
+    dyn.innerHTML = `<div class="${wrap}">` + op.map(f => {
+      const id = `f-${f.name}`;
+      if (f.type === "select") {
+        const opts = f.options.map(o => `<option value="${o}"${o == f.value ? " selected" : ""}>${o}°</option>`).join("");
+        return `<div><label>${f.label}</label><select id="${id}" name="${f.name}">${opts}</select></div>`;
+      }
+      const attrs = [
+        `id="${id}"`, `name="${f.name}"`, `type="${f.type}"`,
+        f.value !== undefined ? `value="${f.value}"` : "",
+        f.placeholder ? `placeholder="${f.placeholder}"` : "",
+        f.min !== undefined ? `min="${f.min}"` : "",
+        f.max !== undefined ? `max="${f.max}"` : "",
+        f.step !== undefined ? `step="${f.step}"` : "",
+      ].join(" ");
+      return `<div><label>${f.label}</label><input ${attrs} /></div>`;
+    }).join("") + `</div>`;
+  }
+  document.getElementById("files").innerHTML = "";
+  document.getElementById("output").style.display = "none";
+  document.getElementById("status").textContent = "";
+  window.scrollTo({top: document.getElementById("form-panel").offsetTop - 20, behavior: "smooth"});
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function renderFiles() {
+  const wrap = document.getElementById("files");
+  if (files.length === 0) { wrap.innerHTML = ""; return; }
+  wrap.innerHTML = files.map((f, i) => `
+    <div class="file-pill">
+      <span class="name">${f.name}</span>
+      <span class="size">${fmtBytes(f.size)}</span>
+      <button data-i="${i}" title="Remove">×</button>
+    </div>
+  `).join("");
+  wrap.querySelectorAll("button").forEach(b => b.addEventListener("click", e => {
+    const i = +e.currentTarget.dataset.i;
+    files.splice(i, 1);
+    renderFiles();
+  }));
+}
+
+function bindDrop() {
+  const drop = document.getElementById("drop");
+  const input = document.getElementById("file-in");
+  input.addEventListener("change", () => {
+    const incoming = Array.from(input.files || []);
+    if (input.multiple) files.push(...incoming); else files = incoming;
+    renderFiles();
+    input.value = "";
+  });
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+  drop.addEventListener("drop", e => {
+    const incoming = Array.from(e.dataTransfer.files || []).filter(f => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+    if (incoming.length === 0) return;
+    if (input.multiple) files.push(...incoming); else files = [incoming[0]];
+    renderFiles();
+  });
+}
+
+async function runOp() {
+  if (!currentOp) return;
+  if (files.length === 0) {
+    showOutput("err", "Add a PDF first.");
+    return;
+  }
+  if (currentOp === "merge" && files.length < 2) {
+    showOutput("err", "Merge needs at least 2 PDFs.");
+    return;
+  }
+
+  const fd = new FormData();
+  for (const f of files) fd.append("file", f, f.name);
+  for (const f of (FIELDS[currentOp] || [])) {
+    const el = document.getElementById(`f-${f.name}`);
+    if (el && el.value !== "") fd.append(f.name, el.value);
+  }
+
+  const runBtn = document.getElementById("run");
+  const status = document.getElementById("status");
+  runBtn.disabled = true;
+  status.innerHTML = `<span class="spinner"></span>Running ${currentOp}…`;
+  document.getElementById("output").style.display = "none";
+
+  const started = performance.now();
+  try {
+    const r = await fetch(`/api/v1/${currentOp}`, { method: "POST", body: fd });
+    const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { const j = await r.json(); msg = j.error || msg; } catch {}
+      showOutput("err", `Failed in ${elapsed}s — ${msg}`);
+      return;
+    }
+    const ct = r.headers.get("content-type") || "";
+    if (ct.startsWith("application/json")) {
+      const data = await r.json();
+      showOutput("ok", `Done in ${elapsed}s.\n\n` + JSON.stringify(data, null, 2));
+    } else {
+      const blob = await r.blob();
+      const cd = r.headers.get("content-disposition") || "";
+      const m = cd.match(/filename="([^"]+)"/);
+      const fname = m ? m[1] : `slab-${currentOp}-output`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fname; a.click();
+      URL.revokeObjectURL(url);
+      const extra = r.headers.get("x-slab-bytes-before") && r.headers.get("x-slab-bytes-after")
+        ? `\nCompressed: ${fmtBytes(+r.headers.get("x-slab-bytes-before"))} → ${fmtBytes(+r.headers.get("x-slab-bytes-after"))}`
+        : "";
+      showOutput("ok", `Done in ${elapsed}s. Downloaded ${fname} (${fmtBytes(blob.size)}).${extra}`);
+    }
+  } catch (e) {
+    showOutput("err", `Request failed: ${e.message}`);
+  } finally {
+    runBtn.disabled = false;
+    status.textContent = "";
+  }
+}
+
+function showOutput(kind, msg) {
+  const o = document.getElementById("output");
+  o.className = `out ${kind}`;
+  o.textContent = msg;
+  o.style.display = "block";
+}
+
+document.getElementById("reset").addEventListener("click", () => {
+  files = []; renderFiles();
+  document.getElementById("output").style.display = "none";
+  document.getElementById("status").textContent = "";
+});
+document.getElementById("run").addEventListener("click", runOp);
+
+loadOps();
+checkHealth();
+bindDrop();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>

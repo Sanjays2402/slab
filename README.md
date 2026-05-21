@@ -1,7 +1,7 @@
 # Slab 🍰
 
 > **The PDF toolkit your files never leave.**
-> A fast, free, fully offline PDF app for macOS, Windows, and Linux.
+> A fast, free, fully offline PDF app for macOS, Windows, and Linux — plus a self-hostable Docker server for headless and homelab use.
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
@@ -19,6 +19,11 @@ Slab is a desktop PDF app that runs **entirely on your machine.** No accounts. N
 - **Honest.** Free forever. GPL‑3.0. No "Pro tier." No telemetry. No upsells.
 - **Beautiful.** A dark‑first interface with themeable accent colors and three density modes.
 - **Extensible.** A declarative plugin system (Foundry) lets you add themes, locales, commands, AI providers, and PDF actions without writing Rust. A typed TypeScript SDK (Workshop, v2.0+) ships three example plugins right in the binary — fully working, sandboxed, source-readable — so you can poke at the plugin system the moment you open the app.
+- **Self-hostable.** v2.1.0 adds **Slab Server** — the same Rust PDF core wrapped in an HTTP API + drag-drop web UI, distributed as a 80MB Docker image (`ghcr.io/sanjays2402/slab`). Run it on a NAS, in Compose, behind a reverse proxy. See [docs/server.md](docs/server.md).
+
+## Run it as a server
+
+`docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest` — open http://localhost:8080, drop a PDF on the page. Same Rust core as the desktop app, headless and scriptable. Full HTTP API + Compose example: [docs/server.md](docs/server.md).
 
 ## What Slab does
 
