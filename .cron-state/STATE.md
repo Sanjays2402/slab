@@ -5,10 +5,11 @@
 
 ---
 
-## STATUS: 📋 Eleven release plans on disk — pipeline goes through v2.0.12; v2.0.2 SHIPPED to main
+## STATUS: 📋 Twelve release plans on disk — pipeline goes through v2.0.13; v2.0.2 SHIPPED to main
 
-**Main HEAD**: `75bf6c0` (v2.0.11 plan promotion). Will advance by 2 commits this tick (v2.0.12 plan + STATE chore).
-**v2.0.12 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.12-sign.md` (~34 KB, 6 slices + pre-flight, ~2400 LOC, 8 commits, 58 new tests). WOW = single-key `s` drop + stamp palette + **320ms rubber-stamp animation (scale-1.5→1.0 + rotate-3° + 12 ink-spatter droplets, cubic-bezier `(0.34, 1.56, 0.64, 1)`)** (Slice 4). Codename "Sign" ✒️ — **signatures + 14 preset stamps**, the single biggest paid-tier gap remaining. Adobe Sign $180/yr, DocuSign Personal $120/yr — v2.0.12 ships the visual half free, with v2.1.0 "Notary" tracked in open-questions for cryptographic PKCS#7 signing. Reuses v2.0.6 sidecar JSON + v2.0.7 ink capture (extracted to shared `inkCapture.ts`) + v2.0.10 edit mode + v2.0.11 rotation/multi-select. **Must ship AFTER v2.0.11 — extends sidecar v2 + rotation field.**
+**Main HEAD**: `c8e15ed` (v2.0.12 plan promotion). Will advance by 2 commits this tick (v2.0.13 plan + STATE chore).
+**v2.0.13 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.13-vault.md` (~36 KB, 940 lines, 6 slices + pre-flight + final tick, ~1890 LOC, 8 commits, 62 new tests). WOW = **Vault-Door wipe animation (380ms gold→black 8-step CSS @keyframes + 40ms stagger) + X-Ray reveal hover ghost + single-key `r` Quick-Redact reticle** (Slice 4). Codename "Vault" 🔒 — **true byte-level content-stream redaction**: glyphs are physically deleted from the PDF, not painted over. Closes the single biggest paid-tier gap remaining after v2.0.12 — Adobe Acrobat Pro $239/yr's flagship feature. The warning sticker in `RedactPanel.svelte` ("true content-stream redaction is on the roadmap") finally comes off. PDFs get *physically smaller* when redacted — the demo line. Pure-Rust tokenizer + surgery + image XObject pruning + annotation scrub + metadata strip. Cryptographic redaction certification deferred to v2.1.0 "Notary" (pairs with PKCS#7 signing). **Must ship AFTER v2.0.12 — touches every file v2.0.6→v2.0.12 touched, disjoint i18n namespaces (`redact.vault.*`, `palette.vault.*`, `settings.privacy.vault.*`, `onboarding.vault.*`) keep merges clean.**
+**v2.0.12 PLAN**: `docs/plans/2026-05-21-v2.0.12-sign.md` (~34 KB, 6 slices + pre-flight, ~2400 LOC, 8 commits, 58 new tests). WOW = single-key `s` drop + stamp palette + **320ms rubber-stamp animation (scale-1.5→1.0 + rotate-3° + 12 ink-spatter droplets, cubic-bezier `(0.34, 1.56, 0.64, 1)`)** (Slice 4). Codename "Sign" ✒️ — **signatures + 14 preset stamps**, the single biggest paid-tier gap remaining. Adobe Sign $180/yr, DocuSign Personal $120/yr — v2.0.12 ships the visual half free, with v2.1.0 "Notary" tracked in open-questions for cryptographic PKCS#7 signing. Reuses v2.0.6 sidecar JSON + v2.0.7 ink capture (extracted to shared `inkCapture.ts`) + v2.0.10 edit mode + v2.0.11 rotation/multi-select. **Must ship AFTER v2.0.11 — extends sidecar v2 + rotation field.**
 **v2.0.11 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.11-anvil.md` (~47 KB, 6 slices + pre-flight, ~2140 LOC, 8 commits, 52 new tests). WOW = Figma-style alignment guides + animated distribute (240ms cubic-bezier) + rotate-handle with live degree readout (Slice 4). Codename "Anvil" ⚒️ — **multi-select** (marquee + Shift-click + Mod+A) + **rotate** (drag handle, 15° snap) + **align** (6 align ops + 2 distribute ops, all animated, one Cmd+Z undoes the lot). **Redeems v2.0.10's two open-question deferrals (group/lasso multi-select + rotate handle) in a single release**, plus introduces alignment guides Acrobat/PDF Expert/Foxit/Bluebeam don't ship. Breaking sidecar v1→v2 migration adds `rotation: number` field to every annotation kind. **Must ship AFTER v2.0.10 — extends every file v2.0.10 touches.**
 **v2.0.10 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.10-lathe.md` (~51 KB, 6 slices + pre-flight, ~2200 LOC, 8 commits, 66 new tests). WOW = keyboard editor (j/k cycle + Delete dissolve + Cmd+Z restore animation) + Figma-style snap-guides on drag + cross-document copy-paste (Slice 4). Codename "Lathe" 🔧 — annotation edit mode: click to select, drag to move, drag handles to resize, undo/redo via command-stack history, copy-paste annotations between docs. **Redeems FIVE deferred items stacked across v2.0.6–v2.0.9 open-questions blocks.** After v2.0.10 ships, Slab reaches Acrobat-Comment-workspace parity + wins on snap-guides, keyboard-first, sidecar JSON — the v1.0.0 launch narrative. **Must ship AFTER v2.0.9 — touches every file v2.0.6–v2.0.9 touch.**
 **Previous (v2.0.9) PLAN**: `docs/plans/2026-05-21-v2.0.9-typeset.md` (~46 KB, 6 slices + pre-flight, ~1920 LOC, 8 commits). WOW = single-key `t` + smart font auto-fit on overflow + accent-tinted blinking caret + 220ms type-in fade-in (Slice 4). Codename "Typeset" 📝 — FreeText / typewriter annotations, the **fifth and final annotation primitive** completing the Acrobat-tier markup toolkit (highlight + note + ink + 4 shapes + freetext). Redeems v2.0.8's open-questions defer ("free-floating text box"). Reuses v2.0.6 sidecar JSON + v2.0.7 DrawLayer + v2.0.8 tagged-union Rust enum. Rust emits ISO 32000-1 §12.5.6.6 `/FreeText` dicts. IME-safe via compositionstart/end gating. **Must ship AFTER v2.0.8 — touches every file v2.0.8 touches.** After v2.0.9 the annotation primitive family is feature-complete vs every paid competitor; v2.0.10 ("Lathe") can pivot to edit-mode polish (selection handles, drag-to-move, undo/redo).
@@ -27,6 +28,47 @@
 **v2.0.7 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines, 6 slices + pre-flight, ~1080 LOC, 8 commits). WOW = single-key `d` drawing mode + 220ms ink-trail-shimmer SVG sweep on stroke commit (Slice 4). Codename "Inkwell" 🖊️ — adds freehand ink/drawing as the third annotation primitive, reusing v2.0.6's sidecar JSON store via a new `kind: "ink"` discriminator. Rust gets a third `Annotation::Ink` enum variant emitting PDF spec §12.5.6.13 `/Subtype /Ink` w/ `/InkList`. **Must ship AFTER v2.0.6 — touches every file v2.0.6 touches (annotations.ts, AnnotateLayer.svelte, ReaderPanel.svelte, CommandPalette.svelte, OnboardingTour.svelte, SettingsPanel.svelte, i18n/en.json, src-tauri/src/pdf/annotations.rs, src-tauri/src/keymap/action.rs). Disjoint namespaces (`annotations.draw.*` / `palette.draw.*` / `settings.annotations.draw.*` / `onboarding.draw.*`) + appended-at-end keys keep merge clean; strict order is the insurance policy.**
 **v2.0.6 PLAN**: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-21 02:02 PT — MODE C writing-plans skill — v2.0.13 plan promoted 🔒
+
+Twelfth consecutive writing-plans tick. This tick: **v2.0.13 "Vault" 🔒** —
+true byte-level content-stream redaction. Glyphs are physically deleted from
+the PDF, not painted over. Closes the single biggest paid-tier gap remaining
+after v2.0.12 — Adobe Acrobat Pro $239/yr's flagship feature.
+
+**Plan**: `docs/plans/2026-05-21-v2.0.13-vault.md` (~36 KB, 940 lines, 6
+slices + pre-flight + final tick, ~1890 LOC, 8 commits, 62 new tests). WOW
+= **Vault-Door wipe animation** (380ms gold→black 8-step CSS @keyframes +
+40ms stagger across rects, cubic-bezier `(0.22, 1.0, 0.36, 1.0)`) +
+**X-Ray reveal hover** (translucent ghost of removed glyphs, local-only,
+never persisted, 600ms dwell, Shift to pin) + **single-key `r`** Quick-
+Redact reticle (Slice 4). Pure-Rust tokenizer + glyph-splice surgery +
+image XObject pruning + annotation scrub + metadata strip. The warning
+sticker in `RedactPanel.svelte` ("true content-stream redaction is on the
+roadmap") finally comes off. Demo line: PDFs get *physically smaller* when
+redacted.
+
+**Buy-Button 4/4 PASS**: Pay-for-it (replaces ~$240/yr/seat for legal/medical/
+HR teams), Pick-us (only paid-tier feature parity that matters at v1.0.0),
+Notice-it (Redact + AutoRedact + BeaconPii panels + palette + keymap +
+Settings → Privacy + Onboarding step #17), Tell-a-friend (Vault-Door + X-Ray
+are screenshot-grade).
+
+**Cryptographic redaction certification** explicitly deferred to v2.1.0
+"Notary" 🪶 — natural pairing with v2.0.12 sigs (PKCS#7). v2.0.13 ships the
+surgical half free; v2.1.0 ships the legally-binding cert as the $49 Pro-tier
+hook.
+
+**Commits this tick (2 on main)**:
+- `<HASH>` docs(plans): v2.0.13 "Vault" implementation plan 🔒
+- `<HASH>` chore(cron): STATE.md + session log — v2.0.13 plan promoted
+
+Session log: `.cron-state/sessions/2026-05-21-0202.md`.
+
+**Scheduling**: do not start v2.0.13 Slice 1 until v2.0.12 ships + tags.
+Strict order: v2.0.2 → … → v2.0.12 → v2.0.13 → v2.1.0.
 
 ---
 
