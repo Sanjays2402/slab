@@ -163,8 +163,8 @@ fn ensure_pdf(pdfs: &[UploadedPdf]) -> Result<&UploadedPdf, ApiError> {
 }
 
 fn write_temp(pdf: &UploadedPdf) -> Result<(tempfile::TempDir, PathBuf), ApiError> {
-    let dir = tempfile::tempdir()
-        .map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
+    let dir =
+        tempfile::tempdir().map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
     let in_path = dir.path().join(&pdf.filename);
     std::fs::write(&in_path, &pdf.bytes)
         .map_err(|e| ApiError::internal("temp", format!("write upload: {e}")))?;
@@ -180,8 +180,8 @@ fn pdf_filename(original: &str, suffix: &str) -> String {
 }
 
 fn pdf_response(path: &Path, download_name: &str) -> Result<Response, ApiError> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| ApiError::internal("io", format!("read result: {e}")))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| ApiError::internal("io", format!("read result: {e}")))?;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -200,7 +200,10 @@ fn pdf_response(path: &Path, download_name: &str) -> Result<Response, ApiError> 
 // ───────────────────────────────────────────────────────────────────
 
 async fn index() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], INDEX_HTML)
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        INDEX_HTML,
+    )
 }
 
 async fn health() -> impl IntoResponse {
@@ -337,7 +340,10 @@ fn parse_csv_u32(s: &str) -> Result<Vec<u32>, ApiError> {
     s.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|t| t.parse::<u32>().map_err(|e| ApiError::bad_request(format!("invalid number '{t}': {e}"))))
+        .map(|t| {
+            t.parse::<u32>()
+                .map_err(|e| ApiError::bad_request(format!("invalid number '{t}': {e}")))
+        })
         .collect()
 }
 
@@ -348,8 +354,8 @@ async fn h_merge(mp: Multipart) -> Result<Response, ApiError> {
             "merge requires at least 2 'file' uploads",
         ));
     }
-    let dir = tempfile::tempdir()
-        .map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
+    let dir =
+        tempfile::tempdir().map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
     let mut paths = Vec::with_capacity(up.pdfs.len());
     for (i, p) in up.pdfs.iter().enumerate() {
         let dest = dir.path().join(format!("in-{i:03}-{}", p.filename));
@@ -440,13 +446,10 @@ fn zip_files(files: &[PathBuf], download_name: &str) -> Result<Response, ApiErro
     let mut buf = Cursor::new(Vec::<u8>::new());
     {
         let mut zw = zip::ZipWriter::new(&mut buf);
-        let opts: zip::write::SimpleFileOptions =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
         for f in files {
-            let name = f
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("part.pdf");
+            let name = f.file_name().and_then(|s| s.to_str()).unwrap_or("part.pdf");
             zw.start_file(name, opts)
                 .map_err(|e| ApiError::internal("zip", format!("start_file: {e}")))?;
             let bytes = std::fs::read(f)
@@ -484,8 +487,9 @@ async fn h_rotate(mp: Multipart) -> Result<Response, ApiError> {
         .get("degrees")
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| ApiError::bad_request("missing or invalid 'degrees' field"))?;
-    let rot = pdf::pages::Rotation::from_int(degrees)
-        .map_err(|e| ApiError::bad_request(format!("degrees must be 90, 180, 270, or -90: {e:?}")))?;
+    let rot = pdf::pages::Rotation::from_int(degrees).map_err(|e| {
+        ApiError::bad_request(format!("degrees must be 90, 180, 270, or -90: {e:?}"))
+    })?;
     let (dir, in_path) = write_temp(pdf_in)?;
     let out = dir.path().join("out.pdf");
     pdf::pages::rotate_pages(&in_path, &pages, rot, &out)
@@ -551,8 +555,8 @@ async fn h_compress(mp: Multipart) -> Result<Response, ApiError> {
         "x-slab-bytes-after",
         HeaderValue::from_str(&report.new_bytes.to_string()).unwrap(),
     );
-    let bytes = std::fs::read(&out)
-        .map_err(|e| ApiError::internal("io", format!("read result: {e}")))?;
+    let bytes =
+        std::fs::read(&out).map_err(|e| ApiError::internal("io", format!("read result: {e}")))?;
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
 
@@ -639,8 +643,8 @@ async fn h_info(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
     let pdf_in = ensure_pdf(&up.pdfs)?;
     let (_dir, in_path) = write_temp(pdf_in)?;
-    let info = pdf::info::info(&in_path)
-        .map_err(|e| ApiError::internal("info", format!("{e:?}")))?;
+    let info =
+        pdf::info::info(&in_path).map_err(|e| ApiError::internal("info", format!("{e:?}")))?;
     Ok(Json(info).into_response())
 }
 
