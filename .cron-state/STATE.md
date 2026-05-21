@@ -5,10 +5,11 @@
 
 ---
 
-## STATUS: 📋 Eight release plans on disk — pipeline goes through v2.0.9; v2.0.2 SHIPPED to main
+## STATUS: 📋 Nine release plans on disk — pipeline goes through v2.0.10; v2.0.2 SHIPPED to main
 
-**Main HEAD**: `0728976` (v2.0.8 plan promotion). Will advance by 2 commits this tick (v2.0.9 plan + STATE chore).
-**v2.0.9 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.9-typeset.md` (~46 KB, 6 slices + pre-flight, ~1920 LOC, 8 commits). WOW = single-key `t` + smart font auto-fit on overflow + accent-tinted blinking caret + 220ms type-in fade-in (Slice 4). Codename "Typeset" 📝 — FreeText / typewriter annotations, the **fifth and final annotation primitive** completing the Acrobat-tier markup toolkit (highlight + note + ink + 4 shapes + freetext). Redeems v2.0.8's open-questions defer ("free-floating text box"). Reuses v2.0.6 sidecar JSON + v2.0.7 DrawLayer + v2.0.8 tagged-union Rust enum. Rust emits ISO 32000-1 §12.5.6.6 `/FreeText` dicts. IME-safe via compositionstart/end gating. **Must ship AFTER v2.0.8 — touches every file v2.0.8 touches.** After v2.0.9 the annotation primitive family is feature-complete vs every paid competitor; v2.0.10 ("Lathe") can pivot to edit-mode polish (selection handles, drag-to-move, undo/redo).
+**Main HEAD**: `37ba015` (v2.0.9 plan promotion). Will advance by 2 commits this tick (v2.0.10 plan + STATE chore).
+**v2.0.10 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.10-lathe.md` (~51 KB, 6 slices + pre-flight, ~2200 LOC, 8 commits, 66 new tests). WOW = keyboard editor (j/k cycle + Delete dissolve + Cmd+Z restore animation) + Figma-style snap-guides on drag + cross-document copy-paste (Slice 4). Codename "Lathe" 🔧 — annotation edit mode: click to select, drag to move, drag handles to resize, undo/redo via command-stack history, copy-paste annotations between docs. **Redeems FIVE deferred items stacked across v2.0.6–v2.0.9 open-questions blocks.** After v2.0.10 ships, Slab reaches Acrobat-Comment-workspace parity + wins on snap-guides, keyboard-first, sidecar JSON — the v1.0.0 launch narrative. **Must ship AFTER v2.0.9 — touches every file v2.0.6–v2.0.9 touch.**
+**Previous (v2.0.9) PLAN**: `docs/plans/2026-05-21-v2.0.9-typeset.md` (~46 KB, 6 slices + pre-flight, ~1920 LOC, 8 commits). WOW = single-key `t` + smart font auto-fit on overflow + accent-tinted blinking caret + 220ms type-in fade-in (Slice 4). Codename "Typeset" 📝 — FreeText / typewriter annotations, the **fifth and final annotation primitive** completing the Acrobat-tier markup toolkit (highlight + note + ink + 4 shapes + freetext). Redeems v2.0.8's open-questions defer ("free-floating text box"). Reuses v2.0.6 sidecar JSON + v2.0.7 DrawLayer + v2.0.8 tagged-union Rust enum. Rust emits ISO 32000-1 §12.5.6.6 `/FreeText` dicts. IME-safe via compositionstart/end gating. **Must ship AFTER v2.0.8 — touches every file v2.0.8 touches.** After v2.0.9 the annotation primitive family is feature-complete vs every paid competitor; v2.0.10 ("Lathe") can pivot to edit-mode polish (selection handles, drag-to-move, undo/redo).
 **Previous (v2.0.8) PLAN**: `docs/plans/2026-05-20-v2.0.8-compose.md` (~41 KB, 6 slices + pre-flight, ~1880 LOC, 8 commits). WOW = 15° rotation-snap dial + 220ms shape-pop animation on commit (Slice 4). Codename "Compose" 🔷 — adds four shape primitives (rect/ellipse/arrow/line). Will advance by 2 commits this tick (v2.0.8 plan + STATE chore).
 **v2.0.2 STATUS**: 🚀 **SHIPPED TO MAIN** — commit `168e638`, tag `v2.0.2` already pushed. Sanjay merged the work directly (no MODE A from cron — humans-first wins).
 **v2.0.8 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.8-compose.md` (~41 KB, 6 slices + pre-flight, ~1880 LOC, 8 commits). WOW = 15° rotation-snap dial + 220ms shape-pop animation on commit (Slice 4). Codename "Compose" 🔷 — adds four shape primitives (rect/ellipse/arrow/line) as the fourth annotation family, redeeming v2.0.7's explicit defer. Reuses v2.0.7 DrawLayer + v2.0.6 sidecar JSON + tagged-union Rust enum. Three-tier rotation snap (no-mod free / Shift 15° fine w/ dial / Cmd 45° axis). **Must ship AFTER v2.0.7 — touches every file v2.0.7 touches.**
@@ -24,6 +25,119 @@
 **v2.0.7 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines, 6 slices + pre-flight, ~1080 LOC, 8 commits). WOW = single-key `d` drawing mode + 220ms ink-trail-shimmer SVG sweep on stroke commit (Slice 4). Codename "Inkwell" 🖊️ — adds freehand ink/drawing as the third annotation primitive, reusing v2.0.6's sidecar JSON store via a new `kind: "ink"` discriminator. Rust gets a third `Annotation::Ink` enum variant emitting PDF spec §12.5.6.13 `/Subtype /Ink` w/ `/InkList`. **Must ship AFTER v2.0.6 — touches every file v2.0.6 touches (annotations.ts, AnnotateLayer.svelte, ReaderPanel.svelte, CommandPalette.svelte, OnboardingTour.svelte, SettingsPanel.svelte, i18n/en.json, src-tauri/src/pdf/annotations.rs, src-tauri/src/keymap/action.rs). Disjoint namespaces (`annotations.draw.*` / `palette.draw.*` / `settings.annotations.draw.*` / `onboarding.draw.*`) + appended-at-end keys keep merge clean; strict order is the insurance policy.**
 **v2.0.6 PLAN**: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-21 00:42 PT — MODE C writing-plans skill — v2.0.10 plan promoted 🔧
+
+User invoked the `writing-plans` skill an **eighth** consecutive tick. This
+tick: **v2.0.10 "Lathe" 🔧** — annotation edit mode (selection, drag,
+resize, undo/redo, copy-paste). Redeems FIVE deferred items stacked across
+v2.0.6–v2.0.9 open-questions blocks in a single release.
+
+**Why v2.0.10 next?**
+1. STATE.md line 11 already pre-claimed the codename "Lathe" for the
+   release after v2.0.9. Plan redeems that pledge.
+2. After v2.0.9 ships, Slab has 5 annotation primitives but ZERO
+   editability. That's a launch-blocker for any reviewer who tries the
+   markup toolkit for >30 seconds.
+3. Buy-Button 4/4 PASS: Acrobat / PDF Expert / Foxit / Drawboard all ship
+   select+move+resize+undo as table-stakes.
+4. Wow is triple-stacked: Figma-style snap-guides + 220ms dissolve/
+   restore animation + cross-document copy-paste. None of the paid
+   competitors ship snap-guides on annotation move.
+
+**Commits this tick (2 on main):**
+- `<HASH>` docs(plans): v2.0.10 "Lathe" implementation plan 🔧
+- `<HASH>` chore(cron): STATE.md + session log — v2.0.10 plan promoted
+- Plan file: `docs/plans/2026-05-21-v2.0.10-lathe.md` (~51 KB).
+
+**Plan structure — 6 slices + pre-flight, ~2200 LOC, 8 commits, 66 new tests:**
+- **Slice 0** (pre-flight): 9 verification checks — v2.0.9 tag exists,
+  all 8 annotation kinds present in TS + Rust, annotations.ts exposes
+  update/remove helpers, edit i18n namespace unclaimed, 8 new ActionId
+  variants free, no existing history.ts module.
+- **Slice 1**: pure-TS `selection.ts` + `history.ts` (~380 LOC + 320 LOC
+  tests, 23 vitest cases). Per-document command-stack undo at 200-deep
+  cap, branch-rewrite semantics, reentrancy-safe.
+- **Slice 2**: `SelectionLayer.svelte` w/ 8-handle marching-ants frame
+  (~440 LOC + tests). SVG `stroke-dashoffset` animation, respects
+  `prefers-reduced-motion`. Single ring for point annotations (notes),
+  2 endpoint handles for lines/arrows.
+- **Slice 3**: drag-to-move + drag-to-resize w/ snap guides (~600 LOC +
+  12 geometry tests). Live preview via CSS `transform` (zero pdfjs
+  re-renders mid-drag). Snap-to-edge at 4px threshold.
+- **Slice 4 ⭐ WOW**: keyboard editor (~430 LOC). 8 new ActionId variants
+  — j/k cycle, Delete dissolve (220ms scale+fade), Cmd+Z restore,
+  Cmd+C/V cross-document copy-paste w/ custom MIME
+  `application/x-slab-annot-v1+json`. Mod+D collision with v2.0.5
+  bookmark resolved via context guard.
+- **Slice 5**: Settings → Annotations → Edit subsection (6 knobs) +
+  palette "Annotations · Edit" group (8 entries w/ peek-undo labels) +
+  22 new i18n keys all under disjoint namespaces.
+- **Slice 6**: OnboardingTour step #14, version bumps (2.0.9 → 2.0.10
+  in three files), CHANGELOG entry, customer-facing release notes at
+  `docs/release-notes/v2.0.10.md`, MODE A merge + tag + push, queue
+  `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level: 4/4 PASS** — Pick-us (table-
+stakes editability), Notice-it (handles + dissolve + cycle), Tell-a-
+friend (Figma-style snap-guides + keyboard-first + cross-doc paste),
+Pay-for-it (Acrobat $239/yr partly justified by editable markup).
+
+**Codebase-discovery decisions baked in:**
+- Selection store is in-memory only — matches every editor; not
+  persisted across opens.
+- History is per-path command-stack (do/undo pairs), not snapshot diff
+  — O(1) per mutation regardless of doc size.
+- Drag preview via CSS `transform` avoids pdfjs canvas re-rasterization.
+- Clipboard custom MIME w/ plain-text fallback handles Linux/Wayland.
+- ESC during drag cancels, restores transform identity, no
+  `history.apply`.
+- Cross-document paste assigns a new ID + drops onto current page.
+- Mod+D collision w/ v2.0.5 Bookmark resolved by context guard
+  (selection!=null → AnnotDuplicate; else → BookmarksToggle).
+
+**Comparison table baked in** vs Adobe / PDF Expert / Foxit on 12 markup
+capabilities. After v2.0.10 lands, Slab wins on snap-guides, keyboard-
+first editing, sidecar JSON, and free/offline/no-telemetry — that's
+the **v1.0.0 launch narrative**.
+
+**Scheduling note (critical, documented in plan):**
+Do not start v2.0.10 Slice 1 until v2.0.9 ships and is tagged. Strict
+order: v2.0.2 → v2.0.3 → v2.0.4 → v2.0.5 → v2.0.6 → v2.0.7 → v2.0.8 →
+v2.0.9 → v2.0.10.
+
+**Open questions:**
+- Group/lasso multi-select → v2.0.11
+- Rotate handle → v2.0.11 (needs `rotation` field on ShapeAnnotation —
+  breaking sidecar change)
+- Cross-page drag → deferred (use copy-paste instead)
+- Touch gestures (pinch-resize) → deferred until Tauri mobile lands
+- **Nine-plan backlog now on disk** — ~9 weeks of execution ticks
+  front-loaded. After v2.0.10 the cron can pivot from "annotation
+  primitives" to other v1.0.0 gaps (Library, OCR, visual diff,
+  presenter mode, command-palette polish).
+
+**Next ticks (in order):**
+1. ~~v2.0.2~~ — **SHIPPED by Sanjay directly** (commit `168e638`).
+2. **v2.0.3 Slices 1-6** on `feature/v2.0.3-beacon-settings`.
+3. v2.0.3 MODE A merge + tag + release.
+4. **v2.0.4 Slices 1-6** on `feature/v2.0.4-memory`.
+5. v2.0.4 MODE A.
+6. **v2.0.5 Slices 1-6** on `feature/v2.0.5-bookmarks`.
+7. v2.0.5 MODE A.
+8. **v2.0.6 Slices 1-6** on `feature/v2.0.6-margin`.
+9. v2.0.6 MODE A.
+10. **v2.0.7 Slices 1-6** on `feature/v2.0.7-inkwell`.
+11. v2.0.7 MODE A.
+12. **v2.0.8 Slices 1-6** on `feature/v2.0.8-compose`.
+13. v2.0.8 MODE A.
+14. **v2.0.9 Slices 1-6** on `feature/v2.0.9-typeset`.
+15. v2.0.9 MODE A.
+16. **v2.0.10 Slices 1-6** on `feature/v2.0.10-lathe`. WOW = keyboard
+    editor + snap-guides + cross-doc paste.
+17. v2.0.10 MODE A.
 
 ---
 
