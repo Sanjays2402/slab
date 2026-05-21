@@ -5,9 +5,11 @@
 
 ---
 
-## STATUS: 📋 Six release plans on disk — pipeline goes through v2.0.7
+## STATUS: 📋 Seven release plans on disk — pipeline goes through v2.0.8; v2.0.2 SHIPPED to main
 
-**Main HEAD**: `d4c176c` (v2.0.6 plan commit chore). Will advance by 2 commits this tick (v2.0.7 plan + STATE chore).
+**Main HEAD**: `168e638` (v2.0.2 marketplace feature commit by Sanjay). Will advance by 2 commits this tick (v2.0.8 plan + STATE chore).
+**v2.0.2 STATUS**: 🚀 **SHIPPED TO MAIN** — commit `168e638`, tag `v2.0.2` already pushed. Sanjay merged the work directly (no MODE A from cron — humans-first wins).
+**v2.0.8 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.8-compose.md` (~41 KB, 6 slices + pre-flight, ~1880 LOC, 8 commits). WOW = 15° rotation-snap dial + 220ms shape-pop animation on commit (Slice 4). Codename "Compose" 🔷 — adds four shape primitives (rect/ellipse/arrow/line) as the fourth annotation family, redeeming v2.0.7's explicit defer. Reuses v2.0.7 DrawLayer + v2.0.6 sidecar JSON + tagged-union Rust enum. Three-tier rotation snap (no-mod free / Shift 15° fine w/ dial / Cmd 45° axis). **Must ship AFTER v2.0.7 — touches every file v2.0.7 touches.**
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
@@ -20,6 +22,145 @@
 **v2.0.7 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines, 6 slices + pre-flight, ~1080 LOC, 8 commits). WOW = single-key `d` drawing mode + 220ms ink-trail-shimmer SVG sweep on stroke commit (Slice 4). Codename "Inkwell" 🖊️ — adds freehand ink/drawing as the third annotation primitive, reusing v2.0.6's sidecar JSON store via a new `kind: "ink"` discriminator. Rust gets a third `Annotation::Ink` enum variant emitting PDF spec §12.5.6.13 `/Subtype /Ink` w/ `/InkList`. **Must ship AFTER v2.0.6 — touches every file v2.0.6 touches (annotations.ts, AnnotateLayer.svelte, ReaderPanel.svelte, CommandPalette.svelte, OnboardingTour.svelte, SettingsPanel.svelte, i18n/en.json, src-tauri/src/pdf/annotations.rs, src-tauri/src/keymap/action.rs). Disjoint namespaces (`annotations.draw.*` / `palette.draw.*` / `settings.annotations.draw.*` / `onboarding.draw.*`) + appended-at-end keys keep merge clean; strict order is the insurance policy.**
 **v2.0.6 PLAN**: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-20 23:?? PT — MODE C writing-plans skill — v2.0.8 plan promoted 🔷
+
+User invoked the `writing-plans` skill a **seventh** consecutive tick. Pattern
+is now reliable: each writing-plans tick promotes the next release plan in the
+pipeline. v2.0.2–v2.0.7 all on disk; this tick: **v2.0.8 "Compose" 🔷** —
+four shape primitives (rectangle, ellipse, arrow, line), redeeming the exact
+item v2.0.7's plan flagged as "defer to v2.0.8."
+
+**Also noticed this tick:** Sanjay personally merged the v2.0.2 marketplace
+work to main (commit `168e638`, tag `v2.0.2` already pushed). The cron's
+MODE A merge-and-release sequence is therefore no longer needed for v2.0.2.
+Updated the STATUS line + Next-ticks list accordingly. The pipeline picks
+up cleanly at v2.0.3.
+
+**Why v2.0.8 next?**
+1. v2.0.7's open-questions block explicitly named shape primitives as the
+   v2.0.8 candidate. Redeeming that pledge keeps the planning thread honest.
+2. v2.0.7's `DrawLayer.svelte` + sidecar `annotations.ts` discriminated
+   union + Rust `Annotation` tagged enum are all freshly extended — v2.0.8
+   adds four sibling variants to each, ~25-30% cheaper now than after they
+   cool.
+3. Reviewer expectation: Acrobat, PDF Expert, Foxit, Drawboard all ship
+   the rect/ellipse/arrow/line quartet as table-stakes markup. Slab today
+   ships zero. Closes that gap entirely in one release.
+4. Three-tier rotation snap (free / Shift 15° / Cmd 45°) with a real
+   on-screen dial is a *differentiator* Acrobat doesn't have — turns a
+   table-stakes feature into a tell-a-friend moment.
+
+**Commits this tick (2 on main):**
+- `<HASH>` docs(plans): v2.0.8 "Compose" implementation plan 🔷
+- `<HASH>` chore(cron): STATE.md + session log — v2.0.8 plan promoted
+- Plan file: `docs/plans/2026-05-20-v2.0.8-compose.md` (~41 KB).
+
+**Plan structure — 6 slices + pre-flight, ~1880 LOC, 8 commits:**
+- **Slice 0** (pre-flight): 7 verification checks — v2.0.7 tag exists,
+  annotations.ts has highlight/note/ink, Rust enum tagged-union with all
+  three, `ActionId::AnnotDraw` sibling present, shape namespaces unclaimed
+  in i18n, single-letter `r`/`e`/`a`/`l` unclaimed in vim keymap, lopdf
+  still 0.32.
+- **Slice 1**: pure-TS `annotations.ts` extension (~250 LOC + 180 LOC
+  vitest, 12 cases) — `RectAnnotation` / `EllipseAnnotation` /
+  `ArrowAnnotation` / `LineAnnotation` variants, `add*Annotation` helpers,
+  6-digit hex enforcement, width clamping (0.5..12 PDF-pt), zero-length
+  arrow rejection.
+- **Slice 2**: Rust `Annotation::{Rect,Ellipse,Arrow,Line}` variants +
+  `build_annotation_dict` arms emitting ISO 32000-1 `/Square`, `/Circle`,
+  `/Line` annotation dicts w/ correct `/Rect`, `/L`, `/LE`, `/BS`, `/C`,
+  `/CA`, `/F` fields. +4 unit tests.
+- **Slice 3**: `DrawLayer.svelte` shape sub-modes (~290 LOC) — pointer
+  drag w/ rubber-band SVG preview, Shift aspect-ratio constraint for
+  rect/ellipse (squares/circles), 45° axis-snap for arrow/line, Esc
+  cancels. Persistent overlay paint loop in ReaderPanel via
+  `pagerendered`.
+- **Slice 4 ⭐ WOW**: Single-key `r`/`e`/`a`/`l` modes + real
+  `ActionId::AnnotShape(ShapeKind)` for keymap-remap survivability +
+  **15° fine rotation snap with on-screen accent-tinted dial** (24-tick
+  ring + angle label chip) when Shift is held during arrow drag + 220ms
+  cubic-bezier shape-pop animation on commit. Respects
+  `prefers-reduced-motion`.
+- **Slice 5**: Settings → Annotations → Shapes subsection (color, width,
+  opacity, arrow head style, line dashed default, snap-15° toggle) +
+  Command-Palette "Annotations · Shapes" group (5 entries gated on
+  `readerCtx`) + 22 new i18n keys.
+- **Slice 6**: OnboardingTour step #12, version bumps (2.0.7 → 2.0.8 in
+  three files), CHANGELOG entry, customer-facing release notes at
+  `docs/release-notes/v2.0.8.md`, MODE A merge + tag + push, queue
+  `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Adobe/PDF Expert/Foxit/Drawboard all ship the
+  rect/ellipse/arrow/line quartet. v1.0.0 launch-blocker.
+- **Notice-it PASS** — sub-toolbar, 4 vim shortcuts, Settings subsection,
+  palette group, OnboardingTour step #12.
+- **Tell-a-friend PASS** — single-key shape mode + 15° rotation dial in
+  a free, offline reader. Architecture-diagram-on-academic-paper
+  screenshot bait.
+- **Pay-for-it PASS** — Acrobat charges $239/yr partly for the Comment
+  toolset (square/circle/line).
+
+**Codebase-discovery decisions baked in:**
+- `Annotation` enum tagged-union pattern (`serde(tag = "kind",
+  rename_all = "snake_case")`) — adding four variants is a pure
+  extension; `slab_append_annotations` Tauri command signature
+  unchanged.
+- `build_annotation_dict()` arms for Square/Circle/Line follow
+  ISO 32000-1 §12.5.6.10 + §12.5.6.7 — Adobe-compatible burn output
+  guaranteed.
+- `DrawLayer.svelte` mode union extends from
+  `"off"|"highlight"|"note"|"ink"` to add four shape modes.
+- pdfjs `eventBus.pagerendered` is the right hook for persistent
+  shape overlay paint (same as v2.0.6 highlight + v2.0.7 ink overlays).
+- Vim-style single-letter `r`/`e`/`a`/`l` mirrors v2.0.6's `h` and
+  v2.0.7's `d` pattern. All four free per pre-flight check #6.
+- Onboarding step math: …10 → 11 → **12** (v2.0.8).
+- i18n namespaces `annotations.shape.*` / `palette.shape.*` /
+  `settings.annotations.shape.*` / `onboarding.shape.*` all greenfield.
+
+**Scheduling note (critical, documented in plan):**
+**Do not start v2.0.8 Slice 1 until v2.0.7 ships and is tagged.**
+v2.0.8 touches every file v2.0.7 touches. Strict order:
+v2.0.3 → v2.0.4 → v2.0.5 → v2.0.6 → v2.0.7 → v2.0.8 (v2.0.2 already
+shipped this evening directly by Sanjay).
+
+**Next ticks (in order):**
+1. ~~v2.0.2~~ — **SHIPPED by Sanjay directly** (commit `168e638`).
+2. **v2.0.3 Slices 1-6** on `feature/v2.0.3-beacon-settings`. WOW =
+   live Ollama-introspection model dropdown (Slice 4).
+3. **v2.0.3 MODE A merge + tag + release**.
+4. **v2.0.4 Slices 1-6** on `feature/v2.0.4-memory`. WOW = SVG
+   progress rings on Recents grid (Slice 4).
+5. **v2.0.4 MODE A merge + tag + release**.
+6. **v2.0.5 Slices 1-6** on `feature/v2.0.5-bookmarks`. WOW = drag-to-
+   reorder (Slice 4).
+7. **v2.0.5 MODE A merge + tag + release**.
+8. **v2.0.6 Slices 1-6** on `feature/v2.0.6-margin`. WOW = ink-bloom +
+   `h` mode (Slice 4).
+9. **v2.0.6 MODE A merge + tag + release**.
+10. **v2.0.7 Slices 1-6** on `feature/v2.0.7-inkwell`. WOW = ink-trail-
+    shimmer + single-key `d` (Slice 4).
+11. **v2.0.7 MODE A merge + tag + release**.
+12. **v2.0.8 Slices 1-6** on `feature/v2.0.8-compose`. WOW = 15° dial +
+    shape-pop (Slice 4).
+13. **v2.0.8 MODE A merge + tag + release**.
+
+**Open questions for Sanjay:**
+- Layered drawing groups (multi-shape select/move/resize as a unit)
+  for v2.0.9? Plan defers (~400 LOC).
+- Per-shape default color override (sticky per-kind), or one shared
+  default across all four? Plan ships shared default.
+- Free text annotation (free-floating text box, distinct from v2.0.6
+  sticky note) for v2.0.9 or v2.0.10's "Lathe" edit-mode pipeline?
+  Plan defers to v2.0.10.
+- **Seven-plan backlog now on disk** — ~8 weeks of execution ticks
+  front-loaded. With Sanjay shipping v2.0.2 directly this evening, is
+  the next tick the right moment for cron to flip from "planning" to
+  "executing" (subagent against v2.0.3 Slice 0)?
 
 ---
 
