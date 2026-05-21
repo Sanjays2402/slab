@@ -5,9 +5,10 @@
 
 ---
 
-## STATUS: 📋 Twelve release plans on disk — pipeline goes through v2.0.13; v2.0.2 SHIPPED to main
+## STATUS: 📋 Thirteen release plans on disk — pipeline goes through v2.1.0; v2.0.2 SHIPPED to main
 
-**Main HEAD**: `c8e15ed` (v2.0.12 plan promotion). Will advance by 2 commits this tick (v2.0.13 plan + STATE chore).
+**Main HEAD**: `3aedf16` (v2.0.13 plan promotion). Will advance by 2 commits this tick (v2.1.0 plan + STATE chore).
+**v2.1.0 PLAN** (new this tick): `docs/plans/2026-05-21-v2.1.0-notary.md` (~43 KB, 1040 lines, 6 slices + pre-flight + final tick, ~3600 LOC, 8 commits, ~70 new tests). WOW = **480ms gold-ribbon Notary Seal unfurl animation** (SVG `feSpecularLighting` emboss + cubic-bezier `(0.34, 1.56, 0.64, 1)` ribbon scaleX-in + wax-stamp scale-1.6→1.0 + emblem pop, plus trust banner + verify-on-open + reduced-motion-safe). Codename "Notary" 🪶 — **cryptographic PKCS#7 / CMS signing per ISO 32000-1 §12.8**, the $49 Pro-tier ANCHOR feature. Replaces Adobe Acrobat Pro $239/yr signature validation + Adobe Sign $180/yr + DocuSign $120/yr — court-admissible PDFs signed entirely offline. Pure-Rust crypto (cms 0.3 + x509-cert 0.3 + rsa 0.10 + p256 0.14, no OpenSSL, no ring). OS-keychain key storage (keyring 3.x), .p12 import (p12 0.7). Six new Tauri commands. Also bridges to v2.0.13 Vault: **Vault-Certified redactions** ship a hash-chained manifest signed in the `/Sig` dict — provable redactions. Buy-Button 4/4 PASS — Pay-for-it (anchors paid Pro tier), Pick-us (no other free offline PKCS#7 signer), Notice-it (8 surfaces incl. trust banner), Tell-a-friend (seal unfurl + Notary Inspector). **Must ship AFTER v2.0.13 — extends `Annotation::Signature` from v2.0.12 + exports `RedactionManifest` from v2.0.13.** Strict order: v2.0.2 → … → v2.0.13 → **v2.1.0** → v2.1.1.
 **v2.0.13 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.13-vault.md` (~36 KB, 940 lines, 6 slices + pre-flight + final tick, ~1890 LOC, 8 commits, 62 new tests). WOW = **Vault-Door wipe animation (380ms gold→black 8-step CSS @keyframes + 40ms stagger) + X-Ray reveal hover ghost + single-key `r` Quick-Redact reticle** (Slice 4). Codename "Vault" 🔒 — **true byte-level content-stream redaction**: glyphs are physically deleted from the PDF, not painted over. Closes the single biggest paid-tier gap remaining after v2.0.12 — Adobe Acrobat Pro $239/yr's flagship feature. The warning sticker in `RedactPanel.svelte` ("true content-stream redaction is on the roadmap") finally comes off. PDFs get *physically smaller* when redacted — the demo line. Pure-Rust tokenizer + surgery + image XObject pruning + annotation scrub + metadata strip. Cryptographic redaction certification deferred to v2.1.0 "Notary" (pairs with PKCS#7 signing). **Must ship AFTER v2.0.12 — touches every file v2.0.6→v2.0.12 touched, disjoint i18n namespaces (`redact.vault.*`, `palette.vault.*`, `settings.privacy.vault.*`, `onboarding.vault.*`) keep merges clean.**
 **v2.0.12 PLAN**: `docs/plans/2026-05-21-v2.0.12-sign.md` (~34 KB, 6 slices + pre-flight, ~2400 LOC, 8 commits, 58 new tests). WOW = single-key `s` drop + stamp palette + **320ms rubber-stamp animation (scale-1.5→1.0 + rotate-3° + 12 ink-spatter droplets, cubic-bezier `(0.34, 1.56, 0.64, 1)`)** (Slice 4). Codename "Sign" ✒️ — **signatures + 14 preset stamps**, the single biggest paid-tier gap remaining. Adobe Sign $180/yr, DocuSign Personal $120/yr — v2.0.12 ships the visual half free, with v2.1.0 "Notary" tracked in open-questions for cryptographic PKCS#7 signing. Reuses v2.0.6 sidecar JSON + v2.0.7 ink capture (extracted to shared `inkCapture.ts`) + v2.0.10 edit mode + v2.0.11 rotation/multi-select. **Must ship AFTER v2.0.11 — extends sidecar v2 + rotation field.**
 **v2.0.11 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.11-anvil.md` (~47 KB, 6 slices + pre-flight, ~2140 LOC, 8 commits, 52 new tests). WOW = Figma-style alignment guides + animated distribute (240ms cubic-bezier) + rotate-handle with live degree readout (Slice 4). Codename "Anvil" ⚒️ — **multi-select** (marquee + Shift-click + Mod+A) + **rotate** (drag handle, 15° snap) + **align** (6 align ops + 2 distribute ops, all animated, one Cmd+Z undoes the lot). **Redeems v2.0.10's two open-question deferrals (group/lasso multi-select + rotate handle) in a single release**, plus introduces alignment guides Acrobat/PDF Expert/Foxit/Bluebeam don't ship. Breaking sidecar v1→v2 migration adds `rotation: number` field to every annotation kind. **Must ship AFTER v2.0.10 — extends every file v2.0.10 touches.**
@@ -28,6 +29,66 @@
 **v2.0.7 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines, 6 slices + pre-flight, ~1080 LOC, 8 commits). WOW = single-key `d` drawing mode + 220ms ink-trail-shimmer SVG sweep on stroke commit (Slice 4). Codename "Inkwell" 🖊️ — adds freehand ink/drawing as the third annotation primitive, reusing v2.0.6's sidecar JSON store via a new `kind: "ink"` discriminator. Rust gets a third `Annotation::Ink` enum variant emitting PDF spec §12.5.6.13 `/Subtype /Ink` w/ `/InkList`. **Must ship AFTER v2.0.6 — touches every file v2.0.6 touches (annotations.ts, AnnotateLayer.svelte, ReaderPanel.svelte, CommandPalette.svelte, OnboardingTour.svelte, SettingsPanel.svelte, i18n/en.json, src-tauri/src/pdf/annotations.rs, src-tauri/src/keymap/action.rs). Disjoint namespaces (`annotations.draw.*` / `palette.draw.*` / `settings.annotations.draw.*` / `onboarding.draw.*`) + appended-at-end keys keep merge clean; strict order is the insurance policy.**
 **v2.0.6 PLAN**: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-21 02:24 PT — MODE C writing-plans skill — v2.1.0 plan promoted 🪶
+
+Thirteenth consecutive writing-plans tick. This tick: **v2.1.0 "Notary" 🪶** —
+cryptographic PKCS#7 / CMS signing per ISO 32000-1 §12.8. The $49 Pro-tier
+ANCHOR feature. Replaces Adobe Acrobat Pro $239/yr signature validation +
+Adobe Sign $180/yr + DocuSign $120/yr — court-admissible PDFs signed entirely
+offline, OS-keychain key storage, zero telemetry.
+
+**Plan**: `docs/plans/2026-05-21-v2.1.0-notary.md` (~43 KB, 1040 lines, 6
+slices + pre-flight + final tick, ~3600 LOC, 8 commits, ~70 new tests). WOW =
+**480ms gold-ribbon Notary Seal unfurl** — SVG `feSpecularLighting` emboss +
+cubic-bezier `(0.34, 1.56, 0.64, 1)` ribbon scaleX-in + wax stamp
+scale-1.6→1.0 + emblem pop — plus trust banner (green/amber/red) + Notary
+Inspector modal with chain validation tree + verify-on-open auto-pass.
+Reduced-motion-safe. Pure-Rust crypto stack: `cms 0.3` + `x509-cert 0.3` +
+`rsa 0.10` + `p256 0.14` + `der 0.8` + `keyring 3.x` + `p12 0.7`. No OpenSSL,
+no ring, no bindgen.
+
+**Architecture**: 4 layers — (1) pure-Rust CMS SignedData builder + verifier,
+(2) OS-keychain identity manager + .p12 import, (3) PDF `/Sig` field embed
+with `/ByteRange` two-segment incremental save + AcroForm `/SigFlags 3`,
+(4) frontend NotaryPanel + TrustBanner + Inspector + seal animation. Plus
+**Vault redaction certification bridge**: v2.0.13 redactions ship a hash-
+chained `/Slab_Vault` manifest signed in the `/Sig` dict — provable
+redactions.
+
+**Buy-Button 4/4 PASS**: Pay-for-it (anchors $49 Pro tier — court-admissible
+PDFs the moat no competitor can chase without re-architecture), Pick-us (the
+only free offline cross-platform PKCS#7 signer; Acrobat $239/yr / Foxit
+$129/yr / PDF Expert $79/yr all charge), Notice-it (8 surfaces: trust banner,
+Notary panel, Settings · Notary, palette ×5, onboarding step #18,
+SignatureCaptureModal cert picker, RedactPanel certify toggle, Recents grid
+green checkmarks), Tell-a-friend (gold-ribbon seal unfurl + Notary Inspector
+with live chain tree + emerald pulse through signed byte-ranges).
+
+**Six new Tauri commands**: `slab_notary_generate_cert`,
+`slab_notary_import_p12`, `slab_notary_list_identities`,
+`slab_notary_delete_identity`, `slab_notary_sign`, `slab_notary_verify`,
+`slab_notary_certify_redaction`. Private keys NEVER cross IPC boundary.
+
+**Deferred to v2.1.1 "Notary II"**: RFC 3161 TSA timestamping, LTV/DSS,
+multi-signer co-sign, visual sig appearance editor, batch sign,
+CRL/OCSP revocation check, PKCS#11 hardware tokens, iPad touch picker.
+Proposal stub at `.cron-state/proposals/v2.1.1-notary-followups.md` (created
+inside Slice 6 of the plan).
+
+**Commits this tick (2 on main)**:
+- `<HASH>` docs(plans): v2.1.0 "Notary" 🪶 implementation plan
+- `<HASH>` chore(cron): STATE.md + session log — v2.1.0 plan promoted
+
+Session log: `.cron-state/sessions/2026-05-21-0224.md`.
+
+**Scheduling**: do not start v2.1.0 Slice 1 until v2.0.13 ships + tags.
+Strict order: v2.0.2 → … → v2.0.13 → v2.1.0 → v2.1.1.
+
+After v2.1.0 ships, Slab's v1.0.0 launch narrative writes itself: "Replaced
+our $2 880/yr team Acrobat Pro bill with Slab." Pro tier $49 anchor in place.
 
 ---
 
