@@ -65,7 +65,7 @@ pub enum VerifyError {
 }
 
 /// Sentinel signature value used by entries that ship inside the Slab
-/// binary (the `assets/marketplace/seed-index.json` resource). These
+/// binary (the `src-tauri/resources/marketplace/seed-index.json` resource). These
 /// entries are trusted by construction: their bytes are compiled into
 /// the binary the user already chose to install, so a separate signature
 /// check would only protect against a corrupted asset bundle — a class

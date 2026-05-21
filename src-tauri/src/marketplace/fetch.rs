@@ -53,16 +53,16 @@ pub fn default_cache_path() -> Option<PathBuf> {
 }
 
 /// Marketplace index that ships baked into the Slab binary
-/// (`assets/marketplace/seed-index.json`). This guarantees the Browse
-/// tab has *something* to render on first launch — before the first
-/// successful network fetch — and during permanent-offline scenarios
-/// (air-gapped machines, captive portals).
+/// (`src-tauri/resources/marketplace/seed-index.json`). This
+/// guarantees the Browse tab has *something* to render on first launch
+/// — before the first successful network fetch — and during
+/// permanent-offline scenarios (air-gapped machines, captive portals).
 ///
 /// All entries here MUST carry `signature: "BUNDLED"` and a
 /// `download_url` that starts with `bundled://`. The verifier
 /// recognises that pair as trusted-by-construction.
 const EMBEDDED_SEED_INDEX_BYTES: &[u8] =
-    include_bytes!("../../../assets/marketplace/seed-index.json");
+    include_bytes!("../../resources/marketplace/seed-index.json");
 
 /// Parse the bundled seed index. Returns `Err` only if the bundled
 /// JSON itself is malformed — which would be a build-time bug, since
