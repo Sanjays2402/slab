@@ -5,9 +5,11 @@
 
 ---
 
-## STATUS: 📋 Seven release plans on disk — pipeline goes through v2.0.8; v2.0.2 SHIPPED to main
+## STATUS: 📋 Eight release plans on disk — pipeline goes through v2.0.9; v2.0.2 SHIPPED to main
 
-**Main HEAD**: `168e638` (v2.0.2 marketplace feature commit by Sanjay). Will advance by 2 commits this tick (v2.0.8 plan + STATE chore).
+**Main HEAD**: `0728976` (v2.0.8 plan promotion). Will advance by 2 commits this tick (v2.0.9 plan + STATE chore).
+**v2.0.9 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.9-typeset.md` (~46 KB, 6 slices + pre-flight, ~1920 LOC, 8 commits). WOW = single-key `t` + smart font auto-fit on overflow + accent-tinted blinking caret + 220ms type-in fade-in (Slice 4). Codename "Typeset" 📝 — FreeText / typewriter annotations, the **fifth and final annotation primitive** completing the Acrobat-tier markup toolkit (highlight + note + ink + 4 shapes + freetext). Redeems v2.0.8's open-questions defer ("free-floating text box"). Reuses v2.0.6 sidecar JSON + v2.0.7 DrawLayer + v2.0.8 tagged-union Rust enum. Rust emits ISO 32000-1 §12.5.6.6 `/FreeText` dicts. IME-safe via compositionstart/end gating. **Must ship AFTER v2.0.8 — touches every file v2.0.8 touches.** After v2.0.9 the annotation primitive family is feature-complete vs every paid competitor; v2.0.10 ("Lathe") can pivot to edit-mode polish (selection handles, drag-to-move, undo/redo).
+**Previous (v2.0.8) PLAN**: `docs/plans/2026-05-20-v2.0.8-compose.md` (~41 KB, 6 slices + pre-flight, ~1880 LOC, 8 commits). WOW = 15° rotation-snap dial + 220ms shape-pop animation on commit (Slice 4). Codename "Compose" 🔷 — adds four shape primitives (rect/ellipse/arrow/line). Will advance by 2 commits this tick (v2.0.8 plan + STATE chore).
 **v2.0.2 STATUS**: 🚀 **SHIPPED TO MAIN** — commit `168e638`, tag `v2.0.2` already pushed. Sanjay merged the work directly (no MODE A from cron — humans-first wins).
 **v2.0.8 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.8-compose.md` (~41 KB, 6 slices + pre-flight, ~1880 LOC, 8 commits). WOW = 15° rotation-snap dial + 220ms shape-pop animation on commit (Slice 4). Codename "Compose" 🔷 — adds four shape primitives (rect/ellipse/arrow/line) as the fourth annotation family, redeeming v2.0.7's explicit defer. Reuses v2.0.7 DrawLayer + v2.0.6 sidecar JSON + tagged-union Rust enum. Three-tier rotation snap (no-mod free / Shift 15° fine w/ dial / Cmd 45° axis). **Must ship AFTER v2.0.7 — touches every file v2.0.7 touches.**
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
