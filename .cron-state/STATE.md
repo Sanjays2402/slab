@@ -5,19 +5,142 @@
 
 ---
 
-## STATUS: 📋 Four release plans on disk — pipeline ready to execute
+## STATUS: 📋 Five release plans on disk — pipeline deep, ready to execute
 
-**Main HEAD**: `a0d1133` (v2.0.4 plan commit chore; v2.0.4 plan at `94d9970`).
+**Main HEAD**: `d0a5560` (v2.0.5 plan commit chore; v2.0.5 plan at `5149218`). Will advance by 2 commits this tick (v2.0.6 plan + STATE chore).
 **Latest tag**: `v2.0.1` (annotated, pushed) — Bundled Hello Workshop 🧩.
 **Latest release**: `v2.0.0` — Workshop 🔧.
 **Previous tag**: `v2.0.0` (Workshop — plugin platform).
-**Active dev branch**: *(none — four pipeline items on disk as plans; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
-**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main as of two ticks ago. Next CI run on `main` should pass Windows. v2.0.1 retag-and-re-release decision deferred (options: retag in-place, or roll the unblock into v2.0.2's release notes as "v2.0.2 also fixes the v2.0.1 windows artifact gap"). Tentative: latter — cleaner customer narrative.
+**Active dev branch**: *(none — five pipeline items on disk as plans; next tick cuts `feature/v2.0.2-workshop-marketplace`)*
+**RELEASE_UNBLOCKING**: LF hotfix `1a28a5f` on main. v2.0.1 retag-and-re-release decision deferred (roll unblock into v2.0.2 release notes as cleaner customer narrative).
 **v2.0.2 PLAN**: `docs/plans/2026-05-20-v2.0.2-workshop-marketplace.md` (46 KB, 1394 lines, 9 slices, ~1140 LOC, ~10 commits). WOW = Fuse.js live-highlight search in Slice 6.
 **v2.0.3 PLAN**: `docs/plans/2026-05-20-v2.0.3-beacon-settings.md` (~57 KB, ~1780 lines, 6 slices + pre-flight, ~1030 LOC). WOW = live Ollama-introspection model dropdown in Slice 4. **Must ship AFTER v2.0.2 — both touch SettingsPanel.svelte + i18n/en.json.**
-**v2.0.4 PLAN**: `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines, 6 slices + pre-flight, ~580-720 LOC). WOW = SVG progress rings on Recents grid (Slice 4). Codename "Memory" 📖 — closes the "remember where I left off" table-stakes gap vs Adobe / PDF Expert / Foxit. **Must ship AFTER v2.0.3 — both touch `src/lib/i18n/en.json`, though in disjoint namespaces (palette.resume / reader.progress / onboarding.memory vs settings.beacon).**
-**v2.0.5 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.5-bookmarks.md` (~62 KB, 1932 lines, 6 slices + pre-flight, ~980 LOC). WOW = drag-to-reorder bookmark slots with HTML5 drag API + accent-tinted drop indicators (Slice 4). Codename "Bookmarks" ★ — closes the "save my spot" companion gap to v2.0.4's "remember last page". **Must ship AFTER v2.0.4 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + i18n/en.json (disjoint namespaces: bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\*).**
+**v2.0.4 PLAN**: `docs/plans/2026-05-20-v2.0.4-memory.md` (~51 KB, 1482 lines, 6 slices + pre-flight, ~580-720 LOC). WOW = SVG progress rings on Recents grid (Slice 4). Codename "Memory" 📖 — closes the "remember where I left off" table-stakes gap vs Adobe / PDF Expert / Foxit.
+**v2.0.5 PLAN**: `docs/plans/2026-05-20-v2.0.5-bookmarks.md` (~62 KB, 1932 lines, 6 slices + pre-flight, ~980 LOC). WOW = drag-to-reorder bookmark slots with HTML5 drag API + accent-tinted drop indicators (Slice 4). Codename "Bookmarks" ★ — closes the "save my spot" companion gap to v2.0.4's "remember last page".
+**v2.0.6 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
 **LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+
+---
+
+## TICK 2026-05-20 19:16 PT — MODE C writing-plans skill — v2.0.6 plan promoted 📝
+
+User invoked the `writing-plans` skill a **fifth** consecutive tick.
+Pattern firmly established: each writing-plans tick promotes the next
+release plan in the pipeline. v2.0.2-v2.0.5 already on disk; this tick:
+**v2.0.6 "Margin" 📝** — persistent annotations sidecar JSON.
+
+**Why v2.0.6 next? (Real launch-blocker.)**
+1. Adobe / PDF Expert / Foxit / Preview ALL persist annotations. Slab
+   today loses every highlight the moment the doc closes (unless user
+   clicks "Save to new PDF" which *destructively rewrites the file*).
+   A reviewer who tries v2.0.5 expecting paid-product parity will close
+   the app the moment their first highlight disappears.
+2. v2.0.6's `annotations.ts` store mirrors v2.0.4's `readingPosition.ts`
+   and v2.0.5's `bookmarks.ts` line-for-line — writing it now while
+   those patterns are fresh in context is ~30% cheaper than later.
+3. Existing Rust surface is already there: `slab_append_annotations`
+   accepts the exact serde shape (`tag = "kind"`, snake_case Highlight |
+   Note) the new TS store produces. **No new Rust modules for happy
+   path** — only 2 ActionId variants (Mod+H, Mod+Shift+H).
+4. Introduces the "persistent sidecar JSON keyed by file path" pattern
+   v2.0.7 (drawings), v2.0.8 (comment threading), v2.0.9 (reading speed)
+   can all reuse.
+
+**Commits this tick (2 on main):**
+- `<HASH>` docs(plans): v2.0.6 "Margin" implementation plan
+- `<HASH>` chore(cron): STATE.md + session log — v2.0.6 plan promoted
+- Plan file: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines).
+
+**Plan structure — 6 slices + pre-flight, ~990 LOC, 8 commits:**
+- **Slice 0** (pre-flight): 5 verification checks — `Annotation` Rust enum
+  still tagged-union w/ exactly Highlight+Note, `PendingAnnotation`
+  shape unchanged, `ActionId` unions (TS + Rust) missing the two new
+  variants, no existing `annotations.*` i18n keys.
+- **Slice 1**: pure-TS `src/lib/annotations.ts` (~330 LOC + ~150 LOC
+  vitest, 12 tests enumerated) — per-path localStorage bucket under
+  `slab.annotations.v1`, 200/doc cap + 3000 total cap, oldest-first
+  eviction. Module mirrors `bookmarks.ts` line-for-line.
+- **Slice 2**: Rewire `AnnotateLayer.svelte` to `subscribeAnnotations(path)`;
+  drop `pending[]` + Save button. Register `ActionId::AnnotHighlight`
+  (Mod+H) + `ActionId::AnnotNote` (Mod+Shift+H) in Rust enum + ACTIONS
+  table + TS union end-to-end. New sidebar header pills: "🖨 Burn into
+  PDF" + "📋 Markdown".
+- **Slice 3**: Persistent overlay render layer in `ReaderPanel.svelte`
+  (~220 LOC) — listens to `eventBus.pagerendered`, paints accent-tinted
+  highlight quads + yellow `■` note pins. `pointer-events: none` on
+  overlay, `auto` on children. Re-renders on store events too.
+- **Slice 4 ⭐ WOW**: Single-key `h` Quick-Highlight (~140 LOC).
+  Press `h` (no modifier, vim-style) → highlight mode. Pulsing "✎
+  Highlight" pill top-right. **220ms ink-bloom** on every new highlight.
+  Screenshot moment.
+- **Slice 5**: Settings → Annotations section (color, author, clear
+  per-doc / clear all) + Command-Palette "Annotations" group (5 entries
+  gated on `readerCtx`) + 14 new i18n keys.
+- **Slice 6**: OnboardingTour step #10 ("📝 Annotations that stay put"),
+  version bumps (2.0.5 → 2.0.6 in three files), CHANGELOG entry,
+  customer-facing release notes at `docs/release-notes/v2.0.6.md`, MODE
+  A merge + tag + push, queue `RELEASE_PENDING` for next tick.
+
+**Buy-Button verdict at release level:**
+- **Pick-us PASS** — Adobe / PDF Expert / Foxit / Preview all persist
+  annotations. Real launch-blocker.
+- **Notice-it PASS** — every returning user sees: (a) highlights survive
+  across opens, (b) Mod+H + `h` shortcuts, (c) Annotations Settings
+  section, (d) Annotations palette group, (e) onboarding step #10,
+  (f) ink-bloom on first highlight.
+- **Tell-a-friend PASS** — single-key `h` + 220ms ink-bloom is a true
+  screenshot moment in a free PDF reader.
+- **Pay-for-it PASS** — Adobe Acrobat charges $239/yr partly because it
+  persists annotations. v2.0.6 gives it away.
+
+**Codebase-discovery decisions baked into the plan:**
+- `Annotation` Rust enum is **already** tagged-union (`serde(tag =
+  "kind", rename_all = "snake_case")`) — TS store's on-disk shape is
+  byte-compatible with what `slab_append_annotations` accepts. Burn
+  works with zero backend changes.
+- `AnnotateLayer.svelte` already does the hard quad-math via
+  `pv.viewport.convertToPdfPoint()`. Slice 2 only changes the *commit
+  step* from `pending = [...pending, ...]` to `addAnnotation(path, ...)`.
+- pdfjs `eventBus.pagerendered` is the right hook (fires on initial
+  render AND zoom changes). Confirmed at line 677–688 of ReaderPanel.
+- Vim-style single-letter `h` mirrors `src/lib/vim/keymap.ts` pattern.
+- Onboarding step math: 6 today → 7 (v2.0.3) → 8 (v2.0.4) → 9 (v2.0.5)
+  → 10 (v2.0.6). Strict-order requirement.
+- i18n namespace `annotations.*` / `settings.annotations.*` /
+  `palette.annot.*` / `onboarding.annotations.*` all greenfield. Zero
+  collision with v2.0.2-2.0.5.
+
+**Scheduling note (critical, documented in the plan):**
+**Do not start v2.0.6 Slice 1 until v2.0.5 ships and is tagged.** v2.0.6
+touches `ReaderPanel.svelte`, `CommandPalette.svelte`, `OnboardingTour.svelte`,
+`SettingsPanel.svelte`, `i18n/en.json` — every one of those is touched
+by an earlier-queued plan. Disjoint surface areas + appended-at-end i18n
+keys keep three-way merge clean, but strict ordering is the insurance
+policy. Strict order: v2.0.2 → v2.0.3 → v2.0.4 → v2.0.5 → v2.0.6.
+
+**Next ticks (in order):**
+1. **v2.0.2 Slices 1-8** on `feature/v2.0.2-workshop-marketplace`. WOW = Fuse.js search w/ live highlighting (Slice 6).
+2. **v2.0.2 MODE A merge + tag + release**.
+3. **v2.0.3 Slices 1-6** on `feature/v2.0.3-beacon-settings`. WOW = live Ollama model dropdown (Slice 4).
+4. **v2.0.3 MODE A merge + tag + release**.
+5. **v2.0.4 Slices 1-6** on `feature/v2.0.4-memory`. WOW = SVG progress rings (Slice 4).
+6. **v2.0.4 MODE A merge + tag + release**.
+7. **v2.0.5 Slices 1-6** on `feature/v2.0.5-bookmarks`. WOW = drag-to-reorder (Slice 4).
+8. **v2.0.5 MODE A merge + tag + release**.
+9. **v2.0.6 Slices 1-6** on `feature/v2.0.6-margin`. WOW = ink-bloom + `h` mode (Slice 4).
+10. **v2.0.6 MODE A merge + tag + release**.
+
+**Open questions for Sanjay (only if he wants to weigh in):**
+- Drawing annotations (ink / shapes) in v2.0.6 or defer to v2.0.7? Plan
+  defers — adds ~400 LOC and a new Rust enum variant.
+- Should "Burn into PDF" delete in-Slab annotations? Plan defaults to
+  **keep** (burned PDF is a shareable static copy; editable copy stays
+  in Slab).
+- Per-doc default color override? Plan defers to v2.0.7.
+- **Five-plan backlog now on disk.** At what point does Sanjay want the
+  next tick to switch from "planning" to "executing" (start a subagent
+  against v2.0.2 Slice 1)? Cron has front-loaded ~6 weeks of execution
+  ticks.
 
 ---
 
