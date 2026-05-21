@@ -64,6 +64,20 @@ pub enum VerifyError {
     BadSignature,
 }
 
+/// Sentinel signature value used by entries that ship inside the Slab
+/// binary (the `src-tauri/resources/marketplace/seed-index.json` resource). These
+/// entries are trusted by construction: their bytes are compiled into
+/// the binary the user already chose to install, so a separate signature
+/// check would only protect against a corrupted asset bundle — a class
+/// of attack defeated by the OS code-signing chain higher up.
+///
+/// The verifier accepts `signature == "BUNDLED"` IFF `download_url`
+/// also starts with `bundled://`. Both conditions must hold; the second
+/// blocks a malicious remote `index.json` from claiming `"BUNDLED"` to
+/// shortcut verification.
+pub const BUNDLED_SIGNATURE_SENTINEL: &str = "BUNDLED";
+pub const BUNDLED_DOWNLOAD_SCHEME: &str = "bundled://";
+
 /// Verify an entry's signature against the supplied public key.
 ///
 /// Splitting the public key out as a parameter (rather than always
@@ -71,6 +85,15 @@ pub enum VerifyError {
 /// to ship the real private key alongside the source.
 pub fn verify_entry(entry: &IndexEntry, public_key: &[u8; 32]) -> Result<(), VerifyError> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+    // Trusted-by-construction bypass for entries that ship in-binary.
+    // Both conditions must hold so a malicious remote index can't fake
+    // the bypass by setting signature="BUNDLED" on its own entries.
+    if entry.signature == BUNDLED_SIGNATURE_SENTINEL
+        && entry.download_url.starts_with(BUNDLED_DOWNLOAD_SCHEME)
+    {
+        return Ok(());
+    }
 
     let sig_bytes = B64
         .decode(&entry.signature)
@@ -122,6 +145,13 @@ mod tests {
             size_bytes: 1024,
             slab_compat: ">=1.4.0".into(),
             signature: String::new(),
+            // v2 fields default to empty/zero so the canonical signing
+            // payload remains byte-identical to a v1 entry. This is
+            // intentional — the v2.0.2 backward-compat invariant.
+            categories: Vec::new(),
+            tags: Vec::new(),
+            screenshots: Vec::new(),
+            installs: 0,
         }
     }
 
@@ -228,5 +258,61 @@ mod tests {
         e.signature = "moFLWn76JK9odPF1iXgW6BnaVOyacRyDnaudSruwOPumfOEGNijnPAUNRx33stgEYLYLQ5MxSYCnzPfCMTFLBw==".into();
         let err = verify_with_maintainer_key(&e).unwrap_err();
         assert!(matches!(err, VerifyError::BadSignature));
+    }
+
+    // ---- v2.0.2 Workshop Marketplace: BUNDLED-sentinel verification ----
+
+    #[test]
+    fn verify_accepts_bundled_sentinel_when_download_url_is_bundled_scheme() {
+        // Trusted-by-construction path: bundled:// + signature=="BUNDLED"
+        // means the entry ships in the binary itself, so the verifier
+        // skips the Ed25519 check.
+        let mut e = fixture_entry();
+        e.signature = BUNDLED_SIGNATURE_SENTINEL.into();
+        e.download_url = "bundled://com.slab.examples.hello".into();
+        // Any public key, even a zero one — the bundled path never reads it.
+        assert!(verify_entry(&e, &[0u8; 32]).is_ok());
+    }
+
+    #[test]
+    fn verify_rejects_bundled_sentinel_with_remote_download_url() {
+        // Attack scenario: malicious remote index.json sets
+        // signature="BUNDLED" to skip verification. Must fail because
+        // download_url is not the bundled:// scheme.
+        let mut e = fixture_entry();
+        e.signature = BUNDLED_SIGNATURE_SENTINEL.into();
+        e.download_url = "https://evil.example.com/payload.tar.gz".into();
+        let err = verify_entry(&e, &[0u8; 32]).unwrap_err();
+        // Falls through to normal verification. The exact error
+        // variant depends on whether "BUNDLED" decodes as valid b64
+        // (it does, but with bad padding) — what matters is that the
+        // bypass did NOT fire and we got an error.
+        assert!(
+            matches!(
+                err,
+                VerifyError::BadSignatureEncoding(_)
+                    | VerifyError::BadSignatureLength(_)
+                    | VerifyError::BadSignature
+            ),
+            "remote URL with BUNDLED sentinel must NOT bypass verification, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_rejects_bundled_url_without_sentinel_signature() {
+        // The reverse attack: bundled:// URL but a real-looking forged
+        // signature. The bypass requires BOTH conditions to hold, so
+        // this falls through to normal Ed25519 verification — which
+        // fails because the signature was made over different bytes
+        // (or with a different key).
+        let mut e = fixture_entry();
+        e.download_url = "bundled://com.slab.examples.hello".into();
+        // A garbage-but-valid-length base64 signature (88 b64 chars = 64 bytes).
+        e.signature = B64.encode([0u8; 64]);
+        let err = verify_entry(&e, &[0u8; 32]).unwrap_err();
+        assert!(matches!(
+            err,
+            VerifyError::BadPublicKey | VerifyError::BadSignature
+        ));
     }
 }
