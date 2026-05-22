@@ -23,6 +23,37 @@
 
 ---
 
+## STATUS: 🎉 v2.1.2 "Arranger" SHIPPED — #26 closed end-to-end
+
+**TICK 2026-05-22 03:30 PT** — MODE C develop + MODE A merge + MODE B finalize, all in one tick:
+
+- **Slice 4 (frontend)** `8e2a66c`: `src/lib/pagesHistory.ts` — framework-agnostic 50-op FIFO command stack with branch-rewrite + label helpers. `PagesVisualPanel.svelte` records every rotate/delete/duplicate on the stack. Single-key hotkeys (R / Shift+R / D / Delete / Cmd+Z / Cmd+Shift+Z), with input/textarea/contenteditable guards. Undo/Redo toolbar buttons with op-label tooltips. Keyboard hint strip below grid.
+- **WOW** ⭐: 280 ms cubic-bezier(0.34, 1.56, 0.64, 1) rotate-tilt with gold-accent drop-shadow + halo pulse cascading to ±2 neighbours (40 ms stagger). 220 ms slide-out-left on delete. prefers-reduced-motion safe.
+- **Slice 5 (backend)** `71f91cb`: `apply_ops()` in `pages_undo.rs` chains arbitrary PageOp sequences through a tempfile cascade and `atomic_save`s the final result (host PDF touched exactly once for crash safety). New Tauri command `slab_apply_page_ops`. +3 acceptance tests.
+- **Slice 6 (release)** `aa9e30e`: bump 2.1.0 → 2.1.2 in package.json + Cargo.toml + tauri.conf.json. Customer-facing release notes at `docs/release-notes/v2.1.2.md`.
+- **MODE A**: `cargo clean` reclaimed 7.9 GiB (disk had hit 98%). Merged `feature/v2.1.2-arranger` → main as `a0e37f4`, tagged `v2.1.2`, pushed with `--follow-tags`.
+- **MODE B**: `gh release create v2.1.2` published with marketing-style notes. CI runs `26282803602` (build) + `26282803605` (docker) in_progress at tick end.
+
+**Quality gates green**: fmt ✓, clippy ✓, `cargo test --lib` → **1002 passed** (+3 new), `pnpm check` → 0 errors / 41 pre-existing warnings.
+
+**Commits this tick (3 on `feature/v2.1.2-arranger` + 1 merge on main)**:
+- `8e2a66c` feat(ui): pagesHistory + 50-deep undo/redo + R/D/Delete hotkeys + WOW rotate-tilt (refs #26)
+- `71f91cb` feat(pages): apply_ops + slab_apply_page_ops Tauri cmd — batch atomic PageOp apply (closes #26)
+- `aa9e30e` chore(release): bump to v2.1.2 + Arranger release notes
+- `a0e37f4` Merge v2.1.2 'Arranger' — closes #26
+
+**Buy-Button verdict**: 4/4 PASS — Pay-for-it (Adobe Pro $239/yr "Organize Pages" replaced free, 50-deep undo no competitor matches), Pick-us (pdfarranger upgrade story shipped offline cross-platform), Notice-it (R/D/Delete hotkeys + Undo/Redo buttons are immediately visible), Tell-a-friend (gold rotate-tilt cascade + crash-safe atomic Save are screenshot bait). **Qualifying BIG tick.**
+
+**WOW**: ✨ 280 ms cubic-bezier rotate-tilt with gold-accent halo cascade. `LAST_WOW_TICK_AT: 2026-05-22 03:30 PT`.
+
+**RECENTLY_CLOSED_ISSUES**: #21, #23, #24, #25, **#26 page ops (`a0e37f4`, v2.1.2)**.
+
+**Open override issues remaining**: **#27** (landing demo video — content task, needs running app to record).
+
+**Next tick**: Poll CI for v2.1.2 artifacts (`gh run view 26282803602`). If green, `gh release upload v2.1.2` the 6 desktop artifacts. Then pivot to issue #27 (demo video) — needs real app footage; if headless env can't record, ship landing-page HTML/CSS scaffolding for the embed slot.
+
+---
+
 ## STATUS PRIOR: 🎉 v2.0.3 MERGED to main + tagged — CI building artifacts
 
 **RELEASE_PENDING: v2.0.3 — merge SHA 6e65be6, tag v2.0.3, CI runs 26280444473 (build) + 26280444477 (docker)** — DONE, released as v2.0.3.
