@@ -26,6 +26,8 @@
     theaterPushStroke,
     theaterUndoStroke,
     theaterClearStrokes,
+    theaterOpenWindows,
+    theaterCloseWindows,
     dispatchPresenterKey,
     makeStroke,
     pushPoint,
@@ -45,6 +47,11 @@
   let busy = false;
   let elapsedLabel = "00:00";
   let timerHandle: number | null = null;
+  // Detached-window labels — set after `theaterOpenWindows` resolves.
+  // null means we haven't spawned the dual-window mode yet (or it was
+  // explicitly closed). Tracked so the panel UI can show a "Detach
+  // windows" vs "Close windows" affordance without polling the backend.
+  let windowLabels: { audience: string; control: string } | null = null;
 
   // ---- Lifecycle ----
   onMount(async () => {
@@ -73,10 +80,35 @@
     try {
       state = await theaterStart(documentPath, totalPages);
       startTimerIfRunning();
+      // Auto-detach: starting a session implies the operator wants the
+      // dual-window experience. If they don't, they can close the
+      // audience window with the system close-button — backend stays
+      // session-active until they hit Exit.
+      await openDetachedWindows();
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
+    }
+  }
+
+  async function openDetachedWindows() {
+    try {
+      windowLabels = await theaterOpenWindows(documentPath);
+    } catch (e) {
+      // Non-fatal: in-panel mode still works. Surface so the operator
+      // knows why they didn't get a second display.
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function closeDetachedWindows() {
+    try {
+      await theaterCloseWindows();
+    } catch (e) {
+      console.warn("[theater] closeDetachedWindows failed", e);
+    } finally {
+      windowLabels = null;
     }
   }
 
@@ -94,6 +126,10 @@
         console.info(
           `[theater] session ended at page ${final.current_page}/${final.total_pages} with ${final.ink_strokes.length} ink strokes`,
         );
+      }
+      // Tear down detached windows in lockstep with the session.
+      if (windowLabels) {
+        await closeDetachedWindows();
       }
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e);
@@ -215,6 +251,10 @@
       >
         {busy ? "Starting…" : "Start presentation"}
       </button>
+      <p class="hint-soft">
+        Opens a fullscreen audience window and a presenter control
+        window with notes, timer, and previews.
+      </p>
       {#if !documentPath}
         <p class="hint">Open a PDF first to enable Theater.</p>
       {/if}
@@ -223,6 +263,15 @@
     <!-- Active session -->
     <div class="status-row">
       <span class="page-label">{pageLabel}</span>
+      {#if windowLabels}
+        <button class="ghost" disabled={busy} on:click={closeDetachedWindows}>
+          Close audience window
+        </button>
+      {:else}
+        <button class="ghost" disabled={busy} on:click={openDetachedWindows}>
+          Open audience window
+        </button>
+      {/if}
       <button class="ghost danger" disabled={busy} on:click={endSession}>
         Exit (Esc)
       </button>
@@ -391,6 +440,14 @@
   }
   .muted { color: var(--muted-fg, #999); font-size: 13px; margin: 0; }
   .hint { color: var(--muted-fg, #777); font-size: 12px; margin: 0; }
+  .hint-soft {
+    color: var(--muted-fg, #888);
+    font-size: 12px;
+    margin: 8px 0 0;
+    max-width: 320px;
+    line-height: 1.45;
+    text-align: center;
+  }
 
   .status-row {
     display: flex;

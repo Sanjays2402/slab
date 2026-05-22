@@ -270,6 +270,28 @@
       keywords:
         "theater presenter present slides projector audience laser pointer blackout whiteout ink annotate spotlight talk teach lecture",
     });
+    // Theater Slice 5 — one-shot detach. Skips the panel and spawns the
+    // audience + control windows immediately. Useful when the operator
+    // already started a session and just wants the second display now.
+    out.push({
+      id: "theater:detach",
+      title: "Open Theater audience window",
+      subtitle:
+        "Spawn the fullscreen audience + presenter control windows",
+      icon: "🖥",
+      group: "Theater",
+      run: async () => {
+        try {
+          const { theaterOpenWindows } = await import("./theater");
+          await theaterOpenWindows(null);
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn("[palette] theater detach failed", e);
+        }
+      },
+      keywords:
+        "theater detach audience second screen monitor projector window presenter control dual display",
+    });
     // Glass Slice 7: jump straight to the customisation panel.
     out.push({
       id: "settings:keymap",
