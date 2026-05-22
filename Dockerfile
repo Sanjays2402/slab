@@ -14,7 +14,10 @@
 # Open:   http://localhost:8080
 
 ARG RUST_VERSION=1.88
-ARG DEBIAN_RELEASE=bookworm
+# trixie ships libwebkit2gtk-4.1-dev which the tauri-build crate-graph
+# needs. bookworm only carries the 4.0 ABI and webkit2gtk-sys 2.x
+# binds to 4.1, so the build dies at gdk-sys/webkit2gtk-sys pkg-config.
+ARG DEBIAN_RELEASE=trixie
 
 # ────────────────────────────────────────────────────────────────────
 # Stage 1 — base toolchain (cargo-chef for dependency caching)
@@ -52,6 +55,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         libssl-dev \
         ca-certificates \
+        libgtk-3-dev \
+        libwebkit2gtk-4.1-dev \
+        libsoup-3.0-dev \
+        libjavascriptcoregtk-4.1-dev \
+        libayatana-appindicator3-dev \
+        librsvg2-dev \
+        libxdo-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Bring the actual workspace in. We don't use cargo-chef's recipe path
