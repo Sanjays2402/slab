@@ -242,6 +242,32 @@
     </div>
   </div>
 
+  <!-- Atlas v2.2.0 — Search section. Pure information panel for the
+       MVP: the actual knobs (max results, snippet length) live in
+       ~/.slab/config.toml under [library.search] and are read by the
+       backend on each call; the panel exposes them as a clear
+       description so curious users can hand-edit. -->
+  <div class="row">
+    <div class="row-info">
+      <h2>{$tStore("settings.search.title")}</h2>
+      <p class="row-desc">{$tStore("settings.search.desc")}</p>
+      <ul class="hint-list">
+        <li><kbd>⇧⌘F</kbd> {$tStore("settings.search.hint.open")}</li>
+        <li><kbd>⌘K</kbd> {$tStore("settings.search.hint.palette")}</li>
+        <li>{$tStore("settings.search.hint.privacy")}</li>
+      </ul>
+    </div>
+    <div class="row-control">
+      <button
+        type="button"
+        class="ghost"
+        onclick={() => window.dispatchEvent(new CustomEvent("slab:focus-library-search"))}
+      >
+        {$tStore("settings.search.cta")}
+      </button>
+    </div>
+  </div>
+
   <!-- Reset + status -->
   <div class="footer-row">
     <button class="ghost" onclick={reset} type="button">{$tStore("settings.reset")}</button>
@@ -287,6 +313,33 @@
     font-size: 12px;
     line-height: 1.5;
     max-width: 460px;
+  }
+  /* Atlas v2.2.0 — bulleted hint rows inside the Search section. */
+  .hint-list {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .hint-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .hint-list kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-3);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    min-width: 32px;
+    text-align: center;
   }
 
   .row-control {
