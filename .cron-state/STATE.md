@@ -5,9 +5,11 @@
 
 ---
 
-## STATUS: 📋 Thirteen release plans on disk — pipeline goes through v2.1.0; v2.0.2 SHIPPED to main
+## STATUS: 🚀 v2.1.0 "Slab Server 🐳" SHIPPED to main + tagged + released — v2.1.1 plan promoted
 
-**Main HEAD**: `3aedf16` (v2.0.13 plan promotion). Will advance by 2 commits this tick (v2.1.0 plan + STATE chore).
+**v2.1.0 STATUS**: 🚀 **SHIPPED** — merge `05c191f`, tag `v2.1.0` pushed, GH release live at https://github.com/Sanjays2402/slab/releases/tag/v2.1.0. Slab Server = self-hostable Docker image (~80MB) + 14-op HTTP API + drag-drop Web UI + compose stack + CI workflow + 13 files / 2009 LOC. CI runs in_progress at tick end: `26271002054` (Docker), `26270991776` (build). MODE B finalize next tick.
+**v2.1.1 PLAN** (new this tick): `docs/plans/2026-05-21-v2.1.1-notary-ii.md` (~12 KB, 6 slices + pre-flight + final tick, ~1850 LOC, 5 commits, ~52 tests). Codename "Notary II" 🕰️ — RFC 3161 TSA timestamping + DSS / VRI embedding + PAdES B-LTA + offline-safe downgrade chain (B-LTA → B-LT → B-T → B-B). WOW = **Verify-in-2050 modal w/ 380ms gold-ribbon-of-time scrub animation** explaining a real PKI gotcha in 6s. Pure-Rust: hand-rolled RFC 3161 over `cms 0.3` + `der 0.8` (4 ASN.1 structs), `ocsp 0.6`, `reqwest 0.12 blocking` gated `feature = "online"`. Buy-Button 4/4 PASS — Pay-for-it (anchors $49 Pro w/ v2.1.0; legal/medical/govt MUST have LTV or archives expire), Pick-us (Adobe $239/yr ships B-LTA, PDF Expert B-T only, Foxit $179/yr Business; no free offline tool ships B-LTA), Notice-it (6 surfaces), Tell-a-friend (Verify-2050). **Must ship AFTER v2.1.0 "Notary" PKCS#7 signing lands** — extends every file under `notary/` v2.1.0 touches.
+**Main HEAD**: `05c191f` (v2.1.0 merge). Will advance by 2 more commits this tick (v2.1.1 plan + STATE chore).
 **v2.1.0 PLAN** (new this tick): `docs/plans/2026-05-21-v2.1.0-notary.md` (~43 KB, 1040 lines, 6 slices + pre-flight + final tick, ~3600 LOC, 8 commits, ~70 new tests). WOW = **480ms gold-ribbon Notary Seal unfurl animation** (SVG `feSpecularLighting` emboss + cubic-bezier `(0.34, 1.56, 0.64, 1)` ribbon scaleX-in + wax-stamp scale-1.6→1.0 + emblem pop, plus trust banner + verify-on-open + reduced-motion-safe). Codename "Notary" 🪶 — **cryptographic PKCS#7 / CMS signing per ISO 32000-1 §12.8**, the $49 Pro-tier ANCHOR feature. Replaces Adobe Acrobat Pro $239/yr signature validation + Adobe Sign $180/yr + DocuSign $120/yr — court-admissible PDFs signed entirely offline. Pure-Rust crypto (cms 0.3 + x509-cert 0.3 + rsa 0.10 + p256 0.14, no OpenSSL, no ring). OS-keychain key storage (keyring 3.x), .p12 import (p12 0.7). Six new Tauri commands. Also bridges to v2.0.13 Vault: **Vault-Certified redactions** ship a hash-chained manifest signed in the `/Sig` dict — provable redactions. Buy-Button 4/4 PASS — Pay-for-it (anchors paid Pro tier), Pick-us (no other free offline PKCS#7 signer), Notice-it (8 surfaces incl. trust banner), Tell-a-friend (seal unfurl + Notary Inspector). **Must ship AFTER v2.0.13 — extends `Annotation::Signature` from v2.0.12 + exports `RedactionManifest` from v2.0.13.** Strict order: v2.0.2 → … → v2.0.13 → **v2.1.0** → v2.1.1.
 **v2.0.13 PLAN** (new this tick): `docs/plans/2026-05-21-v2.0.13-vault.md` (~36 KB, 940 lines, 6 slices + pre-flight + final tick, ~1890 LOC, 8 commits, 62 new tests). WOW = **Vault-Door wipe animation (380ms gold→black 8-step CSS @keyframes + 40ms stagger) + X-Ray reveal hover ghost + single-key `r` Quick-Redact reticle** (Slice 4). Codename "Vault" 🔒 — **true byte-level content-stream redaction**: glyphs are physically deleted from the PDF, not painted over. Closes the single biggest paid-tier gap remaining after v2.0.12 — Adobe Acrobat Pro $239/yr's flagship feature. The warning sticker in `RedactPanel.svelte` ("true content-stream redaction is on the roadmap") finally comes off. PDFs get *physically smaller* when redacted — the demo line. Pure-Rust tokenizer + surgery + image XObject pruning + annotation scrub + metadata strip. Cryptographic redaction certification deferred to v2.1.0 "Notary" (pairs with PKCS#7 signing). **Must ship AFTER v2.0.12 — touches every file v2.0.6→v2.0.12 touched, disjoint i18n namespaces (`redact.vault.*`, `palette.vault.*`, `settings.privacy.vault.*`, `onboarding.vault.*`) keep merges clean.**
 **v2.0.12 PLAN**: `docs/plans/2026-05-21-v2.0.12-sign.md` (~34 KB, 6 slices + pre-flight, ~2400 LOC, 8 commits, 58 new tests). WOW = single-key `s` drop + stamp palette + **320ms rubber-stamp animation (scale-1.5→1.0 + rotate-3° + 12 ink-spatter droplets, cubic-bezier `(0.34, 1.56, 0.64, 1)`)** (Slice 4). Codename "Sign" ✒️ — **signatures + 14 preset stamps**, the single biggest paid-tier gap remaining. Adobe Sign $180/yr, DocuSign Personal $120/yr — v2.0.12 ships the visual half free, with v2.1.0 "Notary" tracked in open-questions for cryptographic PKCS#7 signing. Reuses v2.0.6 sidecar JSON + v2.0.7 ink capture (extracted to shared `inkCapture.ts`) + v2.0.10 edit mode + v2.0.11 rotation/multi-select. **Must ship AFTER v2.0.11 — extends sidecar v2 + rotation field.**
@@ -28,7 +30,36 @@
 **v2.0.5 PLAN**: `docs/plans/2026-05-20-v2.0.5-bookmarks.md` (~62 KB, 1932 lines, 6 slices + pre-flight, ~980 LOC). WOW = drag-to-reorder bookmark slots with HTML5 drag API + accent-tinted drop indicators (Slice 4). Codename "Bookmarks" ★ — closes the "save my spot" companion gap to v2.0.4's "remember last page".
 **v2.0.7 PLAN** (new this tick): `docs/plans/2026-05-20-v2.0.7-inkwell.md` (~33 KB, 963 lines, 6 slices + pre-flight, ~1080 LOC, 8 commits). WOW = single-key `d` drawing mode + 220ms ink-trail-shimmer SVG sweep on stroke commit (Slice 4). Codename "Inkwell" 🖊️ — adds freehand ink/drawing as the third annotation primitive, reusing v2.0.6's sidecar JSON store via a new `kind: "ink"` discriminator. Rust gets a third `Annotation::Ink` enum variant emitting PDF spec §12.5.6.13 `/Subtype /Ink` w/ `/InkList`. **Must ship AFTER v2.0.6 — touches every file v2.0.6 touches (annotations.ts, AnnotateLayer.svelte, ReaderPanel.svelte, CommandPalette.svelte, OnboardingTour.svelte, SettingsPanel.svelte, i18n/en.json, src-tauri/src/pdf/annotations.rs, src-tauri/src/keymap/action.rs). Disjoint namespaces (`annotations.draw.*` / `palette.draw.*` / `settings.annotations.draw.*` / `onboarding.draw.*`) + appended-at-end keys keep merge clean; strict order is the insurance policy.**
 **v2.0.6 PLAN**: `docs/plans/2026-05-20-v2.0.6-margin.md` (~47 KB, 1191 lines, 6 slices + pre-flight, ~990 LOC, 8 commits). WOW = single-key `h` Quick-Highlight mode with 220ms ink-bloom animation on every new highlight (Slice 4). Codename "Margin" 📝 — **closes the highlights-vanish-on-close launch-blocker gap** vs Adobe / PDF Expert / Foxit / macOS Preview. Persistent annotations sidecar JSON keyed by file path, byte-compatible with existing Rust `Annotation` enum (no backend changes needed for the happy path). **Must ship AFTER v2.0.5 — both touch ReaderPanel.svelte + CommandPalette.svelte + OnboardingTour.svelte + SettingsPanel.svelte + i18n/en.json (disjoint namespaces: annotations.\* / palette.annot.\* / settings.annotations.\* / onboarding.annotations.\* vs bookmarks.\* / palette.bookmark.\* vs reader.progress.\* / palette.resume.\* / onboarding.memory.\* vs settings.beacon.\*).**
-**LAST_WOW_TICK_AT**: 2026-05-20 00:20 PT — v2.0.1 itself ships the "0 → 1" plugin moment.
+**LAST_WOW_TICK_AT**: 2026-05-21 22:53 PT — Slab Server 🐳 self-hostable Docker image is screenshot-bait (`docker run -p 8080:8080 ghcr.io/sanjays2402/slab`).
+
+---
+
+## TICK 2026-05-21 22:53 PT — MODE A+B+C — v2.1.0 "Slab Server 🐳" SHIPPED, v2.1.1 plan promoted 🕰️
+
+**Streak-breaker tick.** After 14 consecutive plan-only ticks, found real
+shippable code on `feature/v2.1.0-docker-server` (2009 LOC, 13 files, server
+binary + Dockerfile + compose + CI + UI + docs + release notes). Quality
+gates clean (fmt clean, clippy clean, 923 tests pass, pnpm check 0 errors).
+
+**MODE A**: merged `feature/v2.1.0-docker-server` → main as `05c191f`
+(author re-set to `Cake (cron)` per protocol). Push succeeded.
+**MODE B**: tagged `v2.1.0` annotated, pushed tag, `gh release create v2.1.0`
+with `docs/release-notes/v2.1.0.md`. Release live at
+https://github.com/Sanjays2402/slab/releases/tag/v2.1.0. CI runs in_progress:
+`26271002054` (Docker) + `26270991776` (build). Finalize next tick.
+**MODE C**: wrote `docs/plans/2026-05-21-v2.1.1-notary-ii.md` — v2.1.1
+"Notary II" 🕰️ PAdES B-LTA + RFC 3161 TSA + DSS/VRI + Verify-in-2050 WOW.
+Keeps planning streak alive (v2.1.2 candidate already namechecked: PKCS#11
+hardware tokens, multi-signer, CAdES detached, batch sign, iPad capture).
+
+**Incident**: disk hit 100% mid-tick during plan write. `cargo clean` in
+src-tauri reclaimed 19 GiB (target dir had grown to 20 GiB across the 14
+plan-only ticks where it sat untouched). Sanjay heads-up: worth a weekly
+cleanup or `cargo-cache` cron.
+
+Session log: `.cron-state/sessions/2026-05-21-2253.md`.
+
+---
 
 ---
 
