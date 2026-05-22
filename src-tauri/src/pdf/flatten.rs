@@ -45,18 +45,37 @@ use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Choose between fast annotation-bake and full raster legal-grade flatten.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FlattenMode {
+    /// Bake annotations + AcroForm into page content streams. Fast,
+    /// preserves text searchability. Default.
+    #[default]
+    Annotations,
+    /// Stage A (annotation bake) + Stage B (re-render every page at
+    /// `dpi` via Poppler `pdftoppm`, replacing the page content stream
+    /// with a single ImageXObject). Court-admissible, zero editable
+    /// text, irreversible.
+    Raster { dpi: u32 },
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FlattenOpts {
     /// If true, also flatten widget annotations (form fields). Default
     /// `true` — flattening fields is the whole point of the operation.
     #[serde(default = "default_true")]
     pub include_widgets: bool,
+    /// Annotation-only or full raster.
+    #[serde(default)]
+    pub mode: FlattenMode,
 }
 
 impl Default for FlattenOpts {
     fn default() -> Self {
         Self {
             include_widgets: true,
+            mode: FlattenMode::default(),
         }
     }
 }
@@ -77,16 +96,47 @@ pub struct FlattenReport {
     pub pages_with_annotations: u32,
     /// Whether the document had an `/AcroForm` entry (which we remove).
     pub had_acroform: bool,
+    /// Pages rebuilt as a single ImageXObject (Raster mode only).
+    #[serde(default)]
+    pub pages_rasterized: u32,
+    /// DPI used when rasterizing (0 in Annotations mode).
+    #[serde(default)]
+    pub dpi: u32,
 }
 
 /// Bake annotations into page content streams and remove the original
-/// `/Annots` arrays + `/AcroForm` from the catalog.
+/// `/Annots` arrays + `/AcroForm` from the catalog. In `Raster` mode,
+/// also re-renders every page at `dpi` and swaps the content stream
+/// for a single ImageXObject.
 pub fn flatten(input: &Path, output: &Path, opts: FlattenOpts) -> Result<FlattenReport, PdfError> {
     if !input.exists() {
         return Err(PdfError::InputMissing(input.display().to_string()));
     }
     let mut doc = Document::load(input)?;
-    let report = flatten_doc(&mut doc, &opts)?;
+    let mut report = flatten_doc(&mut doc, &opts)?;
+
+    if let FlattenMode::Raster { dpi } = opts.mode {
+        if !(36..=600).contains(&dpi) {
+            return Err(PdfError::Other(format!("dpi {dpi} out of range (36-600)")));
+        }
+        // Save Stage A to a temp file so pdftoppm can read it.
+        let tmp = tempfile::tempdir().map_err(|e| PdfError::Other(format!("tempdir: {e}")))?;
+        let stage_a = tmp.path().join("stage_a.pdf");
+        doc.compress();
+        doc.save(&stage_a)?;
+        let mut raster_doc = Document::load(&stage_a)?;
+        let pages_rasterized = rasterize_doc(&mut raster_doc, &stage_a, dpi)?;
+        report.pages_rasterized = pages_rasterized;
+        report.dpi = dpi;
+        if let Some(parent) = output.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        raster_doc.compress();
+        raster_doc.save(output)?;
+        return Ok(report);
+    }
 
     if let Some(parent) = output.parent() {
         if !parent.as_os_str().is_empty() {
@@ -96,6 +146,159 @@ pub fn flatten(input: &Path, output: &Path, opts: FlattenOpts) -> Result<Flatten
     doc.compress();
     doc.save(output)?;
     Ok(report)
+}
+
+/// Stage B: shell out to `pdftoppm` to rasterize every page at `dpi`,
+/// then rebuild each page in `doc` as a single ImageXObject `Do`.
+fn rasterize_doc(doc: &mut Document, stage_a: &Path, dpi: u32) -> Result<u32, PdfError> {
+    let pages: Vec<(u32, ObjectId)> = doc.get_pages().into_iter().collect();
+    if pages.is_empty() {
+        return Ok(0);
+    }
+    let tmp = tempfile::tempdir().map_err(|e| PdfError::Other(format!("tempdir: {e}")))?;
+    let prefix = tmp.path().join("p");
+    let status = std::process::Command::new("pdftoppm")
+        .arg("-r")
+        .arg(dpi.to_string())
+        .arg("-png")
+        .arg(stage_a)
+        .arg(&prefix)
+        .status()
+        .map_err(|e| {
+            PdfError::Other(format!(
+                "pdftoppm not found ({e}). Install poppler: \
+                 `brew install poppler` (macOS) / `apt install poppler-utils` (Linux)."
+            ))
+        })?;
+    if !status.success() {
+        return Err(PdfError::Other(format!(
+            "pdftoppm exited {}",
+            status.code().unwrap_or(-1)
+        )));
+    }
+    let mut pngs: Vec<std::path::PathBuf> = std::fs::read_dir(tmp.path())
+        .map_err(|e| PdfError::Other(format!("read tmp: {e}")))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "png"))
+        .collect();
+    pngs.sort();
+    if pngs.len() != pages.len() {
+        return Err(PdfError::Other(format!(
+            "pdftoppm produced {} PNGs for {} pages",
+            pngs.len(),
+            pages.len()
+        )));
+    }
+    rebuild_pages_from_pngs(doc, &pages, &pngs)?;
+    Ok(pages.len() as u32)
+}
+
+fn rebuild_pages_from_pngs(
+    doc: &mut Document,
+    pages: &[(u32, ObjectId)],
+    pngs: &[std::path::PathBuf],
+) -> Result<(), PdfError> {
+    for ((_num, page_id), png_path) in pages.iter().zip(pngs.iter()) {
+        let img = image::open(png_path)
+            .map_err(|e| PdfError::Other(format!("decode {}: {e}", png_path.display())))?;
+        let rgb = img.to_rgb8();
+        let (w, h) = (rgb.width(), rgb.height());
+        let raw = rgb.into_raw();
+
+        // FlateDecode the raw RGB bytes.
+        use flate2::write::ZlibEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&raw)
+            .map_err(|e| PdfError::Other(format!("flate write: {e}")))?;
+        let compressed = enc
+            .finish()
+            .map_err(|e| PdfError::Other(format!("flate finish: {e}")))?;
+
+        let img_dict = dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => w as i64,
+            "Height" => h as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+            "Filter" => "FlateDecode",
+        };
+        let img_stream = Stream::new(img_dict, compressed);
+        let img_id = doc.add_object(Object::Stream(img_stream));
+
+        // Inherited /MediaBox: in points (user-space units).
+        let media_box = page_media_box(doc, *page_id);
+        let pw = media_box[2] - media_box[0];
+        let ph = media_box[3] - media_box[1];
+
+        // Build the new content stream: q pw 0 0 ph llx lly cm /Img Do Q
+        let content = Content {
+            operations: vec![
+                Operation::new("q", vec![]),
+                Operation::new(
+                    "cm",
+                    vec![
+                        Object::Real(pw),
+                        Object::Real(0.0),
+                        Object::Real(0.0),
+                        Object::Real(ph),
+                        Object::Real(media_box[0]),
+                        Object::Real(media_box[1]),
+                    ],
+                ),
+                Operation::new("Do", vec![Object::Name(b"Img".to_vec())]),
+                Operation::new("Q", vec![]),
+            ],
+        };
+        let content_bytes = content
+            .encode()
+            .map_err(|e| PdfError::Other(format!("encode content: {e}")))?;
+        let content_id = doc.add_object(Object::Stream(Stream::new(dictionary! {}, content_bytes)));
+
+        let page = doc.get_object_mut(*page_id)?.as_dict_mut()?;
+        page.set("Contents", Object::Reference(content_id));
+        let resources = dictionary! {
+            "XObject" => dictionary! { "Img" => Object::Reference(img_id) },
+            "ProcSet" => Object::Array(vec![
+                Object::Name(b"PDF".to_vec()),
+                Object::Name(b"ImageC".to_vec()),
+            ]),
+        };
+        page.set("Resources", Object::Dictionary(resources));
+        page.remove(b"Annots");
+        // Also drop any inherited /Group / /Fonts on the page node — defensive.
+    }
+    Ok(())
+}
+
+fn page_media_box(doc: &Document, page_id: ObjectId) -> [f32; 4] {
+    let mut current = page_id;
+    loop {
+        let dict = match doc.get_object(current).and_then(|o| o.as_dict()) {
+            Ok(d) => d,
+            Err(_) => return [0.0, 0.0, 612.0, 792.0],
+        };
+        if let Ok(arr) = dict.get(b"MediaBox").and_then(|o| o.as_array()) {
+            let v: Vec<f32> = arr
+                .iter()
+                .filter_map(|o| match o {
+                    Object::Integer(i) => Some(*i as f32),
+                    Object::Real(f) => Some(*f),
+                    _ => None,
+                })
+                .collect();
+            if v.len() == 4 {
+                return [v[0], v[1], v[2], v[3]];
+            }
+        }
+        match dict.get(b"Parent") {
+            Ok(Object::Reference(pid)) => current = *pid,
+            _ => return [0.0, 0.0, 612.0, 792.0],
+        }
+    }
 }
 
 fn flatten_doc(doc: &mut Document, opts: &FlattenOpts) -> Result<FlattenReport, PdfError> {
@@ -631,5 +834,127 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, PdfError::InputMissing(_)));
+    }
+
+    // ----- v2.0.3 raster-flatten tests (closes #24) -----
+
+    #[test]
+    fn flatten_opts_default_is_annotations_mode() {
+        let opts = FlattenOpts::default();
+        assert!(matches!(opts.mode, FlattenMode::Annotations));
+        assert!(opts.include_widgets);
+        let r = FlattenReport::default();
+        assert_eq!(r.dpi, 0);
+        assert_eq!(r.pages_rasterized, 0);
+    }
+
+    #[test]
+    fn raster_mode_rejects_out_of_range_dpi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 1);
+        let err = flatten(
+            &src,
+            &dst,
+            FlattenOpts {
+                include_widgets: true,
+                mode: FlattenMode::Raster { dpi: 10 },
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, PdfError::Other(_)));
+    }
+
+    /// Requires `pdftoppm` (poppler) on PATH. Skips silently if absent so
+    /// CI environments without poppler don't fail the suite.
+    fn pdftoppm_available() -> bool {
+        std::process::Command::new("pdftoppm")
+            .arg("-v")
+            .output()
+            .is_ok()
+    }
+
+    #[test]
+    fn raster_mode_reports_dpi_and_pages_rasterized() {
+        if !pdftoppm_available() {
+            eprintln!("skipped: pdftoppm not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 2);
+        let report = flatten(
+            &src,
+            &dst,
+            FlattenOpts {
+                include_widgets: true,
+                mode: FlattenMode::Raster { dpi: 100 },
+            },
+        )
+        .unwrap();
+        assert_eq!(report.dpi, 100);
+        assert_eq!(report.pages_rasterized, 2);
+        assert!(dst.exists());
+    }
+
+    #[test]
+    fn raster_mode_strips_all_font_dicts() {
+        if !pdftoppm_available() {
+            eprintln!("skipped: pdftoppm not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 1);
+        flatten(
+            &src,
+            &dst,
+            FlattenOpts {
+                include_widgets: true,
+                mode: FlattenMode::Raster { dpi: 72 },
+            },
+        )
+        .unwrap();
+        // Reopen and assert no /Font dict resources survive.
+        let doc = Document::load(&dst).unwrap();
+        for (_num, page_id) in doc.get_pages() {
+            let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
+            let resources = page
+                .get(b"Resources")
+                .unwrap()
+                .as_dict()
+                .unwrap_or_else(|_| panic!("Resources not inline"));
+            assert!(
+                resources.get(b"Font").is_err(),
+                "expected no /Font in raster-flatten Resources"
+            );
+            let xobjs = resources.get(b"XObject").unwrap().as_dict().unwrap();
+            assert_eq!(
+                xobjs.iter().count(),
+                1,
+                "expected exactly one XObject per rebuilt page"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_mode_leaves_zero_annot_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        pdf_with_one_widget(&src);
+        let report = flatten(&src, &dst, FlattenOpts::default()).unwrap();
+        assert!(report.annotations_in >= 1);
+        let doc = Document::load(&dst).unwrap();
+        for (_num, page_id) in doc.get_pages() {
+            let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
+            assert!(
+                page.get(b"Annots").is_err(),
+                "page still has /Annots after annotation-mode flatten"
+            );
+        }
     }
 }

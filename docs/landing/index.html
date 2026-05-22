@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Slab — Enterprise PDF workstation</title>
+  <meta name="description" content="Enterprise-grade PDF workstation for macOS, Windows, and Linux. Read, edit, OCR, redact, flatten, sign, diff, and run local AI on your documents. Your files never leave your machine." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="nav">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="brandname">Slab</span>
+    </div>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#enterprise">Enterprise</a>
+      <a href="https://github.com/Sanjays2402/slab/releases/latest">Download</a>
+      <a class="ghbtn" href="https://github.com/Sanjays2402/slab" aria-label="GitHub">GitHub →</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="copy">
+      <p class="kicker">Enterprise-grade. Local-first. Free.</p>
+      <h1>The PDF workstation that respects your files.</h1>
+      <p class="sub">Read, edit, OCR, redact, flatten, sign, diff, and run local AI on your documents — on macOS, Windows, and Linux. Zero cloud. Zero telemetry. Zero subscription.</p>
+      <div class="cta">
+        <a class="primary" href="https://github.com/Sanjays2402/slab/releases/latest">Download free</a>
+        <a class="secondary" href="https://github.com/Sanjays2402/slab">View on GitHub</a>
+      </div>
+      <p class="footnote">macOS 13+ · Windows 10+ · Linux (AppImage, deb)</p>
+    </div>
+    <div class="demo demo-hero" aria-label="Animated demo of opening a PDF, highlighting, signing, and saving">
+      <object data="demos/hero.svg" type="image/svg+xml" aria-hidden="true"></object>
+    </div>
+  </section>
+
+  <section id="features" class="features">
+    <h2>What every PDF tool should do.</h2>
+    <div class="grid">
+      <article>
+        <div class="demo demo-card"><object data="demos/merge.svg" type="image/svg+xml" aria-hidden="true"></object></div>
+        <h3>Merge &amp; split</h3>
+        <p>Drag two files in, click merge, get one file out. Or split a 400-page report into per-chapter PDFs.</p>
+      </article>
+      <article>
+        <div class="demo demo-card"><object data="demos/edit.svg" type="image/svg+xml" aria-hidden="true"></object></div>
+        <h3>Inline text edit</h3>
+        <p>Double-click any text block to edit. Fonts and layout stay intact — no rasterization, no fuzzy output.</p>
+      </article>
+      <article>
+        <div class="demo demo-card"><object data="demos/sign.svg" type="image/svg+xml" aria-hidden="true"></object></div>
+        <h3>Sign &amp; flatten</h3>
+        <p>Drop a signature anywhere. Then flatten to 150 DPI for legal and compliance — fully uneditable, locked.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="enterprise" class="enterprise">
+    <h2>Built for teams that take privacy seriously.</h2>
+    <div class="pillars">
+      <div>
+        <h4>Zero cloud</h4>
+        <p>Every operation runs locally. Your client agreements, redacted depositions, and HR records never touch a third-party server.</p>
+      </div>
+      <div>
+        <h4>Cross-platform parity</h4>
+        <p>One UX on macOS, Windows, and Linux. IT deploys the same product to legal, finance, and engineering — no exceptions.</p>
+      </div>
+      <div>
+        <h4>Compliance-ready</h4>
+        <p>Redact PII, flatten annotations into a permanent record, batch-OCR scanned archives. The legal-grade workflow without the legal-grade price tag.</p>
+      </div>
+      <div>
+        <h4>Plugin platform</h4>
+        <p>Extend Slab with the Foundry SDK (typed TypeScript). Build internal tools, sign them, ship them to your team — no enterprise licensing department required.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="vs">
+    <h2>Compare</h2>
+    <table>
+      <thead><tr><th></th><th>Slab</th><th>Adobe Acrobat Pro</th><th>PDF Expert</th><th>Foxit</th></tr></thead>
+      <tbody>
+        <tr><td>Price</td><td>Free</td><td>$239 / year</td><td>$79 / year</td><td>$129 / year</td></tr>
+        <tr><td>macOS · Windows · Linux</td><td>✓ · ✓ · ✓</td><td>✓ · ✓ · ✗</td><td>✓ · ✗ · ✗</td><td>✓ · ✓ · ✗</td></tr>
+        <tr><td>Files stay local</td><td>✓ Always</td><td>✗ Cloud features upload</td><td>~ Partial</td><td>~ Partial</td></tr>
+        <tr><td>Local AI (offline)</td><td>✓ Beacon</td><td>✗ Cloud only</td><td>✗</td><td>~ Cloud add-on</td></tr>
+        <tr><td>Plugin SDK</td><td>✓ Foundry</td><td>Enterprise licensing</td><td>✗</td><td>✗</td></tr>
+        <tr><td>Telemetry</td><td>None</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="foot">
+    <div>Slab is open source under the AGPL. Built in Rust + Svelte on Tauri.</div>
+    <div class="links">
+      <a href="https://github.com/Sanjays2402/slab">GitHub</a>
+      <a href="https://github.com/Sanjays2402/slab/releases">Releases</a>
+      <a href="https://github.com/Sanjays2402/slab/issues">Issues</a>
+    </div>
+  </footer>
+</body>
+</html>
