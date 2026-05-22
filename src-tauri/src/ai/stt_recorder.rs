@@ -285,8 +285,16 @@ mod tests {
         assert!(p1.extension().map(|e| e == "wav").unwrap_or(false));
     }
 
+    // Process-global mutex so the two WHISPER_CLI tests don't race —
+    // cargo runs tests in parallel by default, and both mutate the same
+    // process env var. Without serialisation, one test's overwrite would
+    // bleed into the other's read window (observed flaking CI run
+    // 26283755466).
+    static WHISPER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn locate_whisper_cli_respects_env_override() {
+        let _guard = WHISPER_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // Point WHISPER_CLI at a file that definitely exists (this
         // very test binary). Then we should get that path back.
         let exe = std::env::current_exe().unwrap();
@@ -302,6 +310,7 @@ mod tests {
 
     #[test]
     fn locate_whisper_cli_ignores_nonexistent_env_override() {
+        let _guard = WHISPER_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let orig = std::env::var("WHISPER_CLI").ok();
         std::env::set_var("WHISPER_CLI", "/definitely/not/a/real/path/whisper-cli");
         let got = locate_whisper_cli();
