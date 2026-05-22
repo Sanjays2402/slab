@@ -60,6 +60,8 @@ tokio = { version = "1", features = ["full"] }
 
 # Temp directories for OCR rasterization pipeline
 tempfile = "3"
+# Cross-platform home/config dir lookup for first-launch self-install.
+dirs = "6"
 
 # Beacon (v0.10.0 AI features) — HTTP client for talking to local
 # Ollama and remote OpenAI-compatible servers, async-trait for the

@@ -2,6 +2,7 @@
 // All operations run locally; nothing is ever uploaded.
 
 pub mod ai;
+pub mod first_launch;
 pub mod keymap;
 pub mod marketplace;
 pub mod pdf;
@@ -157,6 +158,154 @@ fn app_info() -> AppInfo {
 fn slab_merge(inputs: Vec<PathBuf>, output: PathBuf) -> CmdResult<PathBuf> {
     let out = output.clone();
     merge_pdfs(&inputs, output).map(|_| out).into()
+}
+
+// ───── First-launch self-install (issue #25, v2.0.3) ──────────────
+
+/// Snapshot of first-launch state surfaced to the UI.
+#[derive(serde::Serialize)]
+struct FirstLaunchProbe {
+    should_prompt: bool,
+    decision: first_launch::LaunchDecision,
+    /// True if the running exe is in a "looks temporary" location
+    /// (Downloads, Desktop, mounted DMG, /tmp, AppImage mount).
+    /// Used by the modal to escalate the "Install" CTA.
+    looks_temporary: bool,
+    /// Where Slab *would* live post-install (display-only).
+    canonical_install_dir: Option<PathBuf>,
+}
+
+#[tauri::command]
+fn slab_first_launch_probe() -> CmdResult<FirstLaunchProbe> {
+    let probe = first_launch::OsProbe;
+    use first_launch::Probe;
+    let state = probe
+        .state_path()
+        .and_then(|p| first_launch::state::load(&p).ok())
+        .unwrap_or_default();
+    let exe = probe.current_exe().ok();
+    let looks_temporary = match exe.as_deref() {
+        #[cfg(target_os = "macos")]
+        Some(p) => first_launch::macos::looks_like_temporary_location(p),
+        #[cfg(target_os = "windows")]
+        Some(p) => first_launch::windows::looks_like_temporary_location(p),
+        #[cfg(target_os = "linux")]
+        Some(p) => first_launch::linux::looks_like_temporary_location(p),
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        Some(_) => false,
+        None => false,
+    };
+    CmdResult::Ok {
+        value: FirstLaunchProbe {
+            should_prompt: first_launch::should_prompt(&probe),
+            decision: state.decision,
+            looks_temporary,
+            canonical_install_dir: probe.canonical_install_dir(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_first_launch_skip() -> CmdResult<()> {
+    let probe = first_launch::OsProbe;
+    use first_launch::Probe;
+    let Some(state_path) = probe.state_path() else {
+        return CmdResult::Err {
+            message: "no HOME directory — cannot persist decision".into(),
+        };
+    };
+    let mut st = first_launch::state::load(&state_path).unwrap_or_default();
+    st.decision = first_launch::LaunchDecision::RunFromHere;
+    match first_launch::state::save(&state_path, &st) {
+        Ok(()) => CmdResult::Ok { value: () },
+        Err(e) => CmdResult::Err {
+            message: format!("save launch state: {e}"),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_first_launch_install() -> CmdResult<PathBuf> {
+    let probe = first_launch::OsProbe;
+    use first_launch::Probe;
+    let Some(state_path) = probe.state_path() else {
+        return CmdResult::Err {
+            message: "no HOME directory — cannot persist decision".into(),
+        };
+    };
+    let installed: std::io::Result<PathBuf> = {
+        #[cfg(target_os = "macos")]
+        {
+            first_launch::macos::install()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            first_launch::windows::install()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            first_launch::linux::install()
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "self-install not supported on this OS",
+            ))
+        }
+    };
+    match installed {
+        Ok(path) => {
+            let st = first_launch::LaunchState {
+                decision: first_launch::LaunchDecision::Installed,
+                installed_at: Some(rfc3339_now()),
+                installed_path: Some(path.clone()),
+                ..Default::default()
+            };
+            if let Err(e) = first_launch::state::save(&state_path, &st) {
+                return CmdResult::Err {
+                    message: format!("install ok but state save failed: {e}"),
+                };
+            }
+            CmdResult::Ok { value: path }
+        }
+        Err(e) => CmdResult::Err {
+            message: format!("install failed: {e}"),
+        },
+    }
+}
+
+/// Lightweight RFC 3339 timestamp using SystemTime → seconds since
+/// epoch, formatted as `YYYY-MM-DDTHH:MM:SSZ`. Avoids pulling chrono.
+fn rfc3339_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (year, month, day, hour, min, sec) = epoch_to_ymdhms(secs);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+/// Pure-arithmetic UTC breakdown — good enough for a one-off timestamp.
+fn epoch_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
+    let days = secs.div_euclid(86_400);
+    let sod = secs.rem_euclid(86_400);
+    let hour = (sod / 3600) as u32;
+    let min = ((sod % 3600) / 60) as u32;
+    let sec = (sod % 60) as u32;
+    // Civil-from-days algorithm (Howard Hinnant, public domain).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let year = (y + if m <= 2 { 1 } else { 0 }) as i32;
+    (year, m, d, hour, min, sec)
 }
 
 #[derive(Deserialize)]
@@ -2631,6 +2780,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            slab_first_launch_probe,
+            slab_first_launch_install,
+            slab_first_launch_skip,
             slab_merge,
             slab_split_ranges,
             slab_split_every,

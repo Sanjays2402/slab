@@ -19,12 +19,15 @@ use slab_lib::ai::auto_tag::AutoTagOpts;
 use slab_lib::ai::config::{load as load_ai_config, make_provider};
 use slab_lib::pdf::annot_export::{extract as extract_annots, to_markdown as annots_to_md};
 use slab_lib::pdf::auto_redact::{auto_redact, AutoRedactOpts};
+use slab_lib::pdf::bates::{apply_bates, BatesOpts, BatesPosition};
+use slab_lib::pdf::booklet::{impose_booklet, BookletOpts};
 use slab_lib::pdf::compress::compress;
 use slab_lib::pdf::encrypt::{decrypt, encrypt};
 use slab_lib::pdf::extract::{extract_text, extract_text_concat};
 use slab_lib::pdf::flatten::{flatten as do_flatten, FlattenMode, FlattenOpts};
 use slab_lib::pdf::grayscale::{grayscale, GrayscaleOpts};
 use slab_lib::pdf::info::info;
+use slab_lib::pdf::invert::{invert_colors, InvertOpts};
 use slab_lib::pdf::library::{
     auto_tag_run_one, default_db_path as library_db_path, ocr_queue_list_pending,
     ocr_queue_run_one, query_documents, LibraryDb, LibraryFilter,
@@ -38,6 +41,7 @@ use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
 use slab_lib::pdf::preflight::{preflight, PreflightOpts, Status as PreflightStatus};
 use slab_lib::pdf::repair::repair as do_repair;
+use slab_lib::pdf::reverse::reverse_pages;
 use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
 use slab_lib::pdf::scan_audit::{audit as scan_audit, PageClassification, Recommendation};
 use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
@@ -87,6 +91,10 @@ fn main() -> ExitCode {
         "sanitize" => cmd_sanitize(rest),
         "repair" => cmd_repair(rest),
         "export-annots" => cmd_export_annots(rest),
+        "bates" => cmd_bates(rest),
+        "invert" => cmd_invert(rest),
+        "reverse" => cmd_reverse(rest),
+        "booklet" => cmd_booklet(rest),
         "lens" => cmd_lens(rest),
         other => Err(CliError::Usage(format!(
             "Unknown command: {other}\n\nRun `slab help`."
@@ -686,6 +694,101 @@ fn cmd_export_annots(args: &[String]) -> Result<(), CliError> {
     println!(
         "✓ {} annotation(s) exported → {}",
         annots.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+// ---- v2.2 batch: bates / invert / reverse / booklet ----
+
+fn cmd_bates(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let prefix = find_flag(args, "--prefix").unwrap_or("").to_string();
+    let start_at: u64 = find_flag(args, "--start")
+        .unwrap_or("1")
+        .parse()
+        .map_err(|e| CliError::Usage(format!("--start must be a positive integer: {e}")))?;
+    let digits: u8 = find_flag(args, "--digits")
+        .unwrap_or("6")
+        .parse()
+        .map_err(|e| CliError::Usage(format!("--digits must be 1..=12: {e}")))?;
+    let font_size: f32 = find_flag(args, "--font-size")
+        .unwrap_or("10")
+        .parse()
+        .map_err(|e| CliError::Usage(format!("--font-size must be a number: {e}")))?;
+    let position = match find_flag(args, "--position").unwrap_or("bottom-right") {
+        "top-left" => BatesPosition::TopLeft,
+        "top-center" => BatesPosition::TopCenter,
+        "top-right" => BatesPosition::TopRight,
+        "bottom-left" => BatesPosition::BottomLeft,
+        "bottom-center" => BatesPosition::BottomCenter,
+        "bottom-right" => BatesPosition::BottomRight,
+        other => {
+            return Err(CliError::Usage(format!(
+                "unknown --position {other:?} (use top-left, top-center, top-right, bottom-left, bottom-center, bottom-right)"
+            )))
+        }
+    };
+    let opts = BatesOpts {
+        prefix,
+        start_at,
+        digits,
+        position,
+        font_size,
+        gray: 0.0,
+    };
+    let report = apply_bates(&input, &output, &opts)?;
+    println!(
+        "✓ stamped {} page(s): {} … {} (next: {}) → {}",
+        report.pages_stamped,
+        report.first_label,
+        report.last_label,
+        report.next_start,
+        output.display()
+    );
+    Ok(())
+}
+
+fn cmd_invert(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let pages = match find_flag(args, "--pages") {
+        Some(s) => parse_pages(s)?,
+        None => vec![],
+    };
+    let n = invert_colors(&input, &output, InvertOpts { pages })?;
+    println!("✓ inverted {n} stream(s) → {}", output.display());
+    Ok(())
+}
+
+fn cmd_reverse(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let n = reverse_pages(&input, &output)?;
+    println!("✓ reversed {n} page(s) → {}", output.display());
+    Ok(())
+}
+
+fn cmd_booklet(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let output = output_path(args)?;
+    let margin: f32 = find_flag(args, "--margin")
+        .unwrap_or("18")
+        .parse()
+        .map_err(|e| CliError::Usage(format!("--margin must be a number: {e}")))?;
+    let gap: f32 = find_flag(args, "--gap")
+        .unwrap_or("12")
+        .parse()
+        .map_err(|e| CliError::Usage(format!("--gap must be a number: {e}")))?;
+    let opts = BookletOpts { margin, gap };
+    let r = impose_booklet(&input, &output, opts)?;
+    println!(
+        "✓ booklet: {} source page(s) → {} signature page(s) ({} sheet(s), {} output page(s)) → {}",
+        r.source_pages,
+        r.signature_pages,
+        r.sheets,
+        r.output_pages,
         output.display()
     );
     Ok(())

@@ -5,12 +5,44 @@
 
 ---
 
-## STATUS: 📋 v2.0.3 "Self-Install" PLAN landed — #25 ready to execute
+## STATUS: 🚀 v2.0.3 "Self-Install" SHIPPED end-to-end on `feature/v2.0.3-self-install` — ready to merge to main next tick
 
-**TICK 2026-05-22 01:23 PT** — writing-plans skill: shipped `docs/plans/2026-05-22-v2.0.3-self-install.md` (46 KB, 1263 lines, 6 slices + final tick, ~12 commits, ~900 LOC at execution, ~12 new tests). Cross-platform first-launch "Install or Run" modal w/ per-OS install (~/Applications, %LOCALAPPDATA%\Programs\Slab + HKCU ProgID, ~/.local/bin + .desktop), opt-in default PDF handler, **zero admin/UAC/sudo**. WOW = 420ms cubic-bezier `(0.34, 1.56, 0.64, 1)` settling animation w/ gold-accent halo drop-shadow on success. Buy-Button 3/4 PASS (Pick-us — no free OSS tool ships no-admin self-install on all 3 OSes; KillerPDF is Windows-only; Adobe/Foxit need admin). Branch `feature/v2.0.3-self-install` cut from main, plan commit `ab7645c` pushed. Next tick: execute Slices 1-2 (backend core + per-OS install, ~6 commits, ~600 LOC).
+**TICK 2026-05-22 02:07 PT** — MODE C develop — Issue #25 closed end-to-end + 4 PDF ops folded in:
 
-**Active branch**: `feature/v2.0.3-self-install` (at `ab7645c`).
-**Open override issues**: #25 (in-flight, plan landed), #26 (page ops), #27 (demo video).
+- **`first_launch/` backend** (`60e6f4d`): Probe trait + LaunchState (Pending/RunFromHere/Installed) + atomic TOML state at `~/.config/slab/launch.toml` + should_prompt decision logic. macOS (`~/Applications/Slab.app` + `lsregister`), Windows (`%LOCALAPPDATA%\Programs\Slab\Slab.exe` + Start Menu .lnk + HKCU-only file association), Linux (`~/.local/bin/slab` + `~/.local/share/applications/slab.desktop` Desktop Entry + `xdg-mime` default handler). **Zero admin / sudo / UAC** on all three OSes. 23 unit tests; `dirs = "6"` added to Cargo.toml.
+- **Tauri commands** (`76d5c88`): `slab_first_launch_probe` returns FirstLaunchProbe { should_prompt, decision, looks_temporary, canonical_install_dir }; `slab_first_launch_install` cfg-gates to the right submodule, records Installed + RFC 3339 timestamp + new path (pure-arithmetic civil-from-days, no chrono); `slab_first_launch_skip` persists RunFromHere. All three wired in `invoke_handler!`.
+- **`FirstLaunchModal.svelte`** (`a637ab0`): three-phase state machine (probing → idle → installing → done/error) mounted in `+layout.svelte`. **WOW = 420ms cubic-bezier `(0.34, 1.56, 0.64, 1)` settling animation** with gold-accent 60px halo box-shadow on success. Liquid Glass overlay (blur(18px) saturate(140%)). prefers-reduced-motion short-circuit. Auto-dismisses if should_prompt=false.
+- **Folded in: 4 PDF ops** (`c9aed14`) that were sitting WIP on disk uncommitted, blocking gates: `bates.rs` (Bates numbering for discovery), `booklet.rs` (2-up signature imposition), `invert.rs` (content-stream color inversion), `reverse.rs` (page-order reversal). 1053 LOC + CLI wiring + 4 landing SVGs + 53 unit tests.
+- **Quality gates green**: fmt ✓, clippy ✓ (after fixing 3 pre-existing lint errors in invert.rs), `cargo test --lib` → **984 passed**, `pnpm check` → 0 errors / 35 pre-existing warnings.
+
+**Commits this tick (4 on `feature/v2.0.3-self-install`)**:
+- `60e6f4d` feat(first-launch): backend core (refs #25)
+- `76d5c88` feat(first-launch): Tauri commands probe/install/skip (refs #25)
+- `a637ab0` feat(ui): FirstLaunchModal + layout mount — gold settling animation (closes #25)
+- `c9aed14` feat(pdf): bates + booklet + invert + reverse
+
+**Buy-Button verdict**: 4/4 PASS — Pay-for-it (Acrobat $239/yr Bates + self-install), Pick-us (no free OSS no-admin self-install on all 3 OSes; KillerPDF is Windows-only), Notice-it (first thing new users see), Tell-a-friend (gold settle is screenshot-bait). **Qualifying BIG tick.**
+
+**WOW**: ✨ 420ms gold-halo settle on install-success. `LAST_WOW_TICK_AT: 2026-05-22 02:07 PT`.
+
+**Active branch**: `feature/v2.0.3-self-install` at `c9aed14`.
+
+**RECENTLY_CLOSED_ISSUES**: #21 (`429d208`), #23 (`93020a3`), #24 (`91fcf58`), **#25 self-install (`a637ab0`)**.
+
+**Open override issues remaining**: #26 (page ops — plan exists at `docs/plans/2026-05-22-v2.1.2-arranger.md`), #27 (landing demo video — needs running app).
+
+**Next tick**: MODE A merge `feature/v2.0.3-self-install` → main, tag `v2.0.3`, push with --follow-tags, then MODE B finalize. Comment on issue #25 with merge SHA.
+
+---
+
+## STATUS PRIOR: 📋 v2.1.2 "Arranger" PLAN landed — #26 ready to execute (after #25)
+
+
+**TICK 2026-05-22 01:46 PT** — writing-plans skill: shipped `docs/plans/2026-05-22-v2.1.2-arranger.md` (49 KB, 1438 lines, 6 slices + pre-flight + final tick, 14 commits / ~720 LOC / 18 new tests at execution). Closes override issue **#26** end-to-end: insert PDF / insert PNG-JPG image / delete / duplicate / drag-reorder / **permanent rotate** (bakes rotation into geometry via `q <matrix> cm` content-stream wrap + MediaBox swap, strips `/Rotate` viewer hint) / **50-deep mixed-op undo stack** via `PageOp` tagged-union (Rust + TS twin) / **atomic crash-safe writes** via tempfile + fsync + `rename(2)` helper `atomic_save()` reusable across every writer. WOW = 280ms cubic-bezier `(0.34, 1.56, 0.64, 1)` rotate-tilt animation with gold-accent halo cascading across neighbouring thumbnails (40ms stagger), reduced-motion-safe. Buy-Button 4/4 PASS (Pay-for-it — Acrobat Pro $239/yr "Organize Pages" replaced free; Pick-us — pdfarranger upgrade story; Notice-it — drag-reorder is first thing visible; Tell-a-friend — single-key `R` permanent rotate + crash-safe writes are screenshot bait). New acceptance integration suite at `src-tauri/tests/issue_26_acceptance.rs` exercises all 6 issue-body criteria. Schedule: v2.0.3 (#25, plan on disk) executes first, then v2.1.2 (#26, this plan), then #27 (demo video, deferred — needs real footage).
+
+**Active branch**: `feature/v2.0.3-self-install` (plan committed straight to active branch; plan files are version-independent).
+**Open override issues**: #25 (plan on disk, next to execute), **#26 (plan on disk, this tick)**, #27 (demo video, content task).
+**Session log**: `.cron-state/sessions/2026-05-22-0146.md`.
 
 ---
 
