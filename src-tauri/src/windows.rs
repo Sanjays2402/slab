@@ -21,6 +21,50 @@ pub struct Geometry {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    /// When true, the window is built fullscreen (covers the active
+    /// display, hides chrome). Used by the Theater "audience" window
+    /// so a presenter's PDF fills the projector screen.
+    #[serde(default)]
+    pub fullscreen: bool,
+    /// When false, the window is built without title-bar / borders.
+    /// Theater audience windows render without decorations so the
+    /// projection is uninterrupted; defaults to true to keep every
+    /// existing panel decorated as before.
+    #[serde(default = "default_decorations")]
+    pub decorations: bool,
+    /// When `Some(true)`, the window is pinned above all others. Used
+    /// for Theater audience so OS notifications can't slip in front of
+    /// a presentation. `None` means "OS default" (effectively false).
+    #[serde(default)]
+    pub always_on_top: Option<bool>,
+    /// When false, the window cannot be resized after spawn. Theater
+    /// audience uses this to keep the canvas locked to the projector
+    /// resolution. Defaults to true (resizable) for normal panels.
+    #[serde(default = "default_resizable")]
+    pub resizable: bool,
+}
+
+fn default_decorations() -> bool {
+    true
+}
+
+fn default_resizable() -> bool {
+    true
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            fullscreen: false,
+            decorations: true,
+            always_on_top: None,
+            resizable: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,6 +147,7 @@ pub fn default_geometry_for_panel(panel_id: &str) -> Geometry {
             y: 80,
             width: 1000,
             height: 720,
+            ..Default::default()
         },
         // Tall narrow chat column — slots next to the main reader.
         "beacon" => Geometry {
@@ -110,6 +155,7 @@ pub fn default_geometry_for_panel(panel_id: &str) -> Geometry {
             y: 100,
             width: 520,
             height: 760,
+            ..Default::default()
         },
         // Roomy enough for a 1-page render at ~125 % zoom.
         "reader" => Geometry {
@@ -117,24 +163,51 @@ pub fn default_geometry_for_panel(panel_id: &str) -> Geometry {
             y: 100,
             width: 900,
             height: 760,
+            ..Default::default()
         },
         "search" => Geometry {
             x: 140,
             y: 120,
             width: 720,
             height: 680,
+            ..Default::default()
         },
         "pii" => Geometry {
             x: 140,
             y: 120,
             width: 760,
             height: 720,
+            ..Default::default()
+        },
+        // Theater (v2.3.0) — audience window for projector / second display.
+        // Fullscreen, undecorated, pinned above other windows, locked
+        // resolution so a stray drag-resize can't reflow mid-talk.
+        "theater" => Geometry {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            fullscreen: true,
+            decorations: false,
+            always_on_top: Some(true),
+            resizable: false,
+        },
+        // Theater (v2.3.0) — presenter control window. Decorated, resizable,
+        // sized for a typical laptop screen so the operator can see current
+        // slide + next slide + speaker notes + timer at a glance.
+        "theater_control" => Geometry {
+            x: 80,
+            y: 80,
+            width: 1280,
+            height: 800,
+            ..Default::default()
         },
         _ => Geometry {
             x: 140,
             y: 120,
             width: 720,
             height: 640,
+            ..Default::default()
         },
     }
 }
@@ -289,8 +362,10 @@ pub fn slab_window_open(
         .title(title)
         .inner_size(geom.width as f64, geom.height as f64)
         .position(geom.x as f64, geom.y as f64)
-        .resizable(true)
-        .decorations(true)
+        .resizable(geom.resizable)
+        .decorations(geom.decorations)
+        .fullscreen(geom.fullscreen)
+        .always_on_top(geom.always_on_top.unwrap_or(false))
         .build()
         .map_err(|e| format!("failed to build window: {}", e))?;
 
@@ -380,8 +455,10 @@ pub fn restore_windows(app: &tauri::AppHandle) {
             .title(title)
             .inner_size(s.geometry.width as f64, s.geometry.height as f64)
             .position(s.geometry.x as f64, s.geometry.y as f64)
-            .resizable(true)
-            .decorations(true)
+            .resizable(s.geometry.resizable)
+            .decorations(s.geometry.decorations)
+            .fullscreen(s.geometry.fullscreen)
+            .always_on_top(s.geometry.always_on_top.unwrap_or(false))
             .build()
         {
             Ok(window) => {
@@ -429,6 +506,7 @@ mod tests {
                 y: 80,
                 width: 640,
                 height: 720,
+                ..Default::default()
             },
             target_doc: Some("/tmp/example.pdf".into()),
         };
@@ -449,6 +527,7 @@ mod tests {
                 y: 0,
                 width: 800,
                 height: 600,
+                ..Default::default()
             },
             target_doc: None,
         };
@@ -467,6 +546,7 @@ mod tests {
                 y: 0,
                 width: 800,
                 height: 600,
+                ..Default::default()
             },
             target_doc: None,
         };
@@ -486,6 +566,7 @@ mod tests {
                 y: 0,
                 width: 100,
                 height: 100,
+                ..Default::default()
             },
             target_doc: None,
         });
@@ -506,6 +587,7 @@ mod tests {
                 y: 0,
                 width: 100,
                 height: 100,
+                ..Default::default()
             },
             target_doc: None,
         });
@@ -525,6 +607,7 @@ mod tests {
                 y: 0,
                 width: 1,
                 height: 1,
+                ..Default::default()
             },
             target_doc: None,
         });
@@ -544,6 +627,7 @@ mod tests {
                     y: 0,
                     width: 1,
                     height: 1,
+                    ..Default::default()
                 },
                 target_doc: None,
             });
@@ -575,6 +659,40 @@ mod tests {
         let g = default_geometry_for_panel("custom-thing");
         assert_eq!(g.width, 720);
         assert_eq!(g.height, 640);
+    }
+
+    #[test]
+    fn default_geometry_for_panel_theater_is_fullscreen_borderless() {
+        let g = default_geometry_for_panel("theater");
+        assert!(g.fullscreen, "theater must be fullscreen");
+        assert!(!g.decorations, "theater must be undecorated");
+        assert_eq!(g.always_on_top, Some(true), "theater must pin on top");
+        assert!(!g.resizable, "theater must lock resolution");
+    }
+
+    #[test]
+    fn default_geometry_for_panel_theater_control_is_decorated_window() {
+        let g = default_geometry_for_panel("theater_control");
+        assert!(!g.fullscreen);
+        assert!(g.decorations);
+        assert!(g.resizable);
+        assert!(g.width >= 1024, "control window too narrow: {}", g.width);
+        assert!(g.height >= 700, "control window too short: {}", g.height);
+    }
+
+    #[test]
+    fn geometry_default_keeps_existing_panel_behaviour() {
+        // Every pre-Theater panel should still come out decorated,
+        // resizable, non-fullscreen, never pinned. Regression guard
+        // so adding new fields with serde defaults can't silently flip
+        // the behaviour for `library`, `beacon`, `reader`, etc.
+        for id in ["library", "beacon", "reader", "search", "pii", "unknown"] {
+            let g = default_geometry_for_panel(id);
+            assert!(!g.fullscreen, "{id} should not be fullscreen");
+            assert!(g.decorations, "{id} should be decorated");
+            assert!(g.resizable, "{id} should be resizable");
+            assert_eq!(g.always_on_top, None, "{id} should not pin");
+        }
     }
 
     #[test]
@@ -637,6 +755,7 @@ mod tests {
                 y: 20,
                 width: 800,
                 height: 600,
+                ..Default::default()
             },
             target_doc: None,
         }];
@@ -675,6 +794,7 @@ mod tests {
                 y: 0,
                 width: 500,
                 height: 700,
+                ..Default::default()
             },
             target_doc: Some("/tmp/a.pdf".into()),
         }];
@@ -688,6 +808,7 @@ mod tests {
                 y: 300,
                 width: 600,
                 height: 800,
+                ..Default::default()
             },
             target_doc: Some("/tmp/b.pdf".into()),
         }];
