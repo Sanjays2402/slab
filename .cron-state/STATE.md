@@ -5,7 +5,26 @@
 
 ---
 
-## STATUS: 🔐 v2.9.0 "Vault" plan promoted — PKCS#11 hardware signing
+## STATUS: 🎬 v2.3.0 Theater Slice 5 SHIPPED — dual-window presenter mode end-to-end
+
+**TICK 2026-05-22 08:30 PT** — MODE C, 4 commits, 1603 net LOC, all gates green.
+
+- `17baa3b` feat(theater): Geometry struct + theater panel specs (fullscreen / decorations / always_on_top / resizable)
+- `3aa1b61` feat(theater): broadcast `slab:theater-state` events + `slab_theater_open_windows` / `slab_theater_close_windows`
+- `cdac49b` feat(theater): `/theater` audience route + `/theater-control` presenter route + `TheaterCanvas.svelte` (1215 LOC)
+- `0610876` feat(theater): TheaterPanel + CommandPalette spawn detached audience window
+
+**End-to-end working capability**: ⇧⌘T → Start presentation → fullscreen audience window appears + presenter control window with notes (localStorage-persisted), session timer, current+next slide previews, full keymap cheat-sheet. Every PageDown/Right/B/W/L/I/./U/C keystroke from the control window flows through the backend `theater_state` event and updates audience in real time. Singleton windows (re-clicking Present focuses existing). Theater route lives at dedicated `/theater` + `/theater-control` paths (not the generic panel shell) so the presenter keymap stays isolated.
+
+**Gates**: cargo fmt clean, cargo clippy `-D warnings` clean, `cargo test --lib` → 1057 passed / 0 failed, pnpm check 0 errors / 41 warnings (pre-existing). NEXT_TICK_MUST_SHIP_CODE cleared.
+
+**LAST_WOW_TICK_AT**: 2026-05-22 08:30 PT — dual-window detached presenter mode (Linear/Stripe-tier — a paralegal demoing to a client gets a clean fullscreen audience view + a control surface with notes & timer & keymap, all offline). Buy-Button: YES (Adobe charges $239/yr for Presenter mode in Acrobat Pro DC).
+
+**Next tick**: re-poll `gh issue list`. If nothing urgent, advance to Slice 6 (telemetry/session export) or merge `feature/v2.3.0-theater` → `main` and start v2.4.0 Stack. Verify build CI green on the push.
+
+---
+
+## STATUS PRIOR: 🔐 v2.9.0 "Vault" plan promoted — PKCS#11 hardware signing
 
 **TICK 2026-05-22 07:48 PT** — MODE C writing-plans skill (cron-invoked).
 
