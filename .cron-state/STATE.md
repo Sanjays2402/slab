@@ -5,11 +5,15 @@
 
 ---
 
-## STATUS: 🔐 v2.8.0 "Vault" plan promoted — PKCS#11 hardware signing
+## STATUS: 🔐 v2.9.0 "Vault" plan promoted — PKCS#11 hardware signing
 
 **TICK 2026-05-22 07:48 PT** — MODE C writing-plans skill (cron-invoked).
 
-- Wrote `docs/plans/2026-05-22-v2.8.0-vault-pkcs11.md` (32 KB, 825
+> Note: originally drafted as v2.8.0 but renumbered to v2.9.0 mid-tick
+> after a sibling cron pushed v2.8.0 "Forge" (batch recipes) during the
+> same window. Both plans land cleanly on the same branch.
+
+- Wrote `docs/plans/2026-05-22-v2.9.0-vault-pkcs11.md` (32 KB, 828
   lines, 8 slices + pre-flight ADR + release; ~1900 net LOC +
   ~520 test LOC at execution, ~10 commits).
 - Codename **"Vault" 🔐** — PKCS#11 hardware-token signing (YubiKey
@@ -39,8 +43,9 @@
   + wax-seal+badge anim), Tell-a-friend ("Slab + $50 YubiKey =
   court-admissible signatures, free" — 10-sec demo).
 - **Pipeline order**: v2.3.0 Theater → v2.4.0 Stack → v2.5.0 Quill →
-  v2.6.0 Lens → v2.7.0 Signet → **v2.8.0 Vault (this tick)** →
-  v2.8.1 on-device keygen → v2.8.2 PKCS#11-over-network → v2.9.0 CAdES.
+  v2.6.0 Lens → v2.7.0 Signet → v2.8.0 Forge (sibling tick) →
+  **v2.9.0 Vault (this tick)** → v2.9.1 on-device keygen →
+  v2.9.2 PKCS#11-over-network → v3.0.0 CAdES.
 
 **Active branch**: `feature/v2.3.0-theater` (plan committed there;
 plan files are version-independent and merge cleanly).
