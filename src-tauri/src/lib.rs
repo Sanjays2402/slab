@@ -98,7 +98,7 @@ use pdf::outline::{
 };
 use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
-use pdf::pages::{delete_pages, reorder_pages, rotate_pages, Rotation};
+use pdf::pages::{delete_pages, reorder_pages, rotate_pages, rotate_pages_permanent, Rotation};
 use pdf::pages_build::{pages_build as do_pages_build, PagesBuildOpts};
 use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
@@ -360,6 +360,21 @@ fn slab_page_count(input: PathBuf) -> CmdResult<u32> {
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
         Ok(rot) => rotate_pages(&input, &pages, rot, &output).into(),
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_rotate_permanent(
+    input: PathBuf,
+    pages: Vec<u32>,
+    degrees: i64,
+    output: PathBuf,
+) -> CmdResult<u32> {
+    match Rotation::from_int(degrees) {
+        Ok(rot) => rotate_pages_permanent(&input, &pages, rot, &output).into(),
         Err(e) => CmdResult::Err {
             message: e.to_string(),
         },
@@ -2791,6 +2806,7 @@ pub fn run() {
             slab_outline_starts,
             slab_page_count,
             slab_rotate,
+            slab_rotate_permanent,
             slab_delete_pages,
             slab_duplicate_pages,
             slab_reorder_pages,

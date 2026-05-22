@@ -37,7 +37,7 @@ use slab_lib::pdf::merge::merge_pdfs;
 use slab_lib::pdf::metadata::{read_metadata, strip_metadata};
 use slab_lib::pdf::ocr::{ocr, OcrOpts};
 use slab_lib::pdf::outline::{read_outline, write_outline, OutlineNode};
-use slab_lib::pdf::pages::{delete_pages, rotate_pages, Rotation};
+use slab_lib::pdf::pages::{delete_pages, rotate_pages, rotate_pages_permanent, Rotation};
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
 use slab_lib::pdf::preflight::{preflight, PreflightOpts, Status as PreflightStatus};
 use slab_lib::pdf::repair::repair as do_repair;
@@ -138,7 +138,7 @@ Commands:
   merge <in1> <in2> ... -o <out>     Concatenate PDFs
   split-every <file> <n> <out-dir>   Split into N-page chunks
   split-ranges <file> <r1,r2..> <dir>   e.g. 1-3,5,7-9
-  rotate <file> <pages> <deg> -o <out>  pages comma-list (1-based), deg ∈ 90/180/270
+  rotate <file> <pages> <deg> -o <out>  pages comma-list (1-based), deg ∈ 90/180/270; --permanent bakes into geometry
   delete-pages <file> <pages> -o <out>
   compress <file> -o <out>           Re-compress streams
   encrypt <file> -o <out> --password <pwd>
@@ -368,10 +368,16 @@ fn cmd_rotate(args: &[String]) -> Result<(), CliError> {
         .parse()
         .map_err(|_| CliError::Usage("degrees must be a number".into()))?;
     let output = output_path(args)?;
+    let permanent = args.iter().any(|a| a == "--permanent");
     let pages = parse_pages(pages_csv)?;
     let rot = Rotation::from_int(deg)?;
-    let n = rotate_pages(&input, &pages, rot, &output)?;
-    println!("✓ rotated {n} page(s) → {}", output.display());
+    let n = if permanent {
+        rotate_pages_permanent(&input, &pages, rot, &output)?
+    } else {
+        rotate_pages(&input, &pages, rot, &output)?
+    };
+    let mode = if permanent { " (permanent)" } else { "" };
+    println!("✓ rotated{mode} {n} page(s) → {}", output.display());
     Ok(())
 }
 
