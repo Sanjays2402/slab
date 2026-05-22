@@ -5,7 +5,43 @@
 
 ---
 
-## STATUS: 🚀 v2.0.3 RELEASED + v2.1.2 Arranger Slices 1-3 shipped
+## STATUS: 📋 v2.2.0 "Atlas" plan promoted — cross-doc FTS5 search ready to execute
+
+**TICK 2026-05-22 03:47 PT** — MODE C writing-plans skill (no shippable work
+on disk; v2.1.2 CI still in_progress; all 5 override issues closed; gh issue
+list empty — fell through to roadmap fill).
+
+- Plan: `docs/plans/2026-05-22-v2.2.0-atlas-search.md` (~30 KB, 6 slices +
+  pre-flight + final tick, ~880 LOC, 28 new tests at execution).
+- Codename **"Atlas"** 🗺️ — SQLite FTS5 virtual table colocated in
+  `~/.slab/library.sqlite`. unicode61 tokenizer + bm25 ranking + snippet()
+  with `<mark>` tags. Page-level rows keyed on `(doc_id, page_index)` so
+  results jump to the matching page directly. AFTER DELETE cascade trigger.
+  ZERO new Rust deps (rusqlite bundled-sqlite ships FTS5).
+- **Six new layers**: schema migration v3→4 (Slice 1) + `slab_library_search`
+  Tauri cmd (Slice 2) + SearchPanel.svelte w/ Cmd+Shift+F + nav (Slice 3) +
+  highlight-on-open page-jump (Slice 4) + palette/onboarding/settings/hover
+  thumbnail (Slice 5) + release ship (Slice 6).
+- **WOW × 2**: 180ms cubic-bezier slide-in cascade w/ 40ms stagger +
+  240ms-dwell hover thumbnail preview tooltip.
+- **Buy-Button 4/4 PASS**: Pay-for-it (Acrobat Pro $239/yr "Search Multiple
+  PDFs" replaced free), Pick-us (only free offline GUI cross-platform),
+  Notice-it (new nav + Cmd+Shift+F + palette + onboarding), Tell-a-friend
+  (paralegal demo: paste folder → 30 ms ranked hits across 200 PDFs).
+
+**v2.1.2 release status**: build CI run `26282803602` still in_progress
+(linux/win/mac-x64 bundle jobs queued; mac-arm64 + all cargo-test jobs
+green). `gh release view v2.1.2` exists with 0 assets — artifact upload
+pending next tick.
+
+**Next tick**: MODE B finalize v2.1.2 (poll CI → `gh run download` → 6
+artifacts to release). Then start v2.2.0 Slice 1+2 on
+`feature/v2.2.0-atlas-search` (FTS5 schema + write hook + search cmd —
+BIG-tick-eligible as a single fold).
+
+---
+
+## STATUS PRIOR: 🚀 v2.0.3 RELEASED + v2.1.2 Arranger Slices 1-3 shipped
 
 **TICK 2026-05-22 03:08 PT** — MODE B finalize + MODE C develop combined:
 - **v2.0.3 release published**: 6 artifacts (mac arm64+x64 dmg, linux deb+appimage, win msi+nsis) attached. URL https://github.com/Sanjays2402/slab/releases/tag/v2.0.3.
