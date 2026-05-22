@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Drop a signature, then flatten the document to a locked PDF">
+  <style>
+    .bg { fill: #14171d; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+    .lbl  { font-family: ui-sans-serif, system-ui; font-size: 11px; fill: #0c0e12; }
+    .cap  { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .lock { font-family: ui-sans-serif, system-ui; font-size: 11px; fill: #86efac; }
+
+    .sig {
+      stroke: #f5a3a3; stroke-width: 2.5; fill: none; stroke-linecap: round;
+      stroke-dasharray: 200; stroke-dashoffset: 200;
+      animation: drawSig 4s infinite ease;
+    }
+    .flatten-overlay {
+      fill: #0c0e12; opacity: 0;
+      animation: flattenSweep 4s infinite ease;
+    }
+    .lock-icon {
+      animation: lockShow 4s infinite ease; opacity: 0;
+    }
+    @keyframes drawSig {
+      0%, 5%   { stroke-dashoffset: 200; }
+      35%, 55% { stroke-dashoffset: 0; }
+      100%     { stroke-dashoffset: 0; }
+    }
+    @keyframes flattenSweep {
+      0%, 60%  { opacity: 0; transform: translateY(-300px); }
+      70%, 78% { opacity: 0.85; transform: translateY(0); }
+      85%, 100%{ opacity: 0; transform: translateY(300px); }
+    }
+    @keyframes lockShow {
+      0%, 80%  { opacity: 0; }
+      90%, 100%{ opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .sig { stroke-dashoffset: 0; }
+      .flatten-overlay { opacity: 0; }
+      .lock-icon { opacity: 1; }
+    }
+  </style>
+
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Sign &amp; flatten — legal-grade output</text>
+
+  <!-- doc -->
+  <rect class="doc" x="120" y="70" width="360" height="280" rx="4"/>
+  <line class="line" x1="150" y1="100" x2="450" y2="100"/>
+  <line class="line" x1="150" y1="120" x2="440" y2="120"/>
+  <line class="line" x1="150" y1="140" x2="430" y2="140"/>
+  <line class="line" x1="150" y1="170" x2="450" y2="170"/>
+  <line class="line" x1="150" y1="190" x2="420" y2="190"/>
+  <line class="line" x1="150" y1="210" x2="450" y2="210"/>
+
+  <text class="lbl" x="150" y="260">Signed by:</text>
+  <line class="line" x1="150" y1="320" x2="350" y2="320"/>
+
+  <!-- signature path -->
+  <path class="sig" d="M 160 305 q 14 -28 30 -8 t 28 -12 t 24 6 t 30 -10 t 24 4 t 18 -8"/>
+
+  <!-- flatten sweep -->
+  <rect class="flatten-overlay" x="120" y="70" width="360" height="280" rx="4"/>
+
+  <!-- lock badge -->
+  <g class="lock-icon" transform="translate(425,300)">
+    <rect x="-2" y="2" width="50" height="18" rx="9" fill="#1b1f26" stroke="#86efac"/>
+    <text class="lock" x="23" y="15" text-anchor="middle">🔒 locked</text>
+  </g>
+</svg>

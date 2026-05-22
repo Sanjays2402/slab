@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Merging two PDFs into one">
+  <style>
+    .bg { fill: #14171d; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; stroke-width: 1; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; }
+    .lbl  { font-family: ui-sans-serif, system-ui; font-size: 11px; fill: #0c0e12; }
+    .cap  { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+
+    @keyframes slideA {
+      0%, 10%  { transform: translate(0,0); }
+      35%, 55% { transform: translate(150px, 40px); }
+      75%, 100%{ transform: translate(150px, 40px); opacity: 0; }
+    }
+    @keyframes slideB {
+      0%, 10%  { transform: translate(0,0); }
+      35%, 55% { transform: translate(-150px, -40px); }
+      75%, 100%{ transform: translate(-150px, -40px); opacity: 0; }
+    }
+    @keyframes mergedIn {
+      0%, 60%  { opacity: 0; transform: scale(0.9); }
+      75%, 95% { opacity: 1; transform: scale(1); }
+      100%     { opacity: 1; transform: scale(1); }
+    }
+    @keyframes resetCycle {
+      0%, 95%  { opacity: 1; }
+      99%, 100%{ opacity: 0; }
+    }
+
+    .docA   { animation: slideA  3s infinite ease; }
+    .docB   { animation: slideB  3s infinite ease; }
+    .merged { animation: mergedIn 3s infinite ease; transform-origin: center; opacity: 0; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .docA, .docB { animation: none; }
+      .merged { opacity: 1; transform: scale(1); animation: none; }
+    }
+  </style>
+
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Merge</text>
+
+  <!-- Doc A (left) -->
+  <g class="docA">
+    <rect class="doc" x="80"  y="120" width="120" height="160" rx="4"/>
+    <line class="line" x1="100" y1="150" x2="180" y2="150"/>
+    <line class="line" x1="100" y1="170" x2="180" y2="170"/>
+    <line class="line" x1="100" y1="190" x2="160" y2="190"/>
+    <text class="lbl" x="140" y="270" text-anchor="middle">contract.pdf</text>
+  </g>
+
+  <!-- Doc B (right) -->
+  <g class="docB">
+    <rect class="doc" x="400" y="120" width="120" height="160" rx="4"/>
+    <line class="line" x1="420" y1="150" x2="500" y2="150"/>
+    <line class="line" x1="420" y1="170" x2="500" y2="170"/>
+    <line class="line" x1="420" y1="190" x2="480" y2="190"/>
+    <text class="lbl" x="460" y="270" text-anchor="middle">exhibit_a.pdf</text>
+  </g>
+
+  <!-- Merged doc center -->
+  <g class="merged">
+    <rect class="doc" x="230" y="100" width="140" height="200" rx="4" fill="#fff" stroke="#86efac" stroke-width="2"/>
+    <line class="line" x1="250" y1="130" x2="350" y2="130"/>
+    <line class="line" x1="250" y1="150" x2="350" y2="150"/>
+    <line class="line" x1="250" y1="170" x2="350" y2="170"/>
+    <line class="line" x1="250" y1="190" x2="330" y2="190" stroke="#f5a3a3"/>
+    <line class="line" x1="250" y1="210" x2="350" y2="210" stroke="#f5a3a3"/>
+    <line class="line" x1="250" y1="230" x2="320" y2="230" stroke="#f5a3a3"/>
+    <text class="lbl" x="300" y="290" text-anchor="middle">contract.pdf · merged</text>
+  </g>
+</svg>

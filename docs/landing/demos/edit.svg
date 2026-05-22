@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Inline text editing inside a PDF">
+  <style>
+    .bg { fill: #14171d; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; stroke-width: 1; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 14px; fill: #0c0e12; }
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .blink { animation: blink 1s infinite step-end; }
+    .typed-old { animation: oldGone 4s infinite ease; }
+    .typed-new { animation: newIn   4s infinite ease; opacity: 0; }
+    .box       { animation: boxIn   4s infinite ease; opacity: 0;
+                 stroke: #7dd3fc; stroke-width: 1.5; fill: none; stroke-dasharray: 4 3; }
+
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes boxIn {
+      0%, 15%  { opacity: 0; }
+      25%, 80% { opacity: 1; }
+      90%, 100%{ opacity: 0; }
+    }
+    @keyframes oldGone {
+      0%, 25%  { opacity: 1; }
+      35%, 100%{ opacity: 0; }
+    }
+    @keyframes newIn {
+      0%, 35%  { opacity: 0; }
+      55%, 90% { opacity: 1; }
+      100%     { opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .typed-old { opacity: 0; }
+      .typed-new { opacity: 1; }
+      .box { opacity: 1; }
+      .blink { animation: none; opacity: 0; }
+    }
+  </style>
+
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Inline text edit — no rasterization</text>
+
+  <!-- doc -->
+  <rect class="doc" x="120" y="80" width="360" height="260" rx="4"/>
+
+  <!-- existing layout lines -->
+  <line class="line" x1="150" y1="110" x2="450" y2="110"/>
+  <line class="line" x1="150" y1="130" x2="430" y2="130"/>
+  <line class="line" x1="150" y1="200" x2="450" y2="200"/>
+  <line class="line" x1="150" y1="220" x2="420" y2="220"/>
+  <line class="line" x1="150" y1="240" x2="450" y2="240"/>
+
+  <!-- editable text block -->
+  <!-- editable text block: old price fades out, new price + cursor fades in -->
+  <text class="ink typed-old" x="150" y="170">Price: $12,000 USD</text>
+  <g class="typed-new">
+    <text class="ink" x="150" y="170">Price: $9,500 USD</text>
+    <rect class="blink" x="290" y="155" width="2" height="18" fill="#0c0e12"/>
+  </g>
+
+  <!-- selection outline -->
+  <rect class="box" x="146" y="152" width="220" height="24" rx="3"/>
+</svg>

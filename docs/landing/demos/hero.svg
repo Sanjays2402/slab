@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img" aria-label="Open a PDF, highlight, sign, save">
+  <style>
+    .bg { fill: #14171d; }
+    .panel { fill: #1b1f26; stroke: #232831; stroke-width: 1; }
+    .ink { fill: #e9ecf2; }
+    .muted { fill: #9aa3b2; }
+    .line { stroke: #2a313c; stroke-width: 1; fill: none; }
+    .accent { fill: #f5a3a3; }
+    .accent2 { fill: #7dd3fc; }
+    .good { fill: #86efac; }
+    .text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; fill: #cdd4e0; }
+    .title { font-family: ui-sans-serif, system-ui; font-weight: 600; font-size: 13px; fill: #e9ecf2; }
+
+    /* 12-second loop with 4 phases */
+    @keyframes openPhase     { 0%, 18%   { opacity: 1; } 25%, 100% { opacity: 0; } }
+    @keyframes hlPhase       { 0%, 18%   { opacity: 0; } 25%, 43% { opacity: 1; } 50%, 100% { opacity: 0; } }
+    @keyframes signPhase     { 0%, 43%   { opacity: 0; } 50%, 68% { opacity: 1; } 75%, 100% { opacity: 0; } }
+    @keyframes savePhase     { 0%, 68%   { opacity: 0; } 75%, 93% { opacity: 1; } 100%      { opacity: 0; } }
+    @keyframes cursorMove    {
+      0%          { transform: translate(80px, 80px); }
+      15%         { transform: translate(140px, 140px); }
+      30%         { transform: translate(360px, 210px); }
+      45%         { transform: translate(560px, 220px); }
+      60%         { transform: translate(440px, 360px); }
+      75%         { transform: translate(720px, 50px); }
+      90%, 100%   { transform: translate(720px, 50px); }
+    }
+    @keyframes highlightFill {
+      0%, 25%  { width: 0; }
+      35%, 50% { width: 280px; }
+      55%, 100%{ width: 280px; }
+    }
+    @keyframes signDraw {
+      0%, 50%  { stroke-dashoffset: 220; }
+      62%, 75% { stroke-dashoffset: 0; }
+      100%     { stroke-dashoffset: 0; }
+    }
+    @keyframes savePulse {
+      0%, 75%  { opacity: 0; transform: scale(0.96); }
+      78%, 90% { opacity: 1; transform: scale(1); }
+      100%     { opacity: 0; transform: scale(1); }
+    }
+
+    .phase-open    { animation: openPhase 12s infinite ease; }
+    .phase-hl      { animation: hlPhase   12s infinite ease; }
+    .phase-sign    { animation: signPhase 12s infinite ease; }
+    .phase-save    { animation: savePhase 12s infinite ease; }
+    .cursor        { animation: cursorMove 12s infinite ease-in-out; }
+    .hl-bar        { animation: highlightFill 12s infinite ease; height: 14px; fill: #f5a3a3; opacity: 0.45; }
+    .sig-stroke    { stroke: #7dd3fc; stroke-width: 2.4; fill: none; stroke-linecap: round;
+                     stroke-dasharray: 220; stroke-dashoffset: 220;
+                     animation: signDraw 12s infinite ease; }
+    .save-toast    { transform-origin: 700px 470px;
+                     animation: savePulse 12s infinite ease; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .phase-open, .phase-hl, .phase-sign, .phase-save,
+      .cursor, .hl-bar, .sig-stroke, .save-toast { animation: none; }
+      .phase-open { opacity: 1; }
+      .hl-bar { width: 280px; }
+      .sig-stroke { stroke-dashoffset: 0; }
+    }
+  </style>
+
+  <!-- App chrome -->
+  <rect class="bg" width="800" height="500"/>
+  <rect class="panel" x="0" y="0" width="800" height="36"/>
+  <circle class="muted" cx="20" cy="18" r="5"/>
+  <circle class="muted" cx="38" cy="18" r="5"/>
+  <circle class="muted" cx="56" cy="18" r="5"/>
+  <text class="text" x="400" y="22" text-anchor="middle">contract_v3.pdf — Slab</text>
+
+  <!-- Sidebar -->
+  <rect class="panel" x="0" y="36" width="56" height="464"/>
+  <rect class="muted" x="14" y="60"  width="28" height="3" rx="1"/>
+  <rect class="muted" x="14" y="86"  width="28" height="3" rx="1" opacity="0.5"/>
+  <rect class="muted" x="14" y="112" width="28" height="3" rx="1" opacity="0.5"/>
+
+  <!-- Document page -->
+  <rect class="panel" x="80" y="60" width="640" height="400" rx="3" stroke="#3a4254"/>
+
+  <!-- PHASE 1: opening -->
+  <g class="phase-open">
+    <rect class="muted" x="120" y="100" width="200" height="14" rx="2" opacity="0.7"/>
+    <rect class="muted" x="120" y="130" width="540" height="6" rx="1" opacity="0.35"/>
+    <rect class="muted" x="120" y="148" width="520" height="6" rx="1" opacity="0.35"/>
+    <rect class="muted" x="120" y="166" width="500" height="6" rx="1" opacity="0.35"/>
+    <text class="text" x="120" y="220">Loading contract_v3.pdf…</text>
+  </g>
+
+  <!-- PHASE 2: highlight (always-rendered text underneath) -->
+  <g class="phase-hl">
+    <text class="title" x="120" y="115">SERVICE AGREEMENT</text>
+    <text class="text" x="120" y="148">This Agreement is entered into as of January 15, 2026, between</text>
+    <text class="text" x="120" y="170">Acme Corporation ("Client") and Slab Software Inc. ("Provider")</text>
+
+    <!-- Highlight bar grows -->
+    <rect class="hl-bar" x="120" y="158" width="280" rx="2"/>
+    <text class="text" x="120" y="220">↑ highlighted “Acme Corporation … Slab Software Inc.”</text>
+  </g>
+
+  <!-- PHASE 3: sign -->
+  <g class="phase-sign">
+    <text class="title" x="120" y="115">SIGNATURE</text>
+    <rect class="panel" x="120" y="140" width="280" height="100" rx="6"/>
+    <text class="text" x="135" y="160">Sign here:</text>
+    <path class="sig-stroke" d="M 145 215 q 18 -40 40 -10 t 35 -15 t 30 10 t 40 -12 t 30 5"/>
+  </g>
+
+  <!-- PHASE 4: save -->
+  <g class="phase-save">
+    <text class="title" x="120" y="115">SAVED</text>
+    <text class="text" x="120" y="148">contract_v3.signed.pdf</text>
+    <text class="text" x="120" y="166" fill="#86efac">✓ written to ~/Documents/contracts/ — 184 KB</text>
+  </g>
+
+  <!-- Save toast -->
+  <g class="save-toast">
+    <rect x="540" y="440" width="200" height="40" rx="8" fill="#1b1f26" stroke="#86efac"/>
+    <circle cx="558" cy="460" r="6" fill="#86efac"/>
+    <text class="text" x="572" y="464">Saved · zero cloud</text>
+  </g>
+
+  <!-- Cursor (always visible, moves with phase) -->
+  <g class="cursor">
+    <polygon points="0,0 12,4 5,6 7,14 4,15 1,7 -4,10" fill="#e9ecf2" stroke="#0c0e12" stroke-width="0.5"/>
+  </g>
+</svg>
