@@ -38,6 +38,8 @@
   "features.beacon": "Beacon AI",
   "features.search": "Beacon Search",
   "features.pii": "PII Redact",
+  "features.citations": "Citations",
+  "features.study": "Study",
   "features.glossary": "Glossary",
   "features.voice": "Voice",
   "features.merge": "Merge",
