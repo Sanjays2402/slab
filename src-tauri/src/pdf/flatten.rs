@@ -840,4 +840,126 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, PdfError::InputMissing(_)));
     }
+
+    // ----- v2.0.3 raster-flatten tests (closes #24) -----
+
+    #[test]
+    fn flatten_opts_default_is_annotations_mode() {
+        let opts = FlattenOpts::default();
+        assert!(matches!(opts.mode, FlattenMode::Annotations));
+        assert!(opts.include_widgets);
+        let r = FlattenReport::default();
+        assert_eq!(r.dpi, 0);
+        assert_eq!(r.pages_rasterized, 0);
+    }
+
+    #[test]
+    fn raster_mode_rejects_out_of_range_dpi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 1);
+        let err = flatten(
+            &src,
+            &dst,
+            FlattenOpts {
+                include_widgets: true,
+                mode: FlattenMode::Raster { dpi: 10 },
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, PdfError::Other(_)));
+    }
+
+    /// Requires `pdftoppm` (poppler) on PATH. Skips silently if absent so
+    /// CI environments without poppler don't fail the suite.
+    fn pdftoppm_available() -> bool {
+        std::process::Command::new("pdftoppm")
+            .arg("-v")
+            .output()
+            .is_ok()
+    }
+
+    #[test]
+    fn raster_mode_reports_dpi_and_pages_rasterized() {
+        if !pdftoppm_available() {
+            eprintln!("skipped: pdftoppm not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 2);
+        let report = flatten(
+            &src,
+            &dst,
+            FlattenOpts {
+                include_widgets: true,
+                mode: FlattenMode::Raster { dpi: 100 },
+            },
+        )
+        .unwrap();
+        assert_eq!(report.dpi, 100);
+        assert_eq!(report.pages_rasterized, 2);
+        assert!(dst.exists());
+    }
+
+    #[test]
+    fn raster_mode_strips_all_font_dicts() {
+        if !pdftoppm_available() {
+            eprintln!("skipped: pdftoppm not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 1);
+        flatten(
+            &src,
+            &dst,
+            FlattenOpts {
+                include_widgets: true,
+                mode: FlattenMode::Raster { dpi: 72 },
+            },
+        )
+        .unwrap();
+        // Reopen and assert no /Font dict resources survive.
+        let doc = Document::load(&dst).unwrap();
+        for (_num, page_id) in doc.get_pages() {
+            let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
+            let resources = page
+                .get(b"Resources")
+                .unwrap()
+                .as_dict()
+                .unwrap_or_else(|_| panic!("Resources not inline"));
+            assert!(
+                resources.get(b"Font").is_err(),
+                "expected no /Font in raster-flatten Resources"
+            );
+            let xobjs = resources.get(b"XObject").unwrap().as_dict().unwrap();
+            assert_eq!(
+                xobjs.iter().count(),
+                1,
+                "expected exactly one XObject per rebuilt page"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_mode_leaves_zero_annot_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("in.pdf");
+        let dst = tmp.path().join("out.pdf");
+        pdf_with_one_widget(&src);
+        let report = flatten(&src, &dst, FlattenOpts::default()).unwrap();
+        assert!(report.annotations_in >= 1);
+        let doc = Document::load(&dst).unwrap();
+        for (_num, page_id) in doc.get_pages() {
+            let page = doc.get_object(page_id).unwrap().as_dict().unwrap();
+            assert!(
+                page.get(b"Annots").is_err(),
+                "page still has /Annots after annotation-mode flatten"
+            );
+        }
+    }
 }
