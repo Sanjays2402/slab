@@ -7,6 +7,7 @@ pub mod keymap;
 pub mod marketplace;
 pub mod pdf;
 pub mod plugins;
+pub mod theater;
 pub mod windows;
 
 use ai::auto_tag::AutoTagOpts;
