@@ -5,9 +5,27 @@
 
 ---
 
-## STATUS: 🎉 v2.0.3 MERGED to main + tagged — CI building artifacts
+## STATUS: 🚀 v2.0.3 RELEASED + v2.1.2 Arranger Slices 1-3 shipped
 
-**RELEASE_PENDING: v2.0.3 — merge SHA 6e65be6, tag v2.0.3, CI runs 26280444473 (build) + 26280444477 (docker)**
+**TICK 2026-05-22 03:08 PT** — MODE B finalize + MODE C develop combined:
+- **v2.0.3 release published**: 6 artifacts (mac arm64+x64 dmg, linux deb+appimage, win msi+nsis) attached. URL https://github.com/Sanjays2402/slab/releases/tag/v2.0.3.
+- **v2.1.2 Arranger** on `feature/v2.1.2-arranger` (pushed): 6 commits, 712 LOC.
+  - `6b9a6ab` PageOp tagged-union enum + 4 tests
+  - `6cee042` atomic_save (tempfile + fsync + rename) helper
+  - `6789cb3` rotate_pages_permanent — bakes /Rotate into geometry (closes #26 acc#3) + 4 tests
+  - `1489590` slab_rotate_permanent Tauri cmd + CLI `--permanent` flag
+  - `ab6410f` InsertSource::Image — PNG/JPG → PDF page (closes #26 acc#2) + 3 tests
+  - `55bcf8f` cargo fmt
+- Quality gates: fmt ✓, clippy ✓, `cargo test --lib` **999 passed**, `pnpm check` 0 errors.
+- CI for branch push: run 26281624047 queued at tick end.
+
+**Next tick**: Slice 4 — UI WOW layer for #26 (thumbnail grid drag-reorder, permanent-rotate context menu, image-insert drop zone). Then close #26 via merge to main once Slice 4 lands.
+
+---
+
+## STATUS PRIOR: 🎉 v2.0.3 MERGED to main + tagged — CI building artifacts
+
+**RELEASE_PENDING: v2.0.3 — merge SHA 6e65be6, tag v2.0.3, CI runs 26280444473 (build) + 26280444477 (docker)** — DONE, released as v2.0.3.
 
 **TICK 2026-05-22 02:36 PT** — MODE A merge:
 - `git merge --no-ff` of `feature/v2.0.3-self-install` → main as `6e65be6`. STATE.md conflict resolved with --theirs (feature branch had the up-to-date log).
