@@ -239,6 +239,24 @@
         keywords: "keyboard shortcuts help reference cheatsheet bindings",
       });
     }
+    // Atlas v2.2.0 — palette shortcut to the cross-document search panel.
+    // The action also focuses the input via the `slab:focus-library-search`
+    // event so the user can type immediately after the palette closes.
+    out.push({
+      id: "library:search",
+      title: "Search library",
+      subtitle: "Find a word across every PDF you've added (⇧⌘F)",
+      icon: "🔎",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library-search");
+        // Defer until after the route swap so the SearchPanel input is mounted.
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:focus-library-search"));
+        });
+      },
+      keywords: "search library find query fts full text cross document indemnify clause atlas",
+    });
     // Glass Slice 7: jump straight to the customisation panel.
     out.push({
       id: "settings:keymap",

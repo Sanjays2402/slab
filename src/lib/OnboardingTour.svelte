@@ -63,6 +63,13 @@
       hint: "Plugins are sandboxed and ask permission before they touch the network or your files.",
     },
     {
+      icon: "🔎",
+      title: "Search every PDF at once",
+      body:
+        "Press ⇧⌘F (Ctrl+Shift+F on Windows/Linux) to search across every PDF in your library. Snippets show your matches in context, click to jump straight to the page — completely offline, sub-100ms on a few hundred docs.",
+      hint: "Add a folder to the Library first → the FTS5 index builds in the background.",
+    },
+    {
       icon: "⌘",
       title: "Command Palette",
       body:
