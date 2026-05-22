@@ -46,23 +46,18 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Choose between fast annotation-bake and full raster legal-grade flatten.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FlattenMode {
     /// Bake annotations + AcroForm into page content streams. Fast,
     /// preserves text searchability. Default.
+    #[default]
     Annotations,
     /// Stage A (annotation bake) + Stage B (re-render every page at
     /// `dpi` via Poppler `pdftoppm`, replacing the page content stream
     /// with a single ImageXObject). Court-admissible, zero editable
     /// text, irreversible.
     Raster { dpi: u32 },
-}
-
-impl Default for FlattenMode {
-    fn default() -> Self {
-        FlattenMode::Annotations
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
