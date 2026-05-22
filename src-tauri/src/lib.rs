@@ -456,6 +456,126 @@ fn slab_theater_export_annotated(
     do_stamp_annotations(&input, &output, opts).into()
 }
 
+// ---- v2.3.0 Theater — presenter mode commands ----
+
+use std::sync::Arc;
+use theater::TheaterManager;
+
+/// Map a TheaterManager session result into a CmdResult for serialisation
+/// to the frontend.
+fn theater_result(
+    r: theater::session::SessionResult<theater::TheaterState>,
+) -> CmdResult<theater::TheaterState> {
+    match r {
+        Ok(value) => CmdResult::Ok { value },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_theater_start(
+    path: PathBuf,
+    total_pages: u32,
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> theater::TheaterState {
+    manager.start(path, total_pages)
+}
+
+#[tauri::command]
+fn slab_theater_end(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> Option<theater::TheaterState> {
+    manager.end()
+}
+
+#[tauri::command]
+fn slab_theater_snapshot(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> Option<theater::TheaterState> {
+    manager.snapshot()
+}
+
+#[tauri::command]
+fn slab_theater_next(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.next_page())
+}
+
+#[tauri::command]
+fn slab_theater_prev(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.prev_page())
+}
+
+#[tauri::command]
+fn slab_theater_jump(
+    page: u32,
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.jump(page))
+}
+
+#[tauri::command]
+fn slab_theater_toggle_blackout(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.toggle_blackout())
+}
+
+#[tauri::command]
+fn slab_theater_toggle_whiteout(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.toggle_whiteout())
+}
+
+#[tauri::command]
+fn slab_theater_toggle_laser(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.toggle_laser())
+}
+
+#[tauri::command]
+fn slab_theater_toggle_ink(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.toggle_ink())
+}
+
+#[tauri::command]
+fn slab_theater_toggle_spotlight(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.toggle_spotlight())
+}
+
+#[tauri::command]
+fn slab_theater_push_stroke(
+    stroke: theater::InkStroke,
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.push_stroke(stroke))
+}
+
+#[tauri::command]
+fn slab_theater_undo_stroke(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.undo_stroke())
+}
+
+#[tauri::command]
+fn slab_theater_clear_strokes(
+    manager: tauri::State<'_, Arc<TheaterManager>>,
+) -> CmdResult<theater::TheaterState> {
+    theater_result(manager.clear_strokes())
+}
+
 #[tauri::command]
 fn slab_outline_starts(input: PathBuf) -> CmdResult<Vec<u32>> {
     outline_top_level_pages(&input).into()
@@ -2790,6 +2910,9 @@ pub fn run() {
         .manage(plugins::PluginRuntimeRegistry::default())
         .manage(std::sync::Arc::new(VoiceSession::new()))
         .manage(std::sync::Arc::new(SttSession::new()))
+        // Theater (v2.3.0): single-active presenter session shared between
+        // the audience fullscreen window and the presenter control window.
+        .manage(std::sync::Arc::new(theater::TheaterManager::new()))
         .setup(|app| {
             // Cabinet (v1.1.0): restore last session's detached windows
             // from ~/.slab/windows.json. Quiet on error.
@@ -2846,6 +2969,20 @@ pub fn run() {
             slab_diff_export_report,
             slab_slides_analyze,
             slab_theater_export_annotated,
+            slab_theater_start,
+            slab_theater_end,
+            slab_theater_snapshot,
+            slab_theater_next,
+            slab_theater_prev,
+            slab_theater_jump,
+            slab_theater_toggle_blackout,
+            slab_theater_toggle_whiteout,
+            slab_theater_toggle_laser,
+            slab_theater_toggle_ink,
+            slab_theater_toggle_spotlight,
+            slab_theater_push_stroke,
+            slab_theater_undo_stroke,
+            slab_theater_clear_strokes,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,
