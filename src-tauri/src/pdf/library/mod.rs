@@ -16,10 +16,12 @@
 // * `query` — list/filter/sort with eager tag loading.
 
 pub mod auto_tagger;
+pub mod fts;
 pub mod ocr_queue;
 pub mod query;
 pub mod registry;
 pub mod scanner;
+pub mod search;
 
 pub use auto_tagger::{
     run_many as auto_tag_run_many, run_one as auto_tag_run_one, AutoTagRunResult,

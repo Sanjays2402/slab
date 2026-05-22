@@ -1776,6 +1776,24 @@ fn slab_library_list_docs(filter: Option<LibraryFilter>) -> CmdResult<Vec<Docume
     result.into()
 }
 
+/// Atlas (v2.2.0) — cross-document FTS5 search.
+///
+/// `query` is raw user input; we sanitise it into a safe MATCH
+/// expression. `limit` is clamped to `1..=500`. `folder_id` optionally
+/// restricts to one folder.
+#[tauri::command]
+fn slab_library_search(
+    query: String,
+    limit: Option<u32>,
+    folder_id: Option<i64>,
+) -> CmdResult<Vec<pdf::library::search::SearchHit>> {
+    let result = (|| -> Result<Vec<pdf::library::search::SearchHit>, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::search::search(db.conn(), &query, limit.unwrap_or(50), folder_id)
+    })();
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
     let result = (|| -> Result<Vec<TagRecord>, LibraryError> {
@@ -2894,6 +2912,7 @@ pub fn run() {
             slab_library_list_folders,
             slab_library_scan,
             slab_library_list_docs,
+            slab_library_search,
             slab_library_list_tags,
             slab_library_add_tag,
             slab_library_set_doc_tags,
