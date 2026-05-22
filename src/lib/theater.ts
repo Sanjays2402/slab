@@ -246,3 +246,30 @@ export async function dispatchPresenterKey(
       return null;
   }
 }
+
+// ---------- Slice 5: detached audience + control windows ----------
+
+/** Labels returned by `slab_theater_open_windows`. */
+export interface TheaterWindowLabels {
+  audience: string;
+  control: string;
+}
+
+/**
+ * Spawn the dedicated full-screen audience window and the presenter
+ * control window. Singleton — calling twice returns the existing
+ * labels rather than stacking duplicates.
+ */
+export async function theaterOpenWindows(
+  targetDoc?: string | null,
+): Promise<TheaterWindowLabels> {
+  return invoke<TheaterWindowLabels>("slab_theater_open_windows", {
+    targetDoc: targetDoc ?? null,
+  });
+}
+
+/** Close audience + control windows; the session itself stays alive. */
+export async function theaterCloseWindows(): Promise<number> {
+  return invoke<number>("slab_theater_close_windows");
+}
+

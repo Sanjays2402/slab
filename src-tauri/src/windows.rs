@@ -434,7 +434,16 @@ pub fn ensure_panel_window(
     let label = state.next_label(panel_id);
     let geom = default_geometry_for_panel(panel_id);
 
-    let mut url = format!("/?panel={}&windowId={}", panel_id, label);
+    // Theater audience/control have dedicated SvelteKit routes rather
+    // than the generic /?panel=... shell — they need a chrome-free
+    // canvas (audience) and a custom-shortcut surface (control), and
+    // wiring them into the panel-shell router would have leaked their
+    // unique key-bindings into the main window.
+    let mut url = match panel_id {
+        "theater" => format!("/theater?windowId={}", label),
+        "theater_control" => format!("/theater-control?windowId={}", label),
+        _ => format!("/?panel={}&windowId={}", panel_id, label),
+    };
     if let Some(p) = &target_doc {
         url.push_str("&doc=");
         url.push_str(&encode_doc_param(p));
