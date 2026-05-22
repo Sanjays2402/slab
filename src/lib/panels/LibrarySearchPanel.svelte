@@ -94,11 +94,17 @@
   /** Open a hit: page_index is 0-based in the backend, ReaderPanel/openNewTab
    *  is path-based and the tab will jump to its last-saved page. We forward
    *  via the same `slab:open-library-doc` event LibraryPanel uses, with an
-   *  optional `page` (1-based) so a future ReaderPanel hookup can honour it. */
+   *  optional `page` (1-based) and the raw `query` so the Reader can run
+   *  pdfjs find() with `highlightAll: true` once the doc loads — every
+   *  occurrence glows yellow, the matched page gets a 720 ms gold halo. */
   function openHit(h: SearchHit): void {
     window.dispatchEvent(
       new CustomEvent("slab:open-library-doc", {
-        detail: { path: h.path, page: h.pageIndex + 1 },
+        detail: {
+          path: h.path,
+          page: h.pageIndex + 1,
+          highlight: query.trim(),
+        },
       }),
     );
   }

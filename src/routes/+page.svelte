@@ -228,6 +228,14 @@
   type Tab = {
     id: string;
     initialPath: string | null;
+    /** Atlas v2.2.0 — page-jump hint forwarded from LibrarySearchPanel.
+     *  1-based to match the user-facing pager. Consumed once by ReaderPanel
+     *  on mount; subsequent navigation overrides it. */
+    initialPage?: number | null;
+    /** Atlas v2.2.0 — highlight query forwarded from LibrarySearchPanel.
+     *  ReaderPanel runs a find() with `highlightAll: true` after the
+     *  initial page renders, so every occurrence is visible at once. */
+    initialHighlight?: string | null;
     title: string;
   };
   let nextTabSeq = 0;
@@ -244,10 +252,15 @@
     active = "reader";
   }
 
-  function openNewTab(initialPath: string | null = null) {
+  function openNewTab(
+    initialPath: string | null = null,
+    opts: { initialPage?: number | null; initialHighlight?: string | null } = {},
+  ) {
     const tab: Tab = {
       id: newTabId(),
       initialPath,
+      initialPage: opts.initialPage ?? null,
+      initialHighlight: opts.initialHighlight ?? null,
       title: initialPath ? basename(initialPath) : "New tab",
     };
     tabs = [...tabs, tab];
@@ -449,9 +462,30 @@
   // the doc in a fresh Reader tab and flip the active feature so they
   // see it immediately.
   function onLibraryOpen(e: Event) {
-    const detail = (e as CustomEvent<{ path: string }>).detail;
+    const detail = (e as CustomEvent<{ path: string; page?: number; highlight?: string }>).detail;
     if (!detail || typeof detail.path !== "string") return;
-    openNewTab(detail.path);
+    // Atlas v2.2.0 — SearchPanel forwards `page` (1-based) + `highlight`
+    // when a result is clicked. Reuse an existing tab if it already holds
+    // this exact path so search-jumps don't pile up tabs.
+    const existing = tabs.find((t) => t.initialPath === detail.path);
+    if (existing) {
+      // Re-broadcast onto the existing tab via a targeted event.
+      setActiveTab(existing.id);
+      queueMicrotask(() => {
+        window.dispatchEvent(new CustomEvent("slab:reader-jump", {
+          detail: {
+            tabId: existing.id,
+            page: detail.page ?? null,
+            highlight: detail.highlight ?? null,
+          },
+        }));
+      });
+      return;
+    }
+    openNewTab(detail.path, {
+      initialPage: detail.page ?? null,
+      initialHighlight: detail.highlight ?? null,
+    });
   }
 
   // Cabinet v1.1.0: detached LibraryPanel windows can't open Reader tabs
@@ -703,6 +737,8 @@
               tabId={t.id}
               active={t.id === activeTabId}
               initialPath={t.initialPath}
+              initialPage={t.initialPage ?? null}
+              initialHighlight={t.initialHighlight ?? null}
               onTitleChange={(title) => onTabTitleChange(t.id, title)}
             />
           </div>

@@ -35,6 +35,15 @@
     active?: boolean;
     /** Path to load on mount (or when the shell swaps it). Optional. */
     initialPath?: string | null;
+    /** Atlas v2.2.0 — page to jump to (1-based) once the doc is loaded.
+     *  Used by LibrarySearchPanel: clicking a hit opens the doc + jumps
+     *  to the matching page. Consumed exactly once on initial load.
+     *  Subsequent jumps come through the `slab:reader-jump` window event. */
+    initialPage?: number | null;
+    /** Atlas v2.2.0 — query string to highlight across the document
+     *  after load. Triggers pdfjs PDFFindController with highlightAll=true
+     *  so every occurrence is visible at once. */
+    initialHighlight?: string | null;
     /** Callback fired after a successful load so the shell can update the tab title. */
     onTitleChange?: (title: string) => void;
   };
@@ -42,6 +51,8 @@
     tabId = "primary",
     active = true,
     initialPath = null,
+    initialPage = null,
+    initialHighlight = null,
     onTitleChange,
   }: ReaderProps = $props();
 
@@ -71,6 +82,18 @@
   let loadError = $state<string | null>(null);
 
   let currentPage = $state(1);
+
+  // Atlas v2.2.0 — runtime page-jump + highlight state.
+  //
+  // `pendingJump` queues a (page, highlight) directive that arrives via
+  // the `slab:reader-jump` event *before* the doc has loaded (e.g. user
+  // clicked a search result, we're still fetching bytes). It's consumed
+  // and cleared the moment loadBytes finishes.
+  //
+  // `jumpHalo` powers the WOW: a 720ms gold cubic-bezier pulse on the
+  // jumped-to page, drawing the eye to the find-highlighted matches.
+  let pendingJump: { page: number | null; highlight: string | null } | null = $state(null);
+  let jumpHalo = $state(false);
   let zoomLabel = $state("page-width"); // sync with PDFViewer.currentScaleValue
   let zoomPct = $state(100);
   let findOpen = $state(false);
@@ -446,6 +469,21 @@
       // it with a `_closed` event. We capture path-at-call-time to
       // avoid losing the value across reactive updates.
       void notifyPluginsDocumentOpened(path);
+      // Atlas v2.2.0 — once the doc is loaded, honour any pending jump
+      // (page + highlight) staged by the shell. We schedule on next tick
+      // so pdfViewer has a chance to render the first page first.
+      if (pendingJump) {
+        const j = pendingJump;
+        pendingJump = null;
+        queueMicrotask(() => applyJump(j.page, j.highlight));
+      } else if (initialPage || initialHighlight) {
+        // First-time consume of mount-time hints from the shell.
+        const p = initialPage;
+        const q = initialHighlight;
+        initialPage = null;
+        initialHighlight = null;
+        queueMicrotask(() => applyJump(p, q));
+      }
     } catch (e: any) {
       // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
       // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
@@ -753,6 +791,49 @@
   function nextPage() { jumpTo(currentPage + 1); }
   function prevPage() { jumpTo(currentPage - 1); }
 
+  // Atlas v2.2.0 — apply a (page, highlight) jump.
+  //
+  // - jumps to the page (1-based clamp)
+  // - runs the find controller with highlightAll so every match glows
+  // - flashes a 720 ms gold halo around the jumped-to page (WOW)
+  //
+  // Reduced-motion users get an instant non-pulsing accent ring instead
+  // (CSS picks up `prefers-reduced-motion` automatically).
+  function applyJump(page: number | null, highlight: string | null) {
+    if (page && page > 0) {
+      jumpTo(page);
+    }
+    if (highlight && highlight.trim()) {
+      findQuery = highlight;
+      // Don't pop the find bar by default — the highlights are enough.
+      // If the user wants to keep navigating matches they can hit Cmd+F.
+      runFind(highlight, "find");
+    }
+    // Trigger the halo on the next frame so the scroll has time to land.
+    jumpHalo = false;
+    requestAnimationFrame(() => {
+      jumpHalo = true;
+      // Auto-clear after the animation finishes so a repeat jump replays.
+      window.setTimeout(() => { jumpHalo = false; }, 900);
+    });
+  }
+
+  /** Atlas v2.2.0 — window-level entry point for cross-tab jump requests.
+   *  +page.svelte's onLibraryOpen fires this when the user clicks a hit
+   *  for a doc that's already open in some tab — we don't want to spawn
+   *  another tab, we want the existing one to scroll + highlight. */
+  function onReaderJump(e: CustomEvent<{ tabId: string; page?: number | null; highlight?: string | null }>) {
+    const d = e.detail;
+    if (!d) return;
+    if (d.tabId !== tabId) return;
+    if (doc) {
+      applyJump(d.page ?? null, d.highlight ?? null);
+    } else {
+      // Doc not loaded yet — stash for the loadBytes() finish handler.
+      pendingJump = { page: d.page ?? null, highlight: d.highlight ?? null };
+    }
+  }
+
   // ---------- Glass II Vim adapter (v1.2.0 Slice 2) ----------
   //
   // The reader subscribes to `slab:vim-reader:*` events emitted by
@@ -969,6 +1050,7 @@
     window.addEventListener("slab:vim-reader:find-open", onVimFindOpen as EventListener);
     window.addEventListener("slab:vim-reader:find-set", onVimFindSet as EventListener);
     window.addEventListener("slab:vim-reader:find-next", onVimFindNext as EventListener);
+    window.addEventListener("slab:reader-jump", onReaderJump as EventListener);
 
     // If the shell handed us a path on mount, load it.
     if (initialPath && isInTauri()) {
@@ -1042,6 +1124,7 @@
     window.removeEventListener("slab:vim-reader:find-open", onVimFindOpen as EventListener);
     window.removeEventListener("slab:vim-reader:find-set", onVimFindSet as EventListener);
     window.removeEventListener("slab:vim-reader:find-next", onVimFindNext as EventListener);
+    window.removeEventListener("slab:reader-jump", onReaderJump as EventListener);
     const dnd = (onMount as any)._slabDnd;
     if (dnd) {
       window.removeEventListener("dragover", dnd.onDragOver);
@@ -1442,7 +1525,7 @@
       </aside>
     {/if}
 
-    <div class="pdfjs-container" class:invert bind:this={containerEl}>
+    <div class="pdfjs-container" class:invert class:jump-halo={jumpHalo} bind:this={containerEl}>
       <div class="pdfViewer" bind:this={viewerEl}></div>
     </div>
 
@@ -1865,6 +1948,29 @@
     position: relative;
     overflow: auto;
     background: var(--bg);
+  }
+
+  /* Atlas v2.2.0 — gold halo pulse when a search jump lands on a page.
+   * 720 ms cubic-bezier "settle" — same easing family the Pages Visual
+   * rotate-tilt uses, for product-wide consistency. The halo lives on
+   * the active page (".pdfViewer .page[data-page-number] :global") so
+   * it reads as "this is the page we jumped to" rather than a giant
+   * frame around the whole reader. */
+  .pdfjs-container.jump-halo :global(.pdfViewer .page) {
+    animation: slab-jump-halo 720ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    will-change: box-shadow, transform;
+  }
+  @keyframes slab-jump-halo {
+    0%   { box-shadow: 0 2px 8px rgba(0,0,0,0.5), 0 0 0 0 rgba(245, 158, 11, 0.0); transform: scale(1); }
+    24%  { box-shadow: 0 2px 8px rgba(0,0,0,0.5), 0 0 0 14px rgba(245, 158, 11, 0.55); transform: scale(1.014); }
+    100% { box-shadow: 0 2px 8px rgba(0,0,0,0.5), 0 0 0 0 rgba(245, 158, 11, 0); transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pdfjs-container.jump-halo :global(.pdfViewer .page) {
+      animation: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5), 0 0 0 3px rgba(245, 158, 11, 0.85);
+      transition: box-shadow 240ms ease-out;
+    }
   }
 
   /* Tweak pdf.js viewer chrome */
