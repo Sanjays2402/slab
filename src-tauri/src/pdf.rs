@@ -32,6 +32,7 @@ pub mod page_labels;
 pub mod page_numbers;
 pub mod pages;
 pub mod pages_build;
+pub mod pages_undo;
 pub mod polyglot;
 pub mod preflight;
 pub mod redact;
