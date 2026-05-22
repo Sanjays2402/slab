@@ -16,6 +16,17 @@
   import { onMount } from "svelte";
   import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
+  import { createPagesHistory, type PageOp } from "$lib/pagesHistory";
+
+  // Arranger (v2.1.2, issue #26) — 50-deep undo/redo command stack.
+  // Hotkeys (when the panel is focused / mounted):
+  //   R / Shift+R       Permanent rotate selection by ±90°
+  //   Delete/Backspace  Delete selection
+  //   D                 Duplicate selection
+  //   Cmd/Ctrl+Z        Undo last op
+  //   Cmd/Ctrl+Shift+Z  Redo
+  const history = createPagesHistory();
+  const histStore = history.store;
 
   // ---- pdfjs lazy import (matches ConvertPanel's pattern) ----
   type PdfjsModule = typeof import("pdfjs-dist");
@@ -231,13 +242,52 @@
   function closeMenu() {
     menu = null;
   }
+  function recordOp(op: PageOp) {
+    history.push(op);
+  }
+
+  // ⭐ WOW — 280ms cubic-bezier rotate tilt with cascading gold-accent halo
+  // on neighbours (40ms stagger). Respects prefers-reduced-motion.
+  function animateRotate(cellIndex: number) {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const root = document.querySelector(`[data-page="${cellIndex}"]`);
+    if (!root) return;
+    root.classList.add("slab-rotate-tilt");
+    window.setTimeout(() => root.classList.remove("slab-rotate-tilt"), 320);
+    // Halo pulse cascades to ±1 then ±2 neighbours.
+    for (let d = 1; d <= 2; d++) {
+      for (const sign of [-1, 1]) {
+        const n = document.querySelector(`[data-page="${cellIndex + sign * d}"]`);
+        if (!n) continue;
+        window.setTimeout(() => {
+          n.classList.add("slab-halo-pulse");
+          window.setTimeout(() => n.classList.remove("slab-halo-pulse"), 280);
+        }, d * 40);
+      }
+    }
+  }
+
+  function animateDelete(cellId: string) {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const el = document.querySelector(`[data-cell-id="${cellId}"]`);
+    if (!el) return;
+    el.classList.add("slab-delete-out");
+  }
+
   function actionRotate(deg: 90 | 180 | 270) {
-    const next = cells.map((c) => {
+    // Record one op per selected cell so undo backs them out one at a time.
+    let firstAt: number | null = null;
+    const next = cells.map((c, idx) => {
       if (!selection.has(c.id)) return c;
       const r = ((c.rotation + deg) % 360) as Cell["rotation"];
+      if (firstAt === null) firstAt = idx + 1;
+      recordOp({ kind: "rotate", at: idx + 1, degrees: deg });
       return { ...c, rotation: r };
     });
     cells = next;
+    if (firstAt !== null) animateRotate(firstAt);
     closeMenu();
   }
   function actionDelete() {
@@ -246,6 +296,15 @@
       closeMenu();
       return;
     }
+    // Walk in reverse so positions stay valid as ops record.
+    const idxs = cells
+      .map((c, i) => ({ id: c.id, idx: i + 1, selected: selection.has(c.id) }))
+      .filter((x) => x.selected)
+      .sort((a, b) => b.idx - a.idx);
+    for (const x of idxs) {
+      recordOp({ kind: "delete", at: x.idx });
+      animateDelete(x.id);
+    }
     cells = cells.filter((c) => !selection.has(c.id));
     selection = new Set();
     closeMenu();
@@ -253,7 +312,7 @@
   function actionDuplicate() {
     if (selection.size === 0) return;
     const next: Cell[] = [];
-    for (const c of cells) {
+    cells.forEach((c, i) => {
       next.push(c);
       if (selection.has(c.id)) {
         const copy = newCell(c.originalIndex);
@@ -262,8 +321,9 @@
         copy.height = c.height;
         copy.rotation = c.rotation;
         next.push(copy);
+        recordOp({ kind: "duplicate", from: i + 1, to: i + 2 });
       }
-    }
+    });
     cells = next;
     closeMenu();
   }
@@ -291,6 +351,74 @@
       .filter((c) => c.originalIndex !== null)
       .sort((a, b) => (a.originalIndex ?? 0) - (b.originalIndex ?? 0))
       .map((c) => ({ ...c, rotation: 0 }));
+    history.clear();
+  }
+
+  // ---- Undo / Redo: replays history.applied() against the original page set ----
+  function reverseLast() {
+    const op = history.undo();
+    if (!op) return;
+    replayHistory();
+    if (op.kind === "rotate") animateRotate(Math.min(op.at, cells.length));
+  }
+  function replayForward() {
+    const op = history.redo();
+    if (!op) return;
+    replayHistory();
+    if (op.kind === "rotate") animateRotate(Math.min(op.at, cells.length));
+  }
+
+  /** Rebuild `cells` from scratch by replaying every applied op. */
+  function replayHistory() {
+    // Start from the original page sequence preserving rendered thumbs.
+    const origByIdx = new Map<number, Cell>();
+    for (const c of cells) {
+      if (c.originalIndex !== null && !origByIdx.has(c.originalIndex)) {
+        origByIdx.set(c.originalIndex, { ...c, rotation: 0 });
+      }
+    }
+    let next: Cell[] = [];
+    for (let i = 1; i <= pageCount; i++) {
+      const tmpl = origByIdx.get(i);
+      next.push(tmpl ? { ...tmpl, id: `c${++nextCellSeq}`, rotation: 0 } : newCell(i));
+    }
+    for (const op of history.applied()) {
+      if (op.kind === "rotate") {
+        const k = op.at - 1;
+        if (k >= 0 && k < next.length) {
+          const r = ((next[k].rotation + op.degrees) % 360) as Cell["rotation"];
+          next[k] = { ...next[k], rotation: r };
+        }
+      } else if (op.kind === "delete") {
+        const k = op.at - 1;
+        if (k >= 0 && k < next.length) next.splice(k, 1);
+      } else if (op.kind === "duplicate") {
+        const k = op.from - 1;
+        if (k >= 0 && k < next.length) {
+          const src = next[k];
+          const copy = { ...src, id: `c${++nextCellSeq}` };
+          next.splice(op.to - 1, 0, copy);
+        }
+      } else if (op.kind === "reorder") {
+        const ordered: Cell[] = [];
+        for (const idx of op.order) {
+          if (idx - 1 >= 0 && idx - 1 < next.length) ordered.push(next[idx - 1]);
+        }
+        next = ordered;
+      } else if (op.kind === "insert_blank") {
+        for (let n = 0; n < op.count; n++) {
+          const blank = newCell(null);
+          blank.width = op.width;
+          blank.height = op.height;
+          next.splice(op.at - 1 + n, 0, blank);
+        }
+      }
+      // insert_pdf / insert_image are persisted server-side only — their
+      // visual rehearsal here would require a re-render which is out of
+      // scope for the undo replay loop. They flush on Apply.
+    }
+    cells = next;
+    selection = new Set();
   }
 
   // ---- Apply: write a new PDF reflecting the current grid ----
@@ -373,6 +501,44 @@
     if (e.key === "Escape") {
       menu = null;
       selection = new Set();
+      return;
+    }
+    // Don't hijack typing in inputs / textareas / contenteditable.
+    const tgt = e.target as HTMLElement | null;
+    if (
+      tgt &&
+      (tgt.tagName === "INPUT" ||
+        tgt.tagName === "TEXTAREA" ||
+        tgt.isContentEditable)
+    ) {
+      return;
+    }
+    // Only act when this panel has loaded a doc.
+    if (!input || cells.length === 0) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) replayForward();
+      else reverseLast();
+      return;
+    }
+    if (!mod && (e.key === "r" || e.key === "R")) {
+      if (selection.size === 0) return;
+      e.preventDefault();
+      actionRotate(e.shiftKey ? 270 : 90);
+      return;
+    }
+    if (!mod && (e.key === "d" || e.key === "D")) {
+      if (selection.size === 0) return;
+      e.preventDefault();
+      actionDuplicate();
+      return;
+    }
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (selection.size === 0) return;
+      e.preventDefault();
+      actionDelete();
+      return;
     }
   }
   onMount(() => {
@@ -434,6 +600,8 @@
       {#each cells as cell, i (cell.id)}
         <div
           class="cell"
+          data-page={i + 1}
+          data-cell-id={cell.id}
           class:selected={selection.has(cell.id)}
           class:drag-over={dragOverId === cell.id}
           class:dragging={dragIds?.includes(cell.id) ?? false}
@@ -477,6 +645,22 @@
 
     <div class="actions">
       <button
+        class="ghost"
+        onclick={reverseLast}
+        disabled={!$histStore.canUndo}
+        title={$histStore.undoLabel ? `Undo ${$histStore.undoLabel} (⌘Z)` : "Nothing to undo"}
+      >
+        ↶ Undo
+      </button>
+      <button
+        class="ghost"
+        onclick={replayForward}
+        disabled={!$histStore.canRedo}
+        title={$histStore.redoLabel ? `Redo ${$histStore.redoLabel} (⌘⇧Z)` : "Nothing to redo"}
+      >
+        ↷ Redo
+      </button>
+      <button
         class="primary"
         onclick={applyChanges}
         disabled={status.kind === "working" || cells.length === 0}
@@ -484,7 +668,7 @@
         {status.kind === "working" ? "Working…" : "Apply → save copy"}
       </button>
       <span class="hint">
-        Tip: shift-click to select multiple, then right-click to act on the group.
+        <kbd>R</kbd> rotate · <kbd>D</kbd> duplicate · <kbd>⌫</kbd> delete · <kbd>⌘Z</kbd> undo
       </span>
     </div>
   {/if}
@@ -509,6 +693,72 @@
 {/if}
 
 <style>
+  /* ⭐ Arranger WOW — rotate-tilt + halo pulse cascade (v2.1.2, issue #26).
+     280ms cubic-bezier with gold-accent halo cascading across neighbours.
+     Honours prefers-reduced-motion. */
+  .cell.slab-rotate-tilt {
+    animation: slab-rotate-tilt 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    transform-origin: center center;
+    z-index: 5;
+  }
+  @keyframes slab-rotate-tilt {
+    0% {
+      transform: rotate(0deg) scale(1);
+      filter: none;
+    }
+    55% {
+      transform: rotate(8deg) scale(1.06);
+      filter: drop-shadow(0 0 12px rgba(212, 160, 74, 0.7));
+    }
+    100% {
+      transform: rotate(0deg) scale(1);
+      filter: none;
+    }
+  }
+  .cell.slab-halo-pulse {
+    animation: slab-halo-pulse 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes slab-halo-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(212, 160, 74, 0);
+    }
+    50% {
+      box-shadow: 0 0 18px 4px rgba(212, 160, 74, 0.32);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(212, 160, 74, 0);
+    }
+  }
+  .cell.slab-delete-out {
+    animation: slab-delete-out 220ms ease-out forwards;
+    pointer-events: none;
+  }
+  @keyframes slab-delete-out {
+    0% {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(-32px) scale(0.85);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cell.slab-rotate-tilt,
+    .cell.slab-halo-pulse,
+    .cell.slab-delete-out {
+      animation: none !important;
+    }
+  }
+  .hint kbd {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.78em;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--panel-bg-2, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--panel-border, rgba(0, 0, 0, 0.12));
+  }
+
   .content-header h1 {
     font-size: 22px;
     font-weight: 600;
