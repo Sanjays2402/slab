@@ -5,7 +5,29 @@
 
 ---
 
-## STATUS: 🚀 v2.2.0 "Atlas" slices 1-5 shipped — search → reader page-jump live
+## STATUS: 🎬 v2.2.0 "Atlas" MERGED to main, tagged — v2.3.0 "Theater" plan committed
+
+**TICK 2026-05-22 05:10 PT** — MODE A (release) + plan-writing tick.
+
+- Merged `feature/v2.2.0-atlas-search` → main (merge SHA see `git log`).
+- Tagged `v2.2.0`; pushing main with `--follow-tags` triggers build CI.
+- All gates green pre-push: cargo fmt + clippy -D warnings + cargo test
+  (1028 passed, 0 failed) + pnpm check (0 errors, 41 pre-existing warnings).
+- Wrote `docs/plans/2026-05-22-v2.3.0-theater-presenter.md` — 7-task
+  presenter-mode plan (audience + presenter windows, ink overlay with
+  save-as-annotation, ⌘⇧P shortcut, palette/onboarding/settings wired).
+  4/4 buy-button test, WOW = live ink synced across two screens.
+
+**RELEASE_PENDING:** v2.2.0 — finalize next tick once build CI green.
+
+**Next tick options:**
+- (a) MODE B finalize v2.2.0 — download artifacts, `gh release create`.
+- (b) Start v2.3.0 Theater Slice 1 (TheaterState module + serde tests).
+- Pick whichever the CI state dictates.
+
+---
+
+## STATUS PRIOR: 🚀 v2.2.0 "Atlas" slices 1-5 shipped — search → reader page-jump live
 
 **TICK 2026-05-22 04:50 PT** — MODE C BIG tick. Four commits to
 `feature/v2.2.0-atlas-search`, pushed (HEAD 3b305ae), CI re-queued.
