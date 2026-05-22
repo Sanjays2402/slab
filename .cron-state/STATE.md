@@ -5,7 +5,19 @@
 
 ---
 
-## STATUS: 🚀 v2.0.3 "Flatten Raster" SHIPPED to main — #24 closed end-to-end
+---
+
+## STATUS: 📋 v2.1.2 "Arranger" PLAN landed — #26 ready to execute (after #25)
+
+**TICK 2026-05-22 01:46 PT** — writing-plans skill: shipped `docs/plans/2026-05-22-v2.1.2-arranger.md` (49 KB, 1438 lines, 6 slices + pre-flight + final tick, 14 commits / ~720 LOC / 18 new tests at execution). Closes override issue **#26** end-to-end: insert PDF / insert PNG-JPG image / delete / duplicate / drag-reorder / **permanent rotate** (bakes rotation into geometry via `q <matrix> cm` content-stream wrap + MediaBox swap, strips `/Rotate` viewer hint) / **50-deep mixed-op undo stack** via `PageOp` tagged-union (Rust + TS twin) / **atomic crash-safe writes** via tempfile + fsync + `rename(2)` helper `atomic_save()` reusable across every writer. WOW = 280ms cubic-bezier `(0.34, 1.56, 0.64, 1)` rotate-tilt animation with gold-accent halo cascading across neighbouring thumbnails (40ms stagger), reduced-motion-safe. Buy-Button 4/4 PASS (Pay-for-it — Acrobat Pro $239/yr "Organize Pages" replaced free; Pick-us — pdfarranger upgrade story; Notice-it — drag-reorder is first thing visible; Tell-a-friend — single-key `R` permanent rotate + crash-safe writes are screenshot bait). New acceptance integration suite at `src-tauri/tests/issue_26_acceptance.rs` exercises all 6 issue-body criteria. Schedule: v2.0.3 (#25, plan on disk) executes first, then v2.1.2 (#26, this plan), then #27 (demo video, deferred — needs real footage).
+
+**Active branch**: `feature/v2.0.3-self-install` (plan committed straight to active branch; plan files are version-independent).
+**Open override issues**: #25 (plan on disk, next to execute), **#26 (plan on disk, this tick)**, #27 (demo video, content task).
+**Session log**: `.cron-state/sessions/2026-05-22-0146.md`.
+
+---
+
+## STATUS PRIOR: 🚀 v2.0.3 "Flatten Raster" SHIPPED to main — #24 closed end-to-end
 
 **TICK 2026-05-22 01:13 PT** — MODE C develop + MODE A merge — issue #24 legal-grade raster flatten:
 
