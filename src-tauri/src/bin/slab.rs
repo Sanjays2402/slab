@@ -22,7 +22,7 @@ use slab_lib::pdf::auto_redact::{auto_redact, AutoRedactOpts};
 use slab_lib::pdf::compress::compress;
 use slab_lib::pdf::encrypt::{decrypt, encrypt};
 use slab_lib::pdf::extract::{extract_text, extract_text_concat};
-use slab_lib::pdf::flatten::{flatten as do_flatten, FlattenOpts};
+use slab_lib::pdf::flatten::{flatten as do_flatten, FlattenMode, FlattenOpts};
 use slab_lib::pdf::grayscale::{grayscale, GrayscaleOpts};
 use slab_lib::pdf::info::info;
 use slab_lib::pdf::library::{
@@ -152,7 +152,7 @@ Commands:
                                      json/xml/img/audio → PDF. Requires
                                      `markitdown` on PATH
                                      (`pipx install 'markitdown[all]'`).
-  flatten <file> -o <out> [--no-widgets]
+  flatten <file> -o <out> [--no-widgets] [--raster] [--dpi N]
                                      Bake annotations into the page content
                                      stream and remove /AcroForm. The result
                                      is a static PDF with no editable fields.
@@ -457,10 +457,30 @@ fn cmd_flatten(args: &[String]) -> Result<(), CliError> {
     let input = require_arg(args, 0, "<file>")?;
     let output = output_path(args)?;
     let include_widgets = !args.iter().any(|a| a == "--no-widgets");
-    let opts = FlattenOpts { include_widgets };
+    let raster = args.iter().any(|a| a == "--raster");
+    let dpi: u32 = find_flag(args, "--dpi")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(150);
+    let mode = if raster {
+        FlattenMode::Raster { dpi }
+    } else {
+        FlattenMode::Annotations
+    };
+    let opts = FlattenOpts {
+        include_widgets,
+        mode,
+    };
     let report = do_flatten(&input, &output, opts)?;
+    let raster_note = if report.pages_rasterized > 0 {
+        format!(
+            ", {} page(s) rasterized @ {} DPI",
+            report.pages_rasterized, report.dpi
+        )
+    } else {
+        String::new()
+    };
     println!(
-        "✓ flattened {}/{} annotation(s) ({} dropped) across {} page(s){} → {}",
+        "✓ flattened {}/{} annotation(s) ({} dropped) across {} page(s){}{} → {}",
         report.annotations_flattened,
         report.annotations_in,
         report.annotations_dropped,
@@ -470,6 +490,7 @@ fn cmd_flatten(args: &[String]) -> Result<(), CliError> {
         } else {
             ""
         },
+        raster_note,
         output.display()
     );
     Ok(())
