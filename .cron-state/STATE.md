@@ -29,15 +29,14 @@ list empty — fell through to roadmap fill).
   Notice-it (new nav + Cmd+Shift+F + palette + onboarding), Tell-a-friend
   (paralegal demo: paste folder → 30 ms ranked hits across 200 PDFs).
 
-**v2.1.2 release status**: build CI run `26282803602` still in_progress
-(linux/win/mac-x64 bundle jobs queued; mac-arm64 + all cargo-test jobs
-green). `gh release view v2.1.2` exists with 0 assets — artifact upload
-pending next tick.
+**v2.1.2 release FINALIZED this tick**: build CI `26282803602` completed
+green → `gh run download` → all 6 desktop artifacts uploaded to
+https://github.com/Sanjays2402/slab/releases/tag/v2.1.2 (mac arm64+x64
+dmg, linux deb+AppImage, win msi+nsis). Release is now public + complete.
 
-**Next tick**: MODE B finalize v2.1.2 (poll CI → `gh run download` → 6
-artifacts to release). Then start v2.2.0 Slice 1+2 on
-`feature/v2.2.0-atlas-search` (FTS5 schema + write hook + search cmd —
-BIG-tick-eligible as a single fold).
+**Next tick**: Start v2.2.0 Slice 1+2 on `feature/v2.2.0-atlas-search`
+(FTS5 schema + write hook + search cmd — BIG-tick-eligible as a single
+fold).
 
 ---
 
