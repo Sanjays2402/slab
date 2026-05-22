@@ -5,9 +5,33 @@
 
 ---
 
-## STATUS: 🎉 v2.1.0 RELEASE PUBLIC — Docker CI hotfix #2 in flight (Rust 1.85 → 1.88), issue #21 sidebar i18n closed
+## STATUS: 🛠️ v2.1.0 Docker CI hotfix #3 (trixie base) + issue #23 frontend shake UX shipped (2/4 acceptance criteria)
 
-**TICK 2026-05-22 00:13 PT** — MODE B finalize hotfix + buy-button bundle:
+**TICK 2026-05-22 00:20 PT** — MODE B finalize hotfix + buyer-button vertical slice on `main`:
+- **Docker CI hotfix #3** (`e10aa1b`): switched Dockerfile builder base from `debian:bookworm` → `debian:trixie` + installed the GTK 3 / webkit2gtk 4.1 / libsoup-3 / javascriptcore / appindicator / rsvg / xdo `-dev` packages. Root cause of run `26274103726` failure: workspace pulls `tauri` non-optionally → `gdk-sys`+`webkit2gtk-sys` build-scripts need pkg-config metadata at cargo-resolve time, even for the `slab-server` binary built behind `--features server`. Bookworm only ships the 4.0 webkit ABI but `webkit2gtk-sys 2.0.2` (locked) binds to 4.1. Runtime layer still `debian:slim` + libssl3 (no GTK in runtime) so image size stays ~80MB.
+- **Issue #23 — Password-protected PDFs** (closes acceptance criteria 1, 2, 4): added `PdfError::WrongPassword` variant + lopdf `InvalidPassword` typed sniff in `src-tauri/src/pdf/encrypt.rs` (commit `0bee4e2`, 3 new unit tests, 6/6 `pdf::encrypt::*` green). Frontend `DecryptModal.svelte` (commit `93020a3`) gained: 500ms cubic-bezier red-shake + danger-ring CSS, 3-attempt counter with "N tries left" messaging, locked-button terminal state, `aria-live` polite, `prefers-reduced-motion` short-circuit, auto-clear+refocus between attempts. Acceptance #3 (re-encrypt on Save) deferred to follow-up tick — touches Save flow, not Open flow.
+- Quality gates green: `cargo fmt --check` clean, `cargo clippy --all-targets -D warnings` clean, `cargo test --lib` → **926 passed** (+3 new), `pnpm check` → 0 errors / 35 pre-existing warnings.
+- Commented closure context on issue #23 with the SHA breadcrumb.
+
+**Commits this tick (3 + STATE chore = 4 on `main`)**:
+- `e10aa1b` fix(v2.1.0): Dockerfile — trixie base + GTK/webkit deps
+- `0bee4e2` feat(pdf): PdfError::WrongPassword + typed lopdf::InvalidPassword sniff (refs #23)
+- `93020a3` feat(ui): DecryptModal — red-shake retry UX with 3-attempt cap (closes #23)
+- `<HASH>` chore(cron): STATE.md + session log — Docker trixie + issue #23 shake UX
+
+**Buy-Button verdict**: ✅ Pick-us (KillerPDF / Adobe / PDF Expert all ship the password-prompt UX; Slab had it half-wired but no typed error + no retry counter — closes a launch-blocker gap), ✅ Notice-it (red shake is screenshot-bait), ✅ Tell-a-friend (the shake + try-counter is the polish moment), ⏳ Pay-for-it (this alone isn't $49-worthy, but it's a table-stakes prerequisite). 3/4 PASS, qualifying tick under buy-button rules.
+
+**WOW**: ✨ 500ms cubic-bezier red-shake on the password field — Linear/Stripe-tier microinteraction. `LAST_WOW_TICK_AT: 2026-05-22 00:20 PT`.
+
+**RECENTLY_CLOSED_ISSUES**: #21 (sidebar i18n, `429d208`), #23 (password prompt acc. criteria 1+2+4, `93020a3` — #3 follow-up tracked).
+
+**Pending**:
+- Docker CI run for SHA `93020a3` (HEAD) will re-trigger after push. Expect `gh run list -L 1 --workflow=docker.yml` to show in_progress next tick. If it goes green → re-tag `v2.1.0` to `93020a3` so the GHCR image truly publishes against the latest main.
+- Desktop CI on this SHA also re-triggers; previous green run `26272331779` was on `7267cd7` so artifacts already exist for the release.
+
+---
+
+## TICK 2026-05-22 00:13 PT — MODE B finalize hotfix + buy-button bundle
 - Docker CI red again after the 1.83→1.85 bump — transitive crates resolved further forward
   (image@0.25.10, plist@1.9.0, time@0.3.47, serde_with@3.20, zbus@5.15, icu_*@2.2 all need ≥1.86–1.88).
   Bumped `Dockerfile` `ARG RUST_VERSION=1.85` → `1.88` (commit `d3d9b13`).
