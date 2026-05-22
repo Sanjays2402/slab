@@ -108,6 +108,15 @@ pub fn scan_folder(db: &mut LibraryDb, folder: &FolderRecord) -> Result<ScanRepo
         } else {
             report.files_updated += 1;
         }
+
+        // Atlas (v2.2.0): feed page text into the FTS5 index. Non-fatal
+        // on extract failure (encrypted/corrupt PDFs shouldn't break a
+        // scan). Look up the doc_id we just upserted via path.
+        if let Ok(pages) = crate::pdf::extract::extract_text(path) {
+            if let Ok(Some(doc)) = db.find_document_by_path(&path_str) {
+                let _ = crate::pdf::library::fts::index_doc(db.conn(), doc.id, &pages);
+            }
+        }
     }
 
     let now = SystemTime::now()

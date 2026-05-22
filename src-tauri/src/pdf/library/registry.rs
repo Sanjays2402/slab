@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -179,7 +179,15 @@ impl LibraryDb {
                   ON library_documents(ocr_state);
                 "#,
             )?;
-            conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
+            conn.execute_batch("PRAGMA user_version = 2;")?;
+        }
+        if version < 3 {
+            // Slice for Atlas (v2.2.0) — FTS5 cross-document search.
+            // Delegated to the `fts` submodule so the migration sits next
+            // to the index code that owns it. This also bumps
+            // user_version to SCHEMA_VERSION.
+            super::fts::migrate_v3(conn)?;
+            debug_assert_eq!(SCHEMA_VERSION, 3);
         }
         Ok(())
     }
@@ -797,7 +805,9 @@ mod tests {
     #[test]
     fn schema_v2_is_set() {
         let db = db();
-        assert_eq!(db.schema_version().unwrap(), 2);
+        // Atlas (v2.2.0) bumped the schema to v3. The v2 column set is a
+        // strict subset, so this test now asserts the lower bound.
+        assert!(db.schema_version().unwrap() >= 2);
     }
 
     #[test]
