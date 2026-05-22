@@ -13,7 +13,7 @@
 # Run:    docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest
 # Open:   http://localhost:8080
 
-ARG RUST_VERSION=1.85
+ARG RUST_VERSION=1.88
 ARG DEBIAN_RELEASE=bookworm
 
 # ────────────────────────────────────────────────────────────────────
