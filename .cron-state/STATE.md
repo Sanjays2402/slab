@@ -5,7 +5,18 @@
 
 ---
 
-## STATUS: 🎉 v2.1.0 RELEASE PUBLIC — 6 desktop artifacts live, Docker CI retry in_progress
+## STATUS: 🎉 v2.1.0 RELEASE PUBLIC — Docker CI hotfix #2 in flight (Rust 1.85 → 1.88), issue #21 sidebar i18n closed
+
+**TICK 2026-05-22 00:13 PT** — MODE B finalize hotfix + buy-button bundle:
+- Docker CI red again after the 1.83→1.85 bump — transitive crates resolved further forward
+  (image@0.25.10, plist@1.9.0, time@0.3.47, serde_with@3.20, zbus@5.15, icu_*@2.2 all need ≥1.86–1.88).
+  Bumped `Dockerfile` `ARG RUST_VERSION=1.85` → `1.88` (commit `d3d9b13`).
+- Closed issue **#21** — sidebar showed raw i18n keys `features.citations` / `features.study` on v2.0.2 because
+  those keys were missing from `src/lib/i18n/en.json`. Added both. svelte-check 0 errors (commit `429d208`).
+- Retagged `v2.1.0` to `429d208`, pushed. Docker CI retriggered: run **`26274103726`** in_progress.
+- Main HEAD now `429d208`, 2 commits ahead of previous tick. Push succeeded.
+
+
 
 **v2.1.0 STATUS**: 🚀 **RELEASE PUBLIC** at https://github.com/Sanjays2402/slab/releases/tag/v2.1.0 — 6 desktop artifacts uploaded (macOS arm64+x64 dmg, Linux deb+AppImage, Windows msi+nsis), draft flag removed. Tag `v2.1.0` retagged once more to `7267cd7` (Rust 1.83→1.85 Dockerfile fix for dlopen2_derive edition2024 requirement). Desktop CI `26272331779` ✅ all 7 jobs green on prior SHA. Docker CI retry runs: `26273132933` (Docker), `26273126709` (build) — in_progress, poll next tick. Docker image not yet published to GHCR until CI passes.
 **v2.1.1 PLAN** (new this tick): `docs/plans/2026-05-21-v2.1.1-notary-ii.md` (~12 KB, 6 slices + pre-flight + final tick, ~1850 LOC, 5 commits, ~52 tests). Codename "Notary II" 🕰️ — RFC 3161 TSA timestamping + DSS / VRI embedding + PAdES B-LTA + offline-safe downgrade chain (B-LTA → B-LT → B-T → B-B). WOW = **Verify-in-2050 modal w/ 380ms gold-ribbon-of-time scrub animation** explaining a real PKI gotcha in 6s. Pure-Rust: hand-rolled RFC 3161 over `cms 0.3` + `der 0.8` (4 ASN.1 structs), `ocsp 0.6`, `reqwest 0.12 blocking` gated `feature = "online"`. Buy-Button 4/4 PASS — Pay-for-it (anchors $49 Pro w/ v2.1.0; legal/medical/govt MUST have LTV or archives expire), Pick-us (Adobe $239/yr ships B-LTA, PDF Expert B-T only, Foxit $179/yr Business; no free offline tool ships B-LTA), Notice-it (6 surfaces), Tell-a-friend (Verify-2050). **Must ship AFTER v2.1.0 "Notary" PKCS#7 signing lands** — extends every file under `notary/` v2.1.0 touches.
