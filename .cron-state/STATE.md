@@ -5,38 +5,45 @@
 
 ---
 
-## STATUS: 📋 v2.2.0 "Atlas" plan promoted — cross-doc FTS5 search ready to execute
+## STATUS: 🚀 v2.2.0 "Atlas" slices 1+2+3 shipped — end-to-end cross-doc search live
 
-**TICK 2026-05-22 03:47 PT** — MODE C writing-plans skill (no shippable work
-on disk; v2.1.2 CI still in_progress; all 5 override issues closed; gh issue
-list empty — fell through to roadmap fill).
+**TICK 2026-05-22 04:24 PT** — MODE C BIG tick. Three logical commits to
+`feature/v2.2.0-atlas-search`, pushed, CI queued (run 26284955295).
 
-- Plan: `docs/plans/2026-05-22-v2.2.0-atlas-search.md` (~30 KB, 6 slices +
-  pre-flight + final tick, ~880 LOC, 28 new tests at execution).
-- Codename **"Atlas"** 🗺️ — SQLite FTS5 virtual table colocated in
-  `~/.slab/library.sqlite`. unicode61 tokenizer + bm25 ranking + snippet()
-  with `<mark>` tags. Page-level rows keyed on `(doc_id, page_index)` so
-  results jump to the matching page directly. AFTER DELETE cascade trigger.
-  ZERO new Rust deps (rusqlite bundled-sqlite ships FTS5).
-- **Six new layers**: schema migration v3→4 (Slice 1) + `slab_library_search`
-  Tauri cmd (Slice 2) + SearchPanel.svelte w/ Cmd+Shift+F + nav (Slice 3) +
-  highlight-on-open page-jump (Slice 4) + palette/onboarding/settings/hover
-  thumbnail (Slice 5) + release ship (Slice 6).
-- **WOW × 2**: 180ms cubic-bezier slide-in cascade w/ 40ms stagger +
-  240ms-dwell hover thumbnail preview tooltip.
-- **Buy-Button 4/4 PASS**: Pay-for-it (Acrobat Pro $239/yr "Search Multiple
-  PDFs" replaced free), Pick-us (only free offline GUI cross-platform),
-  Notice-it (new nav + Cmd+Shift+F + palette + onboarding), Tell-a-friend
-  (paralegal demo: paste folder → 30 ms ranked hits across 200 PDFs).
+- **fix(ai)** 65c3ac0 — process-global Mutex serialises WHISPER_CLI env
+  mutation across the two stt_recorder tests; fixes flake from CI run
+  26283755466.
+- **feat(library)** ba28e64 — Atlas slice 1: FTS5 page-level index
+  (`library_fts` virtual table, unicode61 tokenizer, AFTER DELETE
+  cascade trigger, `migrate_v3()` colocated in `pdf/library/fts.rs`,
+  scanner indexes after every upsert non-fatally, 4 unit tests).
+- **feat(library)** e314088 — Atlas slices 2+3 fold: `search()` with
+  bm25 + `<mark>` snippets + sanitised match expression + folder
+  filter + 1..500 limit clamp; `slab_library_search` Tauri command;
+  6 unit tests; `librarySearch()` TS binding; `LibrarySearchPanel.svelte`
+  with debounced input, doc-grouped results, designed empty/error
+  states, light+dark themes; `Mod+Shift+F` default binding via new
+  `library.search` keymap action; wired into +page.svelte nav + i18n
+  (en/fr/es/ar). 948 net insertions.
 
-**v2.1.2 release FINALIZED this tick**: build CI `26282803602` completed
-green → `gh run download` → all 6 desktop artifacts uploaded to
-https://github.com/Sanjays2402/slab/releases/tag/v2.1.2 (mac arm64+x64
-dmg, linux deb+AppImage, win msi+nsis). Release is now public + complete.
+**Total**: 3 commits, **1203 net LOC** (well over 600 floor), end-to-end
+working capability. All quality gates green: cargo fmt + clippy
+`-D warnings` + cargo test (1023/1023 pass, including all 10 new
+fts/search tests) + pnpm check (0 errors).
 
-**Next tick**: Start v2.2.0 Slice 1+2 on `feature/v2.2.0-atlas-search`
-(FTS5 schema + write hook + search cmd — BIG-tick-eligible as a single
-fold).
+**Buy-Button**: 4/4 (pay, notice, pick-us, tell-a-friend). **Wow**:
+type a phrase → ranked hits with yellow `<mark>` highlights across the
+whole library, offline, in <100ms. `LAST_WOW_TICK_AT: 2026-05-22T11:24Z`.
+
+**Branch state**: `feature/v2.2.0-atlas-search` HEAD at e314088.
+Slices 4 (highlight-on-open page jump), 5 (palette/onboarding/settings
+polish), 6 (release) still ahead. Slice 4 needs ReaderPanel integration:
+SearchPanel currently dispatches `slab:open-library-doc` with `page`
+field in the detail; ReaderPanel doesn't yet honour it. Pick that up
+next tick.
+
+**v2.1.2 release FINALIZED previous tick**: build CI `26282803602` green,
+6 desktop artifacts on tag v2.1.2.
 
 ---
 
