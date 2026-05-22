@@ -5,7 +5,35 @@
 
 ---
 
-## STATUS: 🎬 v2.2.0 "Atlas" MERGED to main, tagged — v2.3.0 "Theater" plan committed
+## STATUS: 🎬 v2.3.0 "Theater" slices 1-4 SHIPPED on feature branch — end-to-end works
+
+**TICK 2026-05-22 05:43 PT** — MODE C BIG develop tick.
+
+- Slice 4 commit `0c50db6`: TheaterPanel.svelte (460+ LOC) + theater.ts
+  bindings + Cmd/Ctrl+Shift+T global accelerator + palette entry +
+  shortcuts overlay section. 5 files, 844 insertions.
+- Combined tick stats: 4 commits ahead of main (slices 1-4),
+  ~1750 LOC net non-test, 26 backend tests green (17 state + 9 session),
+  pnpm check 0 errors, cargo fmt clean.
+- End-to-end loop proven: panel mounts → backend start → toggle overlays
+  → push/undo/clear ink → end. All 14 commands wired.
+- Pushed to `feature/v2.3.0-theater`. Build CI run 26288481834 queued.
+- LAST_WOW_TICK_AT: 2026-05-22 05:43 PT (live ink test pad + presenter
+  cheatsheet — would screenshot).
+
+**Next tick options:**
+- (a) Slice 5: audience window — open via windows::registry + render
+  TheaterState live (laser cursor, blackout/whiteout overlays, ink SVG).
+- (b) Verify build CI green for feature branch, then start Slice 5.
+- (c) v2.2.1 patch — sync package.json/Cargo.toml from 2.1.2 → 2.2.1
+  to match the v2.2.0 release tag artifacts.
+
+RECENTLY_CLOSED_ISSUES: (none this tick — all 5 enterprise issues
+already closed in prior v2.0.3/v2.1.0 ticks per backlog.)
+
+---
+
+## STATUS PRIOR: 🎬 v2.2.0 "Atlas" MERGED to main, tagged — v2.3.0 "Theater" plan committed
 
 **TICK 2026-05-22 05:10 PT** — MODE A (release) + plan-writing tick.
 
@@ -19,11 +47,6 @@
   4/4 buy-button test, WOW = live ink synced across two screens.
 
 **RELEASE_PENDING:** v2.2.0 — finalize next tick once build CI green.
-
-**Next tick options:**
-- (a) MODE B finalize v2.2.0 — download artifacts, `gh release create`.
-- (b) Start v2.3.0 Theater Slice 1 (TheaterState module + serde tests).
-- Pick whichever the CI state dictates.
 
 ---
 
