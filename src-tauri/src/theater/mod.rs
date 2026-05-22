@@ -5,6 +5,8 @@
 //! state-of-truth: navigation, ink strokes, blackout/whiteout/laser flags,
 //! and serde shape pinned by unit tests so the frontend twin stays honest.
 
+pub mod session;
 pub mod state;
 
+pub use session::TheaterManager;
 pub use state::{InkStroke, TheaterState};
