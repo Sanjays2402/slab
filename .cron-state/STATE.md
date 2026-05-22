@@ -5,7 +5,51 @@
 
 ---
 
-## STATUS: ✒️ v2.5.0 "Quill" plan promoted — AcroForm fill & flatten
+## STATUS: 🔍 v2.6.0 "Lens" plan promoted — enterprise OCR + tables→xlsx
+
+**TICK 2026-05-22 06:50 PT** — MODE C writing-plans skill.
+
+- Wrote `docs/plans/2026-05-22-v2.6.0-lens-ocr.md` (44 KB, 1218 lines,
+  8 slices + pre-flight + release; ~1750 net LOC + ~620 test LOC at
+  execution, 8 commits).
+- Codename **"Lens" 🔍** — HOCR invisible text-layer OCR (preserves
+  vectors, fonts, paths — unlike v0.8 raster-stitch), 29-language
+  auto-detect via `whatlang`, batch folder driver with per-file
+  progress events, table extraction → real `.xlsx` via
+  `rust_xlsxwriter` (bold headers, frozen panes, autofit, one sheet
+  per table).
+- Pure-Rust: 2 new crates (`rust_xlsxwriter 0.94`, `whatlang 0.16`),
+  zero new C deps, reuses existing `tesseract` + `pdftoppm` binaries
+  v0.8 OCR already requires.
+- **3 Tauri commands**: `slab_ocr_v2`, `slab_ocr_batch_folder`,
+  `slab_export_tables_xlsx`. **CLI**: `slab ocr --auto-detect`,
+  `slab tables --xlsx`.
+- **WOW**: 180ms cubic-bezier `(0.34, 1.56, 0.64, 1)` left→right
+  clip-path "ink-developing" reveal of the text layer tinted accent
+  gold, with each word bbox flashing its confidence colour
+  (green ≥90, amber 70-89, red <70). Reduced-motion safe.
+- **Buy-Button 4/4 PASS**: Pay-for-it (Adobe Pro $239/yr's Recognize
+  Text + Export to Excel shipped free), Pick-us (macOS Preview = zero
+  OCR; PDF Expert = $79/yr CSV only; Foxit Mac = no OCR), Notice-it
+  (new 🔍 nav + `O` shortcut + confidence heatmap on `H`),
+  Tell-a-friend (drop a folder of 200 scanned invoices → searchable
+  PDFs + per-PDF XLSX in one click).
+- **Pipeline order**: v2.3.0 Theater → v2.4.0 Stack → v2.5.0 Quill →
+  **v2.6.0 Lens (this tick)** → v2.7.0 Scribe (handwriting deferred).
+
+**Active branch**: `feature/v2.3.0-theater` (plan committed there;
+plan files are version-independent and merge cleanly).
+
+**Next tick options**:
+- (a) Theater Slice 5 — audience window rendering. Highest-priority
+  shipping work now that the planning lead is 4 versions deep.
+- (b) v2.2.1 patch — sync `package.json`/`Cargo.toml` 2.1.2 → 2.2.1.
+
+Session log: `.cron-state/sessions/2026-05-22-0650.md`.
+
+---
+
+## STATUS PRIOR: ✒️ v2.5.0 "Quill" plan promoted — AcroForm fill & flatten
 
 **TICK 2026-05-22 06:31 PT** — MODE C writing-plans skill.
 
