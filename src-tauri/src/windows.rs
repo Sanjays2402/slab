@@ -402,6 +402,87 @@ pub fn slab_window_list(state: tauri::State<'_, WindowRegistry>) -> Vec<WindowSt
     state.list()
 }
 
+/// Spawn or focus a singleton window for a given `panel_id`. Unlike
+/// `slab_window_open`, which always mints a new label, this function
+/// reuses an existing window for the same `panel_id` if one is already
+/// open — used by the Theater audience/control windows which must be
+/// strictly unique (you can't run two presenter sessions at once).
+///
+/// Returns the resulting window label so callers can target it for
+/// follow-up `slab_window_close`, focus, or event emission.
+pub fn ensure_panel_window(
+    app: &tauri::AppHandle,
+    state: &WindowRegistry,
+    panel_id: &str,
+    target_doc: Option<String>,
+) -> Result<String, String> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    // Singleton: if a window with this panel_id is registered, focus it
+    // and return early. Avoids stacking two audience windows on a
+    // double-click of the operator's Present button.
+    if let Some(existing) = state.list().into_iter().find(|s| s.panel_id == panel_id) {
+        if let Some(w) = app.get_webview_window(&existing.label) {
+            let _ = w.set_focus();
+            return Ok(existing.label);
+        }
+        // Registry entry exists but window is gone — clean it up and
+        // re-spawn below.
+        state.remove(&existing.label);
+    }
+
+    let label = state.next_label(panel_id);
+    let geom = default_geometry_for_panel(panel_id);
+
+    let mut url = format!("/?panel={}&windowId={}", panel_id, label);
+    if let Some(p) = &target_doc {
+        url.push_str("&doc=");
+        url.push_str(&encode_doc_param(p));
+    }
+    let webview_url = WebviewUrl::App(url.into());
+    let title = format!("Slab — {}", title_case(panel_id));
+
+    let window = WebviewWindowBuilder::new(app, &label, webview_url)
+        .title(title)
+        .inner_size(geom.width as f64, geom.height as f64)
+        .position(geom.x as f64, geom.y as f64)
+        .resizable(geom.resizable)
+        .decorations(geom.decorations)
+        .fullscreen(geom.fullscreen)
+        .always_on_top(geom.always_on_top.unwrap_or(false))
+        .build()
+        .map_err(|e| format!("failed to build window: {}", e))?;
+
+    state.upsert(WindowState {
+        label: label.clone(),
+        panel_id: panel_id.to_string(),
+        geometry: geom,
+        target_doc,
+    });
+    flush_to_disk(state);
+
+    wire_window_events(&window, app.clone(), label.clone());
+
+    Ok(label)
+}
+
+/// Close a specific labelled window and remove its registry entry.
+/// Mirrors `slab_window_close` but exposed at module scope so other
+/// commands (e.g. `slab_theater_close_windows`) can chain it.
+pub fn close_label(
+    app: &tauri::AppHandle,
+    state: &WindowRegistry,
+    label: &str,
+) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window(label) {
+        w.close().map_err(|e| e.to_string())?;
+    }
+    state.remove(label);
+    flush_to_disk(state);
+    Ok(())
+}
+
 /// Restore previously-persisted detached windows on app launch. Called
 /// from the Tauri `setup` hook in `lib::run`. Quiet on every error —
 /// a missing/corrupt windows.json should never block app boot.

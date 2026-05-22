@@ -461,13 +461,39 @@ fn slab_theater_export_annotated(
 use std::sync::Arc;
 use theater::TheaterManager;
 
+/// Event name broadcast on every Theater state mutation. The audience
+/// window (`/theater`) and the presenter control window
+/// (`/theater-control`) both subscribe; main app windows can also
+/// subscribe to mirror live presenter state into the sidebar panel.
+///
+/// Payload is the full `TheaterState` so subscribers can render without
+/// a follow-up `slab_theater_snapshot` round-trip — cuts perceived
+/// latency on slide flips from ~80ms (round-trip) to ~5ms (one emit).
+const THEATER_STATE_EVENT: &str = "slab:theater-state";
+
+/// Broadcast `state` to every Tauri window. Best-effort: a failed emit
+/// is logged but never propagated, because a presenter pressing
+/// PageDown shouldn't see "command failed" if a stale child window
+/// happens to have disconnected.
+fn emit_theater_state(app: &tauri::AppHandle, state: &theater::TheaterState) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit(THEATER_STATE_EVENT, state) {
+        eprintln!("[theater] emit {THEATER_STATE_EVENT} failed: {e}");
+    }
+}
+
 /// Map a TheaterManager session result into a CmdResult for serialisation
-/// to the frontend.
+/// to the frontend, and broadcast `slab:theater-state` on success so
+/// every attached window picks up the new state without polling.
 fn theater_result(
+    app: &tauri::AppHandle,
     r: theater::session::SessionResult<theater::TheaterState>,
 ) -> CmdResult<theater::TheaterState> {
     match r {
-        Ok(value) => CmdResult::Ok { value },
+        Ok(value) => {
+            emit_theater_state(app, &value);
+            CmdResult::Ok { value }
+        }
         Err(e) => CmdResult::Err {
             message: e.to_string(),
         },
@@ -476,18 +502,26 @@ fn theater_result(
 
 #[tauri::command]
 fn slab_theater_start(
+    app: tauri::AppHandle,
     path: PathBuf,
     total_pages: u32,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> theater::TheaterState {
-    manager.start(path, total_pages)
+    let st = manager.start(path, total_pages);
+    emit_theater_state(&app, &st);
+    st
 }
 
 #[tauri::command]
 fn slab_theater_end(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> Option<theater::TheaterState> {
-    manager.end()
+    let res = manager.end();
+    if let Some(s) = &res {
+        emit_theater_state(&app, s);
+    }
+    res
 }
 
 #[tauri::command]
@@ -499,81 +533,134 @@ fn slab_theater_snapshot(
 
 #[tauri::command]
 fn slab_theater_next(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.next_page())
+    theater_result(&app, manager.next_page())
 }
 
 #[tauri::command]
 fn slab_theater_prev(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.prev_page())
+    theater_result(&app, manager.prev_page())
 }
 
 #[tauri::command]
 fn slab_theater_jump(
+    app: tauri::AppHandle,
     page: u32,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.jump(page))
+    theater_result(&app, manager.jump(page))
 }
 
 #[tauri::command]
 fn slab_theater_toggle_blackout(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.toggle_blackout())
+    theater_result(&app, manager.toggle_blackout())
 }
 
 #[tauri::command]
 fn slab_theater_toggle_whiteout(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.toggle_whiteout())
+    theater_result(&app, manager.toggle_whiteout())
 }
 
 #[tauri::command]
 fn slab_theater_toggle_laser(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.toggle_laser())
+    theater_result(&app, manager.toggle_laser())
 }
 
 #[tauri::command]
 fn slab_theater_toggle_ink(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.toggle_ink())
+    theater_result(&app, manager.toggle_ink())
 }
 
 #[tauri::command]
 fn slab_theater_toggle_spotlight(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.toggle_spotlight())
+    theater_result(&app, manager.toggle_spotlight())
 }
 
 #[tauri::command]
 fn slab_theater_push_stroke(
+    app: tauri::AppHandle,
     stroke: theater::InkStroke,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.push_stroke(stroke))
+    theater_result(&app, manager.push_stroke(stroke))
 }
 
 #[tauri::command]
 fn slab_theater_undo_stroke(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.undo_stroke())
+    theater_result(&app, manager.undo_stroke())
 }
 
 #[tauri::command]
 fn slab_theater_clear_strokes(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<TheaterManager>>,
 ) -> CmdResult<theater::TheaterState> {
-    theater_result(manager.clear_strokes())
+    theater_result(&app, manager.clear_strokes())
+}
+
+/// Open the audience (fullscreen) and presenter-control windows for an
+/// active Theater session. Idempotent: if either window already exists
+/// (e.g. operator closed only one), the missing window is re-spawned.
+///
+/// Returns the labels of the two windows so the frontend can target
+/// them for follow-up actions (focus / close).
+#[tauri::command]
+fn slab_theater_open_windows(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, windows::WindowRegistry>,
+    target_doc: Option<String>,
+) -> Result<TheaterWindowLabels, String> {
+    let audience = windows::ensure_panel_window(&app, &state, "theater", target_doc.clone())?;
+    let control = windows::ensure_panel_window(&app, &state, "theater_control", target_doc)?;
+    Ok(TheaterWindowLabels { audience, control })
+}
+
+/// Close the audience and presenter-control windows. Safe to call when
+/// they don't exist (no-op per missing window). Sidebar panel keeps the
+/// session alive — only `slab_theater_end` ends the session itself.
+#[tauri::command]
+fn slab_theater_close_windows(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, windows::WindowRegistry>,
+) -> Result<u32, String> {
+    let mut closed = 0u32;
+    for s in state.list() {
+        if (s.panel_id == "theater" || s.panel_id == "theater_control")
+            && windows::close_label(&app, &state, &s.label).is_ok()
+        {
+            closed += 1;
+        }
+    }
+    Ok(closed)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct TheaterWindowLabels {
+    pub audience: String,
+    pub control: String,
 }
 
 #[tauri::command]
@@ -2983,6 +3070,8 @@ pub fn run() {
             slab_theater_push_stroke,
             slab_theater_undo_stroke,
             slab_theater_clear_strokes,
+            slab_theater_open_windows,
+            slab_theater_close_windows,
             slab_extract_text,
             slab_extract_text_save,
             slab_info,
