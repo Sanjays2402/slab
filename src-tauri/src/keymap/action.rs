@@ -31,6 +31,7 @@ pub enum ActionId {
     ZoomIn,
     ZoomOut,
     BeaconSend,
+    LibrarySearch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +181,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Send Beacon message",
         group: "Beacon",
         default_binding: "Mod+Enter",
+    },
+    ActionInfo {
+        id: ActionId::LibrarySearch,
+        key: "library.search",
+        label: "Search across library",
+        group: "Library",
+        default_binding: "Mod+Shift+F",
     },
 ];
 

@@ -138,6 +138,56 @@ export async function listDocuments(
   return unwrap(res);
 }
 
+// ---------- Atlas (v2.2.0) — cross-doc FTS5 search ----------
+
+export interface SearchHit {
+  docId: number;
+  path: string;
+  title: string | null;
+  pageIndex: number;
+  /** Snippet pre-wrapped with `<mark>…</mark>` around matches. */
+  snippet: string;
+  /** bm25 rank — lower is better in FTS5. */
+  rank: number;
+}
+
+/**
+ * Run a cross-document full-text search against the Atlas FTS5 index.
+ *
+ * @param query natural-language query (we sanitise + quote it ourselves)
+ * @param limit hard cap on returned hits (default 50, clamped server-side to 1..500)
+ * @param folderId optionally restrict to one library folder
+ */
+export async function librarySearch(
+  query: string,
+  limit: number = 50,
+  folderId: number | null = null,
+): Promise<SearchHit[]> {
+  if (!query || !query.trim()) return [];
+  const res = await invoke<
+    CmdResult<
+      Array<{
+        doc_id: number;
+        path: string;
+        title: string | null;
+        page_index: number;
+        snippet: string;
+        rank: number;
+      }>
+    >
+  >("slab_library_search", { query, limit, folderId });
+  const hits = unwrap(res);
+  return hits.map((h) => ({
+    docId: h.doc_id,
+    path: h.path,
+    title: h.title,
+    pageIndex: h.page_index,
+    snippet: h.snippet,
+    rank: h.rank,
+  }));
+}
+
+
 // ---------- Tags ----------
 
 export async function listTags(): Promise<TagRecord[]> {

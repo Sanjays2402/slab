@@ -1,7 +1,6 @@
 {
   "app.title": "سلاب",
   "app.subtitle": "ملفات PDF بحدة أعلى.",
-
   "settings.title": "الإعدادات",
   "settings.subtitle": "اضبط سلاب على ذوقك. التغييرات تُطبَّق فورًا.",
   "settings.language.title": "اللغة",
@@ -24,15 +23,12 @@
   "settings.config.storedAt": "محفوظ في",
   "settings.toggle.off": "إيقاف",
   "settings.toggle.on": "تشغيل",
-
   "vim.enabled": "تم تفعيل اختصارات Vim",
   "vim.disabled": "تم تعطيل اختصارات Vim",
   "vim.enabled.detail": "اضغط Esc في أي وقت للعودة إلى الوضع الطبيعي.",
-
   "toast.detached": "تم فصل {panel}",
   "toast.closedDetached": "تم إغلاق النافذة المنفصلة",
   "toast.localeChanged": "اللغة: {label}",
-
   "features.reader": "القارئ",
   "features.library": "المكتبة",
   "features.beacon": "Beacon AI",
@@ -70,7 +66,6 @@
   "features.slides": "شرائح",
   "features.settings": "الإعدادات",
   "features.keymap": "الاختصارات",
-
   "features.plugins": "الإضافات",
   "plugins.title": "الإضافات",
   "plugins.subtitle": "ضع إضافة في ‎~/.slab/plugins لتوسيع Slab بسمات ولغات وأوامر مخصصة ومزودي ذكاء اصطناعي وإجراءات PDF.",
@@ -116,7 +111,6 @@
   "plugins.notify.uninstallOk": "تمت إزالة {name}",
   "plugins.notify.uninstallFailed": "فشلت الإزالة",
   "plugins.notify.browserOnly": "المتجر متاح فقط في تطبيق Slab لسطح المكتب",
-
   "plugins.detail.close": "إغلاق",
   "plugins.detail.byAuthor": "بواسطة {author}",
   "plugins.detail.installed": "مثبت",
@@ -126,21 +120,19 @@
   "plugins.detail.sha256": "SHA-256",
   "plugins.detail.signature": "التوقيع",
   "plugins.detail.downloadUrl": "رابط التنزيل",
-
   "plugins.install.verifying": "جاري التحقق من التوقيع…",
   "plugins.install.downloading": "جاري تنزيل أرشيف الإضافة…",
   "plugins.install.extracting": "جاري استخراج ملفات الإضافة…",
   "plugins.install.done": "تم تثبيت {name}",
   "plugins.install.failed": "فشل التثبيت",
-
   "plugins.installed.updateAvailable": "تحديث متاح",
   "plugins.installed.updateBadge": "تحديث متاح — v{version}",
-
   "plugins.uninstallConfirm.title": "إزالة {name}؟",
   "plugins.uninstallConfirm.body": "سيؤدي ذلك إلى حذف ملفات الإضافة من جهازك. يمكنك إعادة تثبيتها من السوق في أي وقت.",
   "plugins.uninstallConfirm.path": "مثبت في",
   "plugins.uninstallConfirm.version": "الإصدار",
   "plugins.uninstallConfirm.cancel": "إلغاء",
   "plugins.uninstallConfirm.confirm": "إزالة",
-  "plugins.uninstallConfirm.working": "جاري الإزالة…"
+  "plugins.uninstallConfirm.working": "جاري الإزالة…",
+  "features.library-search": "بحث المكتبة"
 }

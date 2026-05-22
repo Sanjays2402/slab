@@ -1,7 +1,6 @@
 {
   "app.title": "Slab",
   "app.subtitle": "PDF, sharpened.",
-
   "settings.title": "Settings",
   "settings.subtitle": "Make Slab look like home. Changes apply instantly.",
   "settings.language.title": "Language",
@@ -24,15 +23,12 @@
   "settings.config.storedAt": "Stored at",
   "settings.toggle.off": "Off",
   "settings.toggle.on": "On",
-
   "vim.enabled": "Vim bindings enabled",
   "vim.disabled": "Vim bindings disabled",
   "vim.enabled.detail": "Press Esc anytime to return to Normal mode.",
-
   "toast.detached": "Detached {panel}",
   "toast.closedDetached": "Closed detached window",
   "toast.localeChanged": "Language: {label}",
-
   "features.reader": "Reader",
   "features.library": "Library",
   "features.beacon": "Beacon AI",
@@ -74,7 +70,6 @@
   "features.slides": "Slides",
   "features.settings": "Settings",
   "features.keymap": "Shortcuts",
-
   "features.plugins": "Plugins",
   "plugins.title": "Plugins",
   "plugins.subtitle": "Drop a plugin into ~/.slab/plugins to extend Slab with themes, languages, custom commands, AI providers, and PDF actions.",
@@ -139,7 +134,6 @@
   "plugins.notify.uninstallOk": "Uninstalled {name}",
   "plugins.notify.uninstallFailed": "Uninstall failed",
   "plugins.notify.browserOnly": "Marketplace is only available in the Slab desktop app",
-
   "plugins.detail.close": "Close",
   "plugins.detail.byAuthor": "by {author}",
   "plugins.detail.installed": "Installed",
@@ -149,18 +143,15 @@
   "plugins.detail.sha256": "SHA-256",
   "plugins.detail.signature": "Signature",
   "plugins.detail.downloadUrl": "Download URL",
-
   "plugins.install.verifying": "Verifying signature…",
   "plugins.install.downloading": "Downloading plugin archive…",
   "plugins.install.extracting": "Extracting plugin files…",
   "plugins.install.done": "Installed {name}",
   "plugins.install.failed": "Install failed",
-
   "plugins.installed.updateAvailable": "Update available",
   "plugins.installed.updateBadge": "Update available — v{version}",
   "plugins.installed.bundled_pill": "Bundled",
   "plugins.installed.bundled_tooltip": "Ships with Slab — seeded on first launch. Safe to disable, safe to uninstall (it'll come back on a fresh install).",
-
   "plugins.uninstallConfirm.title": "Uninstall {name}?",
   "plugins.uninstallConfirm.body": "This removes the plugin files from your machine. You can reinstall it from the marketplace at any time.",
   "plugins.uninstallConfirm.path": "Installed at",
@@ -168,7 +159,6 @@
   "plugins.uninstallConfirm.cancel": "Cancel",
   "plugins.uninstallConfirm.confirm": "Uninstall",
   "plugins.uninstallConfirm.working": "Uninstalling…",
-
   "plugins.consent.title": "Permissions for {name}",
   "plugins.consent.subtitle": "Choose what this plugin is allowed to do. Defaults are the most restrictive option the plugin can still run with.",
   "plugins.consent.declaredHint": "Declared by plugin: {bound}",
@@ -202,5 +192,6 @@
   "plugins.consent.notify.reset": "Permissions for {name} cleared — you'll be asked again on next enable",
   "plugins.permissions.review": "Review permissions",
   "plugins.permissions.reset": "Reset permissions",
-  "plugins.permissions.granted": "Permissions"
+  "plugins.permissions.granted": "Permissions",
+  "features.library-search": "Search Library"
 }

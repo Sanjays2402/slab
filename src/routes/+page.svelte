@@ -37,6 +37,7 @@
   import BeaconGlossaryPanel from "$lib/panels/BeaconGlossaryPanel.svelte";
   import BeaconVoicePanel from "$lib/panels/BeaconVoicePanel.svelte";
   import LibraryPanel from "$lib/panels/LibraryPanel.svelte";
+  import LibrarySearchPanel from "$lib/panels/LibrarySearchPanel.svelte";
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
@@ -71,6 +72,7 @@
   const features: Feature[] = [
     { id: "reader", label: "Reader", icon: "▥", ready: true },
     { id: "library", label: "Library", icon: "❐", ready: true },
+    { id: "library-search", label: "Search Library", icon: "⌕", ready: true },
     { id: "beacon", label: "Beacon AI", icon: "✦", ready: true },
     { id: "search", label: "Beacon Search", icon: "⌕", ready: true },
     { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
@@ -367,6 +369,18 @@
         shortcutsOpen = !shortcutsOpen;
         return;
       }
+    }
+    // Atlas (v2.2.0): Cmd+Shift+F → Search Library. Fires from any panel.
+    // If already on the search panel, refocus the input so the user can
+    // immediately type a new query.
+    if (matches(e, "library.search")) {
+      e.preventDefault();
+      if (active === "library-search") {
+        window.dispatchEvent(new CustomEvent("slab:focus-library-search"));
+      } else {
+        active = "library-search";
+      }
+      return;
     }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
@@ -703,6 +717,8 @@
     <VimController panel="library" on:action={onLibraryVimAction as unknown as (e: Event) => void}>
       <LibraryPanel />
     </VimController>
+  {:else if active === "library-search"}
+    <LibrarySearchPanel />
   {:else if active === "search"}
     <BeaconSearchPanel />
   {:else if active === "pii"}

@@ -1,7 +1,6 @@
 {
   "app.title": "Slab",
   "app.subtitle": "PDF, afilado.",
-
   "settings.title": "Ajustes",
   "settings.subtitle": "Haz que Slab se sienta como en casa. Los cambios se aplican al instante.",
   "settings.language.title": "Idioma",
@@ -24,15 +23,12 @@
   "settings.config.storedAt": "Almacenado en",
   "settings.toggle.off": "No",
   "settings.toggle.on": "Sí",
-
   "vim.enabled": "Atajos Vim activados",
   "vim.disabled": "Atajos Vim desactivados",
   "vim.enabled.detail": "Pulsa Esc en cualquier momento para volver al modo Normal.",
-
   "toast.detached": "{panel} separado",
   "toast.closedDetached": "Ventana separada cerrada",
   "toast.localeChanged": "Idioma: {label}",
-
   "features.reader": "Lector",
   "features.library": "Biblioteca",
   "features.beacon": "Beacon IA",
@@ -70,7 +66,6 @@
   "features.slides": "Diapositivas",
   "features.settings": "Ajustes",
   "features.keymap": "Atajos",
-
   "features.plugins": "Plugins",
   "plugins.title": "Plugins",
   "plugins.subtitle": "Coloca un plugin en ~/.slab/plugins para extender Slab con temas, idiomas, comandos personalizados, proveedores de IA y acciones PDF.",
@@ -116,7 +111,6 @@
   "plugins.notify.uninstallOk": "{name} desinstalado",
   "plugins.notify.uninstallFailed": "Falló la desinstalación",
   "plugins.notify.browserOnly": "El mercado solo está disponible en la app de escritorio de Slab",
-
   "plugins.detail.close": "Cerrar",
   "plugins.detail.byAuthor": "por {author}",
   "plugins.detail.installed": "Instalado",
@@ -126,21 +120,19 @@
   "plugins.detail.sha256": "SHA-256",
   "plugins.detail.signature": "Firma",
   "plugins.detail.downloadUrl": "URL de descarga",
-
   "plugins.install.verifying": "Verificando firma…",
   "plugins.install.downloading": "Descargando archivo del plugin…",
   "plugins.install.extracting": "Extrayendo archivos del plugin…",
   "plugins.install.done": "{name} instalado",
   "plugins.install.failed": "Falló la instalación",
-
   "plugins.installed.updateAvailable": "Actualización disponible",
   "plugins.installed.updateBadge": "Actualización disponible — v{version}",
-
   "plugins.uninstallConfirm.title": "¿Desinstalar {name}?",
   "plugins.uninstallConfirm.body": "Esto eliminará los archivos del plugin de tu equipo. Podrás reinstalarlo desde el mercado en cualquier momento.",
   "plugins.uninstallConfirm.path": "Instalado en",
   "plugins.uninstallConfirm.version": "Versión",
   "plugins.uninstallConfirm.cancel": "Cancelar",
   "plugins.uninstallConfirm.confirm": "Desinstalar",
-  "plugins.uninstallConfirm.working": "Desinstalando…"
+  "plugins.uninstallConfirm.working": "Desinstalando…",
+  "features.library-search": "Buscar biblioteca"
 }

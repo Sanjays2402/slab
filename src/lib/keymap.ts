@@ -43,7 +43,8 @@ export type ActionId =
   | "find.open"
   | "zoom.in"
   | "zoom.out"
-  | "beacon.send";
+  | "beacon.send"
+  | "library.search";
 
 export interface KeymapAction {
   id: ActionId;
