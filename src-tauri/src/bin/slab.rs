@@ -27,6 +27,7 @@ use slab_lib::pdf::extract::{extract_text, extract_text_concat};
 use slab_lib::pdf::flatten::{flatten as do_flatten, FlattenMode, FlattenOpts};
 use slab_lib::pdf::grayscale::{grayscale, GrayscaleOpts};
 use slab_lib::pdf::info::info;
+use slab_lib::pdf::insert::{insert as do_insert, InsertOpts, InsertSource};
 use slab_lib::pdf::invert::{invert_colors, InvertOpts};
 use slab_lib::pdf::library::{
     auto_tag_run_one, default_db_path as library_db_path, ocr_queue_list_pending,
@@ -75,6 +76,7 @@ fn main() -> ExitCode {
         "split-ranges" => cmd_split_ranges(rest),
         "rotate" => cmd_rotate(rest),
         "delete-pages" => cmd_delete_pages(rest),
+        "insert-image" => cmd_insert_image(rest),
         "compress" => cmd_compress(rest),
         "encrypt" => cmd_encrypt(rest),
         "decrypt" => cmd_decrypt(rest),
@@ -140,6 +142,7 @@ Commands:
   split-ranges <file> <r1,r2..> <dir>   e.g. 1-3,5,7-9
   rotate <file> <pages> <deg> -o <out>  pages comma-list (1-based), deg ∈ 90/180/270; --permanent bakes into geometry
   delete-pages <file> <pages> -o <out>
+  insert-image <file> <image> --at <n> [--dpi 72] -o <out>  PNG/JPG → single PDF page (closes #26)
   compress <file> -o <out>           Re-compress streams
   encrypt <file> -o <out> --password <pwd>
   decrypt <file> -o <out> --password <pwd>
@@ -390,6 +393,45 @@ fn cmd_delete_pages(args: &[String]) -> Result<(), CliError> {
     let pages = parse_pages(pages_csv)?;
     let n = delete_pages(&input, &pages, &output)?;
     println!("✓ deleted {n} page(s) → {}", output.display());
+    Ok(())
+}
+
+fn cmd_insert_image(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let image_path = require_arg(args, 1, "<image>")?;
+    let output = output_path(args)?;
+
+    // --at <n>
+    let at = args
+        .iter()
+        .position(|a| a == "--at")
+        .and_then(|i| args.get(i + 1))
+        .ok_or_else(|| CliError::Usage("missing --at <n>".into()))?
+        .parse::<u32>()
+        .map_err(|_| CliError::Usage("--at must be a positive integer".into()))?;
+
+    // --dpi <f>, default 72
+    let dpi = args
+        .iter()
+        .position(|a| a == "--dpi")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.parse::<f32>())
+        .transpose()
+        .map_err(|_| CliError::Usage("--dpi must be a number".into()))?
+        .unwrap_or(72.0);
+
+    let opts = InsertOpts {
+        at,
+        source: InsertSource::Image {
+            path: image_path.to_string_lossy().to_string(),
+            dpi,
+        },
+    };
+    let total = do_insert(&input, &output, opts)?;
+    println!(
+        "✓ inserted image as page {at} ({dpi:.0} DPI) → {} ({total} total)",
+        output.display()
+    );
     Ok(())
 }
 
