@@ -5,7 +5,45 @@
 
 ---
 
-## STATUS: 🎬 v2.3.0 "Theater" slices 1-4 SHIPPED on feature branch — end-to-end works
+## STATUS: ✒️ v2.5.0 "Quill" plan promoted — AcroForm fill & flatten
+
+**TICK 2026-05-22 06:31 PT** — MODE C writing-plans skill.
+
+- Wrote `docs/plans/2026-05-22-v2.5.0-quill-forms.md` (~40 KB, 8 slices +
+  pre-flight + release, ~1450 net LOC at execution, 8 commits, ~600 test LOC).
+- Codename **"Quill" ✒️** — opens any AcroForm PDF (W-9, I-9, tax, court,
+  insurance, vendor onboarding) → fills text/checkbox/radio/choice/sig
+  fields inline → Saves a PDF Adobe opens identically. Optional flatten-on-
+  save bakes values into the content stream and drops `/AcroForm`.
+- Pure-Rust: lopdf 0.36 (already a workspace dep). Zero new crates.
+- **5 Tauri commands**: inspect / fill / flatten / fdf_export / fdf_import.
+- **WOW**: 220ms cubic-bezier `(0.34, 1.56, 0.64, 1)` gold ink-settle cascade
+  on Save — every field gets a `scaleX(0→1)` gold underline + 30ms-staggered
+  background shimmer. Reduced-motion safe.
+- **Buy-Button 4/4 PASS**: Pay-for-it (Adobe Pro $239/yr's #1 retention
+  feature shipped free), Pick-us (only free offline cross-platform tool that
+  fills all 5 field kinds + flattens — macOS Preview only does text), Notice-
+  it (new sidebar panel + `F` shortcut + numbered overlay pills on every
+  widget), Tell-a-friend (drop a W-9 demo line + ink-settle cascade screenshot).
+- **Scheduling**: v2.5.0 ships AFTER v2.3.0 "Theater" finishes (slices 5-7
+  remain — audience window, ink overlay rendering, release). Strict order:
+  Theater → Stack (v2.4.0 plan landed last tick) → **Quill (v2.5.0, this
+  tick)**. Quill is the highest-buyer-value plan in the pipeline.
+
+**Active branch**: `feature/v2.3.0-theater` (still — plan committed on it;
+plan files are version-independent and merge cleanly to main).
+
+**Next tick options**:
+- (a) Theater Slice 5 — audience window rendering (TheaterState → live SVG
+  ink overlay across two screens). Highest-priority shipping work.
+- (b) v2.2.1 patch — sync package.json/Cargo.toml 2.1.2 → 2.2.1 to match the
+  v2.2.0 release tag. Cheap correctness fix.
+
+Session log: `.cron-state/sessions/2026-05-22-0631.md`.
+
+---
+
+## STATUS PRIOR: 🎬 v2.3.0 "Theater" slices 1-4 SHIPPED on feature branch — end-to-end works
 
 **TICK 2026-05-22 05:43 PT** — MODE C BIG develop tick.
 
