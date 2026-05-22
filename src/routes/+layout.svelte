@@ -7,10 +7,14 @@
   import { refreshPlugins, logActiveAiProviders } from "$lib/plugins";
   import ToastStack from "$lib/ToastStack.svelte";
   import OnboardingTour from "$lib/OnboardingTour.svelte";
+  import FirstLaunchModal from "$lib/components/FirstLaunchModal.svelte";
 
   let { children } = $props();
 
   let tourOpen = $state(false);
+  // First-launch self-install modal. Shown at most once per machine,
+  // before the onboarding tour. Issue #25.
+  let firstLaunchOpen = $state(true);
 
   // Boot the v1.0.0 "Glass" theme system as early as possible.
   // Theme/accent/density are persisted to `~/.slab/config.toml`
@@ -74,6 +78,9 @@
 
 <ToastStack />
 <OnboardingTour bind:open={tourOpen} onClose={() => (tourOpen = false)} />
+{#if firstLaunchOpen}
+  <FirstLaunchModal onDismiss={() => (firstLaunchOpen = false)} />
+{/if}
 
 <style>
   .app {
