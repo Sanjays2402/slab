@@ -19,6 +19,8 @@ pub enum InsertSource {
     Blank { count: u32, width: f32, height: f32 },
     /// Splice every page of another PDF on disk.
     Pdf { path: String },
+    /// Insert a PNG/JPG file as a single PDF page sized to image_pixels / dpi.
+    Image { path: String, dpi: f32 },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -50,6 +52,13 @@ pub fn insert(input: &Path, output: &Path, opts: InsertOpts) -> Result<u32, PdfE
                 return Err(PdfError::InputMissing(path.clone()));
             }
             splice_in(&mut host, donor_path)?
+        }
+        InsertSource::Image { path, dpi } => {
+            let img_path = Path::new(path);
+            if !img_path.exists() {
+                return Err(PdfError::InputMissing(path.clone()));
+            }
+            image_to_page(&mut host, img_path, *dpi)?
         }
     };
 
@@ -148,6 +157,78 @@ fn splice_in(host: &mut Document, donor_path: &Path) -> Result<Vec<lopdf::Object
     Ok(donor_page_ids)
 }
 
+fn image_to_page(
+    host: &mut Document,
+    img_path: &Path,
+    dpi: f32,
+) -> Result<Vec<lopdf::ObjectId>, PdfError> {
+    let img = image::open(img_path).map_err(|e| PdfError::Other(format!("image decode: {e}")))?;
+    let rgb = img.to_rgb8();
+    let (iw, ih) = (rgb.width(), rgb.height());
+
+    // Convert pixels → PDF points (72 pt = 1 in). dpi == pixels per inch.
+    let dpi = if dpi <= 0.0 { 72.0 } else { dpi };
+    let pw = (iw as f32) * 72.0 / dpi;
+    let ph = (ih as f32) * 72.0 / dpi;
+
+    // Build an /XObject /Image with FlateDecode'd raw DeviceRGB bytes.
+    let raw = rgb.into_raw();
+    let compressed = flate_compress(&raw);
+    let mut img_stream = lopdf::Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => Object::Integer(iw as i64),
+            "Height" => Object::Integer(ih as i64),
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => Object::Integer(8),
+            "Filter" => "FlateDecode",
+        },
+        compressed,
+    );
+    // Tell lopdf the bytes are already final — don't re-deflate on save.
+    img_stream.set_content(img_stream.content.clone());
+    let img_id = host.add_object(img_stream);
+
+    // Locate Pages root so the new Page node's /Parent is correct.
+    let catalog_id = host.trailer.get(b"Root")?.as_reference()?;
+    let pages_root_id = host
+        .get_object(catalog_id)?
+        .as_dict()?
+        .get(b"Pages")?
+        .as_reference()?;
+
+    // Content stream: draw the image scaled to fill the page.
+    let content = format!("q {} 0 0 {} 0 0 cm /Im0 Do Q", pw, ph);
+    let content_id = host.add_object(lopdf::Stream::new(dictionary! {}, content.into_bytes()));
+    let resources = host.add_object(dictionary! {
+        "XObject" => dictionary! { "Im0" => Object::Reference(img_id) },
+        "ProcSet" => vec!["PDF".into(), "ImageC".into()],
+    });
+    let page_id = host.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_root_id,
+        "MediaBox" => vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(pw),
+            Object::Real(ph),
+        ],
+        "Resources" => Object::Reference(resources),
+        "Contents" => Object::Reference(content_id),
+    });
+    Ok(vec![page_id])
+}
+
+fn flate_compress(data: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(data).unwrap();
+    enc.finish().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +310,102 @@ mod tests {
         )
         .unwrap();
         assert_eq!(total, 5);
+    }
+
+    #[test]
+    fn insert_image_appends_single_page() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host.pdf");
+        let img = dir.path().join("sample.png");
+        let out = dir.path().join("out.pdf");
+        std::fs::write(&host, sample_pdf(3)).unwrap();
+
+        // 100x100 red PNG.
+        let png = image::RgbImage::from_pixel(100, 100, image::Rgb([220, 80, 80]));
+        png.save(&img).unwrap();
+
+        let total = insert(
+            &host,
+            &out,
+            InsertOpts {
+                at: 99,
+                source: InsertSource::Image {
+                    path: img.to_string_lossy().to_string(),
+                    dpi: 72.0,
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(total, 4);
+
+        let doc = Document::load(&out).unwrap();
+        let pages = doc.get_pages();
+        assert_eq!(pages.len(), 4);
+
+        // Verify the trailing page has a 100x100 MediaBox at 72 DPI.
+        let last = *pages.values().last().unwrap();
+        let dict = doc.get_object(last).unwrap().as_dict().unwrap();
+        let mb = dict.get(b"MediaBox").unwrap().as_array().unwrap();
+        let read = |o: &Object| -> f32 {
+            match o {
+                Object::Real(r) => *r,
+                Object::Integer(i) => *i as f32,
+                _ => 0.0,
+            }
+        };
+        let w = read(&mb[2]) - read(&mb[0]);
+        let h = read(&mb[3]) - read(&mb[1]);
+        assert!(
+            (w - 100.0).abs() < 0.5 && (h - 100.0).abs() < 0.5,
+            "expected 100x100 page, got {w}x{h}"
+        );
+    }
+
+    #[test]
+    fn insert_image_at_position_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host.pdf");
+        let img = dir.path().join("first.png");
+        let out = dir.path().join("out.pdf");
+        std::fs::write(&host, sample_pdf(2)).unwrap();
+        image::RgbImage::from_pixel(50, 80, image::Rgb([10, 20, 30]))
+            .save(&img)
+            .unwrap();
+
+        let total = insert(
+            &host,
+            &out,
+            InsertOpts {
+                at: 1,
+                source: InsertSource::Image {
+                    path: img.to_string_lossy().to_string(),
+                    dpi: 72.0,
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn insert_image_missing_path_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host.pdf");
+        let out = dir.path().join("out.pdf");
+        std::fs::write(&host, sample_pdf(1)).unwrap();
+
+        let err = insert(
+            &host,
+            &out,
+            InsertOpts {
+                at: 2,
+                source: InsertSource::Image {
+                    path: "/nonexistent/missing.png".to_string(),
+                    dpi: 72.0,
+                },
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, PdfError::InputMissing(_)));
     }
 }
