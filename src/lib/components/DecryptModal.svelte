@@ -14,10 +14,16 @@
 
   let { input, onUnlock, onCancel }: Props = $props();
 
+  /** Issue #23 acceptance: red shake + retry up to 3 times before reverting to an error. */
+  const MAX_ATTEMPTS = 3;
+
   let password = $state("");
   let showPw = $state(false);
   let working = $state(false);
   let err = $state<string | null>(null);
+  let attempts = $state(0); // wrong-password attempts so far
+  let shaking = $state(false);
+  let locked = $state(false); // exhausted retries — Unlock disabled
   let pwInput: HTMLInputElement | undefined = $state();
 
   // Focus the password field as soon as the modal mounts.
@@ -37,21 +43,46 @@
   }
 
   /// Convert a `slab_decrypt` error string into something a human can act on.
-  /// The lopdf message for wrong-password is "Invalid password" — we promote
-  /// that to a UX-grade hint instead of leaking the raw library text.
-  function friendlyDecryptError(raw: string): string {
+  /// The Rust side now returns a typed `WrongPassword` variant (issue #23),
+  /// which serializes via `thiserror`'s `Display` to "wrong password". We
+  /// keep the older "invalid password" / "incorrect password" string
+  /// fallbacks for forward-compat with any other crate-version sniffing.
+  function isWrongPasswordMessage(raw: string): boolean {
     const low = raw.toLowerCase();
-    if (low.includes("invalid password") || low.includes("wrong password")) {
+    return (
+      low.includes("wrong password") ||
+      low.includes("invalid password") ||
+      low.includes("incorrect password") ||
+      low.includes("incorrectpassword")
+    );
+  }
+
+  function friendlyDecryptError(raw: string): string {
+    if (isWrongPasswordMessage(raw)) {
       return "That password didn't work. Try again.";
     }
+    const low = raw.toLowerCase();
     if (low.includes("input does not exist") || low.includes("input missing")) {
       return "The file moved or was deleted. Pick it again.";
     }
     return raw;
   }
 
+  /// Trigger the red-shake animation once. Auto-clears after the CSS
+  /// animation duration so a subsequent wrong attempt re-fires it.
+  function triggerShake() {
+    shaking = false;
+    // Force a microtask gap so the class toggle re-mounts the animation.
+    queueMicrotask(() => {
+      shaking = true;
+      setTimeout(() => {
+        shaking = false;
+      }, 520);
+    });
+  }
+
   async function submit() {
-    if (working) return;
+    if (working || locked) return;
     if (!password) {
       err = "Enter the password.";
       return;
@@ -67,7 +98,21 @@
       });
       if (res.kind === "ok") {
         password = "";
+        attempts = 0;
         onUnlock(output);
+      } else if (isWrongPasswordMessage(res.message)) {
+        attempts += 1;
+        triggerShake();
+        password = "";
+        // Re-focus so the user can immediately retype.
+        queueMicrotask(() => pwInput?.focus());
+        if (attempts >= MAX_ATTEMPTS) {
+          locked = true;
+          err = `Too many attempts (${MAX_ATTEMPTS}). Close and try again.`;
+        } else {
+          const remaining = MAX_ATTEMPTS - attempts;
+          err = `That password didn't work. ${remaining} ${remaining === 1 ? "try" : "tries"} left.`;
+        }
       } else {
         err = friendlyDecryptError(res.message);
       }
@@ -113,14 +158,15 @@
 
     <label class="field">
       <span class="field-label">Password</span>
-      <div class="row">
+      <div class="row" class:shake={shaking}>
         <input
           bind:this={pwInput}
           type={showPw ? "text" : "password"}
           bind:value={password}
           placeholder="••••••••"
           autocomplete="current-password"
-          disabled={working}
+          disabled={working || locked}
+          class:err-input={shaking}
         />
         <button
           type="button"
@@ -134,7 +180,7 @@
     </label>
 
     {#if err}
-      <div class="status err">✕ {err}</div>
+      <div class="status err" role="alert" aria-live="polite">✕ {err}</div>
     {/if}
 
     <div class="actions">
@@ -145,9 +191,9 @@
         type="button"
         class="primary"
         onclick={submit}
-        disabled={working || !password}
+        disabled={working || locked || !password}
       >
-        {working ? "Unlocking…" : "Unlock"}
+        {working ? "Unlocking…" : locked ? "Locked" : "Unlock"}
       </button>
     </div>
 
@@ -278,5 +324,30 @@
     color: var(--text-3);
     margin: 4px 0 0;
     line-height: 1.4;
+  }
+
+  /* Issue #23: red-shake animation + danger ring on wrong password.
+     ~520ms total — 3 cycles of 6px lateral displacement, then settles.
+     Reduced-motion: drop the translate, keep just the danger ring. */
+  @keyframes slab-decrypt-shake {
+    0%   { transform: translateX(0); }
+    15%  { transform: translateX(-6px); }
+    30%  { transform: translateX(6px); }
+    45%  { transform: translateX(-4px); }
+    60%  { transform: translateX(4px); }
+    75%  { transform: translateX(-2px); }
+    100% { transform: translateX(0); }
+  }
+  .row.shake {
+    animation: slab-decrypt-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  }
+  .row input.err-input {
+    border-color: var(--danger, #e54);
+    box-shadow: 0 0 0 2px rgba(229, 68, 68, 0.18);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .row.shake {
+      animation: none;
+    }
   }
 </style>
