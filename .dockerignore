@@ -1,0 +1,42 @@
+# Slab build context — keep this small. Everything outside the
+# Rust workspace + Cargo manifests is dead weight in the Docker layer.
+
+.git
+.github
+.cron-state
+.svelte-kit
+.vscode
+node_modules
+target
+src-tauri/target
+src-tauri/gen
+
+# Built desktop bundles never need to enter the server image.
+dist
+build
+
+# Local dev artifacts
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Editor scratch
+.idea
+*.swp
+*.swo
+
+# Tests, fixtures, docs that don't ship inside the server image.
+docs/release-notes
+docs/plans
+docs/screenshots
+docs/figma-exports
+SIGNING.md
+*.dmg
+*.deb
+*.AppImage
+*.msi
+*.exe
+
+# We intentionally keep ./src-tauri/resources/server (the embedded UI)
+# in the context — that's compiled into the slab-server binary.

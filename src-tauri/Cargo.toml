@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "2.0.2"
+version = "2.1.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -22,6 +22,16 @@ path = "src/bin/slab.rs"
 [[bin]]
 name = "slab-sign-plugin"
 path = "src/bin/sign_plugin.rs"
+
+# v2.1.0 "Server" 🐳 — HTTP daemon exposing the core PDF operations
+# over a REST API. Same Rust core as the Tauri desktop app, but
+# headless — Docker-friendly, behind a reverse proxy on a NAS, or
+# embedded in a homelab Compose stack. Frontend ships as a single
+# embedded index.html so a fresh `docker run` is a one-step setup.
+[[bin]]
+name = "slab-server"
+path = "src/bin/server.rs"
+required-features = ["server"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -116,6 +126,25 @@ rquickjs = { version = "0.11", default-features = false, features = ["std"] }
 # in the worker loop (Slice 6.5). Tiny crate, single-author, no transitive
 # bloat.
 crossbeam-channel = "0.5"
+
+# Server (v2.1.0 "Server" 🐳) — optional axum HTTP server stack for
+# `slab-server`. Gated behind the `server` feature so the desktop bundle
+# stays lean; Docker / homelab builds opt-in with `--features server`.
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "multipart", "macros"], optional = true }
+tower = { version = "0.5", default-features = false, optional = true }
+tower-http = { version = "0.6", default-features = false, features = ["cors", "limit", "trace"], optional = true }
+mime = { version = "0.3", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
+# Zip the multi-file "split" responses so the client gets one download
+# regardless of how many output PDFs the operation produced.
+zip = { version = "2", default-features = false, features = ["deflate", "time"], optional = true }
+
+[features]
+default = []
+# Opt-in flag for the `slab-server` binary. Desktop Tauri builds leave
+# this off so they don't pay the axum/tower compile + binary-size cost.
+server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:mime", "dep:tracing", "dep:tracing-subscriber", "dep:zip"]
 
 [dev-dependencies]
 tempfile = "3"

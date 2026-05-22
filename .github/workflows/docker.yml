@@ -1,0 +1,89 @@
+# Build and publish the `slab-server` Docker image to GHCR.
+#
+# Triggers:
+#   • Push of a `v*.*.*` tag      → builds + pushes `:v2.1.0` and `:latest`.
+#   • Manual workflow_dispatch    → builds + pushes `:dev-<sha>` only.
+#
+# The Tauri desktop bundle workflow (`build.yml`) handles the
+# .dmg/.deb/.AppImage/.msi/.exe artifacts; this workflow exists
+# solely to ship the headless server image so users can:
+#
+#     docker run -p 8080:8080 ghcr.io/sanjays2402/slab:v2.1.0
+
+name: Docker (slab-server)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push image to GHCR (otherwise build-only)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name == 'push' || inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/slab
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha,prefix=dev-,format=short
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=Slab Server
+            org.opencontainers.image.description=Self-hosted PDF toolkit — same Rust core as the Slab desktop app, headless HTTP API + drag-drop web UI.
+            org.opencontainers.image.url=https://github.com/Sanjays2402/slab
+            org.opencontainers.image.source=https://github.com/Sanjays2402/slab
+            org.opencontainers.image.licenses=GPL-3.0
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          # linux/arm64 cross-compile is held back behind the QEMU
+          # build-time cost (Rust + reqwest TLS = ~12 min per arch on
+          # the GitHub runners). v2.1.0 ships amd64 only; arm64 lands
+          # in v2.1.1 once we have a self-hosted aarch64 builder.
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

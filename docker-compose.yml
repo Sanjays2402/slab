@@ -1,0 +1,50 @@
+# Compose file for running Slab Server locally.
+#
+# Quickstart:
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# Stop and remove the container:
+#   docker compose down
+#
+# Pull the latest image without rebuilding:
+#   docker compose pull && docker compose up -d
+#
+# Override defaults via environment variables on the host (or a `.env`
+# file in this directory). All variables fall back to safe defaults.
+
+services:
+  slab:
+    image: ghcr.io/sanjays2402/slab:${SLAB_TAG:-latest}
+    container_name: slab-server
+    restart: unless-stopped
+    ports:
+      - "${SLAB_PORT:-8080}:8080"
+    environment:
+      # Increase this on machines processing very large PDFs (in MB).
+      SLAB_MAX_UPLOAD_MB: "${SLAB_MAX_UPLOAD_MB:-256}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    volumes:
+      # Persistent data dir (Beacon embedding cache, future job
+      # history, etc.). The container creates this on first run.
+      - slab_data:/var/lib/slab
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    # Drop every capability except the ones axum's listen() needs.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Read-only root FS with a tmpfs for /tmp (multipart upload
+    # buffering). /var/lib/slab is the only writable mountpoint.
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+
+volumes:
+  slab_data:
+    driver: local
