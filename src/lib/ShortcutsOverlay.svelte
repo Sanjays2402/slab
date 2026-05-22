@@ -103,6 +103,22 @@
       ],
     },
     {
+      title: "Theater (presenter mode)",
+      items: [
+        { keys: [MOD, "Shift", "T"], label: "Open Theater panel" },
+        { keys: ["→", "Space"], label: "Next page" },
+        { keys: ["←"], label: "Previous page" },
+        { keys: ["B"], label: "Blackout audience" },
+        { keys: ["W"], label: "Whiteboard" },
+        { keys: ["L"], label: "Toggle laser pointer" },
+        { keys: ["I"], label: "Toggle ink mode" },
+        { keys: ["."], label: "Toggle spotlight cursor" },
+        { keys: ["U"], label: "Undo last ink stroke" },
+        { keys: ["C"], label: "Clear all ink strokes" },
+        { keys: ["Esc"], label: "Exit presentation" },
+      ],
+    },
+    {
       title: "Customise",
       items: [
         { keys: [MOD, "K"], label: "Open palette → \"Customize shortcuts\"" },

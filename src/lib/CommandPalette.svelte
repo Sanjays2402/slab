@@ -257,6 +257,19 @@
       },
       keywords: "search library find query fts full text cross document indemnify clause atlas",
     });
+    // Theater v2.3.0 — open the presenter-mode control panel. Shortcut
+    // ⇧⌘T (⇧^T on win/linux). The detailed key cheat sheet lives inside
+    // the panel itself once it's open.
+    out.push({
+      id: "theater:open",
+      title: "Start Theater (presenter mode)",
+      subtitle: "Turn the current PDF into slides — laser, ink, blackout (⇧⌘T)",
+      icon: "🎬",
+      group: "Theater",
+      run: () => onSelectPanel("theater"),
+      keywords:
+        "theater presenter present slides projector audience laser pointer blackout whiteout ink annotate spotlight talk teach lecture",
+    });
     // Glass Slice 7: jump straight to the customisation panel.
     out.push({
       id: "settings:keymap",

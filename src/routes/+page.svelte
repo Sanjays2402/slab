@@ -41,6 +41,7 @@
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
+  import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
   import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
   import PluginsPanel from "$lib/panels/PluginsPanel.svelte";
@@ -110,6 +111,7 @@
     { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
+    { id: "theater", label: "Theater", icon: "🎬", ready: true },
     { id: "settings", label: "Settings", icon: "⚙", ready: true },
     { id: "plugins", label: "Plugins", icon: "🧩", ready: true },
     { id: "keymap", label: "Shortcuts", icon: "⌨", ready: true },
@@ -394,6 +396,24 @@
         active = "library-search";
       }
       return;
+    }
+    // Theater (v2.3.0): Cmd/Ctrl+Shift+T → open the Theater presenter panel.
+    // Hardcoded (not yet in the customisable keymap.toml) — promoted to a
+    // proper ActionId once the v2.3.0 backend ships its config schema.
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      (e.key === "T" || e.key === "t")
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "theater";
+        return;
+      }
     }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
@@ -825,6 +845,8 @@
     <DiffPanel />
   {:else if active === "slides"}
     <SlidesPanel />
+  {:else if active === "theater"}
+    <TheaterPanel />
   {:else if active === "settings"}
     <SettingsPanel />
   {:else if active === "plugins"}
