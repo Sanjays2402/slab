@@ -61,6 +61,9 @@ pub enum PdfError {
     #[error("input file does not exist: {0}")]
     InputMissing(String),
 
+    #[error("wrong password")]
+    WrongPassword,
+
     #[error("no input files provided")]
     NoInputs,
 
