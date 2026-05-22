@@ -5,7 +5,54 @@
 
 ---
 
-## STATUS: 🔍 v2.6.0 "Lens" plan promoted — enterprise OCR + tables→xlsx
+## STATUS: ✒️ v2.7.0 "Signet" plan promoted — PKCS#7 digital signatures
+
+**TICK 2026-05-22 07:10 PT** — MODE C writing-plans skill.
+
+- Wrote `docs/plans/2026-05-22-v2.7.0-signet-digital-sign.md` (39 KB,
+  952 lines, 8 slices + pre-flight ADR + release; ~1800 net LOC +
+  ~700 test LOC at execution, 9 commits).
+- Codename **"Signet" ✒️** — PAdES-B-B compliant PKCS#7 detached
+  signatures with embedded X.509 cert chain, RSA-2048-SHA256 or
+  ECDSA-P256-SHA256, visible signature widget, tamper detection on
+  verify. Adobe Reader / Foxit / macOS Preview all accept output.
+- Pure-Rust crypto: rsa 0.9, p256 0.13, x509-cert 0.2, cms 0.2,
+  pkcs12 0.1, der 0.7, rustls-native-certs 0.7. Zero new C deps.
+  Reuses existing lopdf 0.40 + sha2 0.11.
+- **6 Tauri commands**: `slab_signet_{inspect,sign,verify,generate_cert,
+  load_p12,list_certs}`. **CLI**: `slab sign`, `slab verify`, `slab cert`.
+- **3-tab SignetPanel.svelte**: Sign / Verify / Manage. Self-signed
+  cert generator in-scope so every first-run user has a working flow
+  without buying a $200/yr CA cert.
+- **WOW**: 320ms cubic-bezier `(0.34, 1.56, 0.64, 1)` gold wax-seal
+  stamp animation with radial-gradient glow ripple on every successful
+  sign. Reduced-motion safe.
+- **Buy-Button 4/4 PASS**: Pay-for-it (Adobe Sign $240-720/user/yr +
+  DocuSign $300-540/user/yr replaced for free), Pick-us (only free
+  offline cross-platform PDF signer — Preview's signature is bitmap-
+  only and useless in court, PDF Expert can't sign, Foxit Mac is
+  $159/yr Pro tier), Notice-it (new ✒️ nav + `G` shortcut + 3 palette
+  entries + wax-seal anim), Tell-a-friend (10-second sign demo →
+  Adobe validates ✓ → "macOS Preview literally can't do this").
+- **Pipeline order**: v2.3.0 Theater → v2.4.0 Stack → v2.5.0 Quill →
+  v2.6.0 Lens → **v2.7.0 Signet (this tick)** → v2.7.1 RFC 3161
+  timestamps → v2.7.2 LTV (B-LT) → v2.8.0 PKCS#11 smart-card.
+- **Out of scope** (deferred to keep tick sane): timestamping (v2.7.1),
+  long-term validation / DSS (v2.7.2), smart-card / YubiKey (v2.8.0),
+  multi-signature with field locking (v2.8.0).
+
+**Active branch**: `feature/v2.3.0-theater` (plan committed there;
+plan files are version-independent and merge cleanly).
+
+**Planning lead is now 5 versions deep — next tick MUST ship code,
+not write more plans.** Best target: Theater Slice 5 (audience window
+rendering) or v2.2.1 version-string patch.
+
+Session log: `.cron-state/sessions/2026-05-22-0710.md`.
+
+---
+
+## STATUS PRIOR: 🔍 v2.6.0 "Lens" plan promoted — enterprise OCR + tables→xlsx
 
 **TICK 2026-05-22 06:50 PT** — MODE C writing-plans skill.
 
