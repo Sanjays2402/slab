@@ -5,7 +5,56 @@
 
 ---
 
-## STATUS: 🚀 v2.2.0 "Atlas" slices 1+2+3 shipped — end-to-end cross-doc search live
+## STATUS: 🚀 v2.2.0 "Atlas" slices 1-5 shipped — search → reader page-jump live
+
+**TICK 2026-05-22 04:50 PT** — MODE C BIG tick. Four commits to
+`feature/v2.2.0-atlas-search`, pushed (HEAD 3b305ae), CI re-queued.
+
+- **feat(reader)** 332ebb4 — Atlas slice 4: highlight-on-open + page-jump.
+  Tab type gets `initialPage`/`initialHighlight`; `openNewTab(path, opts)`
+  signature expanded; `onLibraryOpen` reuses existing tab via new
+  `slab:reader-jump` event or opens new with hints. ReaderPanel adds
+  `pendingJump`/`jumpHalo` state, `applyJump()` helper, queueing if jump
+  arrives before bytes load. Gold halo on `.pdfjs-container` via
+  `@keyframes slab-jump-halo` (720ms cubic-bezier 0.34,1.56,0.64,1) with
+  `prefers-reduced-motion` static-ring fallback. SearchPanel now forwards
+  `highlight: query.trim()` so pdfjs find-bar highlights every occurrence.
+- **feat(palette,onboarding)** 2f1e575 — Atlas slice 5a: `library:search`
+  command in palette (group Library, fires `slab:focus-library-search`);
+  Onboarding step 5 explaining cross-PDF search.
+- **feat(settings,i18n)** 183f434 — Atlas slice 5b: Settings → Search
+  section with kbd-chip hints + "Open Search" CTA; 6 new i18n keys × 4
+  locales (en/fr/es/ar).
+- **test(library/search)** 3b305ae — 5 new Rust tests pinning the
+  slice-4 UI contract (page_index 0-based, snippet `<mark>` wrap,
+  rank-ASC ordering, multi-page hit-per-page, limit ceiling).
+
+**Total**: 4 commits, ~620 net LOC, end-to-end working capability
+(palette command → search → click hit → existing tab focused → page
+jumps with gold halo + pdfjs match highlights). All gates green:
+cargo fmt + clippy `-D warnings` + cargo test (18/18 search tests
+pass, 1010+ filtered untouched) + pnpm check (0 errors, 41 warnings
+pre-existing).
+
+**Buy-Button**: 4/4. **Wow**: click a search hit → tab snaps to the
+right page with a soft gold halo expanding from match. Screenshot-bait.
+`LAST_WOW_TICK_AT: 2026-05-22T11:50Z`.
+
+**Branch state**: `feature/v2.2.0-atlas-search` HEAD at 3b305ae.
+Next tick options: (a) Slice 6 — incremental FTS5 reindex on file mtime
+change (so the library stays fresh without full rescan), (b) merge
+branch to main + tag v2.2.0 once CI green and call Atlas done, (c)
+empty-state polish + "Did you mean?" affordance in SearchPanel.
+
+Recommend (b) — Atlas already exceeds the v2.2.0 spec scope; ship it
+and let v2.2.1 absorb incremental reindex.
+
+**v2.1.2 release FINALIZED previous tick**: build CI `26282803602` green,
+6 desktop artifacts on tag v2.1.2.
+
+---
+
+## STATUS PRIOR: 🚀 v2.2.0 "Atlas" slices 1+2+3 shipped — end-to-end cross-doc search live
 
 **TICK 2026-05-22 04:24 PT** — MODE C BIG tick. Three logical commits to
 `feature/v2.2.0-atlas-search`, pushed, CI queued (run 26284955295).
