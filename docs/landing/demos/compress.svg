@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Compress: large PDF shrinks dramatically, quality preserved">
+  <style>
+    .cap   { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .lbl   { font-family: ui-sans-serif, system-ui; font-size: 11px; fill: #cdd4e0; }
+    .size  { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 18px; font-weight: 700; }
+    .doc-big   { fill: #e9ecf2; stroke: #d1d5db; }
+    .doc-small { fill: #e9ecf2; stroke: #86efac; stroke-width: 2; }
+    .arrow { stroke: #7dd3fc; stroke-width: 2; fill: none; marker-end: url(#arr); }
+    .bar   { fill: #232831; }
+    .bar-fill-old { fill: #fca5a5; }
+    .bar-fill-new { fill: #86efac; }
+    .pct { font-family: ui-sans-serif, system-ui; font-size: 22px; font-weight: 700; fill: #86efac; }
+
+    @keyframes shrinkDoc {
+      0%, 15%  { transform: scale(1); }
+      55%, 100%{ transform: scale(0.45); }
+    }
+    @keyframes barShrink {
+      0%, 25%  { width: 220px; }
+      60%, 100%{ width: 38px; }
+    }
+    @keyframes resultIn {
+      0%, 55%  { opacity: 0; transform: scale(0.85); }
+      70%, 100%{ opacity: 1; transform: scale(1); }
+    }
+
+    .shrink  { transform-origin: 145px 220px;
+               animation: shrinkDoc 4s infinite ease; }
+    .bar-anim{ animation: barShrink 4s infinite ease; }
+    .result  { animation: resultIn  4s infinite ease; opacity: 0;
+               transform-origin: 480px 220px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .shrink { transform: scale(0.45); }
+      .bar-anim { width: 38px; }
+      .result { opacity: 1; transform: scale(1); }
+    }
+  </style>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/>
+    </marker>
+  </defs>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Compress — shrink files, keep quality</text>
+
+  <!-- Before doc -->
+  <g class="shrink">
+    <rect class="doc-big" x="60" y="120" width="170" height="200" rx="4"/>
+    <text class="lbl" x="145" y="350" text-anchor="middle">report.pdf</text>
+    <text class="size" x="145" y="380" text-anchor="middle" fill="#fca5a5">42.6 MB</text>
+  </g>
+
+  <!-- Arrow -->
+  <path class="arrow" d="M 250 220 L 380 220"/>
+
+  <!-- After doc -->
+  <g class="result">
+    <rect class="doc-small" x="420" y="180" width="120" height="160" rx="4"/>
+    <text class="lbl" x="480" y="358" text-anchor="middle">report.pdf</text>
+    <text class="size" x="480" y="380" text-anchor="middle" fill="#86efac">3.2 MB</text>
+  </g>
+
+  <!-- Big percent reduction -->
+  <g class="result">
+    <text class="pct" x="300" y="100" text-anchor="middle">−92%</text>
+  </g>
+</svg>

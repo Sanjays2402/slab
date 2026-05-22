@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Redact: PII auto-detected and blacked out">
+  <style>
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; fill: #0c0e12; }
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .pill { font-family: ui-sans-serif, system-ui; font-size: 9px; fill: #f5a3a3; font-weight: 600; }
+
+    @keyframes detectBox {
+      0%, 10%  { opacity: 0; }
+      20%, 55% { opacity: 1; }
+      60%, 100%{ opacity: 0; }
+    }
+    @keyframes fillBlack {
+      0%, 55%  { width: 0; opacity: 0; }
+      65%, 100%{ opacity: 1; }
+      75%, 100%{ width: var(--w); }
+    }
+    @keyframes labelFade {
+      0%, 15%   { opacity: 0; }
+      25%, 55%  { opacity: 1; }
+      60%, 100% { opacity: 0; }
+    }
+    @keyframes textFade {
+      0%, 60%  { opacity: 1; }
+      75%, 100%{ opacity: 0; }
+    }
+
+    .detect    { animation: detectBox 4s infinite ease; opacity: 0;
+                 stroke: #f5a3a3; fill: none; stroke-width: 1.5; stroke-dasharray: 3 2; }
+    .label     { animation: labelFade 4s infinite ease; opacity: 0; }
+    .redact    { animation: fillBlack 4s infinite ease; fill: #0c0e12; opacity: 0; }
+    .pii-text  { animation: textFade  4s infinite ease; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .detect { opacity: 0; }
+      .label { opacity: 0; }
+      .pii-text { opacity: 0; }
+      .redact { opacity: 1; width: var(--w); }
+    }
+  </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Redact — auto-detect &amp; black out PII</text>
+
+  <rect class="doc" x="120" y="70" width="360" height="290" rx="4"/>
+
+  <text class="ink" x="140" y="110">PATIENT INTAKE FORM</text>
+  <text class="ink" x="140" y="140">Name:</text>
+  <text class="ink pii-text" x="200" y="140">Jane M. Doe</text>
+  <text class="ink" x="140" y="165">SSN:</text>
+  <text class="ink pii-text" x="200" y="165">123-45-6789</text>
+  <text class="ink" x="140" y="190">DOB:</text>
+  <text class="ink pii-text" x="200" y="190">04 / 17 / 1982</text>
+  <text class="ink" x="140" y="215">Phone:</text>
+  <text class="ink pii-text" x="200" y="215">(415) 555-0192</text>
+  <text class="ink" x="140" y="240">Email:</text>
+  <text class="ink pii-text" x="200" y="240">jane.doe@example.com</text>
+
+  <text class="ink" x="140" y="280">Diagnosis: routine annual checkup, no concerns.</text>
+  <text class="ink" x="140" y="300">Provider notes: vitals normal, recommend follow-up in 12 months.</text>
+
+  <!-- Detection boxes (appear briefly) -->
+  <rect class="detect" x="198" y="128" width="90"  height="16" rx="2"/>
+  <rect class="detect" x="198" y="153" width="92"  height="16" rx="2"/>
+  <rect class="detect" x="198" y="178" width="100" height="16" rx="2"/>
+  <rect class="detect" x="198" y="203" width="110" height="16" rx="2"/>
+  <rect class="detect" x="198" y="228" width="160" height="16" rx="2"/>
+
+  <!-- Labels -->
+  <text class="pill label" x="295" y="139">NAME</text>
+  <text class="pill label" x="297" y="164">SSN</text>
+  <text class="pill label" x="305" y="189">DOB</text>
+  <text class="pill label" x="315" y="214">PHONE</text>
+  <text class="pill label" x="365" y="239">EMAIL</text>
+
+  <!-- Black redaction bars (grow in) -->
+  <rect class="redact" style="--w:90px"  x="198" y="128" width="0" height="16" rx="1"/>
+  <rect class="redact" style="--w:92px"  x="198" y="153" width="0" height="16" rx="1"/>
+  <rect class="redact" style="--w:100px" x="198" y="178" width="0" height="16" rx="1"/>
+  <rect class="redact" style="--w:110px" x="198" y="203" width="0" height="16" rx="1"/>
+  <rect class="redact" style="--w:160px" x="198" y="228" width="0" height="16" rx="1"/>
+</svg>

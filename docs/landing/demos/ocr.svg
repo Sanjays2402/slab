@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="OCR: scanned page transforms into searchable text">
+  <style>
+    .ink   { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; fill: #0c0e12; }
+    .cap   { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .doc   { fill: #e9ecf2; stroke: #d1d5db; }
+    .scan-line { stroke: #7dd3fc; stroke-width: 2; opacity: 0.85; }
+    .blur-text { fill: #6b7280; }
+
+    @keyframes scanSweep {
+      0%, 5%   { transform: translateY(80px); opacity: 0; }
+      10%, 60% { opacity: 0.9; }
+      65%      { transform: translateY(320px); opacity: 0.9; }
+      75%, 100%{ transform: translateY(320px); opacity: 0; }
+    }
+    @keyframes blurOut {
+      0%, 30%  { opacity: 1; }
+      50%, 100%{ opacity: 0; }
+    }
+    @keyframes textIn {
+      0%, 50%  { opacity: 0; }
+      65%, 100%{ opacity: 1; }
+    }
+    @keyframes selectBox {
+      0%, 75%  { opacity: 0; }
+      82%, 95% { opacity: 1; }
+      100%     { opacity: 0; }
+    }
+
+    .scan       { animation: scanSweep 4s infinite ease; }
+    .blur       { animation: blurOut   4s infinite ease; }
+    .sharp      { animation: textIn    4s infinite ease; opacity: 0; }
+    .select-box { animation: selectBox 4s infinite ease;
+                  fill: #7dd3fc; opacity: 0; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .scan { opacity: 0; }
+      .blur { opacity: 0; }
+      .sharp { opacity: 1; }
+      .select-box { opacity: 0.3; }
+    }
+  </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">OCR — scan to searchable text</text>
+
+  <rect class="doc" x="150" y="80" width="300" height="280" rx="4"/>
+
+  <!-- Blurry "scanned" text -->
+  <g class="blur" filter="url(#blur)">
+    <rect x="170" y="110" width="220" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="130" width="240" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="150" width="200" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="180" width="230" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="200" width="210" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="220" width="180" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="260" width="220" height="8" fill="#9aa3b2" opacity="0.6"/>
+    <rect x="170" y="280" width="160" height="8" fill="#9aa3b2" opacity="0.6"/>
+  </g>
+  <defs>
+    <filter id="blur"><feGaussianBlur stdDeviation="1.2"/></filter>
+  </defs>
+
+  <!-- Crisp text -->
+  <g class="sharp">
+    <text class="ink" x="170" y="118">INVOICE #2026-0541</text>
+    <text class="ink" x="170" y="138">Date: January 15, 2026</text>
+    <text class="ink" x="170" y="158">Vendor: Acme Corporation</text>
+    <text class="ink" x="170" y="188">Description    Qty   Price</text>
+    <text class="ink" x="170" y="208">Widget A        12   $1,200</text>
+    <text class="ink" x="170" y="228">Widget B         3     $450</text>
+    <text class="ink" x="170" y="268">Subtotal: $1,650</text>
+    <text class="ink" x="170" y="288">Tax (8%):   $132</text>
+    <!-- selectable highlight on "Acme" -->
+    <rect class="select-box" x="223" y="148" width="80" height="14" rx="1"/>
+  </g>
+
+  <!-- Scanning beam -->
+  <g class="scan">
+    <rect class="scan-line" x="150" y="0" width="300" height="3"/>
+    <rect x="150" y="-30" width="300" height="30" fill="url(#beam)"/>
+  </g>
+  <defs>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7dd3fc" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#7dd3fc" stop-opacity="0.35"/>
+    </linearGradient>
+  </defs>
+</svg>

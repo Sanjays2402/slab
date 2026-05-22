@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Diff: side-by-side compare of two PDF versions">
+  <style>
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .doc { fill: #fff; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+
+    .added   { fill: #86efac; opacity: 0.4; }
+    .removed { fill: #fca5a5; opacity: 0.4; }
+    .strike  { stroke: #b91c1c; stroke-width: 1; }
+
+    @keyframes fadeBlocks {
+      0%, 15%  { opacity: 0; }
+      25%, 90% { opacity: 1; }
+      100%     { opacity: 0; }
+    }
+    .block { animation: fadeBlocks 4s infinite ease; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .block { opacity: 1; animation: none; }
+    }
+  </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Diff — semantic compare across versions</text>
+
+  <!-- Left doc (v1) -->
+  <text class="lbl" x="100" y="68">contract_v1.pdf</text>
+  <rect class="doc" x="60"  y="80" width="220" height="280" rx="4"/>
+  <text class="ink" x="76" y="105">SERVICE AGREEMENT</text>
+  <text class="ink" x="76" y="130">Term: 12 months</text>
+  <text class="ink" x="76" y="150">Price: $24,000 / year</text>
+  <text class="ink" x="76" y="170">Net 30 payment terms.</text>
+  <text class="ink" x="76" y="200">Coverage: business hours.</text>
+  <text class="ink" x="76" y="220">SLA: 99.0% uptime.</text>
+  <text class="ink" x="76" y="250">Renewal: manual.</text>
+  <text class="ink" x="76" y="280">Termination: 60-day notice.</text>
+
+  <!-- Right doc (v2) -->
+  <text class="lbl" x="340" y="68">contract_v2.pdf</text>
+  <rect class="doc" x="320" y="80" width="220" height="280" rx="4"/>
+  <text class="ink" x="336" y="105">SERVICE AGREEMENT</text>
+  <text class="ink" x="336" y="130">Term: 24 months</text>
+  <text class="ink" x="336" y="150">Price: $42,000 / year</text>
+  <text class="ink" x="336" y="170">Net 15 payment terms.</text>
+  <text class="ink" x="336" y="200">Coverage: 24 / 7.</text>
+  <text class="ink" x="336" y="220">SLA: 99.9% uptime.</text>
+  <text class="ink" x="336" y="250">Renewal: auto, 90-day.</text>
+  <text class="ink" x="336" y="280">Termination: 60-day notice.</text>
+
+  <!-- Diff overlays (left = removed, right = added) -->
+  <g class="block">
+    <rect class="removed" x="74" y="120" width="195" height="14" rx="2"/>
+    <rect class="removed" x="74" y="140" width="195" height="14" rx="2"/>
+    <rect class="removed" x="74" y="160" width="195" height="14" rx="2"/>
+    <rect class="removed" x="74" y="190" width="195" height="14" rx="2"/>
+    <rect class="removed" x="74" y="210" width="195" height="14" rx="2"/>
+    <rect class="removed" x="74" y="240" width="195" height="14" rx="2"/>
+
+    <rect class="added" x="334" y="120" width="195" height="14" rx="2"/>
+    <rect class="added" x="334" y="140" width="195" height="14" rx="2"/>
+    <rect class="added" x="334" y="160" width="195" height="14" rx="2"/>
+    <rect class="added" x="334" y="190" width="195" height="14" rx="2"/>
+    <rect class="added" x="334" y="210" width="195" height="14" rx="2"/>
+    <rect class="added" x="334" y="240" width="195" height="14" rx="2"/>
+  </g>
+</svg>
