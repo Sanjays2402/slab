@@ -397,6 +397,15 @@ fn slab_reorder_pages(input: PathBuf, order: Vec<u32>, output: PathBuf) -> CmdRe
 }
 
 #[tauri::command]
+fn slab_apply_page_ops(
+    input: PathBuf,
+    ops: Vec<crate::pdf::pages_undo::PageOp>,
+    output: PathBuf,
+) -> CmdResult<()> {
+    crate::pdf::pages_undo::apply_ops(&input, &ops, &output).into()
+}
+
+#[tauri::command]
 fn slab_pages_build(input: PathBuf, opts: PagesBuildOpts, output: PathBuf) -> CmdResult<u32> {
     do_pages_build(&input, &opts, &output).into()
 }
@@ -2810,6 +2819,7 @@ pub fn run() {
             slab_delete_pages,
             slab_duplicate_pages,
             slab_reorder_pages,
+            slab_apply_page_ops,
             slab_pages_build,
             slab_find_text_spans,
             slab_replace_text_span,
