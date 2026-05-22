@@ -5,7 +5,23 @@
 
 ---
 
-## STATUS: 🚀 v2.0.3 "Self-Install" SHIPPED end-to-end on `feature/v2.0.3-self-install` — ready to merge to main next tick
+## STATUS: 🎉 v2.0.3 MERGED to main + tagged — CI building artifacts
+
+**RELEASE_PENDING: v2.0.3 — merge SHA 6e65be6, tag v2.0.3, CI runs 26280444473 (build) + 26280444477 (docker)**
+
+**TICK 2026-05-22 02:36 PT** — MODE A merge:
+- `git merge --no-ff` of `feature/v2.0.3-self-install` → main as `6e65be6`. STATE.md conflict resolved with --theirs (feature branch had the up-to-date log).
+- Quality gates on main: fmt ✓, clippy ✓, `cargo test --lib` **984 passed**, `pnpm check` 0 errors / 35 warnings ✓.
+- Tag `v2.0.3 — Self-Install + Flatten Raster` pushed with `--follow-tags`. CI dispatched (run 26280444473 build, 26280444477 docker), both queued at tick end.
+- Issue #25 commented with shipped SHA.
+
+**Open override issues remaining**: #26 (page ops — plan exists at `docs/plans/2026-05-22-v2.1.2-arranger.md`), #27 (landing demo video — needs running app, deferred).
+
+**Next tick**: MODE B finalize — poll CI → if green, `gh run download` + `gh release create v2.0.3` with marketing-style notes and the 6 platform artifacts. If still in_progress, hold. After release: execute v2.1.2 Arranger plan against #26.
+
+---
+
+## STATUS PRIOR: 🚀 v2.0.3 "Self-Install" SHIPPED end-to-end on `feature/v2.0.3-self-install`
 
 **TICK 2026-05-22 02:07 PT** — MODE C develop — Issue #25 closed end-to-end + 4 PDF ops folded in:
 
