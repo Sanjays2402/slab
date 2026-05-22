@@ -5,9 +5,38 @@
 
 ---
 
-## STATUS: 🛠️ v2.1.0 Docker CI hotfix #3 (trixie base) + issue #23 frontend shake UX shipped (2/4 acceptance criteria)
+## STATUS: 🚀 v2.0.3 "Flatten Raster" SHIPPED to main — #24 closed end-to-end
 
-**TICK 2026-05-22 00:20 PT** — MODE B finalize hotfix + buyer-button vertical slice on `main`:
+**TICK 2026-05-22 01:13 PT** — MODE C develop + MODE A merge — issue #24 legal-grade raster flatten:
+
+- **`FlattenMode` tagged enum** in `src-tauri/src/pdf/flatten.rs`: `Annotations` (default, byte-identical to prior behavior) | `Raster { dpi: u32 }` (Stage A annotation-bake → Stage B re-render via Poppler `pdftoppm` → rebuild each page as a single `/Subtype /Image` XObject with FlateDecode'd DeviceRGB + drop `/Font`). 36–600 DPI clamp. Inherited `/MediaBox` walks up the page-tree so multi-page docs with shared boxes render at the right size.
+- **5 new tests** (931/931 lib tests passing total): `flatten_opts_default_is_annotations_mode`, `raster_mode_rejects_out_of_range_dpi`, `raster_mode_reports_dpi_and_pages_rasterized`, `raster_mode_strips_all_font_dicts` (criterion #2), `annotation_mode_leaves_zero_annot_entries` (criterion #1). Raster tests gracefully skip when `pdftoppm` not on PATH.
+- **CLI**: `slab flatten input.pdf --raster --dpi 150 -o out.pdf`. Defaults to 150. Output line reports "X page(s) rasterized @ N DPI".
+- **UI**: `FlattenPanel.svelte` rewritten with two radio cards (annotations / legal-grade raster), 150/300 DPI sub-picker, amber irreversibility warning, accent-tinted "pages rasterized" report row, dynamic button label.
+- **Docs**: `docs/features/flatten.md` — customer-facing guide w/ Adobe $239/yr / PDF Expert / Foxit comparison and what-survives-what-doesn't matrix.
+- **Quality gates green**: `cargo fmt --check` ✓, `cargo clippy --all-targets -D warnings` ✓ (#[derive(Default)] for FlattenMode), `cargo test --lib` 931 passed, `pnpm check` 0 errors / 35 pre-existing warnings.
+
+**Commits this tick (5 on `feature/v2.0.3-flatten-raster` → merged to main as `91fcf58`)**:
+- `21866bf` feat(flatten): raster Stage B — pdftoppm + single ImageXObject rebuild (refs #24)
+- `cdbdf74` test(flatten): raster path acceptance tests (closes #24 criteria 1, 2, 4)
+- `e9e8302` feat(cli): slab flatten --raster --dpi N (closes #24 CLI criterion)
+- `57531b3` feat(ui): FlattenPanel mode picker + 150/300 DPI + irreversible warn (closes #24 UI)
+- `7fa6f30` docs(flatten): two-mode user guide + clippy default-impl fix (closes #24)
+- Merge commit `91fcf58` on main, pushed.
+
+**Buy-Button verdict**: ✅ Pay-for-it (Adobe Pro $239/yr flagship feature shipped free), ✅ Pick-us (no free offline tool ships dual-mode raster — pdftk+qpdf chain replaced), ✅ Notice-it (mode picker is immediately visible the moment user opens Flatten), ✅ Tell-a-friend ("Slab does court-admissible 150 DPI flatten offline for free"). 4/4 PASS — qualifying BIG tick.
+
+**WOW**: ✨ The amber irreversibility warn callout + dual-mode radio cards + accent-tinted "Pages rasterized N @ N DPI" report row — screenshot-bait for r/legaltech. `LAST_WOW_TICK_AT: 2026-05-22 01:13 PT`.
+
+**RECENTLY_CLOSED_ISSUES**: #21 (`429d208`), #23 password modal acc#1+2+4 (`93020a3`), **#24 legal-grade flatten (`91fcf58`, v2.0.3)**.
+
+**Open issues remaining** (5-issue override): #25 (self-install dialog), #26 (page ops), #27 (landing demo video). Next tick: #25.
+
+**Pending CI**: build run `26276408535` for `91fcf58` in_progress at tick end.
+
+---
+
+## TICK 2026-05-22 00:20 PT — MODE B finalize hotfix + buyer-button vertical slice on `main`:
 - **Docker CI hotfix #3** (`e10aa1b`): switched Dockerfile builder base from `debian:bookworm` → `debian:trixie` + installed the GTK 3 / webkit2gtk 4.1 / libsoup-3 / javascriptcore / appindicator / rsvg / xdo `-dev` packages. Root cause of run `26274103726` failure: workspace pulls `tauri` non-optionally → `gdk-sys`+`webkit2gtk-sys` build-scripts need pkg-config metadata at cargo-resolve time, even for the `slab-server` binary built behind `--features server`. Bookworm only ships the 4.0 webkit ABI but `webkit2gtk-sys 2.0.2` (locked) binds to 4.1. Runtime layer still `debian:slim` + libssl3 (no GTK in runtime) so image size stays ~80MB.
 - **Issue #23 — Password-protected PDFs** (closes acceptance criteria 1, 2, 4): added `PdfError::WrongPassword` variant + lopdf `InvalidPassword` typed sniff in `src-tauri/src/pdf/encrypt.rs` (commit `0bee4e2`, 3 new unit tests, 6/6 `pdf::encrypt::*` green). Frontend `DecryptModal.svelte` (commit `93020a3`) gained: 500ms cubic-bezier red-shake + danger-ring CSS, 3-attempt counter with "N tries left" messaging, locked-button terminal state, `aria-live` polite, `prefers-reduced-motion` short-circuit, auto-clear+refocus between attempts. Acceptance #3 (re-encrypt on Save) deferred to follow-up tick — touches Save flow, not Open flow.
 - Quality gates green: `cargo fmt --check` clean, `cargo clippy --all-targets -D warnings` clean, `cargo test --lib` → **926 passed** (+3 new), `pnpm check` → 0 errors / 35 pre-existing warnings.
