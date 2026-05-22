@@ -30,7 +30,7 @@ path = "src/bin/sign_plugin.rs"
 # embedded index.html so a fresh `docker run` is a one-step setup.
 [[bin]]
 name = "slab-server"
-path = "src/bin/server.rs"
+path = "src/server_main.rs"
 required-features = ["server"]
 
 [build-dependencies]

@@ -39,7 +39,7 @@ use slab_lib::pdf;
 // embedded frontend
 // ───────────────────────────────────────────────────────────────────
 
-const INDEX_HTML: &str = include_str!("../../resources/server/index.html");
+const INDEX_HTML: &str = include_str!("../resources/server/index.html");
 
 // ───────────────────────────────────────────────────────────────────
 // types

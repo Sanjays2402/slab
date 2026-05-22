@@ -14,7 +14,7 @@
 # Open:   http://localhost:8080
 
 ARG RUST_VERSION=1.83
-ARG DEBIAN_RELEASE=bookworm-slim
+ARG DEBIAN_RELEASE=bookworm
 
 # ────────────────────────────────────────────────────────────────────
 # Stage 1 — base toolchain (cargo-chef for dependency caching)
@@ -32,7 +32,7 @@ COPY src-tauri/Cargo.toml src-tauri/Cargo.lock ./src-tauri/
 # needing the actual sources. We replace it with the real tree in
 # the builder stage below.
 RUN mkdir -p src-tauri/src/bin && \
-    echo 'fn main() {}' > src-tauri/src/bin/server.rs && \
+    echo 'fn main() {}' > src-tauri/src/server_main.rs && \
     echo 'fn main() {}' > src-tauri/src/bin/slab.rs && \
     echo 'fn main() {}' > src-tauri/src/bin/sign_plugin.rs && \
     echo '' > src-tauri/src/lib.rs && \
@@ -73,7 +73,7 @@ RUN --mount=type=cache,target=/build/src-tauri/target \
 # ────────────────────────────────────────────────────────────────────
 # Stage 4 — runtime (debian:slim, no Rust toolchain, ~80MB)
 # ────────────────────────────────────────────────────────────────────
-FROM debian:${DEBIAN_RELEASE} AS runtime
+FROM debian:${DEBIAN_RELEASE}-slim AS runtime
 
 # `libssl3` for reqwest TLS, `ca-certificates` for HTTPS verification
 # (Beacon AI features may make outbound HTTPS calls when configured).
