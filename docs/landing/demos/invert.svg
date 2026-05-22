@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" role="img" aria-label="Invert colors demo">
+  <defs>
+    <style>
+      @keyframes flip {
+        0%, 45% { opacity: 1 }
+        50%, 95% { opacity: 0 }
+        100% { opacity: 1 }
+      }
+      @keyframes flop {
+        0%, 45% { opacity: 0 }
+        50%, 95% { opacity: 1 }
+        100% { opacity: 0 }
+      }
+      .light { animation: flip 3.6s ease-in-out infinite }
+      .dark  { animation: flop 3.6s ease-in-out infinite }
+    </style>
+  </defs>
+  <rect width="320" height="200" fill="#f8fafc"/>
+  <g transform="translate(110,30)">
+    <!-- light page -->
+    <g class="light">
+      <rect width="100" height="140" rx="4" fill="#fff" stroke="#94a3b8"/>
+      <rect x="10" y="14" width="80" height="4" fill="#0f172a"/>
+      <rect x="10" y="24" width="70" height="3" fill="#334155"/>
+      <rect x="10" y="32" width="75" height="3" fill="#334155"/>
+      <rect x="10" y="40" width="60" height="3" fill="#334155"/>
+      <rect x="10" y="54" width="80" height="3" fill="#475569"/>
+      <rect x="10" y="62" width="55" height="3" fill="#475569"/>
+      <rect x="10" y="74" width="40" height="20" fill="#3b82f6" opacity=".7"/>
+    </g>
+    <!-- dark page -->
+    <g class="dark">
+      <rect width="100" height="140" rx="4" fill="#0f172a" stroke="#1e293b"/>
+      <rect x="10" y="14" width="80" height="4" fill="#fff"/>
+      <rect x="10" y="24" width="70" height="3" fill="#cbd5e1"/>
+      <rect x="10" y="32" width="75" height="3" fill="#cbd5e1"/>
+      <rect x="10" y="40" width="60" height="3" fill="#cbd5e1"/>
+      <rect x="10" y="54" width="80" height="3" fill="#94a3b8"/>
+      <rect x="10" y="62" width="55" height="3" fill="#94a3b8"/>
+      <rect x="10" y="74" width="40" height="20" fill="#fbbf24" opacity=".7"/>
+    </g>
+  </g>
+  <text x="160" y="185" text-anchor="middle" font-size="10" fill="#475569">Dark-mode PDFs — easy on the eyes</text>
+</svg>

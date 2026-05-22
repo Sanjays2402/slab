@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" role="img" aria-label="Booklet imposition demo">
+  <defs>
+    <style>
+      @keyframes fold {
+        0%, 20% { transform: rotateY(0deg) }
+        50%, 70% { transform: rotateY(35deg) }
+        100% { transform: rotateY(0deg) }
+      }
+      .sheet { transform-origin: 160px 100px; animation: fold 4s ease-in-out infinite }
+      .num { font: 700 16px ui-sans-serif,system-ui; fill:#0f172a }
+    </style>
+  </defs>
+  <rect width="320" height="200" fill="#f8fafc"/>
+  <g class="sheet">
+    <!-- landscape sheet with two panels and a spine -->
+    <rect x="60" y="40" width="200" height="120" rx="4" fill="#fff" stroke="#94a3b8"/>
+    <line x1="160" y1="40" x2="160" y2="160" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+    <!-- left panel = page 8 (outer back) -->
+    <text class="num" x="110" y="108" text-anchor="middle">8</text>
+    <!-- right panel = page 1 (outer front) -->
+    <text class="num" x="210" y="108" text-anchor="middle">1</text>
+  </g>
+  <text x="160" y="185" text-anchor="middle" font-size="10" fill="#475569">Saddle-stitch signature imposition</text>
+</svg>
