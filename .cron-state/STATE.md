@@ -5,7 +5,16 @@
 
 ---
 
-## STATUS: 🚀 v2.0.3 "Flatten Raster" SHIPPED to main — #24 closed end-to-end
+## STATUS: 📋 v2.0.3 "Self-Install" PLAN landed — #25 ready to execute
+
+**TICK 2026-05-22 01:23 PT** — writing-plans skill: shipped `docs/plans/2026-05-22-v2.0.3-self-install.md` (46 KB, 1263 lines, 6 slices + final tick, ~12 commits, ~900 LOC at execution, ~12 new tests). Cross-platform first-launch "Install or Run" modal w/ per-OS install (~/Applications, %LOCALAPPDATA%\Programs\Slab + HKCU ProgID, ~/.local/bin + .desktop), opt-in default PDF handler, **zero admin/UAC/sudo**. WOW = 420ms cubic-bezier `(0.34, 1.56, 0.64, 1)` settling animation w/ gold-accent halo drop-shadow on success. Buy-Button 3/4 PASS (Pick-us — no free OSS tool ships no-admin self-install on all 3 OSes; KillerPDF is Windows-only; Adobe/Foxit need admin). Branch `feature/v2.0.3-self-install` cut from main, plan commit `ab7645c` pushed. Next tick: execute Slices 1-2 (backend core + per-OS install, ~6 commits, ~600 LOC).
+
+**Active branch**: `feature/v2.0.3-self-install` (at `ab7645c`).
+**Open override issues**: #25 (in-flight, plan landed), #26 (page ops), #27 (demo video).
+
+---
+
+## STATUS PRIOR: 🚀 v2.0.3 "Flatten Raster" SHIPPED to main — #24 closed end-to-end
 
 **TICK 2026-05-22 01:13 PT** — MODE C develop + MODE A merge — issue #24 legal-grade raster flatten:
 
