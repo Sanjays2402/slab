@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Extract — pull text, tables, metadata">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes typing {
+      0% { clip-path: inset(0 100% 0 0); }
+      80%, 100% { clip-path: inset(0 0 0 0); }
+    }
+    .json-out { animation: typing 4s infinite linear; }
+    @media (prefers-reduced-motion: reduce) { .json-out { clip-path: inset(0 0 0 0); } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Extract — pull text, tables, metadata</text>
+  
+  <!-- source doc -->
+  <rect class="doc" x="60" y="100" width="200" height="240" rx="4"/>
+  <line class="line" x1="78" y1="130" x2="240" y2="130"/>
+  <line class="line" x1="78" y1="150" x2="240" y2="150"/>
+  <line class="line" x1="78" y1="170" x2="220" y2="170"/>
+  <line class="line" x1="78" y1="200" x2="240" y2="200"/>
+  <line class="line" x1="78" y1="220" x2="230" y2="220"/>
+  <line class="line" x1="78" y1="250" x2="240" y2="250"/>
+
+  <!-- arrow -->
+  <path d="M 280 220 L 340 220" stroke="#7dd3fc" stroke-width="2" fill="none" marker-end="url(#earr)"/>
+  <defs><marker id="earr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker></defs>
+
+  <!-- output JSON terminal -->
+  <rect x="360" y="100" width="200" height="240" rx="6" fill="#1b1f26" stroke="#232831"/>
+  <text class="lbl" x="372" y="120">extract.json</text>
+  <g class="json-out">
+    <text class="ink" x="372" y="148" fill="#86efac">{</text>
+    <text class="ink" x="382" y="166" fill="#7dd3fc">"title":</text>
+    <text class="ink" x="440" y="166" fill="#fde047">"Report",</text>
+    <text class="ink" x="382" y="184" fill="#7dd3fc">"pages":</text>
+    <text class="ink" x="440" y="184" fill="#fda4af">42,</text>
+    <text class="ink" x="382" y="202" fill="#7dd3fc">"author":</text>
+    <text class="ink" x="382" y="220" fill="#fde047">  "Acme Corp",</text>
+    <text class="ink" x="382" y="238" fill="#7dd3fc">"words":</text>
+    <text class="ink" x="440" y="238" fill="#fda4af">12384,</text>
+    <text class="ink" x="382" y="256" fill="#7dd3fc">"tables":</text>
+    <text class="ink" x="440" y="256" fill="#fda4af">7</text>
+    <text class="ink" x="372" y="274" fill="#86efac">}</text>
+  </g>
+    
+</svg>

@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Table extract — tables → CSV / Excel">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes pulseIn { 0%, 10% { opacity: 0; } 25%, 50% { opacity: 1; } 65%, 100% { opacity: 0; } }
+    @keyframes csvType { 0% { clip-path: inset(0 100% 0 0); } 60%, 100% { clip-path: inset(0 0 0 0); } }
+    .pulse { animation: pulseIn 4s infinite ease; }
+    .csv { animation: csvType 4s infinite linear; }
+    @media (prefers-reduced-motion: reduce) {
+      .pulse { opacity: 1; } .csv { clip-path: inset(0 0 0 0); }
+    }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Table extract — tables → CSV / Excel</text>
+  
+  <!-- doc with table -->
+  <rect class="doc" x="40" y="80" width="240" height="240" rx="4"/>
+  <g>
+    <rect x="56" y="110" width="208" height="20" fill="#f3f4f6"/>
+    <text class="ink" x="62" y="124">Item</text>
+    <text class="ink" x="146" y="124">Qty</text>
+    <text class="ink" x="206" y="124">Price</text>
+    <line class="line" x1="56" y1="130" x2="264" y2="130"/>
+    <text class="ink" x="62" y="148">Widget A</text>
+    <text class="ink" x="146" y="148">12</text>
+    <text class="ink" x="206" y="148">$1,200</text>
+    <text class="ink" x="62" y="168">Widget B</text>
+    <text class="ink" x="146" y="168">3</text>
+    <text class="ink" x="206" y="168">$450</text>
+    <text class="ink" x="62" y="188">Gadget</text>
+    <text class="ink" x="146" y="188">8</text>
+    <text class="ink" x="206" y="188">$640</text>
+    <text class="ink" x="62" y="208">Thingamajig</text>
+    <text class="ink" x="146" y="208">1</text>
+    <text class="ink" x="206" y="208">$95</text>
+  </g>
+  <!-- pulse over table -->
+  <rect class="pulse" x="56" y="110" width="208" height="110" rx="2"
+        fill="none" stroke="#7dd3fc" stroke-width="2" stroke-dasharray="4 3" opacity="0"/>
+
+  <path d="M 290 170 L 330 170" stroke="#7dd3fc" stroke-width="2" fill="none" marker-end="url(#tarr)"/>
+  <defs><marker id="tarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker></defs>
+
+  <!-- CSV terminal -->
+  <rect x="350" y="80" width="220" height="240" rx="6" fill="#1b1f26" stroke="#232831"/>
+  <text class="lbl" x="362" y="100">items.csv</text>
+  <g class="csv">
+    <text class="ink" x="362" y="125" fill="#7dd3fc">Item,Qty,Price</text>
+    <text class="ink" x="362" y="143" fill="#cdd4e0">Widget A,12,1200</text>
+    <text class="ink" x="362" y="161" fill="#cdd4e0">Widget B,3,450</text>
+    <text class="ink" x="362" y="179" fill="#cdd4e0">Gadget,8,640</text>
+    <text class="ink" x="362" y="197" fill="#cdd4e0">Thingamajig,1,95</text>
+  </g>
+    
+</svg>

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Annotations — highlight, note, draw">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes hlGrow { 0%, 5% { width: 0; } 20%, 100% { width: 260px; } }
+    @keyframes noteIn { 0%, 30% { opacity: 0; transform: translateY(-8px); } 45%, 100% { opacity: 1; transform: translateY(0); } }
+    @keyframes drawIn { 0%, 55% { stroke-dashoffset: 200; } 75%, 100% { stroke-dashoffset: 0; } }
+    .hl { animation: hlGrow 5s infinite ease; }
+    .note { animation: noteIn 5s infinite ease; transform-origin: 440px 200px; }
+    .ink-stroke { animation: drawIn 5s infinite ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .hl { width: 260px; } .note { opacity: 1; } .ink-stroke { stroke-dashoffset: 0; }
+    }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Annotations — highlight, note, draw</text>
+  
+  <rect class="doc" x="100" y="70" width="400" height="300" rx="4"/>
+  <line class="line" x1="120" y1="100" x2="480" y2="100"/>
+  <line class="line" x1="120" y1="120" x2="470" y2="120"/>
+  <line class="line" x1="120" y1="140" x2="480" y2="140"/>
+  <line class="line" x1="120" y1="180" x2="450" y2="180"/>
+  <line class="line" x1="120" y1="200" x2="480" y2="200"/>
+  <line class="line" x1="120" y1="220" x2="430" y2="220"/>
+  <line class="line" x1="120" y1="260" x2="460" y2="260"/>
+  <line class="line" x1="120" y1="280" x2="480" y2="280"/>
+  <line class="line" x1="120" y1="300" x2="440" y2="300"/>
+
+  <!-- highlight (phase 1) -->
+  <rect class="hl" x="120" y="113" width="0" height="14" fill="#fde047" opacity="0.55" rx="2"/>
+
+  <!-- sticky note (phase 2) -->
+  <g class="note" opacity="0">
+    <rect x="380" y="170" width="120" height="70" rx="3" fill="#fef3c7" stroke="#facc15"/>
+    <line x1="392" y1="190" x2="488" y2="190" stroke="#92400e" stroke-width="1"/>
+    <line x1="392" y1="205" x2="480" y2="205" stroke="#92400e" stroke-width="1"/>
+    <line x1="392" y1="220" x2="470" y2="220" stroke="#92400e" stroke-width="1"/>
+  </g>
+
+  <!-- ink draw (phase 3) -->
+  <path class="ink-stroke" d="M 130 295 q 20 -22 38 -5 t 35 -12 t 30 8 t 28 -8 t 25 4" stroke="#ef4444" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="200" stroke-dashoffset="200"/>
+    
+</svg>

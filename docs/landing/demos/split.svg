@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Split — by range, by size, by pattern">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes pieceIn { 0%, 20% { opacity: 0; transform: scale(0.6); } 50%, 100% { opacity: 1; transform: scale(1); } }
+    .piece { animation: pieceIn 4s infinite ease; transform-origin: center center; }
+    .sp1 { animation-delay: 0s; } .sp2 { animation-delay: 0.15s; } .sp3 { animation-delay: 0.3s; }
+    .sp4 { animation-delay: 0.45s; } .sp5 { animation-delay: 0.6s; }
+    @media (prefers-reduced-motion: reduce) { .piece { opacity: 1; transform: scale(1); } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Split — by range, by size, by pattern</text>
+  
+  <g class="src">
+    <rect class="doc" x="40" y="100" width="140" height="200" rx="4"/>
+    <text class="lbl" x="110" y="320" text-anchor="middle">report.pdf · 400p</text>
+    <line class="line" x1="60" y1="130" x2="160" y2="130"/>
+    <line class="line" x1="60" y1="150" x2="150" y2="150"/>
+    <line class="line" x1="60" y1="170" x2="160" y2="170"/>
+    <line class="line" x1="60" y1="190" x2="140" y2="190"/>
+    <line class="line" x1="60" y1="210" x2="160" y2="210"/>
+    <line class="line" x1="60" y1="230" x2="155" y2="230"/>
+    <line class="line" x1="60" y1="250" x2="160" y2="250"/>
+    <line class="line" x1="60" y1="270" x2="150" y2="270"/>
+  </g>
+  <path d="M 200 200 L 240 200" stroke="#7dd3fc" stroke-width="2" fill="none" marker-end="url(#sarr)"/>
+  <defs><marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker></defs>
+
+  <g class="split-pieces">
+    <g class="piece sp1">
+      <rect class="doc" x="260" y="80" width="90" height="110" rx="3"/>
+      <text class="lbl" x="305" y="208" text-anchor="middle">ch1.pdf</text>
+    </g>
+    <g class="piece sp2">
+      <rect class="doc" x="370" y="80" width="90" height="110" rx="3"/>
+      <text class="lbl" x="415" y="208" text-anchor="middle">ch2.pdf</text>
+    </g>
+    <g class="piece sp3">
+      <rect class="doc" x="480" y="80" width="90" height="110" rx="3"/>
+      <text class="lbl" x="525" y="208" text-anchor="middle">ch3.pdf</text>
+    </g>
+    <g class="piece sp4">
+      <rect class="doc" x="315" y="240" width="90" height="110" rx="3"/>
+      <text class="lbl" x="360" y="368" text-anchor="middle">ch4.pdf</text>
+    </g>
+    <g class="piece sp5">
+      <rect class="doc" x="425" y="240" width="90" height="110" rx="3"/>
+      <text class="lbl" x="470" y="368" text-anchor="middle">ch5.pdf</text>
+    </g>
+  </g>
+    
+</svg>

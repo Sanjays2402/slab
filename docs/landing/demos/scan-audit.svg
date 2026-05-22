@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Scan audit — PDF/A, accessibility, integrity">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes rowIn { 0%, 5% { opacity: 0; transform: translateX(-8px); } 15%, 100% { opacity: 1; transform: translateX(0); } }
+    .row { animation: rowIn 4s infinite ease; }
+    .r1 { animation-delay: 0s; } .r2 { animation-delay: 0.2s; } .r3 { animation-delay: 0.4s; }
+    .r4 { animation-delay: 0.6s; } .r5 { animation-delay: 0.8s; }
+    @media (prefers-reduced-motion: reduce) { .row { opacity: 1; transform: none; } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Scan audit — PDF/A, accessibility, integrity</text>
+  
+  <rect x="100" y="80" width="400" height="280" rx="6" fill="#1b1f26" stroke="#232831"/>
+  <text class="lbl" x="115" y="105">Audit: report_v2.pdf</text>
+
+  <g class="row r1">
+    <rect x="115" y="125" width="370" height="36" rx="4" fill="#0c0e12" stroke="#232831"/>
+    <circle cx="135" cy="143" r="9" class="check" fill="#86efac"/>
+    <text class="ink" x="148" y="147" fill="#e9ecf2">PDF/A-2b compliance</text>
+    <text class="ink" x="475" y="147" text-anchor="end" fill="#86efac">PASS</text>
+  </g>
+  <g class="row r2">
+    <rect x="115" y="170" width="370" height="36" rx="4" fill="#0c0e12" stroke="#232831"/>
+    <circle cx="135" cy="188" r="9" class="check" fill="#86efac"/>
+    <text class="ink" x="148" y="192" fill="#e9ecf2">All text extractable (no images of text)</text>
+    <text class="ink" x="475" y="192" text-anchor="end" fill="#86efac">PASS</text>
+  </g>
+  <g class="row r3">
+    <rect x="115" y="215" width="370" height="36" rx="4" fill="#0c0e12" stroke="#232831"/>
+    <circle cx="135" cy="233" r="9" class="check" fill="#fde047"/>
+    <text class="ink" x="148" y="237" fill="#e9ecf2">Tagged structure (accessibility)</text>
+    <text class="ink" x="475" y="237" text-anchor="end" fill="#fde047">WARN</text>
+  </g>
+  <g class="row r4">
+    <rect x="115" y="260" width="370" height="36" rx="4" fill="#0c0e12" stroke="#232831"/>
+    <circle cx="135" cy="278" r="9" class="check" fill="#86efac"/>
+    <text class="ink" x="148" y="282" fill="#e9ecf2">Embedded fonts</text>
+    <text class="ink" x="475" y="282" text-anchor="end" fill="#86efac">PASS</text>
+  </g>
+  <g class="row r5">
+    <rect x="115" y="305" width="370" height="36" rx="4" fill="#0c0e12" stroke="#232831"/>
+    <circle cx="135" cy="323" r="9" class="check" fill="#86efac"/>
+    <text class="ink" x="148" y="327" fill="#e9ecf2">No JavaScript / no embedded files</text>
+    <text class="ink" x="475" y="327" text-anchor="end" fill="#86efac">PASS</text>
+  </g>
+    
+</svg>

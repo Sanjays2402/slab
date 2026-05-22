@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Markdown → PDF — beautiful docs from plain text">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes renderIn { 0%, 25% { opacity: 0; transform: scale(0.9); } 50%, 100% { opacity: 1; transform: scale(1); } }
+    .rendered { animation: renderIn 4s infinite ease; transform-origin: 470px 210px; }
+    @media (prefers-reduced-motion: reduce) { .rendered { opacity: 1; transform: scale(1); } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Markdown → PDF — beautiful docs from plain text</text>
+  
+  <!-- terminal/markdown -->
+  <rect x="50" y="80" width="240" height="260" rx="6" fill="#1b1f26" stroke="#232831"/>
+  <text class="lbl" x="62" y="100">README.md</text>
+  <text class="ink" x="62" y="125" fill="#f5a3a3"># Slab</text>
+  <text class="ink" x="62" y="145" fill="#cdd4e0">Local-first PDF tool.</text>
+  <text class="ink" x="62" y="170" fill="#f5a3a3">## Features</text>
+  <text class="ink" x="62" y="190" fill="#cdd4e0">- Merge</text>
+  <text class="ink" x="62" y="208" fill="#cdd4e0">- Edit</text>
+  <text class="ink" x="62" y="226" fill="#cdd4e0">- Sign</text>
+  <text class="ink" x="62" y="252" fill="#f5a3a3">## Code</text>
+  <text class="ink" x="62" y="272" fill="#7dd3fc">`slab merge a.pdf b.pdf`</text>
+
+  <!-- arrow -->
+  <path d="M 310 220 L 350 220" stroke="#7dd3fc" stroke-width="2" fill="none" marker-end="url(#marr)"/>
+  <defs><marker id="marr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker></defs>
+
+  <!-- rendered PDF -->
+  <g class="rendered" opacity="0">
+    <rect class="doc" x="370" y="80" width="200" height="260" rx="4"/>
+    <text x="388" y="118" font-family="Georgia,serif" font-size="20" font-weight="700" fill="#0c0e12">Slab</text>
+    <text class="ink" x="388" y="138">Local-first PDF tool.</text>
+    <text x="388" y="170" font-family="Georgia,serif" font-size="14" font-weight="700" fill="#0c0e12">Features</text>
+    <circle cx="392" cy="186" r="2" fill="#0c0e12"/><text class="ink" x="400" y="190">Merge</text>
+    <circle cx="392" cy="204" r="2" fill="#0c0e12"/><text class="ink" x="400" y="208">Edit</text>
+    <circle cx="392" cy="222" r="2" fill="#0c0e12"/><text class="ink" x="400" y="226">Sign</text>
+    <text x="388" y="252" font-family="Georgia,serif" font-size="14" font-weight="700" fill="#0c0e12">Code</text>
+    <rect x="388" y="262" width="170" height="20" fill="#f3f4f6" rx="2"/>
+    <text class="ink" x="394" y="276" fill="#0c0e12">slab merge a.pdf b.pdf</text>
+  </g>
+    
+</svg>

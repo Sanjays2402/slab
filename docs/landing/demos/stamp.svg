@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Stamp — DRAFT, APPROVED, CONFIDENTIAL">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes stampLand {
+      0%, 15%  { opacity: 0; transform: translate(300px, 200px) scale(2.5) rotate(-15deg); }
+      30%, 35% { opacity: 1; transform: translate(300px, 220px) scale(1) rotate(-12deg); }
+      40%, 100%{ opacity: 1; transform: translate(300px, 220px) scale(1) rotate(-12deg); }
+    }
+    .stamp { animation: stampLand 4s infinite ease-out; transform-origin: center center; }
+    @media (prefers-reduced-motion: reduce) {
+      .stamp { opacity: 1; transform: translate(300px,220px) scale(1) rotate(-12deg); }
+    }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Stamp — DRAFT, APPROVED, CONFIDENTIAL</text>
+  
+  <rect class="doc" x="150" y="80" width="300" height="280" rx="4"/>
+  <line class="line" x1="170" y1="110" x2="430" y2="110"/>
+  <line class="line" x1="170" y1="130" x2="420" y2="130"/>
+  <line class="line" x1="170" y1="150" x2="430" y2="150"/>
+  <line class="line" x1="170" y1="170" x2="410" y2="170"/>
+  <line class="line" x1="170" y1="200" x2="430" y2="200"/>
+  <line class="line" x1="170" y1="220" x2="430" y2="220"/>
+  <line class="line" x1="170" y1="240" x2="420" y2="240"/>
+  <line class="line" x1="170" y1="270" x2="430" y2="270"/>
+  <line class="line" x1="170" y1="290" x2="400" y2="290"/>
+  <line class="line" x1="170" y1="320" x2="430" y2="320"/>
+
+  <!-- stamp -->
+  <g class="stamp">
+    <rect x="-78" y="-26" width="156" height="52" rx="4" fill="none" stroke="#16a34a" stroke-width="4"/>
+    <text x="0" y="6" text-anchor="middle" font-family="ui-sans-serif,system-ui" font-size="24" font-weight="900" fill="#16a34a" letter-spacing="2">APPROVED</text>
+  </g>
+    
+</svg>

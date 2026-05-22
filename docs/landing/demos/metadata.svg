@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Metadata — title, author, keywords, dates">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes fldIn { 0%, 10% { opacity: 0; } 30%, 100% { opacity: 1; } }
+    .fld { animation: fldIn 4s infinite ease; }
+    .f1 { animation-delay: 0s; } .f2 { animation-delay: 0.4s; } .f3 { animation-delay: 0.8s; }
+    .f4 { animation-delay: 1.2s; } .f5 { animation-delay: 1.6s; }
+    @media (prefers-reduced-motion: reduce) { .fld { opacity: 1; } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Metadata — title, author, keywords, dates</text>
+  
+  <rect x="100" y="80" width="400" height="280" rx="6" fill="#1b1f26" stroke="#232831"/>
+  <text class="lbl" x="115" y="105">Document properties</text>
+
+  <text class="ink" x="115" y="142" fill="#9aa3b2">Title</text>
+  <rect x="115" y="150" width="370" height="26" rx="3" fill="#0c0e12" stroke="#232831"/>
+  <text class="ink fld f1" x="125" y="168" fill="#e9ecf2" opacity="0">Q3 2026 Financial Report</text>
+
+  <text class="ink" x="115" y="196" fill="#9aa3b2">Author</text>
+  <rect x="115" y="204" width="180" height="26" rx="3" fill="#0c0e12" stroke="#232831"/>
+  <text class="ink fld f2" x="125" y="222" fill="#e9ecf2" opacity="0">Sanjay Santhanam</text>
+
+  <text class="ink" x="305" y="196" fill="#9aa3b2">Created</text>
+  <rect x="305" y="204" width="180" height="26" rx="3" fill="#0c0e12" stroke="#232831"/>
+  <text class="ink fld f3" x="315" y="222" fill="#e9ecf2" opacity="0">2026-09-30 14:22 PT</text>
+
+  <text class="ink" x="115" y="250" fill="#9aa3b2">Keywords</text>
+  <rect x="115" y="258" width="370" height="26" rx="3" fill="#0c0e12" stroke="#232831"/>
+  <text class="ink fld f4" x="125" y="276" fill="#e9ecf2" opacity="0">finance, Q3, internal, draft</text>
+
+  <text class="ink" x="115" y="304" fill="#9aa3b2">Subject</text>
+  <rect x="115" y="312" width="370" height="26" rx="3" fill="#0c0e12" stroke="#232831"/>
+  <text class="ink fld f5" x="125" y="330" fill="#e9ecf2" opacity="0">Quarterly results &amp; forward outlook</text>
+    
+</svg>

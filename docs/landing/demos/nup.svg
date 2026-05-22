@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="N-up — fit 2, 4, 6 pages per sheet">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes composeIn { 0%, 20% { opacity: 0; transform: scale(0.92); } 45%, 100% { opacity: 1; transform: scale(1); } }
+    .composed { animation: composeIn 4s infinite ease; transform-origin: 380px 220px; }
+    @media (prefers-reduced-motion: reduce) { .composed { opacity: 1; transform: scale(1); } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">N-up — fit 2, 4, 6 pages per sheet</text>
+  
+  <!-- 4 source pages on left -->
+  <g class="src">
+    <rect class="doc" x="60"  y="100" width="60" height="80" rx="3"/>
+    <rect class="doc" x="60"  y="200" width="60" height="80" rx="3"/>
+    <rect class="doc" x="60"  y="300" width="60" height="50" rx="3" opacity="0.6"/>
+    <text class="lbl" x="90" y="370" text-anchor="middle">single pages</text>
+  </g>
+  <path d="M 140 220 L 200 220" stroke="#7dd3fc" stroke-width="2" fill="none" marker-end="url(#narr)"/>
+  <defs><marker id="narr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker></defs>
+
+  <!-- composed 2x2 sheet -->
+  <g class="composed" opacity="0">
+    <rect class="doc" x="220" y="90" width="320" height="260" rx="4"/>
+    <rect class="doc" x="240" y="110" width="135" height="100" rx="2" stroke="#7dd3fc"/>
+    <rect class="doc" x="390" y="110" width="135" height="100" rx="2" stroke="#7dd3fc"/>
+    <rect class="doc" x="240" y="225" width="135" height="100" rx="2" stroke="#7dd3fc"/>
+    <rect class="doc" x="390" y="225" width="135" height="100" rx="2" stroke="#7dd3fc"/>
+    <line class="line" x1="248" y1="130" x2="367" y2="130"/>
+    <line class="line" x1="248" y1="148" x2="367" y2="148"/>
+    <line class="line" x1="398" y1="130" x2="517" y2="130"/>
+    <line class="line" x1="398" y1="148" x2="517" y2="148"/>
+    <line class="line" x1="248" y1="245" x2="367" y2="245"/>
+    <line class="line" x1="248" y1="263" x2="367" y2="263"/>
+    <line class="line" x1="398" y1="245" x2="517" y2="245"/>
+    <line class="line" x1="398" y1="263" x2="517" y2="263"/>
+    <text class="lbl" x="382" y="370" text-anchor="middle">4-up sheet</text>
+  </g>
+    
+</svg>

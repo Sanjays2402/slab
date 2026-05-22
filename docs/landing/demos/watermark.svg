@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Watermark — diagonal text or image">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes wmFade { 0%, 25% { opacity: 0; } 50%, 100% { opacity: 1; } }
+    .wm { animation: wmFade 4s infinite ease; }
+    @media (prefers-reduced-motion: reduce) { .wm { opacity: 1; } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Watermark — diagonal text or image</text>
+  
+  <rect class="doc" x="150" y="80" width="300" height="290" rx="4"/>
+  <line class="line" x1="170" y1="110" x2="430" y2="110"/>
+  <line class="line" x1="170" y1="130" x2="420" y2="130"/>
+  <line class="line" x1="170" y1="150" x2="430" y2="150"/>
+  <line class="line" x1="170" y1="180" x2="410" y2="180"/>
+  <line class="line" x1="170" y1="200" x2="430" y2="200"/>
+  <line class="line" x1="170" y1="220" x2="430" y2="220"/>
+  <line class="line" x1="170" y1="250" x2="430" y2="250"/>
+  <line class="line" x1="170" y1="270" x2="420" y2="270"/>
+  <line class="line" x1="170" y1="300" x2="430" y2="300"/>
+  <line class="line" x1="170" y1="320" x2="400" y2="320"/>
+
+  <g class="wm">
+    <text x="300" y="240" text-anchor="middle" font-family="ui-sans-serif,system-ui" font-size="44" font-weight="900"
+          fill="#dc2626" opacity="0.18" transform="rotate(-28 300 240)" letter-spacing="6">CONFIDENTIAL</text>
+  </g>
+    
+</svg>

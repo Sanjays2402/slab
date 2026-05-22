@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Outline / TOC — generate &amp; navigate">
+  <style>
+    .cap { font-family: ui-sans-serif, system-ui; font-size: 13px; fill: #e9ecf2; font-weight: 600; }
+    .ink { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; fill: #0c0e12; }
+    .doc { fill: #e9ecf2; stroke: #d1d5db; }
+    .lbl { font-family: ui-sans-serif, system-ui; font-size: 10px; fill: #9aa3b2; }
+    .line { stroke: #9ca3af; stroke-width: 1.2; fill: none; }
+
+    @keyframes fadeIn { 0%, 10% { opacity: 0; } 30%, 100% { opacity: 1; } }
+    .toc text { animation: fadeIn 4s infinite ease; }
+    .t1 { animation-delay: 0s; } .t2 { animation-delay: 0.2s; } .t3 { animation-delay: 0.35s; }
+    .t4 { animation-delay: 0.55s; } .t5 { animation-delay: 0.7s; } .t6 { animation-delay: 0.85s; }
+    .t7 { animation-delay: 1.05s; } .t8 { animation-delay: 1.2s; } .t9 { animation-delay: 1.35s; }
+    @media (prefers-reduced-motion: reduce) { .toc text { opacity: 1; } }
+    </style>
+  <rect width="600" height="400" fill="#0c0e12"/>
+  <text class="cap" x="300" y="34" text-anchor="middle">Outline / TOC — generate &amp; navigate</text>
+  
+  <rect x="60" y="80" width="240" height="280" rx="6" fill="#1b1f26" stroke="#232831"/>
+  <text class="lbl" x="76" y="105">Bookmarks</text>
+  <g class="toc">
+    <text class="ink t1" x="76"  y="135" fill="#e9ecf2">▼ 1. Introduction</text>
+    <text class="ink t2" x="92"  y="155" fill="#cdd4e0" opacity="0">1.1 Background</text>
+    <text class="ink t3" x="92"  y="173" fill="#cdd4e0" opacity="0">1.2 Scope</text>
+    <text class="ink t4" x="76"  y="200" fill="#e9ecf2" opacity="0">▼ 2. Methodology</text>
+    <text class="ink t5" x="92"  y="220" fill="#cdd4e0" opacity="0">2.1 Data sources</text>
+    <text class="ink t6" x="92"  y="238" fill="#cdd4e0" opacity="0">2.2 Analysis</text>
+    <text class="ink t7" x="76"  y="265" fill="#e9ecf2" opacity="0">▶ 3. Results</text>
+    <text class="ink t8" x="76"  y="290" fill="#e9ecf2" opacity="0">▶ 4. Discussion</text>
+    <text class="ink t9" x="76"  y="315" fill="#e9ecf2" opacity="0">▶ 5. Appendix</text>
+  </g>
+
+  <!-- doc preview -->
+  <rect class="doc" x="340" y="80" width="220" height="280" rx="4"/>
+  <text class="ink" x="358" y="115" fill="#0c0e12" font-weight="700" font-size="14">2. Methodology</text>
+  <line class="line" x1="358" y1="140" x2="540" y2="140"/>
+  <line class="line" x1="358" y1="158" x2="540" y2="158"/>
+  <line class="line" x1="358" y1="176" x2="525" y2="176"/>
+  <line class="line" x1="358" y1="200" x2="540" y2="200"/>
+  <line class="line" x1="358" y1="218" x2="540" y2="218"/>
+    
+</svg>
