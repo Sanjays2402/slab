@@ -25,6 +25,7 @@
   import BatesPanel from "$lib/panels/BatesPanel.svelte";
   import LegalStampPanel from "$lib/panels/LegalStampPanel.svelte";
   import SignetPanel from "$lib/panels/SignetPanel.svelte";
+  import SignetBatchPanel from "$lib/panels/SignetBatchPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
   import VeilPanel from "$lib/panels/VeilPanel.svelte";
   import CompactPanel from "$lib/panels/CompactPanel.svelte";
@@ -115,6 +116,7 @@
     { id: "bates", label: "Bates", icon: "№", ready: true },
     { id: "stamp", label: "Legal Stamp", icon: "✸", ready: true },
     { id: "signet", label: "Signet", icon: "✍︎", ready: true },
+    { id: "signet-batch", label: "Batch Sign", icon: "✱", ready: true },
     { id: "redact", label: "Redact", icon: "▮", ready: true },
     { id: "veil", label: "Veil", icon: "🛡", ready: true },
     { id: "compact", label: "Compact", icon: "📦", ready: true },
@@ -972,6 +974,8 @@
     <LegalStampPanel />
   {:else if active === "signet"}
     <SignetPanel />
+  {:else if active === "signet-batch"}
+    <SignetBatchPanel />
   {:else if active === "redact"}
     <RedactPanel />
   {:else if active === "veil"}

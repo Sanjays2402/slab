@@ -3999,6 +3999,199 @@ async fn signet_verify(input_path: String) -> Result<Vec<SignetVerifiedDto>, Str
         .collect())
 }
 
+#[derive(serde::Deserialize)]
+pub struct SignetProBatchArgs {
+    pub input_dir: String,
+    pub output_dir: String,
+    pub cert_pem_path: String,
+    pub key_pem_path: String,
+    pub key_password: Option<String>,
+    /// Recurse into subdirectories. Default false.
+    pub recursive: Option<bool>,
+    /// "suffix" (default — appends -signed) or "mirror" (preserves filename).
+    pub naming: Option<String>,
+    /// Skip files whose output already exists. Default false.
+    pub skip_existing: Option<bool>,
+    /// Optional human-readable reason embedded in every signature.
+    pub reason: Option<String>,
+    /// Optional location embedded in every signature.
+    pub location: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetProBatchEntryDto {
+    pub input: String,
+    pub output: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetProBatchReportDto {
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub elapsed_ms: u64,
+    pub success_rate: f64,
+    pub entries: Vec<SignetProBatchEntryDto>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct SignetProBatchProgressDto {
+    pub done: usize,
+    pub total: usize,
+    /// 0.0..=1.0
+    pub fraction: f64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetProBatchPlannedDto {
+    pub jobs: Vec<SignetProBatchEntryDto>,
+}
+
+/// Marketing-grade copy: this is the command every law firm + IT admin
+/// will call. Drop a folder of contracts in, get signed PDFs out.
+///
+/// Emits `signet-pro/batch-progress` events of [`SignetProBatchProgressDto`]
+/// after every file completes. Frontend wires these to a progress bar.
+#[tauri::command]
+async fn signet_pro_batch_sign(
+    app: tauri::AppHandle,
+    args: SignetProBatchArgs,
+) -> Result<SignetProBatchReportDto, String> {
+    use crate::pdf::signet_pro::batch::{
+        sign_folder, BatchOptions, NameStrategy,
+    };
+    let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
+        std::path::Path::new(&args.cert_pem_path),
+        std::path::Path::new(&args.key_pem_path),
+        args.key_password.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    let id = std::sync::Arc::new(id);
+
+    let naming = match args.naming.as_deref() {
+        Some("mirror") => NameStrategy::Mirror,
+        _ => NameStrategy::SuffixSigned,
+    };
+    let opts = BatchOptions {
+        recursive: args.recursive.unwrap_or(false),
+        naming,
+        skip_if_output_exists: args.skip_existing.unwrap_or(false),
+    };
+
+    let reason = args.reason.clone();
+    let location = args.location.clone();
+    let id_for_signer = std::sync::Arc::clone(&id);
+
+    let app_for_progress = app.clone();
+    let in_dir = std::path::PathBuf::from(&args.input_dir);
+    let out_dir = std::path::PathBuf::from(&args.output_dir);
+
+    // Run the rayon-parallel batch in a blocking-task slot so we don't
+    // hog the tauri async runtime. The signer closure is Send+Sync (Arc).
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        sign_folder(
+            &in_dir,
+            &out_dir,
+            &opts,
+            move |job| {
+                let sign_opts = crate::pdf::signet::SignOptions {
+                    reason: reason.clone(),
+                    location: location.clone(),
+                    contact_info: None,
+                    field_name: None,
+                };
+                // Ensure output dir exists for each parent — cheap, idempotent.
+                if let Some(p) = job.output.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                crate::pdf::signet::sign_pdf(&job.input, &job.output, &id_for_signer, &sign_opts)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            },
+            move |done, total| {
+                use tauri::Emitter;
+                let fraction = if total == 0 {
+                    0.0
+                } else {
+                    done as f64 / total as f64
+                };
+                let _ = app_for_progress.emit(
+                    "signet-pro/batch-progress",
+                    SignetProBatchProgressDto {
+                        done,
+                        total,
+                        fraction,
+                    },
+                );
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("batch task join: {e}"))?
+    .map_err(|e| format!("batch IO: {e}"))?;
+
+    Ok(SignetProBatchReportDto {
+        total: report.total,
+        succeeded: report.succeeded,
+        failed: report.failed,
+        elapsed_ms: report.elapsed.as_millis() as u64,
+        success_rate: report.success_rate(),
+        entries: report
+            .entries
+            .into_iter()
+            .map(|e| SignetProBatchEntryDto {
+                input: e.input.display().to_string(),
+                output: e.output.display().to_string(),
+                ok: e.ok,
+                error: e.error,
+                elapsed_ms: e.elapsed.as_millis() as u64,
+            })
+            .collect(),
+    })
+}
+
+/// Dry-run: walk the input folder, return the planned (input → output) pairs
+/// without signing anything. Powers the panel's "preview before sign" row.
+#[tauri::command]
+async fn signet_pro_batch_plan(
+    input_dir: String,
+    output_dir: String,
+    recursive: Option<bool>,
+    naming: Option<String>,
+    skip_existing: Option<bool>,
+) -> Result<SignetProBatchPlannedDto, String> {
+    use crate::pdf::signet_pro::batch::{plan_batch, BatchOptions, NameStrategy};
+    let opts = BatchOptions {
+        recursive: recursive.unwrap_or(false),
+        naming: match naming.as_deref() {
+            Some("mirror") => NameStrategy::Mirror,
+            _ => NameStrategy::SuffixSigned,
+        },
+        skip_if_output_exists: skip_existing.unwrap_or(false),
+    };
+    let jobs = plan_batch(
+        std::path::Path::new(&input_dir),
+        std::path::Path::new(&output_dir),
+        &opts,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SignetProBatchPlannedDto {
+        jobs: jobs
+            .into_iter()
+            .map(|j| SignetProBatchEntryDto {
+                input: j.input.display().to_string(),
+                output: j.output.display().to_string(),
+                ok: true,
+                error: None,
+                elapsed_ms: 0,
+            })
+            .collect(),
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -4229,6 +4422,8 @@ pub fn run() {
             signet_load_identity,
             signet_sign,
             signet_verify,
+            signet_pro_batch_sign,
+            signet_pro_batch_plan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
