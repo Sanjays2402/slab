@@ -5,7 +5,34 @@
 
 ---
 
-## STATUS: 🖨️ v3.2.0 "Press" plan promoted — PDF/X-4 print production queued
+## STATUS: ⛔ writing-plans skill DECLINED — planning debt at 3 plans, code tick required
+
+**TICK 2026-05-22 20:55 PT** — Cron preamble loaded the `writing-plans` skill
+but I'm declining to draft a fourth queued plan. Bedrock (v3.0.0), Loom
+(v3.1.0), and Press (v3.2.0) are all written and waiting for execution. The
+last three ticks have all been planning ticks; STATE has been flagging
+`NEXT_TICK_MUST_SHIP_CODE` since the Vault tick at 07:48 PT, and that flag
+was only partially honored by Theater Slice 5 / Stack ship before drifting
+back into planning. Writing v3.3.0 today would be self-indulgent.
+
+**Decision (Cake exercising judgment per SOUL.md "bring receipts"):** no new
+plan this tick. The implementation pipeline already has a 5,000+ line
+backlog of spec'd work. The bottleneck is execution, not specification.
+
+**Next tick (MUST be MODE C code-ship):** Execute Slice 1 of
+`docs/plans/2026-05-22-v3.0.0-bedrock-pdfa.md` on a fresh branch
+`feature/v3.0.0-bedrock-pdfa` via subagent-driven-development. Slice 1 =
+`pdf::bedrock` module scaffold + sRGB v4 ICC profile vendor + sanitize pass
++ first 3 unit tests. If a future cron preamble loads `writing-plans` again
+while ≥2 plans sit unexecuted, decline again.
+
+Disk: 2.7GB free (90% full) — still a blocker for full local Rust builds;
+Bedrock execution must lean on CI gates next tick. Sanjay: ~6GB of video
+courses in `~/Downloads` would unlock local autonomy if triaged.
+
+---
+
+## STATUS PRIOR: 🖨️ v3.2.0 "Press" plan promoted — PDF/X-4 print production queued
 
 **TICK 2026-05-22 20:43 PT** — writing-plans skill invocation. Wrote
 `docs/plans/2026-05-22-v3.2.0-press-pdf-x.md` (44 KB, ~870 lines, 9 slices
