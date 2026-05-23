@@ -4,16 +4,40 @@
 
 ---
 
-## STATUS: v3.8.0 Press Slices 1+2 SHIPPED on `feature/v3.8.0-press` — ADR + FOGRA51/GRACoL ICC vendored, OutputIntent enum, normalize_color() pass with 17 passing tests. Next tick: Slice 3 (geometry) + Slice 4 (orchestrator) — gets us to CLI-level "any PDF → valid PDF/X-4".
+## STATUS: v3.8.0 Press Slices 3+4 SHIPPED on `feature/v3.8.0-press` — end-to-end PDF/X-4 conversion works at the library AND Tauri-command level. `convert_to_pdfx4` glues sanitize → font_embed → color → geometry → xmp → output_intent into one entry point. 1318 tests passing, all gates green.
 
-**TICK 2026-05-23 10:15 PT (Saturday off-hours)** — MODE C develop. 4 commits, ~680 net LOC + ~280 LOC tests + 5.5MB ICC profiles. All gates green. Session log: `.cron-state/sessions/2026-05-23-1015.md`.
+**TICK 2026-05-23 10:36 PT (Saturday off-hours)** — MODE C develop. 3 commits, ~675 net LOC + ~400 LOC tests. Session log: `.cron-state/sessions/2026-05-23-1036.md`.
 
-### Next tick
-- Slice 3: `pdf::press::geometry::ensure_print_boxes` — synthesize TrimBox, optional 3mm BleedBox.
-- Slice 4: `pdf::press::orchestrate::convert_to_pdfx4` — glue passes 1-6 (sanitize → font_embed → color → geometry → xmp → output_intent). Extends `pdfa::xmp::XmpBuilder` with PdfX4 variant and `pdfa::output_intent` with `IntentSubtype::GtsPdfX`.
-- Target ship at end of next tick: working CLI-level conversion.
+### Next tick — Slice 6 (PressPanel UI + magenta wipe wow)
 
-### LAST_WOW_TICK_AT: 2026-05-23T16:15Z (Loom Slice 6 sub-badge stagger — Slice 1+2 was plumbing, no new wow needed; daily budget satisfied)
+UI is the right next move (Slice 5 validator can be a stub or follow-up).
+Targets:
+- `src/lib/panels/PressPanel.svelte` — Inspect / Convert / Validate tabs.
+- Sidebar entry "Press" between Bedrock and Loom.
+- Cmd+Shift+X shortcut + command-palette entries.
+- **Magenta press-roller wipe anim** (380ms, CMYK ink rollers, reduced-motion safe).
+- "PDF/X-4 ✓ FOGRA51" reveal badge.
+
+After Slice 6 the branch is feature-complete → merge → tag v3.8.0 → release.
+
+### LAST_WOW_TICK_AT: 2026-05-23T16:15Z (Loom Slice 6 sub-badge stagger — Slice 4 was plumbing, daily wow budget already satisfied; Slice 6 next tick MUST ship the magenta wipe to reset the clock)
+
+### What shipped this tick
+
+- `c1360e1 feat(press): geometry pass — TrimBox synthesis + optional 3mm BleedBox (Slice 3)`
+- `05a4188 feat(press): convert_to_pdfx4 orchestrator + PDF/X-4 XMP + OutputIntent (Slice 4)`
+- `3ea4a65 feat(press): slab_press_convert Tauri command — UI can now drive PDF/X-4`
+
+### Ops note
+
+Disk hit 100% again pre-compile. Cleared Chrome code-sign clone (78GB) +
+`cargo clean -p slab-app` (8.8GB). 5.6GB free after. If this recurs the
+clean target is recoverable cheaply; the Chrome clone keeps coming back
+whenever Chrome updates.
+
+---
+
+## PRIOR STATUS: v3.8.0 Press Slices 1+2 SHIPPED on `feature/v3.8.0-press` — ADR + FOGRA51/GRACoL ICC vendored, OutputIntent enum, normalize_color() pass with 17 passing tests.
 
 ---
 
