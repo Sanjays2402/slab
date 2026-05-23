@@ -6,13 +6,16 @@
 //! Public surface (incremental — fleshed out across the v3.10.0 ticks):
 //!
 //! - [`identity`] — load a [`SigningIdentity`](identity::SigningIdentity) from
-//!   on-disk PKCS#12 or a PEM cert+key pair. **Ready.**
+//!   on-disk PEM cert + key pair. **Ready.**
+//! - [`trust`] — user-managed X.509 trust store on the filesystem.
+//!   **Ready (basic chain checks).**
 //! - `cms_blob` — RFC 5652 SignedData (PKCS#7-detached) builder. _(planned, Task 3.)_
 //! - `sign` — embed a Sig field + ByteRange + Contents window into a PDF.
 //!   _(planned, Task 4.)_
 //! - `verify` — re-hash + re-validate a signed PDF. _(planned, Task 5.)_
-//! - `trust` — user-managed X.509 trust store. _(planned, Task 5.)_
 
 pub mod identity;
+pub mod trust;
 
 pub use identity::{KeyAlgorithm, SignetError, SigningIdentity};
+pub use trust::{ChainStatus, TrustStore};
