@@ -7,6 +7,7 @@ pub mod annot_export;
 pub mod annotations;
 pub mod auto_redact;
 pub mod bates;
+pub mod bates_batch;
 pub mod booklet;
 pub mod compress;
 pub mod crop;
