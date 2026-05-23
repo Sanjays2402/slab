@@ -4,29 +4,33 @@
 
 ---
 
-## STATUS: v3.8.0 Press Slices 3+4 SHIPPED on `feature/v3.8.0-press` — end-to-end PDF/X-4 conversion works at the library AND Tauri-command level. `convert_to_pdfx4` glues sanitize → font_embed → color → geometry → xmp → output_intent into one entry point. 1318 tests passing, all gates green.
+## STATUS: v3.8.0 Press Slice 6 SHIPPED on `feature/v3.8.0-press` — **PressPanel UI live end-to-end**. Inspect/Convert/Validate tabs, Mod+Shift+X shortcut, sidebar entry, and the magenta press-roller wipe wow with PDF/X-4 ✓ badge reveal. Branch is **feature-complete** for v3.8.0 → MERGE TO MAIN next tick.
 
-**TICK 2026-05-23 10:36 PT (Saturday off-hours)** — MODE C develop. 3 commits, ~675 net LOC + ~400 LOC tests. Session log: `.cron-state/sessions/2026-05-23-1036.md`.
+**TICK 2026-05-23 11:14 PT (Saturday off-hours)** — MODE C develop. 4 commits, ~630 net LOC (PressPanel.svelte 604 + +page.svelte 15 + keymap.ts 1 + keymap/action.rs 8). All gates green (cargo fmt/clippy/test 1318 passing, pnpm check 0 errors). Session log: `.cron-state/sessions/2026-05-23-1114.md`.
 
-### Next tick — Slice 6 (PressPanel UI + magenta wipe wow)
+### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (magenta press-roller wipe — 380ms CMYK ink-roller sweep + PDF/X-4 ✓ FOGRA51/GRACoL2013 badge reveal, reduced-motion safe)
 
-UI is the right next move (Slice 5 validator can be a stub or follow-up).
-Targets:
-- `src/lib/panels/PressPanel.svelte` — Inspect / Convert / Validate tabs.
-- Sidebar entry "Press" between Bedrock and Loom.
-- Cmd+Shift+X shortcut + command-palette entries.
-- **Magenta press-roller wipe anim** (380ms, CMYK ink rollers, reduced-motion safe).
-- "PDF/X-4 ✓ FOGRA51" reveal badge.
-
-After Slice 6 the branch is feature-complete → merge → tag v3.8.0 → release.
-
-### LAST_WOW_TICK_AT: 2026-05-23T16:15Z (Loom Slice 6 sub-badge stagger — Slice 4 was plumbing, daily wow budget already satisfied; Slice 6 next tick MUST ship the magenta wipe to reset the clock)
+### Next tick — MODE A RELEASE
+1. `git checkout main && git pull`
+2. `git merge --no-ff feature/v3.8.0-press -m "Merge v3.8.0 'Press' — one-click PDF/X-4 conversion"`
+3. Bump version 3.7.0 → 3.8.0 across Cargo.toml + tauri.conf.json + package.json.
+4. Quality gates on main.
+5. Tag v3.8.0 with marketing-tone annotation (no emoji in tag/commit per Sanjay's rule).
+6. Push main --follow-tags. Set RELEASE_PENDING for MODE B finalize next tick.
 
 ### What shipped this tick
 
-- `c1360e1 feat(press): geometry pass — TrimBox synthesis + optional 3mm BleedBox (Slice 3)`
-- `05a4188 feat(press): convert_to_pdfx4 orchestrator + PDF/X-4 XMP + OutputIntent (Slice 4)`
-- `3ea4a65 feat(press): slab_press_convert Tauri command — UI can now drive PDF/X-4`
+- `f3ac2a2 feat(press): register press.open keymap action (Mod+Shift+X)`
+- `80de330 feat(press): extend ActionId union with press.open`
+- `826d065 feat(press): PressPanel.svelte — Inspect/Convert/Validate tabs (Slice 6)`
+- `a53766f feat(press): wire PressPanel into +page.svelte (sidebar + shortcut)`
+
+### Buy-Button verdict — PASS on 4 of 4
+
+- Pay-for-it: Acrobat Pro charges $239/yr for PDF/X-4 export → Slab does it free + offline.
+- Notice-it: New sidebar entry + Cmd+Shift+X shortcut.
+- Pick-us: No free cross-platform PDF/X-4 converter exists with a real UI.
+- Tell-a-friend: Magenta press-roller wipe is screenshottable.
 
 ### Ops note
 
