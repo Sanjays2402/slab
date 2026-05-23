@@ -26,6 +26,7 @@
     "pages",
     "pages-list",
     "diff",
+    "stack",
     "slides",
     "tables",
     "markdown",
