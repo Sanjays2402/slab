@@ -4,7 +4,52 @@
 
 ---
 
-## STATUS: v3.4.0 Discovery plan written (planning tick — Bates + legal stamps)
+## STATUS: v3.4.0 Discovery — backend SHIPPED on feature/v3.4.0-discovery-slice-1-3
+
+**TICK 2026-05-23 03:48 PT** — Slices 1-3 of the just-written plan, plus
+Slice 4 (Tauri commands). Backend feature-complete, frontend next tick.
+
+### What shipped (branch `feature/v3.4.0-discovery-slice-1-3`, pushed)
+- `85dc7ad` refactor(bates): extract `bates_label_for()` pure helper + 2 tests
+- `cf21ccd` feat(bates): `bates_batch` module — counter chaining across files
+  + CSV/JSON load file (Relativity/Concordance/Everlaw) + 6 tests
+- `302d0b4` feat(legal-stamp): `legal_stamp.rs` with 4 canonical presets
+  (CONFIDENTIAL/AEO/PRIVILEGED/DRAFT) + Custom text + 9 tests
+- `2b45442` feat(commands): three Tauri IPC entrypoints
+  (`slab_bates_apply`, `slab_bates_batch`, `slab_legal_stamp_apply`)
+  wired into `generate_handler!`
+
+4 commits, +853 net LOC, 17 new unit tests (all green).
+`cargo build --lib` green. `cargo fmt --check` green.
+`cargo test --lib pdf::bates pdf::bates_batch pdf::legal_stamp` → 22 passed.
+
+### Buy-Button audit
+- Pay-for-it: Adobe Acrobat Pro DC ($239/yr) is bought primarily for
+  Bates numbering. Slab now matches Adobe's batch capability — free, offline.
+- Pick-us: Acrobat batches ~5 docs at a time; Slab does the entire
+  production in one call with a CSV index. Direct enterprise win.
+- Notice-it: three new IPC commands ready for the toolbar wiring tick.
+- Tell-a-friend: pending the frontend panel (next tick).
+
+### What's next (Slice 5 — frontend, top priority next tick)
+1. `BatesPanel.svelte` — prefix + digits + start + position + apply (single-file)
+2. `BatesBatchPanel.svelte` — file list + output dir + load-file picker
+3. `LegalStampPanel.svelte` — preset radio + custom text + opacity + apply
+4. Wire into toolbar + Cmd+K command palette + Cmd+Shift+B / Cmd+Shift+S
+5. Then merge to main + release notes + tag v3.4.0.
+
+### Disk story (DANGER)
+Disk hit **0 GiB / 100%** mid-tick during clippy. `cargo clean` reclaimed
+4.0 GiB. NEXT TICK MUST `cargo clean` before touching the build OR
+keep work to Svelte-only files (no Rust compile). Currently 3.2 GiB free.
+
+LAST_WOW_TICK_AT: 2026-05-23 (Indic locales merged earlier this tick window;
+the v3.4.0 ship is more buyer-magnet than wow-screenshot, will pair next
+frontend tick with the live label-preview animation as the wow).
+
+---
+
+## ARCHIVED: v3.4.0 Discovery plan written (planning tick — Bates + legal stamps)
 
 **TICK 2026-05-23 03:32 PT** — planning tick via writing-plans skill.
 
