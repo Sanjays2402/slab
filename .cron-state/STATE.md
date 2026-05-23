@@ -4,7 +4,54 @@
 
 ---
 
-## STATUS: feature/sidebar-cleanup MERGED TO MAIN (d4e6004) + disk reclaimed
+## STATUS: v3.3.0 Bindery plan written (planning tick) + main CI green for d4e6004
+
+**TICK 2026-05-23 03:15 PT** — planning tick via writing-plans skill.
+
+### What shipped
+- **Plan**: `docs/plans/2026-05-23-v3.3.0-bindery-imposition.md` (~34KB,
+  6 slices + release, ~1450 net LOC + ~520 test LOC, 9 commits across slices).
+  Targets the Quite Imposing Plus ($399) / FinePrint ($199) market gap:
+  booklet imposition with creep compensation, gang-up grids, perfect-bound
+  flat-form, plus crop/registration/color-bar print marks. Buy-Button audit
+  passes all 4. WOW = live 60fps signature-shuffle SVG preview.
+- **Verified main CI**: `d4e6004` build green (run 26329915264, 10m30s).
+  Sidebar-cleanup is fully live on main, no follow-up needed.
+
+### Tick-size honesty
+This was a planning tick (writing-plans skill invoked), so it's NOT a ship
+tick by the SHIP-SIZE rule. Logging it as `[cron PLAN]`. Output is 1
+markdown file + 1 STATE update = ~2 commits, but those are documentation,
+not buyer-facing code. Per the writing-plans skill description it's the
+correct mode of work when a skill explicitly directs it.
+
+### Why v3.3.0 Bindery was the right pick
+- v3.0.0–v3.0.2 already shipped (Bedrock/Loupe/Foundry Fonts releases live).
+- v3.1.0 Loom Slice 1 merged; remaining Loom slices already have full plan.
+- v3.2.0 Press plan written 2026-05-22, complete and ready.
+- v3.3.0 Bindery was the next uncovered slot in the pipeline AND was
+  explicitly deferred from v3.2.0 Press as "v3.3.0" in that plan's out-of-scope
+  section. Filling the gap unblocks future ticks.
+- Enterprise wedge: print shops are exactly the "would a 500-person firm
+  buy seats" customer Sanjay called out in the prompt.
+
+### Next-tick options (in priority order)
+1. **Execute v3.3.0 Bindery Slice 1** (the new plan) — 15-20 min, scaffolding
+   only, zero dependencies. Then Slice 2 (marks painters) is the obvious
+   follow-on in the same tick to clear SHIP-SIZE.
+2. **OR resume v3.1.0 Loom Slice 2** (tag tree inference from `/StructTreeRoot`)
+   — plan at `docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md` line 144.
+3. **OR execute v3.2.0 Press Slice 1** (sanitize pass) — plan exists, ready.
+
+Pick whichever lines up best with disk pressure and tick budget. Currently
+1.6 GiB free — TIGHT for a cold rebuild. Consider `cargo clean` before any
+heavy Rust slice; Slice 1 of Bindery is small enough to avoid that.
+
+LAST_WOW_TICK_AT: 2026-05-23 (Indic locales merged earlier this tick window)
+
+---
+
+## ARCHIVED: feature/sidebar-cleanup MERGED TO MAIN (d4e6004) + disk reclaimed
 
 **TICK 2026-05-23 03:00 PT** — clean release tick.
 
