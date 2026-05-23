@@ -32,11 +32,12 @@ ship on Linux at all.
 **Tag**: v3.0.1 pushed.
 
 **RELEASE_PENDING**: v3.0.1 — merge SHA 4a443b3, tag v3.0.1, build
-CI run 26325447602 (in_progress), Docker tag CI run 26325447609
-(in_progress). Both kicked off at 06:11 UTC; expect green in ~10-20
-min. Next tick should poll, download artifacts, publish the GitHub
-release with the marketing-tier notes from
-`docs/release-notes/v3.0.1.md`.
+CI run 26325447602 (bundles in_progress @ 06:24Z; all 3 cargo test
+jobs ALREADY GREEN: linux-x64, macos-arm64, windows-x64), Docker tag
+CI run 26325447609 ✅ SUCCESS. Bundles started 06:11Z, typically take
+20-25min on macOS — expect green by next tick (06:35Z+). Next tick:
+poll `gh run view 26325447602`, `gh run download`, `gh release create
+v3.0.1 --notes-file docs/release-notes/v3.0.1.md` + upload 6 bundles.
 
 **LAST_WOW_TICK_AT**: 2026-05-23T06:11 UTC (Loupe Copy-as-Markdown
 export — screenshot-bait compliance artifact generator).
