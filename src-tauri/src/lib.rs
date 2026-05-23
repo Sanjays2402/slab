@@ -464,6 +464,136 @@ fn slab_loom_matterhorn_digest() -> CmdResult<LoomMatterhornDigest> {
     }
 }
 
+/// Slice 2 result surfaced to the LoomPanel: per-page node counts plus a
+/// few sample headings so the UI can show what the classifier actually
+/// thinks the document's outline looks like.
+#[derive(Serialize)]
+pub struct LoomClassifySummary {
+    pub total_pages: usize,
+    pub total_nodes: usize,
+    pub heading_count: usize,
+    pub paragraph_count: usize,
+    pub list_count: usize,
+    pub list_item_count: usize,
+    pub figure_count: usize,
+    pub artifact_count: usize,
+    /// Up to 20 detected headings as `{level, text}`, in document order.
+    pub headings: Vec<LoomClassifyHeading>,
+    pub pages: Vec<LoomClassifyPage>,
+}
+
+#[derive(Serialize)]
+pub struct LoomClassifyHeading {
+    pub page: u32,
+    pub level: u8,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct LoomClassifyPage {
+    pub page_number: u32,
+    pub headings: usize,
+    pub paragraphs: usize,
+    pub list_items: usize,
+    pub figures: usize,
+    pub artifacts: usize,
+}
+
+#[tauri::command]
+fn slab_loom_classify_summary(input: PathBuf) -> CmdResult<LoomClassifySummary> {
+    use crate::pdf::loom::{classify, extract_layout, NodeKind, StructNode};
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let tree = classify(&layout);
+
+    fn walk_collect(
+        nodes: &[StructNode],
+        page: u32,
+        per_page: &mut LoomClassifyPage,
+        headings: &mut Vec<LoomClassifyHeading>,
+        totals: &mut (usize, usize, usize, usize, usize, usize, usize),
+    ) {
+        for n in nodes {
+            totals.0 += 1; // total
+            match n.kind {
+                NodeKind::Heading(level) => {
+                    totals.1 += 1;
+                    per_page.headings += 1;
+                    if headings.len() < 20 {
+                        let mut text = n.text.trim().to_string();
+                        if text.len() > 120 {
+                            text.truncate(117);
+                            text.push_str("...");
+                        }
+                        headings.push(LoomClassifyHeading { page, level, text });
+                    }
+                }
+                NodeKind::Paragraph => {
+                    totals.2 += 1;
+                    per_page.paragraphs += 1;
+                }
+                NodeKind::List => {
+                    totals.3 += 1;
+                }
+                NodeKind::ListItem => {
+                    totals.4 += 1;
+                    per_page.list_items += 1;
+                }
+                NodeKind::Figure => {
+                    totals.5 += 1;
+                    per_page.figures += 1;
+                }
+                NodeKind::Artifact => {
+                    totals.6 += 1;
+                    per_page.artifacts += 1;
+                }
+                _ => {}
+            }
+            walk_collect(&n.children, page, per_page, headings, totals);
+        }
+    }
+
+    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut headings = Vec::new();
+    let mut pages = Vec::with_capacity(tree.pages.len());
+    for p in &tree.pages {
+        let mut pp = LoomClassifyPage {
+            page_number: p.page_number,
+            headings: 0,
+            paragraphs: 0,
+            list_items: 0,
+            figures: 0,
+            artifacts: 0,
+        };
+        walk_collect(&p.nodes, p.page_number, &mut pp, &mut headings, &mut totals);
+        pages.push(pp);
+    }
+    CmdResult::Ok {
+        value: LoomClassifySummary {
+            total_pages: tree.pages.len(),
+            total_nodes: totals.0,
+            heading_count: totals.1,
+            paragraph_count: totals.2,
+            list_count: totals.3,
+            list_item_count: totals.4,
+            figure_count: totals.5,
+            artifact_count: totals.6,
+            headings,
+            pages,
+        },
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3200,6 +3330,7 @@ pub fn run() {
             slab_outline_starts,
             slab_page_count,
             slab_loom_layout_summary,
+            slab_loom_classify_summary,
             slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
