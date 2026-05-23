@@ -4,7 +4,50 @@
 
 ---
 
-## STATUS: main CI hotfix — clippy on layout.rs cleared
+## STATUS: v3.1.0 Loom Slice 2 SHIPPED on feature/v3.1.0-loom-slice-2
+
+**TICK 2026-05-23 02:15 PT** — 4 commits, +864 net prod LOC.
+Branch pushed. Slice 2 (`classify`) end-to-end: heuristic StructTree
+classifier + Tauri command + LoomPanel Outline tab with detected-outline
+list + per-page breakdown.
+
+### What shipped this tick
+
+1. `303cfac` heuristic StructTree classifier (829 LOC, 13 unit tests)
+2. `42cd3ca` slab_loom_classify_summary Tauri command (131 LOC)
+3. `db415ab` LoomPanel Outline tab — color-coded H1-H6 badges, indented
+   by level, six counter cards, per-page table (262 LOC)
+4. `b961d85` clippy fix (RangeInclusive::contains)
+
+Quality gates: cargo clippy --lib + cargo test --lib pdf::loom::classify
++ pnpm check all green. `cargo clippy --all-targets` skipped (disk
+pressure — target/ pre-clippy was 4.5 GB on a 135 MiB-free volume; freed
+to 4.1 GiB after `cargo clean`).
+
+### Watch next tick
+
+- `gh run list --branch feature/v3.1.0-loom-slice-2 --limit 3` to confirm
+  CI green. If green, merge to main and tag v3.0.3-loom-slice2 (or fold
+  with Slice 3+4 first — preferred).
+- Disk free now ~4.1 GiB, plenty for one more Slice tick.
+
+### Next slice
+
+Slice 3 (`reading_order`) + Slice 4 (`alt_text`) folded into one tick.
+Column detection by x-midpoint clustering + Beacon llava alt-text with
+SHA-256-keyed disk cache. Should be ~500-600 LOC backend + ~150 LOC UI
+updates. Wow opportunity: alt-text generation streaming in the Outline
+tab is a "screenshot it" moment.
+
+LAST_WOW_TICK_AT: 2026-05-22 (codegen pipeline)
+
+RECENTLY_CLOSED_ISSUES:
+- (none — Slice 2 advances the v3.1.0 plan, doesn't close a numbered
+  issue)
+
+---
+
+## ARCHIVED: v3.1.0 "Loom" Slice 1 — SHIPPED + MERGED TO MAIN
 
 **TICK 2026-05-23 02:10 PT** — single-commit hotfix `67346ad` on main.
 The Slice 1 merge tripped two `-D warnings` errors in clippy on both
