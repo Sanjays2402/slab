@@ -4,7 +4,39 @@
 
 ---
 
-## STATUS: v3.9.0 Quill RELEASED (mac arm64+x64 dmg, win nsis+msi). Linux deferred to v3.9.1 (disk ENOSPC). v3.10.0 Signet ready to start.
+## STATUS: v3.10.0 Signet foundation landed on feature/v3.10.0-signet — identity loader + trust store, 17 tests passing. NOT shippable yet (Tasks 4+5 still owed: sign + verify).
+
+**TICK 2026-05-23 13:19 PT (Saturday off-hours)** — MODE C develop, foundation tick.
+3 commits, ~1100 LOC + 17 new tests, on `feature/v3.10.0-signet`:
+- `c051a24` chore(signet): vendor RustCrypto CMS deps + ADR 0011
+- `f013237` feat(signet): SigningIdentity PEM loader (RSA / P-256 / P-384)
+- `edcdc89` feat(signet): TrustStore + chain status enum
+
+Quality gates green: cargo fmt + clippy + cargo test --lib **1346 passing** (+17 new), pnpm check 0 errors. Pushed to origin.
+
+### Honest buy-button verdict: foundation, not ship
+Plumbing only — no UI, no end-to-end sign/verify. Risk-reduced the CMS work
+by getting identity + trust right before touching the finicky
+`cms::SignedDataBuilder` API.
+
+### Next tick — Task 4 (sign pipeline, end-to-end)
+1. `cms_blob.rs` — `build_pkcs7_detached(digest, identity, time)`.
+   Reference: `~/.cargo/registry/.../cms-0.2.3/tests/builder.rs:86-156`.
+2. `sign.rs` — `prepare_signature_field` + `sign_pdf` (byte-range splice).
+3. Tauri command `slab_signet_sign` + minimal SignetPanel.
+4. Target: 600+ LOC, end-to-end "load identity → sign PDF → file on disk".
+
+After Task 4 the buy-button passes for the FIRST time on this version.
+
+### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (Quill press-roller — within 24h)
+
+### Ops
+Disk dropped from 5.2 Gi → 1.7 Gi during this tick (full `target/` rebuild
+after Quill release). Next compile may need `cargo clean -p slab-app` again.
+
+---
+
+## PRIOR STATUS: v3.9.0 Quill RELEASED (mac arm64+x64 dmg, win nsis+msi). Linux deferred to v3.9.1 (disk ENOSPC). v3.10.0 Signet ready to start.
 
 **TICK 2026-05-23 13:07 PT (Saturday off-hours)** — MODE B FINALIZE.
 CI run 26341610206 all green. Tagged `098f11b` → `v3.9.0`, pushed tag, created
