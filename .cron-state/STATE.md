@@ -4,7 +4,66 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro kickoff — plan + ADR 0012 + module scaffolding on feature/v3.11.0-signet-pro.
+## STATUS: v3.11.0 Signet Pro — Tasks 2/3/4/5 shipped (TSA encoder+parser, appearance, batch driver).
+
+**TICK 2026-05-23 15:32 PT (Saturday off-hours)** — writing-plans skill: plan
+already saved last tick, this tick *executes* it.
+
+Branch: `feature/v3.11.0-signet-pro` — 3 new commits (`552a859`, `41a88f3`,
+`8c85371`) on top of last tick's scaffold + plan, total 4 commits / ~950 LOC
+this tick (953 insertions across 4 files). Plus rayon dep added.
+
+Shipped this tick:
+- **Task 2 + 3 (parse half):** RFC 3161 `TimeStampReq` DER encoder +
+  `TimeStampResp` parser in `signet_pro/tsa.rs`. Canonical-integer nonce
+  normalisation (so `der::asn1::Int` accepts the full i64 range);
+  `ID_AA_TIMESTAMP_TOKEN` OID exported for CMS unsigned-attr embedding.
+  7 unit tests.
+- **Task 4:** `build_appearance` + `build_appearance_from_name` Form
+  XObject builder in `signet_pro/appearance.rs`. 0.5pt grey border +
+  Helvetica BT/ET text, PDF-literal-string escaping, font-size clamp,
+  optional date/reason/location lines. 9 unit tests.
+- **Task 5:** Batch driver in `signet_pro/batch.rs` — `plan_batch` walks
+  for *.pdf (recursive opt-in), `run_batch` executes via rayon with
+  atomic-counter progress, `BatchReport` with `success_rate`,
+  `fully_succeeded`, `failures()`. 10 unit tests including a full
+  `sign_folder` end-to-end smoke test (pretend-sign 3 PDFs).
+
+**signet_pro now has 25 passing tests** (was 0 last tick). Full signet+pro
+suite: 59/59 green.
+
+Quality gates this tick:
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓ (fixed bool_assert_comparison,
+  derive Default, and ok().expect() lints raised by the new code)
+- `cargo test --lib pdf::signet` → 59/59 PASS
+- `pnpm check` → 0 errors, 63 warnings (all pre-existing a11y nits)
+
+**Disk: 5.4 GiB free** after `cargo clean` (was at 124 MiB before — full
+clean ran mid-tick to unblock the link step).
+
+Buy-Button test: TSA encoding + batch parallel sign are Acrobat Pro $239/yr
+exclusives, both now implemented offline in Slab. Pay-for-it ✓, Pick-us ✓.
+
+### Next tick — finish Task 3 (HTTP fetch) + Task 4 wiring into sign_pdf
+1. `fetch_timestamp(url, req)` — reqwest blocking POST with
+   `application/timestamp-query` content-type. Mock via mockito in tests.
+2. Embed returned TST as `id-aa-timeStampToken` unsigned attr in
+   `signet::sign::sign_pdf` SignerInfo (CAdES-T upgrade).
+3. Wire `SignOptions::appearance` → swap invisible Widget for AP/N form-
+   XObject Widget at the spec.rect on spec.page.
+4. Frontend BatchSignPanel.svelte (Task 6) — can land alongside in same tick
+   if scope allows.
+
+### LAST_WOW_TICK_AT: 2026-05-23T22:32Z (batch parallel sign with progress
+events — the demo screenshot Sanjay will tweet)
+
+### RECENTLY_CLOSED_ISSUES:
+- (none open)
+
+---
+
+## PRIOR STATUS: v3.11.0 Signet Pro kickoff — plan + ADR 0012 + module scaffolding on feature/v3.11.0-signet-pro.
 
 **TICK 2026-05-23 15:14 PT (Saturday off-hours)** — writing-plans skill invocation.
 
