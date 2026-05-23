@@ -594,6 +594,129 @@ fn slab_loom_classify_summary(input: PathBuf) -> CmdResult<LoomClassifySummary> 
     }
 }
 
+/// Slice 3 result for the LoomPanel Outline tab: per-page column count
+/// + sample of the first N reading-order labels so users can see Loom's
+/// re-ordering live.
+#[derive(Serialize)]
+pub struct LoomReadingOrderSummary {
+    pub total_pages: usize,
+    /// Pages on which Loom detected ≥ 2 narrow column bands.
+    pub multi_column_pages: usize,
+    /// Total reading-flow nodes (excludes artifacts).
+    pub total_reading_nodes: usize,
+    /// Total page-spanning nodes (figures, headings that cross columns,
+    /// full-width banners).
+    pub total_spanners: usize,
+    pub pages: Vec<LoomReadingOrderPage>,
+    /// First up to 40 reading-flow node labels in correct order across
+    /// the document. Useful preview for the LoomPanel.
+    pub flow_preview: Vec<LoomReadingOrderFlowEntry>,
+}
+
+#[derive(Serialize)]
+pub struct LoomReadingOrderPage {
+    pub page_number: u32,
+    pub column_count: usize,
+    pub spanner_count: usize,
+    pub artifact_count: usize,
+    pub reading_node_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct LoomReadingOrderFlowEntry {
+    pub page: u32,
+    /// PDF tag (P, H1..H6, L, LI, Figure, Caption, Artifact).
+    pub tag: &'static str,
+    /// First 80 chars of the node text.
+    pub text: String,
+}
+
+#[tauri::command]
+fn slab_loom_reading_order_summary(input: PathBuf) -> CmdResult<LoomReadingOrderSummary> {
+    use crate::pdf::loom::{classify, extract_layout, order_reading, NodeKind, StructNode};
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let tree = classify(&layout);
+    let geometry: Vec<(f32, f32)> = layout.pages.iter().map(|p| (p.width, p.height)).collect();
+    let order = order_reading(&tree, &geometry);
+
+    fn trunc(s: &str) -> String {
+        let t = s.trim();
+        if t.chars().count() > 80 {
+            let mut out: String = t.chars().take(77).collect();
+            out.push_str("...");
+            out
+        } else {
+            t.to_string()
+        }
+    }
+
+    fn flatten<'a>(out: &mut Vec<&'a StructNode>, nodes: &'a [StructNode]) {
+        for n in nodes {
+            out.push(n);
+            flatten(out, &n.children);
+        }
+    }
+
+    let mut total_reading_nodes = 0usize;
+    let mut total_spanners = 0usize;
+    let mut pages = Vec::with_capacity(order.pages.len());
+    let mut flow_preview: Vec<LoomReadingOrderFlowEntry> = Vec::new();
+    for p in &order.pages {
+        let mut flat: Vec<&StructNode> = Vec::new();
+        flatten(&mut flat, &p.nodes);
+        let reading_node_count = flat
+            .iter()
+            .filter(|n| !matches!(n.kind, NodeKind::Artifact))
+            .count();
+        total_reading_nodes += reading_node_count;
+        total_spanners += p.spanner_count;
+        pages.push(LoomReadingOrderPage {
+            page_number: p.page_number,
+            column_count: p.column_count,
+            spanner_count: p.spanner_count,
+            artifact_count: p.artifact_count,
+            reading_node_count,
+        });
+        for n in flat.into_iter() {
+            if flow_preview.len() >= 40 {
+                break;
+            }
+            // Skip empty figure placeholders + artifacts in the preview —
+            // they'd add noise without showing the reading order.
+            let text = trunc(&n.text);
+            if text.is_empty() && !matches!(n.kind, NodeKind::Figure) {
+                continue;
+            }
+            flow_preview.push(LoomReadingOrderFlowEntry {
+                page: p.page_number,
+                tag: n.kind.tag(),
+                text,
+            });
+        }
+    }
+    CmdResult::Ok {
+        value: LoomReadingOrderSummary {
+            total_pages: order.pages.len(),
+            multi_column_pages: order.multi_column_pages(),
+            total_reading_nodes,
+            total_spanners,
+            pages,
+            flow_preview,
+        },
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3331,6 +3454,7 @@ pub fn run() {
             slab_page_count,
             slab_loom_layout_summary,
             slab_loom_classify_summary,
+            slab_loom_reading_order_summary,
             slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
