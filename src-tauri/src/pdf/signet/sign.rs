@@ -29,6 +29,7 @@ use lopdf::{dictionary, Document, Object, ObjectId};
 
 use super::cms_blob::{build_pkcs7_detached, sha256};
 use super::identity::{SignetError, SigningIdentity};
+use crate::pdf::signet_pro::appearance::{build_appearance, AppearanceSpec};
 
 /// Hex-window size for `/Contents`. 16 384 hex chars = 8192 binary bytes —
 /// generous headroom over a typical RSA-2048 PKCS#7 blob (~2 KiB) plus
@@ -51,6 +52,11 @@ pub struct SignOptions {
     pub contact_info: Option<String>,
     /// Field name. Defaults to `Signature1` (or `Signature{N}` if taken).
     pub field_name: Option<String>,
+    /// Optional visible signature appearance. When set, the widget gets a
+    /// non-zero `/Rect` and an `/AP << /N <form-xobject> >>` so viewers
+    /// render a visible stamp. When `None`, the signature is invisible
+    /// (the v3.10.0 default).
+    pub appearance: Option<AppearanceSpec>,
 }
 
 /// Outcome of a successful sign operation.
@@ -135,20 +141,75 @@ pub fn sign_pdf(
     }
     let sig_obj_id: ObjectId = doc.add_object(Object::Dictionary(sig_dict));
 
-    // 3. Build a (invisible) widget annotation on page 0 with a 0×0 rect.
-    //    Acrobat renders a default appearance; v3.10.1 will offer a visible
-    //    wax-seal /AP stream.
-    let page_id = first_page_id(&doc)?;
-    let widget_id = doc.add_object(Object::Dictionary(dictionary! {
+    // 3. Build a widget annotation. If `opts.appearance` is set we attach
+    //    a Form XObject as `/AP /N` and use the spec's rect + page.
+    //    Otherwise the widget is invisible (0×0 rect on the first page,
+    //    `F = 132` = Print | NoView), matching the v3.10.0 default.
+    let (page_id, rect_array, ap_ref, widget_flags) = match opts.appearance.as_ref() {
+        Some(spec) => {
+            let page_id = nth_page_id(&doc, spec.page.max(1) as usize)?;
+            let app = build_appearance(identity, spec);
+            // Wrap the content stream in a Form XObject. Resources reference
+            // Helvetica via /F1 — a standard 14 PDF font, no embedding needed.
+            let fonts_dict = {
+                let mut d = lopdf::Dictionary::new();
+                for (name, base) in &app.fonts {
+                    let font_id = doc.add_object(Object::Dictionary(dictionary! {
+                        "Type" => "Font",
+                        "Subtype" => "Type1",
+                        "BaseFont" => base.to_string().as_str(),
+                        "Encoding" => "WinAnsiEncoding",
+                    }));
+                    d.set(name.as_str(), Object::Reference(font_id));
+                }
+                d
+            };
+            let resources = dictionary! { "Font" => Object::Dictionary(fonts_dict) };
+            let xobject_dict = dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "FormType" => 1i64,
+                "BBox" => Object::Array(vec![
+                    Object::Real(app.bbox[0]),
+                    Object::Real(app.bbox[1]),
+                    Object::Real(app.bbox[2]),
+                    Object::Real(app.bbox[3]),
+                ]),
+                "Resources" => Object::Dictionary(resources),
+            };
+            let xobj = lopdf::Stream::new(xobject_dict, app.content_stream);
+            let xobj_id = doc.add_object(Object::Stream(xobj));
+            let ap_dict = dictionary! { "N" => Object::Reference(xobj_id) };
+            let ap_id = doc.add_object(Object::Dictionary(ap_dict));
+            let rect = Object::Array(vec![
+                Object::Real(spec.rect[0]),
+                Object::Real(spec.rect[1]),
+                Object::Real(spec.rect[2]),
+                Object::Real(spec.rect[3]),
+            ]);
+            // F = 4 (Print) — visible, printable, no NoView.
+            (page_id, rect, Some(ap_id), 4i64)
+        }
+        None => {
+            let page_id = first_page_id(&doc)?;
+            let rect = Object::Array(vec![0.into(), 0.into(), 0.into(), 0.into()]);
+            (page_id, rect, None, 132i64)
+        }
+    };
+    let mut widget_dict = dictionary! {
         "Type" => "Annot",
         "Subtype" => "Widget",
         "FT" => "Sig",
         "T" => Object::string_literal(field_name.clone()),
-        "F" => 132i64, // Print | NoView (Acrobat treats invisible-sig fields this way)
-        "Rect" => Object::Array(vec![0.into(), 0.into(), 0.into(), 0.into()]),
+        "F" => widget_flags,
+        "Rect" => rect_array,
         "P" => Object::Reference(page_id),
         "V" => Object::Reference(sig_obj_id),
-    }));
+    };
+    if let Some(ap_id) = ap_ref {
+        widget_dict.set("AP", Object::Reference(ap_id));
+    }
+    let widget_id = doc.add_object(Object::Dictionary(widget_dict));
 
     // 4. Wire AcroForm + page Annots.
     attach_widget_to_page(&mut doc, page_id, widget_id)?;
@@ -346,6 +407,22 @@ fn first_page_id(doc: &Document) -> Result<ObjectId, SignetError> {
     pages
         .into_iter()
         .next()
+        .map(|(_, id)| id)
+        .ok_or_else(|| SignetError::InvalidCert("PDF has no pages".into()))
+}
+
+/// 1-indexed page lookup. Falls back to the first page if `n` exceeds the
+/// page count (e.g. caller asked for page 7 of a 3-page document).
+fn nth_page_id(doc: &Document, n: usize) -> Result<ObjectId, SignetError> {
+    let pages = doc.get_pages();
+    let total = pages.len();
+    if total == 0 {
+        return Err(SignetError::InvalidCert("PDF has no pages".into()));
+    }
+    let target = n.max(1).min(total);
+    pages
+        .into_iter()
+        .nth(target - 1)
         .map(|(_, id)| id)
         .ok_or_else(|| SignetError::InvalidCert("PDF has no pages".into()))
 }

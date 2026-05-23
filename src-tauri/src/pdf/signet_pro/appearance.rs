@@ -8,9 +8,7 @@
 //! [`SigningIdentity`] it produces the byte content of a PDF Form XObject's
 //! content stream plus the dictionary entries that Widget assemblers need
 //! (`/BBox`, `/Resources`, `/FormType`). The actual splicing into the PDF
-//! document graph happens in `signet::sign::sign_pdf` (Task 4 follow-up).
-
-#![allow(dead_code)] // Wired into sign_pdf in a follow-up tick.
+//! document graph happens in `signet::sign::sign_pdf`.
 
 use crate::pdf::signet::SigningIdentity;
 

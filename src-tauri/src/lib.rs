@@ -3893,6 +3893,23 @@ pub struct SignetSignArgs {
     pub location: Option<String>,
     pub contact_info: Option<String>,
     pub field_name: Option<String>,
+    /// Optional visible signature appearance. When `None`, the signature is
+    /// invisible (legacy v3.10.0 behaviour). When `Some`, a Form XObject
+    /// stamp is rendered on the specified page + rect.
+    pub appearance: Option<SignetAppearanceArgs>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SignetAppearanceArgs {
+    /// 1-indexed page number.
+    pub page: u32,
+    /// `[llx, lly, urx, ury]` in PDF user-space units.
+    pub rect: [f32; 4],
+    pub show_name: Option<bool>,
+    pub show_date: Option<bool>,
+    pub show_reason: Option<bool>,
+    pub show_location: Option<bool>,
+    pub font_size: Option<f32>,
 }
 
 #[derive(serde::Serialize)]
@@ -3941,6 +3958,54 @@ async fn signet_load_identity(
     })
 }
 
+/// Format a Unix timestamp (seconds since epoch) as "YYYY-MM-DD HH:MM UTC".
+/// Used to seed the visible-signature appearance date line. No chrono dep.
+fn format_utc_human(secs: i64) -> String {
+    const SECS_PER_DAY: i64 = 86_400;
+    let mut days = secs.div_euclid(SECS_PER_DAY);
+    let t = secs.rem_euclid(SECS_PER_DAY) as u32;
+    let h = t / 3600;
+    let mi = (t % 3600) / 60;
+    let mut y: i64 = 1970;
+    loop {
+        let dy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if days < dy {
+            break;
+        }
+        days -= dy;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let dim = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut mo = 1u32;
+    let mut d = days as u32;
+    for (i, &dm) in dim.iter().enumerate() {
+        if d < dm {
+            mo = i as u32 + 1;
+            break;
+        }
+        d -= dm;
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", y, mo, d + 1, h, mi)
+}
+
 #[tauri::command]
 async fn signet_sign(args: SignetSignArgs) -> Result<SignetSignResultDto, String> {
     let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
@@ -3950,10 +4015,34 @@ async fn signet_sign(args: SignetSignArgs) -> Result<SignetSignResultDto, String
     )
     .map_err(|e| e.to_string())?;
     let opts = crate::pdf::signet::SignOptions {
-        reason: args.reason,
-        location: args.location,
+        reason: args.reason.clone(),
+        location: args.location.clone(),
         contact_info: args.contact_info,
         field_name: args.field_name,
+        appearance: args.appearance.map(|a| {
+            use crate::pdf::signet_pro::appearance::AppearanceSpec;
+            // Best-effort human signing-time string (UTC). Format: "YYYY-MM-DD HH:MM UTC".
+            let when = {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                format_utc_human(secs)
+            };
+            AppearanceSpec {
+                page: a.page.max(1),
+                rect: a.rect,
+                font_size: a.font_size.unwrap_or(9.0),
+                show_name: a.show_name.unwrap_or(true),
+                show_date: a.show_date.unwrap_or(true),
+                show_reason: a.show_reason.unwrap_or(args.reason.is_some()),
+                show_location: a.show_location.unwrap_or(args.location.is_some()),
+                image: None,
+                reason: args.reason.clone(),
+                location: args.location.clone(),
+                signing_time: Some(when),
+            }
+        }),
     };
     let report = crate::pdf::signet::sign_pdf(
         std::path::Path::new(&args.input_path),
@@ -4060,9 +4149,7 @@ async fn signet_pro_batch_sign(
     app: tauri::AppHandle,
     args: SignetProBatchArgs,
 ) -> Result<SignetProBatchReportDto, String> {
-    use crate::pdf::signet_pro::batch::{
-        sign_folder, BatchOptions, NameStrategy,
-    };
+    use crate::pdf::signet_pro::batch::{sign_folder, BatchOptions, NameStrategy};
     let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
         std::path::Path::new(&args.cert_pem_path),
         std::path::Path::new(&args.key_pem_path),
@@ -4102,6 +4189,7 @@ async fn signet_pro_batch_sign(
                     location: location.clone(),
                     contact_info: None,
                     field_name: None,
+                    appearance: None,
                 };
                 // Ensure output dir exists for each parent — cheap, idempotent.
                 if let Some(p) = job.output.parent() {
