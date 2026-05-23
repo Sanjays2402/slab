@@ -39,6 +39,7 @@ pub enum ActionId {
     TheaterToggleInk,
     TheaterExit,
     BedrockOpen,
+    PressOpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +245,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Archive as PDF/A",
         group: "Archive",
         default_binding: "Mod+Shift+A",
+    },
+    ActionInfo {
+        id: ActionId::PressOpen,
+        key: "press.open",
+        label: "Convert to PDF/X-4 (Press)",
+        group: "Press",
+        default_binding: "Mod+Shift+X",
     },
 ];
 
