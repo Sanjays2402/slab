@@ -50,6 +50,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # PDF manipulation: pure-Rust, no native deps
 lopdf = "0.40"
 
+# TrueType inspection for PDF/A font-embed pass (v3.0.2 Foundry Fonts)
+ttf-parser = { version = "0.21", default-features = false, features = ["std"] }
+
 # Markdown parser for md2pdf
 pulldown-cmark = { version = "0.12", default-features = false }
 
