@@ -372,3 +372,121 @@ pub fn make_table_pdf(path: &Path) {
     doc.trailer.set("ID", id_obj);
     doc.save(path).unwrap();
 }
+
+/// Build a 1-page PDF containing one image XObject (RGB gradient, JPEG
+/// q=85) of the requested pixel dimensions. Used by the v3.6.0 Compactor
+/// tests as a bloat target we can downsample + re-encode.
+pub fn make_pdf_with_image(path: &Path, width: u32, height: u32) {
+    use image::{codecs::jpeg::JpegEncoder, ColorType, RgbImage};
+
+    // Synthetic RGB gradient (not flat — flat colors compress to nothing
+    // and would defeat the test). Mix R,G,B per pixel so JPEG can't
+    // trivially collapse it.
+    let mut img = RgbImage::new(width, height);
+    for (x, y, px) in img.enumerate_pixels_mut() {
+        let r = (x % 256) as u8;
+        let g = (y % 256) as u8;
+        let b = ((x.wrapping_add(y)) % 256) as u8;
+        *px = image::Rgb([r, g, b]);
+    }
+    let mut jpeg = Vec::with_capacity((width * height) as usize / 4);
+    {
+        let mut enc = JpegEncoder::new_with_quality(&mut jpeg, 85);
+        enc.encode(img.as_raw(), width, height, ColorType::Rgb8.into())
+            .expect("encode jpeg");
+    }
+
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    // Image XObject stream — DCTDecode so the JPEG bytes are the stream content.
+    let mut image_stream = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => width as i64,
+            "Height" => height as i64,
+            "BitsPerComponent" => 8_i64,
+            "ColorSpace" => "DeviceRGB",
+            "Filter" => "DCTDecode",
+        },
+        jpeg,
+    );
+    // Important: lopdf would otherwise FlateEncode the stream content on
+    // save, which would invalidate the DCTDecode filter (double-encoded).
+    image_stream.allows_compression = false;
+    let image_id = doc.add_object(image_stream);
+
+    let resources_id = doc.add_object(dictionary! {
+        "XObject" => dictionary! { "Im1" => image_id },
+    });
+
+    // Content stream draws the image to fill the page.
+    let content = lopdf::content::Content {
+        operations: vec![
+            lopdf::content::Operation::new("q", vec![]),
+            lopdf::content::Operation::new(
+                "cm",
+                vec![
+                    612.into(),
+                    0.into(),
+                    0.into(),
+                    792.into(),
+                    0.into(),
+                    0.into(),
+                ],
+            ),
+            lopdf::content::Operation::new("Do", vec!["Im1".into()]),
+            lopdf::content::Operation::new("Q", vec![]),
+        ],
+    };
+    let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => resources_id,
+        "Contents" => content_id,
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+    doc.save(path).unwrap();
+}
+
+#[cfg(test)]
+mod fixture_self_tests {
+    use super::*;
+    use lopdf::Document;
+
+    #[test]
+    fn make_pdf_with_image_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("img.pdf");
+        make_pdf_with_image(&p, 300, 300);
+        let doc = Document::load(&p).unwrap();
+        let has_image = doc.objects.values().any(|o| {
+            o.as_stream()
+                .ok()
+                .and_then(|s| s.dict.get(b"Subtype").ok())
+                .and_then(|v| v.as_name().ok())
+                == Some(b"Image".as_ref())
+        });
+        assert!(has_image, "fixture must include image XObject");
+        assert!(
+            std::fs::metadata(&p).unwrap().len() > 5_000,
+            "image-bearing PDF should be > 5 KB"
+        );
+    }
+}
