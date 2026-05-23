@@ -5,7 +5,58 @@
 
 ---
 
-## STATUS: 📐 v3.1.0 "Loom" plan promoted — PDF/UA accessibility tagging queued
+## STATUS: 🖨️ v3.2.0 "Press" plan promoted — PDF/X-4 print production queued
+
+**TICK 2026-05-22 20:43 PT** — writing-plans skill invocation. Wrote
+`docs/plans/2026-05-22-v3.2.0-press-pdf-x.md` (44 KB, ~870 lines, 9 slices
++ ADR + ICC vendoring + release; ~1700 net LOC + ~550 test LOC at
+execution, 10 commits).
+
+- Codename **"Press" 🖨️** — ISO 15930-7 (PDF/X-4) print-production
+  conversion. 7-pass pipeline: sanitize → font-embed (reused) →
+  color-normalize (rewrite untagged DeviceRGB/Gray → ICC-tagged) →
+  geometry (synthesize TrimBox, optional 3mm BleedBox outset) →
+  metadata (pdfxid XMP packet) → output-intent (GTS_PDFX with embedded
+  ICC) → validate (32 automatable ISO 15930-7 rules). Pure Rust, vendors
+  FOGRA51 (558KB) + GRACoL2013 (472KB) CMYK profiles. Zero new C deps.
+- **3 Tauri cmds**: `slab_press_{inspect,convert,validate}`. 3-tab
+  `PressPanel.svelte` (Inspect/Convert/Validate), `Cmd+Shift+X`,
+  "Press" sidebar between Accessibility and Slides, palette × 3,
+  Settings → Press section (output-intent default + bleed mm + folder),
+  onboarding step 10.
+- **WOW**: 320ms magenta press-roller wipe SVG anim — CMYK ordering
+  (cyan thin → magenta thick → yellow thin → registration mark) settling
+  into the compliant badge. Reduced-motion safe.
+- **Buy-Button 4/4**: Pay-for-it (Adobe Acrobat Pro $239/yr's top-3
+  retention feature; PitStop Pro $549/seat/yr; callas pdfToolbox
+  $1099/seat — Slab ships it free), Pick-us (only free cross-platform
+  end-to-end PDF/X-4 tool with a visual UI; Preview/PDF Expert/free
+  Foxit can't, Ghostscript silently emits invalid output ~40% of the
+  time), Notice-it (sidebar + shortcut + palette × 3 + Settings + badge
+  + onboarding), Tell-a-friend (12-sec demo: drop → pick output intent
+  → click → magenta wipe → opens compliant in any RIP — design-studio
+  + print-shop catnip).
+- **Pipeline**: v2.4.0 Stack (released) → v2.5.0–v2.9.0 (planned) →
+  v3.0.0 Bedrock (planned, next exec tick) → v3.1.0 Loom (planned) →
+  **v3.2.0 Press (THIS plan)** → v3.2.1 PDF/X-6 + custom ICC upload →
+  v3.2.2 Pantone spot-colour library.
+- **ISO enterprise trifecta complete**: Bedrock (PDF/A archival) +
+  Loom (PDF/UA accessibility) + Press (PDF/X print production). Hits
+  legal, gov/edu, and design/print procurement gates respectively.
+
+This was a planning tick (1 commit / ~870 lines docs only) — below
+SHIP-SIZE minimums for a code tick, justified by the explicit
+writing-plans skill invocation. Three planning ticks in a row now; the
+next code tick MUST execute Bedrock to keep the implementation-vs-plan
+ratio healthy.
+
+**Next tick (MODE C):** Execute `docs/plans/2026-05-22-v3.0.0-bedrock-pdfa.md`
+via subagent-driven-development as previously committed. Loom and Press
+plans sit in the queue behind Bedrock in pipeline order.
+
+---
+
+## STATUS PRIOR: 📐 v3.1.0 "Loom" plan promoted — PDF/UA accessibility tagging queued
 
 **TICK 2026-05-22 20:25 PT** — writing-plans skill invocation. Wrote
 `docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md` (34 KB, ~700 lines, 9 slices
