@@ -80,11 +80,11 @@
     { id: "library-search", label: "Search Library", icon: "⌕", ready: true },
     { id: "beacon", label: "Beacon AI", icon: "✦", ready: true },
     { id: "search", label: "Beacon Search", icon: "⌕", ready: true },
-    { id: "pii", label: "PII Redact", icon: "🔒", ready: true },
-    { id: "citations", label: "Citations", icon: "📑", ready: true },
-    { id: "study", label: "Study", icon: "🎓", ready: true },
-    { id: "glossary", label: "Glossary", icon: "📖", ready: true },
-    { id: "voice", label: "Voice", icon: "🔊", ready: true },
+    { id: "pii", label: "PII Redact", icon: "◍", ready: true },
+    { id: "citations", label: "Citations", icon: "❞", ready: true },
+    { id: "study", label: "Study", icon: "⊜", ready: true },
+    { id: "glossary", label: "Glossary", icon: "⌥", ready: true },
+    { id: "voice", label: "Voice", icon: "◊", ready: true },
     { id: "merge", label: "Merge", icon: "⧉", ready: true },
     { id: "split", label: "Split", icon: "⎯", ready: true },
     { id: "split-chapter", label: "Split by Chapter", icon: "✂", ready: true },
@@ -112,17 +112,14 @@
     { id: "flatten", label: "Flatten", icon: "▤", ready: true },
     { id: "sanitize", label: "Sanitize", icon: "⊗", ready: true },
     { id: "repair", label: "Repair", icon: "✚", ready: true },
-    { id: "ocr", label: "OCR", icon: "👁", ready: true },
+    { id: "ocr", label: "OCR", icon: "◉", ready: true },
     { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "stack", label: "Compare", icon: "⇄", ready: true },
-    { id: "bedrock", label: "Archive (PDF/A)", icon: "📐", ready: true },
+    { id: "bedrock", label: "Archive (PDF/A)", icon: "⌬", ready: true },
     { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
-    { id: "theater", label: "Theater", icon: "🎬", ready: true },
-    { id: "settings", label: "Settings", icon: "⚙", ready: true },
-    { id: "plugins", label: "Plugins", icon: "🧩", ready: true },
-    { id: "keymap", label: "Shortcuts", icon: "⌨", ready: true },
+    { id: "theater", label: "Theater", icon: "❖", ready: true },
   ];
 
   let active = $state("reader");
@@ -750,7 +747,30 @@
         {/each}
       </div>
     {/if}
-    <span class="version">v{__APP_VERSION__}</span>
+    <div class="meta-row" role="group" aria-label="Slab meta">
+      <button
+        class="meta-btn"
+        class:active={active === "settings"}
+        title={$tStore("features.settings")}
+        aria-label={$tStore("features.settings")}
+        onclick={() => (active = "settings")}
+      >⚙</button>
+      <button
+        class="meta-btn"
+        class:active={active === "plugins"}
+        title={$tStore("features.plugins")}
+        aria-label={$tStore("features.plugins")}
+        onclick={() => (active = "plugins")}
+      >⊕</button>
+      <button
+        class="meta-btn"
+        class:active={active === "keymap"}
+        title={$tStore("features.keymap")}
+        aria-label={$tStore("features.keymap")}
+        onclick={() => (active = "keymap")}
+      >⌨</button>
+      <span class="version">v{__APP_VERSION__}</span>
+    </div>
   </div>
 </aside>
 
@@ -1167,9 +1187,53 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: hidden;
+    overflow-y: auto;
     padding: 28px 36px 36px;
     min-height: 0;
+    align-items: stretch;
+  }
+  /* Centre the content stream once the viewport gets wide (fullscreen).
+     Each panel caps its own readable width; the wrapper just keeps it
+     pinned to the horizontal middle so the layout doesn't drift left. */
+  .content > :global(*) {
+    width: 100%;
+    max-width: 1100px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 4px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+  }
+  .meta-btn {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-2);
+    border-radius: var(--r-sm);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .meta-btn:hover { background: var(--bg-3); color: var(--text); }
+  .meta-btn.active {
+    background: var(--bg-3);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .meta-row .version {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: 0.4px;
   }
 
   /* ---------- Tab strip (Reader only) ---------- */

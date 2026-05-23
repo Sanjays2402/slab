@@ -153,5 +153,10 @@
   "settings.theater.cta": "Ouvrir le panneau Théâtre",
   "onboarding.theater.title": "Présentez depuis un document",
   "onboarding.theater.body": "Pressez ⇧⌘P (ou Ctrl+Shift+P sur Windows/Linux) sur un PDF ouvert pour lancer Théâtre — fenêtre audience sur le second écran, panneau présentateur avec minuteur, notes, encre et laser.",
-  "onboarding.theater.hint": "Échap quitte Théâtre ; B fait l'écran noir ; I bascule le stylo."
+  "onboarding.theater.hint": "Échap quitte Théâtre ; B fait l'écran noir ; I bascule le stylo.",
+  "features.loom": "Loom (PDF/UA)",
+  "features.stack": "Comparer",
+  "features.bedrock": "Archive (PDF/A)",
+  "features.loupe": "Loupe (vérif PDF/A)",
+  "features.theater": "Théâtre"
 }

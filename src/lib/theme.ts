@@ -21,7 +21,7 @@ import { writable, get } from "svelte/store";
 import { isInTauri } from "$lib/tauri";
 import { clearPluginTheme } from "$lib/pluginThemes";
 
-export type ThemeMode = "auto" | "light" | "dark";
+export type ThemeMode = "auto" | "light" | "dark" | "white";
 export type AccentColor = "orange" | "blue" | "purple" | "green" | "pink";
 export type Density = "comfortable" | "compact";
 
@@ -46,6 +46,7 @@ export const BUILT_IN_THEMES: { id: ThemeMode; label: string; icon: string }[] =
   { id: "auto", label: "Auto (match system)", icon: "◐" },
   { id: "light", label: "Light", icon: "☀" },
   { id: "dark", label: "Dark", icon: "☾" },
+  { id: "white", label: "White", icon: "□" },
 ];
 
 const DEFAULT_CONFIG: UiConfig = {
@@ -67,7 +68,7 @@ function normalise(raw: unknown): UiConfig {
   const out: UiConfig = { ...DEFAULT_CONFIG };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
-  if (typeof r.theme === "string" && (r.theme === "auto" || r.theme === "light" || r.theme === "dark")) {
+  if (typeof r.theme === "string" && (r.theme === "auto" || r.theme === "light" || r.theme === "dark" || r.theme === "white")) {
     out.theme = r.theme;
   }
   if (
@@ -89,9 +90,10 @@ function normalise(raw: unknown): UiConfig {
  * Compute the effective "dark" vs "light" given the configured mode and
  * the host OS preference. Exported for tests; pure function.
  */
-export function resolveTheme(mode: ThemeMode, prefersDark: boolean): "light" | "dark" {
+export function resolveTheme(mode: ThemeMode, prefersDark: boolean): "light" | "dark" | "white" {
   if (mode === "dark") return "dark";
   if (mode === "light") return "light";
+  if (mode === "white") return "white";
   return prefersDark ? "dark" : "light";
 }
 
@@ -108,7 +110,8 @@ export function applyConfig(cfg: UiConfig): void {
   root.setAttribute("data-accent", cfg.accent);
   root.setAttribute("data-density", cfg.density);
   // Set CSS color-scheme so native form controls + scrollbars follow.
-  root.style.colorScheme = resolved;
+  // White is a flavour of light from the browser's POV.
+  root.style.colorScheme = resolved === "dark" ? "dark" : "light";
 }
 
 /** True if the configured mode follows the OS. */

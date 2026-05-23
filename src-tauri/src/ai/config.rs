@@ -73,6 +73,8 @@ pub enum ThemeMode {
     Auto,
     Light,
     Dark,
+    /// Pure-white surfaces with near-black ink. Crisper than Light.
+    White,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -453,7 +455,12 @@ mod tests {
     #[test]
     fn ui_config_roundtrip_all_variants() {
         let tmp = TempDir::new().unwrap();
-        for theme in [ThemeMode::Auto, ThemeMode::Light, ThemeMode::Dark] {
+        for theme in [
+            ThemeMode::Auto,
+            ThemeMode::Light,
+            ThemeMode::Dark,
+            ThemeMode::White,
+        ] {
             for accent in [
                 AccentColor::Orange,
                 AccentColor::Blue,

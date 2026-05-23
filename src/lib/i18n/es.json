@@ -153,5 +153,10 @@
   "settings.theater.cta": "Abrir el panel de Teatro",
   "onboarding.theater.title": "Presenta desde cualquier documento",
   "onboarding.theater.body": "Pulsa ⇧⌘P (o Ctrl+Shift+P en Windows/Linux) en cualquier PDF abierto para iniciar Teatro — ventana de audiencia en tu segundo monitor, panel del presentador con cronómetro, notas, tinta y láser.",
-  "onboarding.theater.hint": "Esc sale; B pone pantalla negra; I activa el lápiz."
+  "onboarding.theater.hint": "Esc sale; B pone pantalla negra; I activa el lápiz.",
+  "features.loom": "Loom (PDF/UA)",
+  "features.stack": "Comparar",
+  "features.bedrock": "Archivo (PDF/A)",
+  "features.loupe": "Lupa (verificación PDF/A)",
+  "features.theater": "Teatro"
 }
