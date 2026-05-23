@@ -4,6 +4,43 @@
 
 ---
 
+## STATUS: v3.7.0 Loom MERGED + TAGGED + PUSHED. CI in progress. Awaiting MODE B finalize next tick.
+
+**TICK 2026-05-23 09:30 PT (Saturday off-hours)** — MODE A RELEASE executed:
+- Merged feature/v3.1.0-loom-slice-3 → main (merge commit a04f8e6).
+- Bumped version 3.6.0 → **3.7.0** across Cargo.toml, tauri.conf.json, package.json (ce739dd).
+- Tagged **v3.7.0** with marketing-tone annotation.
+- Pushed main + tag to origin.
+
+### RELEASE_PENDING: v3.7.0 — merge SHA a04f8e6, tag v3.7.0, CI run 26337874627 (build) + 26337874606 (Docker)
+
+### Quality gates on main (post-merge)
+- cargo fmt --all -- --check: clean
+- cargo clippy --lib --all-targets -- -D warnings: clean
+- cargo test --lib: **1286 passed, 0 failed**
+- pnpm check: 0 errors, 46 warnings (pre-existing unused-CSS)
+
+### Why version jumped 3.1.0 → 3.7.0
+Slab's released version line had already reached v3.6.0 (Compactor) on main while
+the Loom feature branch was being developed in parallel under its own legacy
+"v3.1.0 Loom" codename. To avoid version regression and keep tag history
+monotonic, Loom ships as **v3.7.0 — Loom**. Codename "Loom" preserved in the
+release title.
+
+### Next tick — MODE B FINALIZE
+1. `gh run view 26337874627` — if green, `gh run download` artifacts.
+2. `gh release create v3.7.0` with notes-file + 6 artifacts.
+3. Verify Docker tag workflow (26337874606) too.
+4. Clear RELEASE_PENDING line.
+5. Then start next pipeline item (v3.8.0 — see roadmap).
+
+### LAST_WOW_TICK_AT: 2026-05-23T16:15Z (Loom Slice 6 sub-badge stagger)
+
+---
+
+## PRIOR HISTORY (v3.1.0 Loom development on feature/v3.1.0-loom-slice-3)
+
+
 ## STATUS: v3.1.0 Loom Slice 6 (metadata + validator + UI) SHIPPED on feature/v3.1.0-loom-slice-3. Branch is feature-complete for v3.1.0; ready to merge to main next tick.
 
 **TICK 2026-05-23 09:15 PT (Saturday off-hours)** — MODE C develop. Slice 6
