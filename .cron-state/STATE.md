@@ -5,7 +5,42 @@
 
 ---
 
-## STATUS: 🎯 v2.4.0 "Stack" MERGED + TAGGED — RELEASE_PENDING
+## STATUS: 📐 v3.0.0 "Bedrock" plan promoted — PDF/A archival conversion
+
+**TICK 2026-05-22 19:36 PT** — writing-plans skill invocation. Wrote
+`docs/plans/2026-05-22-v3.0.0-bedrock-pdfa.md` (25 KB, 544 lines, 8 slices
++ ADR + release; ~1800 net LOC + ~500 test LOC at execution, 10 commits).
+
+- Codename **"Bedrock" 📐** — ISO 19005-2 PDF/A-2b conversion (3b opt-in).
+  6-pass pipeline: sanitize → font-embed → color-normalize → metadata-inject
+  → output-intent → validate. Pure Rust (lopdf + quick-xml + flate2),
+  vendors 3.1KB sRGB v4 ICC profile, zero new C deps.
+- **3 Tauri cmds**: `slab_bedrock_{inspect,convert,validate}`. 3-tab
+  `BedrockPanel.svelte` (Inspect/Convert/Validate), `Cmd+Shift+A`,
+  "Archive" sidebar between Compare and Slides, palette × 3, Settings →
+  Archive section, onboarding step 8.
+- **WOW**: 280ms gold rock-strata clip-path reveal anim on success. RM-safe.
+- **Buy-Button 4/4**: Pay-for-it (Adobe $239/yr's #2 retention feature),
+  Pick-us (Preview/PDF Expert/free Foxit can't; Ghostscript CLI emits invalid
+  output), Notice-it (nav + shortcut + palette + Settings + strata anim),
+  Tell-a-friend (NARA/eIDAS/ISO 14641/IRS mandate PDF/A — 8-sec demo).
+- **Pipeline**: v2.4.0 Stack (RELEASE_PENDING below) → v2.5.0 Quill →
+  v2.6.0 Lens → v2.7.0 Signet → v2.8.0 Forge → v2.9.0 Vault →
+  **v3.0.0 Bedrock (this tick)** → v3.0.1 PDF/A-1b → v3.1.0 PDF/UA.
+
+Commit `811ec75` on main. This was a planning tick (1 commit / 544 lines
+docs only) — below SHIP-SIZE minimums for a code tick, justified by the
+explicit writing-plans skill invocation. Code-ship last tick (Stack 1026
+LOC + merge + tag) is fresh.
+
+**Next tick MUST be MODE B finalize (v2.4.0 build CI run 26321021423 is
+still in_progress this tick; Docker run 26321021424 already green).**
+Re-poll, download artifacts, gh release create. Then resume MODE C on
+the planned pipeline.
+
+---
+
+## STATUS PRIOR: 🎯 v2.4.0 "Stack" MERGED + TAGGED — RELEASE_PENDING
 
 **TICK 2026-05-22 19:25 PT** — MODE A complete. `feature/v2.4.0-stack-visual-diff`
 merged into main (`07eb543`), version manifests bumped 2.3.0 → 2.4.0
