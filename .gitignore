@@ -11,4 +11,5 @@ vite.config.ts.timestamp-*
 dev-fixtures/
 
 # Cron-staged release artifacts (live on GitHub Releases, not in git).
-assets/
+/assets/*
+!/assets/icc/

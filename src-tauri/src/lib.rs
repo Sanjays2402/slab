@@ -101,6 +101,15 @@ use pdf::page_labels::{apply as do_page_labels, PageLabelsOpts};
 use pdf::page_numbers::{add_page_numbers as do_page_numbers, PageNumbersOpts};
 use pdf::pages::{delete_pages, reorder_pages, rotate_pages, rotate_pages_permanent, Rotation};
 use pdf::pages_build::{pages_build as do_pages_build, PagesBuildOpts};
+use pdf::pdfa::{
+    convert::{
+        convert_to_pdfa as do_pdfa_convert, ConvertOpts as PdfAConvertOpts,
+        ConvertReport as PdfAConvertReport,
+    },
+    font_audit::{audit_fonts as do_pdfa_font_audit, FontAuditReport as PdfAFontAuditReport},
+    validate::{validate_pdfa as do_pdfa_validate, ValidationReport as PdfAValidationReport},
+    ConformanceLevel as PdfAConformanceLevel,
+};
 use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::repair::{repair as do_repair, RepairReport};
@@ -883,6 +892,32 @@ fn slab_flatten(input: PathBuf, output: PathBuf, opts: FlattenOpts) -> CmdResult
 #[tauri::command]
 fn slab_sanitize(input: PathBuf, output: PathBuf, opts: SanitizeOpts) -> CmdResult<SanitizeReport> {
     do_sanitize(&input, &output, opts).into()
+}
+
+#[tauri::command]
+fn slab_pdfa_validate(
+    input: PathBuf,
+    level: Option<PdfAConformanceLevel>,
+) -> CmdResult<PdfAValidationReport> {
+    let level = level.unwrap_or_default();
+    do_pdfa_validate(&input, level).into()
+}
+
+#[tauri::command]
+fn slab_pdfa_font_audit(input: PathBuf) -> CmdResult<PdfAFontAuditReport> {
+    let result: Result<PdfAFontAuditReport, PdfError> = lopdf::Document::load(&input)
+        .map(|doc| do_pdfa_font_audit(&doc))
+        .map_err(PdfError::from);
+    result.into()
+}
+
+#[tauri::command]
+fn slab_pdfa_convert(
+    input: PathBuf,
+    output: PathBuf,
+    opts: PdfAConvertOpts,
+) -> CmdResult<PdfAConvertReport> {
+    do_pdfa_convert(&input, &output, opts).into()
 }
 
 #[tauri::command]
@@ -3122,6 +3157,9 @@ pub fn run() {
             slab_polyglot,
             slab_flatten,
             slab_sanitize,
+            slab_pdfa_validate,
+            slab_pdfa_font_audit,
+            slab_pdfa_convert,
             slab_repair,
             slab_beacon_config_read,
             slab_beacon_config_write,

@@ -65,7 +65,7 @@
 
   async function runDiff() {
     if (!oldPath || !newPath) return;
-    status = { kind: "busy", message: `Rendering at ${dpi} DPI…` };
+    status = { kind: "working", msg: `Rendering at ${dpi} DPI…` };
     diff = null;
     try {
       const res = await invoke<CmdResult<VisualDiff>>("slab_visual_diff_pdfs", {
@@ -80,13 +80,13 @@
         currentChangeIdx = 0;
         status = {
           kind: "ok",
-          message: `${diff.pages.length} pages compared — ${totalChanges} change regions across ${changedPages} pages.`,
+          msg: `${diff.pages.length} pages compared — ${totalChanges} change regions across ${changedPages} pages.`,
         };
       } else {
-        status = { kind: "err", message: res.error ?? "visual diff failed" };
+        status = { kind: "err", msg: res.message ?? "visual diff failed" };
       }
     } catch (e) {
-      status = { kind: "err", message: String(e) };
+      status = { kind: "err", msg: String(e) };
     }
   }
 
@@ -177,17 +177,17 @@
         Scroll-lock
       </label>
     </div>
-    <button class="primary" onclick={runDiff} disabled={!oldPath || !newPath || status.kind === "busy"}>
-      {status.kind === "busy" ? "Comparing…" : "Compare"}
+    <button class="primary" onclick={runDiff} disabled={!oldPath || !newPath || status.kind === "working"}>
+      {status.kind === "working" ? "Comparing…" : "Compare"}
     </button>
   </header>
 
-  {#if status.kind === "busy"}
-    <p class="status busy">{status.message}</p>
+  {#if status.kind === "working"}
+    <p class="status busy">{status.msg}</p>
   {:else if status.kind === "ok"}
-    <p class="status ok">{status.message}</p>
+    <p class="status ok">{status.msg}</p>
   {:else if status.kind === "err"}
-    <p class="status err">{status.message}</p>
+    <p class="status err">{status.msg}</p>
   {/if}
 
   {#if diff}

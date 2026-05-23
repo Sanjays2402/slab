@@ -41,6 +41,7 @@
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import StackPanel from "$lib/panels/StackPanel.svelte";
+  import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
   import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
@@ -112,6 +113,7 @@
     { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "stack", label: "Compare", icon: "⇄", ready: true },
+    { id: "bedrock", label: "Archive (PDF/A)", icon: "📐", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
     { id: "theater", label: "Theater", icon: "🎬", ready: true },
     { id: "settings", label: "Settings", icon: "⚙", ready: true },
@@ -413,6 +415,17 @@
         return;
       }
     }
+    // Bedrock (v3.0.0): focus the PDF/A archive panel. Default Mod+Shift+A.
+    if (matches(e, "bedrock.open")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "bedrock";
+        return;
+      }
+    }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
     if (active !== "reader") return;
@@ -629,6 +642,8 @@
       <DiffPanel />
     {:else if detachedPanel === "stack"}
       <StackPanel />
+    {:else if detachedPanel === "bedrock"}
+      <BedrockPanel />
     {:else if detachedPanel === "slides"}
       <SlidesPanel />
     {:else if detachedPanel === "tables"}
@@ -856,6 +871,8 @@
     <DiffPanel />
   {:else if active === "stack"}
     <StackPanel />
+  {:else if active === "bedrock"}
+    <BedrockPanel />
   {:else if active === "slides"}
     <SlidesPanel />
   {:else if active === "theater"}
