@@ -57,6 +57,8 @@
   "features.crop": "Rogner",
   "features.insert": "Insérer",
   "features.headerfooter": "En-tête/Pied",
+  "features.bates": "Bates",
+  "features.stamp": "Tampon Légal",
   "features.redact": "Caviarder",
   "features.autoredact": "Caviardage auto",
   "features.nup": "N en 1",

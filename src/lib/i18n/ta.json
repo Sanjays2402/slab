@@ -61,6 +61,8 @@
   "features.crop": "வெட்டு",
   "features.insert": "செருகு",
   "features.headerfooter": "தலைப்பு/அடிக்குறிப்பு",
+  "features.bates": "பேட்ஸ்",
+  "features.stamp": "சட்ட முத்திரை",
   "features.redact": "மறை",
   "features.autoredact": "தானாக மறை",
   "features.nup": "N-மேல்",

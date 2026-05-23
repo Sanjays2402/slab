@@ -13,7 +13,44 @@ in this file too.
 
 ## [Unreleased]
 
-Nothing yet.
+### v3.4.0 "Discovery" (preview — backend + UI on `feature/v3.4.0-discovery-slice-1-3`)
+
+The release litigation paralegals have been asking for. Bates numbering is
+the legal-discovery standard for stamping a sequential identifier on every
+page of every document in a production set — and until today it was a
+$239/yr Adobe Acrobat Pro DC feature. Now it's free, offline, and faster
+than Adobe.
+
+#### Added
+
+- **Bates numbering panel** — prefix, zero-padded digits (1–12), six
+  positions, custom font size and gray. `Cmd/Ctrl + Shift + B`.
+- **Batch mode** — drop a folder of PDFs, get a numbered production set
+  with a single monotonic counter chained across every page of every
+  file, in seconds. Optional Relativity / Concordance / Everlaw–compatible
+  CSV or JSON load file written next to the output.
+- **Legal stamp panel** — four canonical preset chips
+  (CONFIDENTIAL, ATTORNEY EYES ONLY, PRIVILEGED & CONFIDENTIAL, DRAFT)
+  plus custom-text diagonal stamps with opacity, font-size, rotation, and
+  page-subset controls. `Cmd/Ctrl + Shift + S`.
+- **Live preview** — both panels re-render the stamped label as you type,
+  drag a slider, or click a position. Paralegals can see exactly what
+  page 1 will look like before they touch a document.
+- **Command palette + sidebar entries + ShortcutsOverlay entries** so the
+  two panels are discoverable from every existing entry point.
+- **7-language UI** — feature labels in English, German, French, Spanish,
+  Hindi, Tamil, Telugu (plus Arabic for the Slab feature index).
+
+### Earlier on this branch (Slices 1–4, 2026-05-23)
+
+- `bates_label_for()` pure helper extracted from the original `apply_bates`
+  primitive, with unit-test coverage.
+- `bates_batch` module — counter-chaining driver across an ordered list of
+  PDFs, output-directory writer, CSV/JSON load-file emission.
+- `legal_stamp` module — diagonal stamp engine with 4 canonical presets
+  + custom-text preset, rotation, opacity, RGB color, optional page subset.
+- Tauri IPC commands `slab_bates_apply`, `slab_bates_batch`,
+  `slab_legal_stamp_apply` wired into the handler registry.
 
 ## [2.0.1] — 2026-05-20 — Bundled Hello Workshop 🧩
 

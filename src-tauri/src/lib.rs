@@ -64,6 +64,11 @@ use pdf::annot_export::{
 };
 use pdf::annotations::{append as do_append_annotations, Annotation};
 use pdf::auto_redact::{auto_redact as do_auto_redact, AutoRedactOpts};
+use pdf::bates::{apply_bates as do_apply_bates, BatesOpts, BatesReport};
+use pdf::bates_batch::{
+    apply_bates_batch as do_apply_bates_batch, BatchInput as BatesBatchInput,
+    BatchReport as BatesBatchReport,
+};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
 use pdf::diff::{diff_pdfs as do_diff_pdfs, export_report as do_diff_export_report, DocDiff};
@@ -78,6 +83,9 @@ use pdf::grayscale::{grayscale as do_grayscale, GrayscaleOpts};
 use pdf::header_footer::{apply as do_header_footer, HFOpts};
 use pdf::info::{info as do_info, PdfInfo};
 use pdf::insert::{insert as do_insert, InsertOpts};
+use pdf::legal_stamp::{
+    apply_legal_stamp as do_apply_legal_stamp, LegalStampOpts, LegalStampReport,
+};
 use pdf::library::{
     auto_tag_run_many as do_auto_tag_run_many, auto_tag_run_one as do_auto_tag_run_one,
     default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
@@ -346,6 +354,32 @@ fn slab_split_ranges(
 #[tauri::command]
 fn slab_split_every(input: PathBuf, chunk_size: u32, out_dir: PathBuf) -> CmdResult<Vec<PathBuf>> {
     split_every(&input, chunk_size, &out_dir).into()
+}
+
+/// Stamp Bates numbers (prefix + zero-padded counter) onto every page of
+/// one PDF. The buyer-magnet litigation discovery feature.
+#[tauri::command]
+fn slab_bates_apply(input: PathBuf, output: PathBuf, opts: BatesOpts) -> CmdResult<BatesReport> {
+    do_apply_bates(&input, &output, &opts).into()
+}
+
+/// Apply Bates numbering across a whole production set — ordered list of
+/// PDFs, monotonic counter chained across files, optional CSV/JSON load
+/// file for Relativity / Concordance / Everlaw ingest.
+#[tauri::command]
+fn slab_bates_batch(input: BatesBatchInput) -> CmdResult<BatesBatchReport> {
+    do_apply_bates_batch(&input).into()
+}
+
+/// Apply a diagonal legal stamp (CONFIDENTIAL / ATTORNEY EYES ONLY /
+/// PRIVILEGED & CONFIDENTIAL / DRAFT, or custom text) to the document.
+#[tauri::command]
+fn slab_legal_stamp_apply(
+    input: PathBuf,
+    output: PathBuf,
+    opts: LegalStampOpts,
+) -> CmdResult<LegalStampReport> {
+    do_apply_legal_stamp(&input, &output, &opts).into()
 }
 
 #[tauri::command]
@@ -3194,6 +3228,9 @@ pub fn run() {
             slab_first_launch_skip,
             slab_merge,
             slab_split_ranges,
+            slab_bates_apply,
+            slab_bates_batch,
+            slab_legal_stamp_apply,
             slab_split_every,
             slab_split_by_pattern,
             slab_find_matching_pages,

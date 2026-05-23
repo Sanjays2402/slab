@@ -57,6 +57,8 @@
   "features.crop": "Recortar",
   "features.insert": "Insertar",
   "features.headerfooter": "Encabezado/Pie",
+  "features.bates": "Bates",
+  "features.stamp": "Sello Legal",
   "features.redact": "Censurar",
   "features.autoredact": "Auto-censura",
   "features.nup": "N en 1",

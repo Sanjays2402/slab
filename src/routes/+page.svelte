@@ -21,6 +21,8 @@
   import CropPanel from "$lib/panels/CropPanel.svelte";
   import InsertPanel from "$lib/panels/InsertPanel.svelte";
   import HeaderFooterPanel from "$lib/panels/HeaderFooterPanel.svelte";
+  import BatesPanel from "$lib/panels/BatesPanel.svelte";
+  import LegalStampPanel from "$lib/panels/LegalStampPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
   import NupPanel from "$lib/panels/NupPanel.svelte";
   import MarkdownPanel from "$lib/panels/MarkdownPanel.svelte";
@@ -103,6 +105,8 @@
     { id: "crop", label: "Crop", icon: "⊟", ready: true },
     { id: "insert", label: "Insert", icon: "＋", ready: true },
     { id: "headerfooter", label: "Header/Footer", icon: "≡", ready: true },
+    { id: "bates", label: "Bates", icon: "№", ready: true },
+    { id: "stamp", label: "Legal Stamp", icon: "✸", ready: true },
     { id: "redact", label: "Redact", icon: "▮", ready: true },
     { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
     { id: "nup", label: "N-up", icon: "▦", ready: true },
@@ -424,6 +428,40 @@
       if (!inField) {
         e.preventDefault();
         active = "bedrock";
+        return;
+      }
+    }
+    // v3.4.0 Discovery: Bates (Cmd/Ctrl+Shift+B) and Legal Stamp
+    // (Cmd/Ctrl+Shift+S). Hardcoded for ship velocity, matching the
+    // Loupe pattern below — promote to the keymap registry later if
+    // users ask to rebind.
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      (e.key === "B" || e.key === "b")
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "bates";
+        return;
+      }
+    }
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      (e.key === "S" || e.key === "s")
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "stamp";
         return;
       }
     }
@@ -892,6 +930,10 @@
     <InsertPanel />
   {:else if active === "headerfooter"}
     <HeaderFooterPanel />
+  {:else if active === "bates"}
+    <BatesPanel />
+  {:else if active === "stamp"}
+    <LegalStampPanel />
   {:else if active === "redact"}
     <RedactPanel />
   {:else if active === "autoredact"}

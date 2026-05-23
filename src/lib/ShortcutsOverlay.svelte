@@ -119,6 +119,13 @@
       ],
     },
     {
+      title: "Discovery (Bates & Stamps)",
+      items: [
+        { keys: [MOD, "Shift", "B"], label: "Open Bates numbering panel" },
+        { keys: [MOD, "Shift", "S"], label: "Open Legal Stamp panel" },
+      ],
+    },
+    {
       title: "Customise",
       items: [
         { keys: [MOD, "K"], label: "Open palette → \"Customize shortcuts\"" },
