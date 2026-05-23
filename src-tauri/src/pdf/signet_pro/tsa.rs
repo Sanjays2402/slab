@@ -194,6 +194,106 @@ pub fn parse_timestamp_resp(bytes: &[u8]) -> Result<TimestampResp, SignetError> 
 }
 
 // ---------------------------------------------------------------------------
+// HTTP client (opt-in, off by default)
+// ---------------------------------------------------------------------------
+
+/// Content-type a conformant TSA accepts on POST (RFC 3161 §3.4).
+pub const TSA_REQUEST_CONTENT_TYPE: &str = "application/timestamp-query";
+/// Content-type a conformant TSA returns on success (RFC 3161 §3.4).
+pub const TSA_RESPONSE_CONTENT_TYPE: &str = "application/timestamp-reply";
+
+/// Caller-tunable HTTP knobs.
+///
+/// Defaults are conservative: 15s connect + 30s read timeout, no proxy, no
+/// custom CA roots. The reqwest client is built fresh per call — TSA fetches
+/// are rare (one per signature) so the connection-pool win isn't worth the
+/// extra config plumbing.
+#[derive(Debug, Clone)]
+pub struct TsaFetchOptions {
+    pub connect_timeout: std::time::Duration,
+    pub request_timeout: std::time::Duration,
+    /// Verify the response content-type matches `application/timestamp-reply`.
+    /// Some self-hosted TSAs return `application/octet-stream`; users can
+    /// disable the check for those.
+    pub strict_content_type: bool,
+}
+
+impl Default for TsaFetchOptions {
+    fn default() -> Self {
+        Self {
+            connect_timeout: std::time::Duration::from_secs(15),
+            request_timeout: std::time::Duration::from_secs(30),
+            strict_content_type: true,
+        }
+    }
+}
+
+/// POST a `TimeStampReq` DER blob to `tsa_url` and return the parsed
+/// `TimeStampResp`.
+///
+/// **Network call.** Caller is responsible for honouring the user's
+/// "offline" preference — `SignOptions::tsa_url == None` skips this entirely.
+///
+/// Errors bubble up as [`SignetError::InvalidCert`] with a "TSA fetch: …"
+/// prefix so the UI can show a single clean failure row.
+pub fn fetch_timestamp(
+    tsa_url: &str,
+    request_der: &[u8],
+    opts: &TsaFetchOptions,
+) -> Result<TimestampResp, SignetError> {
+    if request_der.is_empty() {
+        return Err(SignetError::InvalidCert(
+            "TSA fetch: empty request body".into(),
+        ));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(opts.connect_timeout)
+        .timeout(opts.request_timeout)
+        // rustls-tls is enabled at the crate level; no extra root certs by
+        // default. Users who need a private TSA CA add it to the system
+        // trust store (or we expose a knob in v3.11.1).
+        .user_agent(concat!("Slab/", env!("CARGO_PKG_VERSION"), " (signet_pro)"))
+        .build()
+        .map_err(|e| SignetError::InvalidCert(format!("TSA fetch: client build: {e}")))?;
+
+    let resp = client
+        .post(tsa_url)
+        .header(reqwest::header::CONTENT_TYPE, TSA_REQUEST_CONTENT_TYPE)
+        .header(reqwest::header::ACCEPT, TSA_RESPONSE_CONTENT_TYPE)
+        .body(request_der.to_vec())
+        .send()
+        .map_err(|e| SignetError::InvalidCert(format!("TSA fetch: POST: {e}")))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(SignetError::InvalidCert(format!(
+            "TSA fetch: HTTP {} from {tsa_url}",
+            status.as_u16()
+        )));
+    }
+
+    if opts.strict_content_type {
+        let ct = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        // Tolerate "application/timestamp-reply; charset=binary" and friends.
+        if !ct.starts_with(TSA_RESPONSE_CONTENT_TYPE) {
+            return Err(SignetError::InvalidCert(format!(
+                "TSA fetch: unexpected Content-Type '{ct}' (expected {TSA_RESPONSE_CONTENT_TYPE})"
+            )));
+        }
+    }
+
+    let bytes = resp
+        .bytes()
+        .map_err(|e| SignetError::InvalidCert(format!("TSA fetch: read body: {e}")))?;
+    parse_timestamp_resp(&bytes)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -277,5 +377,90 @@ mod tests {
             ID_AA_TIMESTAMP_TOKEN.to_string(),
             "1.2.840.113549.1.9.16.2.14"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // HTTP fetch tests — use mockito to stand up a fake TSA endpoint.
+    // -------------------------------------------------------------------
+
+    /// Minimal granted-response DER (status=0, no token) — same as
+    /// `parse_minimal_granted_response`. Used as the fake TSA's reply.
+    fn granted_resp_der() -> Vec<u8> {
+        vec![0x30, 0x05, 0x30, 0x03, 0x02, 0x01, 0x00]
+    }
+
+    #[test]
+    fn fetch_timestamp_round_trips_granted_response() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/tsa")
+            .match_header("content-type", TSA_REQUEST_CONTENT_TYPE)
+            .with_status(200)
+            .with_header("content-type", TSA_RESPONSE_CONTENT_TYPE)
+            .with_body(granted_resp_der())
+            .create();
+
+        let req = build_timestamp_req(&[0x55u8; 32], Some(123)).unwrap();
+        let url = format!("{}/tsa", server.url());
+        let resp = fetch_timestamp(&url, &req, &TsaFetchOptions::default()).expect("fetch ok");
+        assert!(resp.status_granted());
+        assert_eq!(resp.status, 0);
+        mock.assert();
+    }
+
+    #[test]
+    fn fetch_timestamp_errors_on_http_500() {
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("POST", "/tsa").with_status(500).create();
+        let req = build_timestamp_req(&[0u8; 32], None).unwrap();
+        let url = format!("{}/tsa", server.url());
+        let err = fetch_timestamp(&url, &req, &TsaFetchOptions::default())
+            .expect_err("expected HTTP 500 to surface");
+        let msg = format!("{err}");
+        assert!(msg.contains("HTTP 500"), "msg: {msg}");
+    }
+
+    #[test]
+    fn fetch_timestamp_errors_on_wrong_content_type() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/tsa")
+            .with_status(200)
+            .with_header("content-type", "text/plain")
+            .with_body("not a TSA response")
+            .create();
+        let req = build_timestamp_req(&[0u8; 32], None).unwrap();
+        let url = format!("{}/tsa", server.url());
+        let err = fetch_timestamp(&url, &req, &TsaFetchOptions::default())
+            .expect_err("expected wrong content-type to fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("Content-Type"), "msg: {msg}");
+    }
+
+    #[test]
+    fn fetch_timestamp_tolerates_lax_content_type_when_opted_out() {
+        let mut server = mockito::Server::new();
+        let _mock = server
+            .mock("POST", "/tsa")
+            .with_status(200)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(granted_resp_der())
+            .create();
+        let req = build_timestamp_req(&[0u8; 32], None).unwrap();
+        let url = format!("{}/tsa", server.url());
+        let opts = TsaFetchOptions {
+            strict_content_type: false,
+            ..Default::default()
+        };
+        let resp = fetch_timestamp(&url, &req, &opts).expect("fetch ok");
+        assert!(resp.status_granted());
+    }
+
+    #[test]
+    fn fetch_timestamp_rejects_empty_request() {
+        let err = fetch_timestamp("http://127.0.0.1:1/", &[], &TsaFetchOptions::default())
+            .expect_err("empty body should fail fast");
+        let msg = format!("{err}");
+        assert!(msg.contains("empty request body"), "msg: {msg}");
     }
 }
