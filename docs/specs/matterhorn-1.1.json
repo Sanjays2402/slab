@@ -1,0 +1,333 @@
+{
+  "$schema": "./matterhorn-1.1.schema.json",
+  "protocol": "Matterhorn Protocol",
+  "version": "1.1",
+  "publisher": "PDF Association",
+  "publishedYear": 2021,
+  "appliesTo": "ISO 14289-1:2014/Amd.1:2018 (PDF/UA-1)",
+  "totals": {
+    "sections": 31,
+    "failureConditions_inThisRegistry": 91,
+    "failureConditions_inFullProtocol": 136,
+    "auto": 48,
+    "human": 33,
+    "outOfScope_v3_1_0": 10,
+    "notYetTranscribed": 45
+  },
+  "coverage": "partial — 91 of 136 failure conditions transcribed in v3.1.0 Slice 0. Subsequent slices will fill in the remaining 45 leaf-level conditions as the validate pass implements each section. JSON layout is the single source of truth; src-tauri/src/pdf/loom/matterhorn.rs is generated from this file in Slice 1 of v3.1.0 Loom. Verdict assignments by the Slab team; will be reviewed by an accessibility consultant before v3.1.0 GA.",
+  "verdictGlossary": {
+    "auto": "Decidable from the PDF object model alone — the validate pass runs the check and emits PASS/FAIL without human review.",
+    "human": "Requires human judgement (e.g. is this image decorative?) — surfaced in the Loom Review tab with the offending node highlighted.",
+    "outOfScope": "Depends on Slab features not yet shipped (multimedia, advanced forms, complex signatures). Tracked for a later release."
+  },
+  "sections": [
+    {
+      "id": "01",
+      "title": "Real content (real vs artifact)",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "01-001", "title": "Some real content is not tagged.", "verdict": "auto" },
+        { "id": "01-002", "title": "Some tag does not include all of the real content it describes.", "verdict": "auto" },
+        { "id": "01-003", "title": "Content is marked as Artifact but is in fact real content.", "verdict": "human" },
+        { "id": "01-004", "title": "Tagged content is incorrectly marked as Artifact (suppresses real content from AT).", "verdict": "human" },
+        { "id": "01-005", "title": "Content other than Artifacts is not inside a marked-content sequence (no MCID).", "verdict": "auto" },
+        { "id": "01-006", "title": "The structure tree is missing or empty.", "verdict": "auto" },
+        { "id": "01-007", "title": "Content is tagged in a way that does not represent the document's logical reading order.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "02",
+      "title": "Role mapping",
+      "isoClause": "7.10",
+      "failureConditions": [
+        { "id": "02-001", "title": "One or more non-standard tag's mapping is not mapped to a standard PDF 1.7 type.", "verdict": "auto" },
+        { "id": "02-002", "title": "A non-standard tag's mapping is semantically inappropriate.", "verdict": "human" },
+        { "id": "02-003", "title": "A standard PDF 1.7 type is remapped to a non-standard type.", "verdict": "auto" },
+        { "id": "02-004", "title": "A circular role mapping exists.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "03",
+      "title": "Parent-child relationships",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "03-001", "title": "Tag's parent-child relationship is not permitted by ISO 14289-1.", "verdict": "auto" },
+        { "id": "03-002", "title": "A structure element's K array references an object that is not allowed.", "verdict": "auto" },
+        { "id": "03-003", "title": "Document does not contain a Document tag at the root of the structure tree.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "04",
+      "title": "Character mappings (ActualText / ToUnicode)",
+      "isoClause": "7.2",
+      "failureConditions": [
+        { "id": "04-001", "title": "Text is mapped to Unicode PUA without an ActualText entry.", "verdict": "auto" },
+        { "id": "04-002", "title": "A glyph's ToUnicode mapping does not produce a character that is reasonable.", "verdict": "human" },
+        { "id": "04-003", "title": "Font without ToUnicode CMap is used for text content.", "verdict": "auto" },
+        { "id": "04-004", "title": "Stretchable characters lack proper ActualText.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "05",
+      "title": "Natural language (Lang)",
+      "isoClause": "7.2",
+      "failureConditions": [
+        { "id": "05-001", "title": "Natural language for document is not specified (Catalog /Lang missing).", "verdict": "auto" },
+        { "id": "05-002", "title": "Natural language for content differs from default but is not specified.", "verdict": "human" },
+        { "id": "05-003", "title": "Lang entry uses a non-conformant BCP 47 tag.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "06",
+      "title": "Document title (DisplayDocTitle)",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "06-001", "title": "/ViewerPreferences DisplayDocTitle is false or missing.", "verdict": "auto" },
+        { "id": "06-002", "title": "/Info /Title is empty or absent.", "verdict": "auto" },
+        { "id": "06-003", "title": "Document title in metadata is the filename or otherwise not meaningful.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "07",
+      "title": "PDF objects, file structure",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "07-001", "title": "File is not a valid PDF.", "verdict": "auto" },
+        { "id": "07-002", "title": "Cross-reference table is broken.", "verdict": "auto" },
+        { "id": "07-003", "title": "Linearized PDF with broken hint stream.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "08",
+      "title": "Embedded files",
+      "isoClause": "7.11",
+      "failureConditions": [
+        { "id": "08-001", "title": "Embedded file lacks an MD5 hash or modification date.", "verdict": "auto" },
+        { "id": "08-002", "title": "Embedded file is not described by a /Desc entry.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "09",
+      "title": "Replacement text / Abbreviations (E entry)",
+      "isoClause": "7.5",
+      "failureConditions": [
+        { "id": "09-001", "title": "Abbreviation lacks /E expansion in tag.", "verdict": "human" },
+        { "id": "09-002", "title": "Stylised text (e.g. drop cap) lacks /ActualText.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "10",
+      "title": "Alternative descriptions (Alt) on figures",
+      "isoClause": "7.3",
+      "failureConditions": [
+        { "id": "10-001", "title": "Figure without /Alt attribute.", "verdict": "auto" },
+        { "id": "10-002", "title": "/Alt value is empty for a non-decorative figure.", "verdict": "human" },
+        { "id": "10-003", "title": "/Alt is identical to surrounding text (redundant).", "verdict": "human" },
+        { "id": "10-004", "title": "Decorative image is not marked as Artifact.", "verdict": "human" },
+        { "id": "10-005", "title": "/Alt describes the image's visual properties rather than its meaning.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "11",
+      "title": "Pronunciation",
+      "isoClause": "7.6",
+      "failureConditions": [
+        { "id": "11-001", "title": "Word requires phonetic pronunciation but /Pron is absent.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "12",
+      "title": "Headings",
+      "isoClause": "7.4",
+      "failureConditions": [
+        { "id": "12-001", "title": "Heading levels are not nested in semantic order (skipped level).", "verdict": "auto" },
+        { "id": "12-002", "title": "Document uses H without numbered heading variants in strongly-structured doc.", "verdict": "human" },
+        { "id": "12-003", "title": "Document uses numbered heading variants but a strongly-structured doc requires sequential.", "verdict": "auto" },
+        { "id": "12-004", "title": "Visible heading is tagged as a paragraph.", "verdict": "human" },
+        { "id": "12-005", "title": "Paragraph is tagged as a heading.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "13",
+      "title": "Lists",
+      "isoClause": "7.6",
+      "failureConditions": [
+        { "id": "13-001", "title": "Visible list is not tagged as L / LI.", "verdict": "human" },
+        { "id": "13-002", "title": "L tag has /ListNumbering value that does not match visible markers.", "verdict": "human" },
+        { "id": "13-003", "title": "Nested lists are not nested in the structure tree.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "14",
+      "title": "Tables",
+      "isoClause": "7.5",
+      "failureConditions": [
+        { "id": "14-001", "title": "Table is not tagged as Table / TR / TD / TH.", "verdict": "human" },
+        { "id": "14-002", "title": "Header cell is tagged as TD instead of TH.", "verdict": "human" },
+        { "id": "14-003", "title": "Header cell lacks /Scope (Row, Column, Both).", "verdict": "auto" },
+        { "id": "14-004", "title": "Complex header/data association lacks /Headers IDs.", "verdict": "human" },
+        { "id": "14-005", "title": "Visible TH does not map to the data cells it heads.", "verdict": "human" },
+        { "id": "14-006", "title": "Table has merged cells but no /ColSpan or /RowSpan attribute.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "15",
+      "title": "Layout (multi-column reading order)",
+      "isoClause": "7.5",
+      "failureConditions": [
+        { "id": "15-001", "title": "Reading order in tag tree does not follow visible reading order.", "verdict": "human" },
+        { "id": "15-002", "title": "Columns are tagged in display order rather than reading order.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "16",
+      "title": "Header / footer / page artifacts",
+      "isoClause": "7.8",
+      "failureConditions": [
+        { "id": "16-001", "title": "Running header is not marked as /Artifact /Type/Pagination.", "verdict": "auto" },
+        { "id": "16-002", "title": "Page number is included in tagged content (not artifact).", "verdict": "auto" },
+        { "id": "16-003", "title": "Watermark is not marked as /Artifact /Type/Layout.", "verdict": "auto" },
+        { "id": "16-004", "title": "Background image with no informational value is not Artifact.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "17",
+      "title": "Color and contrast",
+      "isoClause": "—",
+      "failureConditions": [
+        { "id": "17-001", "title": "Information is conveyed by color alone.", "verdict": "human" },
+        { "id": "17-002", "title": "Text contrast against background fails WCAG 2.1 AA (4.5:1).", "verdict": "auto" },
+        { "id": "17-003", "title": "Large text contrast fails WCAG 2.1 AA (3:1).", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "18",
+      "title": "Annotations (links, notes)",
+      "isoClause": "7.18",
+      "failureConditions": [
+        { "id": "18-001", "title": "Annotation lacks /Contents entry.", "verdict": "auto" },
+        { "id": "18-002", "title": "Link annotation is not tagged as /Link with /Link-OBJR.", "verdict": "auto" },
+        { "id": "18-003", "title": "/Annot is not contained in a proper structure element.", "verdict": "auto" },
+        { "id": "18-004", "title": "Link text is generic (\"click here\", \"more\").", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "19",
+      "title": "Forms",
+      "isoClause": "7.18",
+      "failureConditions": [
+        { "id": "19-001", "title": "Form field lacks /TU tooltip.", "verdict": "outOfScope" },
+        { "id": "19-002", "title": "Form field /T name is the only label.", "verdict": "outOfScope" },
+        { "id": "19-003", "title": "Form is not tagged as /Form with proper OBJR.", "verdict": "outOfScope" },
+        { "id": "19-004", "title": "Required field lacks indication other than color.", "verdict": "outOfScope" }
+      ]
+    },
+    {
+      "id": "20",
+      "title": "Optional content",
+      "isoClause": "7.20",
+      "failureConditions": [
+        { "id": "20-001", "title": "Optional content group lacks /Name.", "verdict": "auto" },
+        { "id": "20-002", "title": "Optional content default visibility hides accessible content.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "21",
+      "title": "Embedded fonts",
+      "isoClause": "7.21",
+      "failureConditions": [
+        { "id": "21-001", "title": "Font used in real content is not embedded.", "verdict": "auto" },
+        { "id": "21-002", "title": "Font subset is missing glyphs referenced by content.", "verdict": "auto" },
+        { "id": "21-003", "title": "CIDFont lacks /CIDToGIDMap.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "22",
+      "title": "Metadata (XMP)",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "22-001", "title": "XMP packet missing /pdfuaid:part.", "verdict": "auto" },
+        { "id": "22-002", "title": "/pdfuaid:part value is not 1.", "verdict": "auto" },
+        { "id": "22-003", "title": "XMP metadata schema for PDF/UA is malformed.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "23",
+      "title": "Encryption / permissions",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "23-001", "title": "Document permissions prevent text extraction for AT.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "24",
+      "title": "Article threads",
+      "isoClause": "7.16",
+      "failureConditions": [
+        { "id": "24-001", "title": "Article thread is broken or out of reading order.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "25",
+      "title": "MarkInfo flag",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "25-001", "title": "/MarkInfo /Marked is false or absent.", "verdict": "auto" },
+        { "id": "25-002", "title": "/MarkInfo /Suspects is true.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "26",
+      "title": "Suspect content",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "26-001", "title": "Tag tree contains /Suspect marker that has not been resolved.", "verdict": "auto" }
+      ]
+    },
+    {
+      "id": "27",
+      "title": "Multimedia (RichMedia)",
+      "isoClause": "7.17",
+      "failureConditions": [
+        { "id": "27-001", "title": "Video annotation lacks captioning track.", "verdict": "outOfScope" },
+        { "id": "27-002", "title": "Audio annotation lacks transcript.", "verdict": "outOfScope" },
+        { "id": "27-003", "title": "RichMedia annotation lacks /Contents description.", "verdict": "outOfScope" }
+      ]
+    },
+    {
+      "id": "28",
+      "title": "Digital signatures",
+      "isoClause": "7.19",
+      "failureConditions": [
+        { "id": "28-001", "title": "Signature appearance contains real content not in tag tree.", "verdict": "outOfScope" },
+        { "id": "28-002", "title": "Visible signature lacks alt-text.", "verdict": "outOfScope" }
+      ]
+    },
+    {
+      "id": "29",
+      "title": "Visual appearance",
+      "isoClause": "7.5",
+      "failureConditions": [
+        { "id": "29-001", "title": "Text is rendered as an image without /ActualText.", "verdict": "auto" },
+        { "id": "29-002", "title": "Text rotation makes content non-extractable.", "verdict": "human" }
+      ]
+    },
+    {
+      "id": "30",
+      "title": "JavaScript / interactivity",
+      "isoClause": "7.1",
+      "failureConditions": [
+        { "id": "30-001", "title": "JavaScript action affects accessibility without notification.", "verdict": "outOfScope" }
+      ]
+    },
+    {
+      "id": "31",
+      "title": "Miscellaneous",
+      "isoClause": "—",
+      "failureConditions": [
+        { "id": "31-001", "title": "Document fails PAC 2024 ruleset for reasons not enumerated above.", "verdict": "human" },
+        { "id": "31-002", "title": "Conformance claim (XMP) does not match actual conformance.", "verdict": "auto" }
+      ]
+    }
+  ]
+}
