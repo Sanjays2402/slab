@@ -4,7 +4,11 @@
 
 ---
 
-## STATUS: v3.7.0 Loom MERGED + TAGGED + PUSHED. CI in progress. Awaiting MODE B finalize next tick.
+## STATUS: v3.7.0 Loom MERGED + TAGGED + PUSHED. CI build still in progress. v3.8.0 Press plan written this tick; awaiting MODE B finalize next tick.
+
+**TICK 2026-05-23 09:43 PT (Saturday off-hours)** — writing-plans skill invoked by Sanjay's cron prompt; CI for v3.7.0 build (run 26337874627) still in_progress, so MODE B blocked. Drafted `docs/plans/2026-05-23-v3.8.0-press-pdf-x.md` — re-baselined the 2026-05-22 v3.2.0 plan to v3.8.0 (pipeline jumped during Loom dev) and shrunk it from ~1700 LOC of new code to ~1500 because v3.0.0 Bedrock landed the `pdf::pdfa::{icc,xmp,output_intent,sanitize,font_embed}` substrate. 6 slices + release, each tick passes ship-size on its own. Next tick: if CI green → finalize v3.7.0 release; then start v3.8.0 Slice 1+2.
+
+
 
 **TICK 2026-05-23 09:30 PT (Saturday off-hours)** — MODE A RELEASE executed:
 - Merged feature/v3.1.0-loom-slice-3 → main (merge commit a04f8e6).
