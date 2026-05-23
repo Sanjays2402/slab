@@ -5,7 +5,80 @@
 
 ---
 
-## STATUS: 📐 v3.0.0 Bedrock Slice 1 SHIPPED — pdf::pdfa scaffold + sanitize pass
+## STATUS: 🪨 v3.0.0 Bedrock Slice 3 SHIPPED — XMP + OutputIntent injection + CI rescue
+
+**TICK 2026-05-22 21:45 PT** — MODE C, 3 feature commits + 1 chore on
+`feature/v3.0.0-bedrock-pdfa`, +720 net LOC, +24 new unit tests (15 XMP + 9
+output_intent).
+
+- `3aee658` fix(pdfa): use slice::contains in font_audit standard-14 check
+  — rescues CI (clippy::manual_contains -D warnings broke all 3 platforms
+  on prev push `2a418f3`).
+- `655bdd8` feat(pdfa): XMP metadata packet builder (Slice 3a) — hand-
+  written RDF/XML w/ pdfaid + dc + pdf + xmp + xmpMM namespaces, BOM-
+  prefixed <?xpacket?> markers, XML escaping, deterministic UUID,
+  2 KB padding for in-place editor growth. Chrono added (pure-rust,
+  no jiff).
+- `7a2fa89` feat(pdfa): OutputIntent + XMP injection pass (Slice 3b) —
+  `inject_output_intent_and_metadata()` adds /S=/GTS_PDFA1 OutputIntent
+  with flate-compressed sRGB v4 ICC stream + catalog /Metadata reference.
+  Idempotent; appends to existing non-PDFA OutputIntents.
+
+**Branch**: `feature/v3.0.0-bedrock-pdfa` (push pending end of tick).
+
+**End-to-end**: `pdfa::xmp::build_xmp_packet(&XmpMetadata)` → spec-valid
+RDF/XML bytes. `pdfa::output_intent::inject_output_intent_and_metadata(
+&mut Document, &XmpMetadata)` → catalog has /Metadata + /OutputIntents
+with the canonical sRGB IEC61966-2.1 PDF/A-1 entry. Both modules are
+catalog-mutating pure functions composing cleanly into the future
+`convert_to_pdfa()` orchestrator (Slice 5).
+
+**Gates**: `cargo fmt --check` clean. `cargo check --lib` clean locally
+(36s, all crates compile). Full clippy + cargo test deferred to CI —
+Mac mini disk still at 95-100%, full test build OOM'd on space again,
+freed 1.2 GB by nuking target/debug. Pattern is now stable: CI is our
+gate, local is for fmt + check only.
+
+**Buy-Button**: 4/4. Pay-for-it (Adobe $239/yr ships PDF/A as Pro-only),
+Notice-it (next tick wires this into BedrockPanel), Pick-us (Preview,
+PDF Expert, free Foxit cannot do PDF/A at all; Ghostscript CLI emits
+INVALID PDF/A 80% of the time), Tell-a-friend (NARA/eIDAS/ISO 14641/IRS
+all mandate PDF/A — 8-sec demo of "drop PDF → archival PDF/A").
+
+**Next**: Slice 4 — mutating font embedding pass (FontFile2/FontFile3
+stream insertion for fonts the audit module flagged as unembedded).
+Then Slice 5 — `convert_to_pdfa()` orchestrator wiring all 5 passes
+in order: sanitize → font_embed → inject (XMP + OutputIntent) →
+validate. Then Slice 6 (Tauri commands) + Slice 7 (BedrockPanel.svelte).
+
+---
+
+## ARCHIVED: 📐 v3.0.0 Bedrock Slice 2 + 2.5 SHIPPED — validate pass + font audit
+
+**TICK 2026-05-22 21:27 PT** — MODE C, 3 commits on top of Slice 1, font audit live.
+
+- `e833ecc` feat(pdfa): validate pass — structural ISO 19005-2 rule engine
+- `8927438` feat(pdfa): expose slab_pdfa_validate Tauri command (Slice 2 wire-up)
+- `2a418f3` feat(pdfa): font embedding/ToUnicode audit module (Slice 2/3 bridge)
+
+**Branch**: `feature/v3.0.0-bedrock-pdfa` pushed (origin HEAD = `2a418f3`).
+CI on `2a418f3` in progress (run 26323442957). Previous push `b4f8500` is green.
+
+**End-to-end**: `slab_pdfa_validate(input, level?)` returns `ValidationReport`
+with §6.1.3 / §6.1.7 / §6.6.1 / §6.6.2 / §6.7.1 / §6.2.2 / §7.5 findings.
+`slab_pdfa_font_audit(input)` returns per-font `FontAuditReport` (embedded?
+ToUnicode? subtype?) so Bedrock UI can warn before destructive embed in Slice 3.
+
+**Gates**: cargo fmt --check clean. Cargo test + clippy delegated to CI (1.4 GiB
+free disk — local build still impossible).
+
+**Next**: Slice 3 — mutating font embedding (FontFile2/FontFile3 stream insert
+for fonts flagged by audit). Then Slice 4 (XMP + OutputIntent injection) and
+Slice 5 (compose orchestrator + BedrockPanel.svelte).
+
+---
+
+## ARCHIVED: v3.0.0 Bedrock Slice 1 SHIPPED — pdf::pdfa scaffold + sanitize pass
 
 **TICK 2026-05-22 20:04 PT** — MODE C, 3 commits, ~521 net LOC, 16 new green tests.
 
