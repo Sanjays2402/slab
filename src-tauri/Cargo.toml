@@ -137,7 +137,7 @@ crossbeam-channel = "0.5"
 # Pure-Rust RustCrypto stack avoids OpenSSL on Windows/Linux/macOS bundles
 # and keeps the Tauri binary single-blob portable. See ADR 0011.
 cms = "0.2"
-x509-cert = { version = "0.2", features = ["pem"] }
+x509-cert = { version = "0.2", features = ["pem", "builder"] }
 rsa = { version = "0.9", features = ["pem", "sha2"] }
 p256 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
 p384 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
@@ -172,6 +172,8 @@ tempfile = "3"
 # Beacon mock HTTP server for provider unit tests (no real Ollama in CI).
 mockito = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Signet (v3.10.0) — RNG for generating throwaway self-signed certs in tests.
+rand = "0.8"
 
 [profile.release]
 opt-level = "s"      # optimize for size

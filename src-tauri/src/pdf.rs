@@ -48,6 +48,7 @@ pub mod repair;
 pub mod reverse;
 pub mod sanitize;
 pub mod scan_audit;
+pub mod signet;
 pub mod slides;
 pub mod split;
 pub mod split_pattern;
