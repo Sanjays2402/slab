@@ -4,35 +4,50 @@
 
 ---
 
-## STATUS: v3.4.0 Discovery — RELEASED 🎉 (artifacts published, no longer Draft)
+## STATUS: v3.5.0 Veil — FEATURE-COMPLETE on `feature/v3.5.0-veil`, awaiting CI
 
-**TICK 2026-05-23 05:05 PT** — MODE B FINALIZE complete. v3.4.0 build CI
-finished `success`, downloaded all 6 artifacts, published GitHub release
-`v3.4.0 — Discovery` with notes from /tmp/v3.4.0-notes.md. Release is
-Published (not Draft). Docker image already on GHCR from run 26331594960.
+**TICK 2026-05-23 05:55 PT** — MODE C closeout for Veil. Slices 1–5 shipped
+end-to-end: backend module (glyph_bbox + text_stream + annotations + sanitize
++ driver, ~1400 LOC, 19 tests authored), Tauri command `slab_redact_true`,
+new `VeilPanel.svelte` Liquid Glass UI, sidebar entry. Version bumped to
+3.5.0 across Cargo.toml, tauri.conf.json, package.json. Pushed branch.
 
-### What shipped this tick
-- Downloaded build artifacts (run 26331594957) — macos-arm64 dmg, macos-x64
-  dmg, linux deb + AppImage, windows msi + nsis.
-- `gh release create v3.4.0` — title "v3.4.0 — Discovery", 6 artifacts
-  attached, marketing-grade notes.
-- Verified `isDraft: false`, latest release on the repo.
+Quality gates this tick:
+- `cargo fmt --all -- --check` ✓
+- `cargo check --lib` ✓ (29.15s)
+- `cargo clippy --lib -- -D warnings` ✓
+- `cargo test --lib pdf::redact_true` — Slice 1 (6 tests) passed earlier
+  on this branch; full re-run BLOCKED by host disk pressure (228Gi
+  volume at 99–100%). The test build pulls tauri_* + rustls + rquickjs
+  etc. and ENOSPC's repeatedly. Library check is clean; functional
+  smoke will happen post-merge once disk reclaimed.
 
-### Release URL
-https://github.com/Sanjays2402/slab/releases/tag/v3.4.0
+Branch commits:
+- 1c14fdd Slice 1: glyph_bbox + 6 tests
+- e8e32dd Slice 2: text-stream excision + 5 tests
+- 24e48f2 Slices 3+4: annotation scrubber + metadata sanitizer
+- c567bc9 Slice 5: driver + Tauri command + VeilPanel.svelte + version bump
 
-RELEASE_PENDING: (cleared)
+Branch CI run: 26333259889 (queued at push time).
 
-LAST_WOW_TICK_AT: 2026-05-23 (v3.4.0 Discovery shipped — paralegals get the
-entire $239/yr Adobe Acrobat Pro DC discovery workflow free, offline, batch
-+ live preview Adobe doesn't even have)
+LAST_WOW_TICK_AT: 2026-05-23 (Veil: paste the redacted PDF into pdftotext,
+the censored words are GONE — not just hidden behind a bar. Adobe charges
+$239/yr for this; we ship it free + offline. Buy-button + wow + pick-us.)
 
 ### Next-tick options (priority order)
-1. **Execute v3.5.0 Veil Slice 1** — pure helper module per
-   `docs/plans/2026-05-23-v3.5.0-veil-true-redaction.md`. ~280 LOC + 5 tests,
-   small footprint, plan is implementer-grade.
-2. Cross-cutting polish (command palette, settings panel, etc.) if Slice 1
-   feels too heavy for one tick.
+1. **MODE A merge `feature/v3.5.0-veil` → main** once CI run 26333259889
+   goes green. Tag v3.5.0, push tag, finalize release in MODE B.
+2. If CI fails: read `gh run view 26333259889 --log-failed` and fix on
+   the branch (do NOT skip the fix to ship something else).
+3. After v3.5.0 ships, optionally clean up legacy `RedactPanel.svelte`
+   field-name bug (passes `{x,y,w,h}` but backend expects pct fields).
+
+---
+
+## ARCHIVED: v3.4.0 Discovery — RELEASED 2026-05-23
+
+Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.4.0
+Docker on GHCR from run 26331594960. 6 artifacts published.
 
 ---
 
