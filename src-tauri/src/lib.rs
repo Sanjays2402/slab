@@ -841,7 +841,7 @@ async fn slab_loom_alt_text_summary(input: PathBuf) -> CmdResult<LoomAltTextSumm
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct LoomTagResult {
     pub output_path: String,
     pub elapsed_ms: u64,
@@ -850,6 +850,11 @@ pub struct LoomTagResult {
     pub bdc_pairs_injected: usize,
     pub struct_elems_created: usize,
     pub figures_with_alt_text: usize,
+    /// Slice 6: post-tag validator report. Auto-run on the in-memory tagged
+    /// doc so the UI can render a "Validated ✓ ISO 14289-1" sub-badge.
+    pub validation: crate::pdf::loom::validate::ValidateReport,
+    /// Slice 6: metadata stats (title applied? lang set? xmp size).
+    pub metadata: crate::pdf::loom::metadata::MetadataStats,
 }
 
 /// Slice 5: tag a PDF for PDF/UA-1 conformance and write `<name>.tagged.pdf`.
@@ -861,8 +866,11 @@ pub struct LoomTagResult {
 #[tauri::command]
 async fn slab_loom_tag_document(input: PathBuf) -> CmdResult<LoomTagResult> {
     use crate::pdf::loom::{
-        classify, default_alt_text_cache_dir, enrich_with_alt_text, extract_layout, order_reading,
+        classify, default_alt_text_cache_dir, enrich_with_alt_text, extract_layout,
+        metadata::{apply_pdfua_metadata, MetadataOptions},
+        order_reading,
         structure_tree::{weave, WeaveOptions},
+        validate::validate as run_validate,
         AltTextOptions,
     };
     use lopdf::Document;
@@ -919,6 +927,31 @@ async fn slab_loom_tag_document(input: PathBuf) -> CmdResult<LoomTagResult> {
         }
     };
 
+    // Slice 6: apply PDF/UA-1 metadata (XMP packet + ViewerPreferences).
+    let title = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string());
+    let meta_stats = match apply_pdfua_metadata(
+        &mut doc,
+        &MetadataOptions {
+            title,
+            fallback_lang: Some("en-US".into()),
+            ..Default::default()
+        },
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("metadata: {}", e),
+            };
+        }
+    };
+
+    // Slice 6: validate the in-memory tagged doc so the UI can render a
+    // "Validated ✓ ISO 14289-1" sub-badge with per-condition checkmarks.
+    let validation = run_validate(&doc);
+
     let out_path = {
         let stem = input
             .file_stem()
@@ -942,7 +975,41 @@ async fn slab_loom_tag_document(input: PathBuf) -> CmdResult<LoomTagResult> {
             bdc_pairs_injected: stats.bdc_pairs_injected,
             struct_elems_created: stats.struct_elems_created,
             figures_with_alt_text: stats.figures_with_alt_text,
+            validation,
+            metadata: meta_stats,
         },
+    }
+}
+
+/// Slice 6: validate a PDF against ISO 14289-1 (PDF/UA-1).
+///
+/// Runs the 8 auto-decidable Matterhorn conditions against any PDF — the
+/// freshly-tagged Slab output, an Acrobat-tagged file, or an arbitrary PDF
+/// the user dropped onto the panel. Returns a `ValidateReport` the UI
+/// renders as a green/red conformance card with per-condition checkmarks.
+#[tauri::command]
+fn slab_loom_validate(input: PathBuf) -> CmdResult<crate::pdf::loom::validate::ValidateReport> {
+    use crate::pdf::loom::validate::validate as run_validate;
+    use lopdf::Document;
+
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let doc = match Document::load_mem(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("load PDF: {}", e),
+            };
+        }
+    };
+    CmdResult::Ok {
+        value: run_validate(&doc),
     }
 }
 
@@ -3686,6 +3753,7 @@ pub fn run() {
             slab_loom_reading_order_summary,
             slab_loom_alt_text_summary,
             slab_loom_tag_document,
+            slab_loom_validate,
             slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
