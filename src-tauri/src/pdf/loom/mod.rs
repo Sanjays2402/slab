@@ -43,9 +43,11 @@
 //   * review       — TODO (Slice 6)
 //   * emit         — TODO (Slice 7)
 
+pub mod classify;
 pub mod layout;
 pub mod matterhorn;
 
+pub use classify::{classify, NodeKind, StructNode, StructTree, StructTreePage};
 pub use layout::{
     extract_layout, extract_layout_from_doc, Bbox, ImagePlacement, LayoutTree, PageLayout, TextRun,
 };
