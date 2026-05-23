@@ -25,9 +25,12 @@ import en from "./i18n/en.json";
 import es from "./i18n/es.json";
 import fr from "./i18n/fr.json";
 import ar from "./i18n/ar.json";
+import hi from "./i18n/hi.json";
+import ta from "./i18n/ta.json";
+import te from "./i18n/te.json";
 import { pluginsStore, loadPluginLocaleBundle, currentPlugins } from "$lib/plugins";
 
-export type LocaleId = "en" | "es" | "fr" | "ar";
+export type LocaleId = "en" | "es" | "fr" | "ar" | "hi" | "ta" | "te";
 export type Bundle = Record<string, string>;
 
 export const LOCALES: { id: LocaleId; label: string; dir: "ltr" | "rtl" }[] = [
@@ -35,6 +38,9 @@ export const LOCALES: { id: LocaleId; label: string; dir: "ltr" | "rtl" }[] = [
 	{ id: "es", label: "Español", dir: "ltr" },
 	{ id: "fr", label: "Français", dir: "ltr" },
 	{ id: "ar", label: "العربية", dir: "rtl" },
+	{ id: "hi", label: "हिन्दी", dir: "ltr" },
+	{ id: "ta", label: "தமிழ்", dir: "ltr" },
+	{ id: "te", label: "తెలుగు", dir: "ltr" },
 ];
 
 const BUNDLES: Record<LocaleId, Bundle> = {
@@ -42,10 +48,13 @@ const BUNDLES: Record<LocaleId, Bundle> = {
 	es: es as Bundle,
 	fr: fr as Bundle,
 	ar: ar as Bundle,
+	hi: hi as Bundle,
+	ta: ta as Bundle,
+	te: te as Bundle,
 };
 
 const STORAGE_KEY = "slab.i18n.locale";
-const VALID: ReadonlySet<LocaleId> = new Set<LocaleId>(["en", "es", "fr", "ar"]);
+const VALID: ReadonlySet<LocaleId> = new Set<LocaleId>(["en", "es", "fr", "ar", "hi", "ta", "te"]);
 
 function loadLocale(): LocaleId {
 	if (typeof localStorage === "undefined") return "en";
