@@ -85,7 +85,30 @@
     pages: LoomClassifyPage[];
   };
 
-  type Tab = "layout" | "outline" | "conformance" | "about";
+  type LoomReadingOrderPage = {
+    page_number: number;
+    column_count: number;
+    spanner_count: number;
+    artifact_count: number;
+    reading_node_count: number;
+  };
+
+  type LoomReadingOrderFlowEntry = {
+    page: number;
+    tag: string;
+    text: string;
+  };
+
+  type LoomReadingOrderSummary = {
+    total_pages: number;
+    multi_column_pages: number;
+    total_reading_nodes: number;
+    total_spanners: number;
+    pages: LoomReadingOrderPage[];
+    flow_preview: LoomReadingOrderFlowEntry[];
+  };
+
+  type Tab = "layout" | "outline" | "reading" | "conformance" | "about";
   let tab: Tab = "layout";
 
   let inputPath = "";
@@ -93,6 +116,8 @@
   let digest: LoomMatterhornDigest | null = null;
   let classifySummary: LoomClassifySummary | null = null;
   let classifyStatus: Status = idle;
+  let readingSummary: LoomReadingOrderSummary | null = null;
+  let readingStatus: Status = idle;
   let status: Status = idle;
 
   onMount(() => {
@@ -179,6 +204,33 @@
       classifyStatus = { kind: "err", msg: String(e) };
     }
   }
+
+  async function runReading() {
+    if (!inputPath) return;
+    readingStatus = { kind: "working", msg: "Computing reading order…" };
+    readingSummary = null;
+    try {
+      const r = await invoke<CmdResult<LoomReadingOrderSummary>>(
+        "slab_loom_reading_order_summary",
+        { input: inputPath },
+      );
+      if (r.kind === "ok") {
+        readingSummary = r.value;
+        const v = r.value;
+        readingStatus = {
+          kind: "ok",
+          msg:
+            v.multi_column_pages > 0
+              ? `Found multi-column content on ${v.multi_column_pages} of ${v.total_pages} page${v.total_pages === 1 ? "" : "s"} — re-ordered ${v.total_reading_nodes.toLocaleString()} reading-flow node${v.total_reading_nodes === 1 ? "" : "s"} into screen-reader order.`
+              : `Single-column document — ${v.total_reading_nodes.toLocaleString()} reading-flow node${v.total_reading_nodes === 1 ? "" : "s"} in natural top-to-bottom order.`,
+        };
+      } else {
+        readingStatus = { kind: "err", msg: r.message };
+      }
+    } catch (e) {
+      readingStatus = { kind: "err", msg: String(e) };
+    }
+  }
 </script>
 
 <section class="loom">
@@ -204,6 +256,12 @@
       aria-selected={tab === "outline"}
       class:active={tab === "outline"}
       on:click={() => (tab = "outline")}>Outline</button
+    >
+    <button
+      role="tab"
+      aria-selected={tab === "reading"}
+      class:active={tab === "reading"}
+      on:click={() => (tab = "reading")}>Reading order</button
     >
     <button
       role="tab"
@@ -415,6 +473,128 @@
         </div>
       {/if}
     </div>
+  {:else if tab === "reading"}
+    <div class="reading">
+      <div class="picker">
+        <button class="primary" on:click={pickPdf}>Pick PDF…</button>
+        <div class="path" title={inputPath}>
+          {inputPath ? basename(inputPath) : "no file selected"}
+        </div>
+        <button
+          class="primary"
+          disabled={!inputPath || readingStatus.kind === "working"}
+          on:click={runReading}
+        >
+          {readingStatus.kind === "working"
+            ? "Computing…"
+            : "Compute reading order"}
+        </button>
+      </div>
+
+      {#if readingStatus.kind !== "idle"}
+        <p class="status" data-kind={readingStatus.kind}>{readingStatus.msg}</p>
+      {/if}
+
+      {#if readingSummary}
+        <div class="totals totals--four">
+          <div class="totals__item">
+            <div class="n">{readingSummary.total_pages.toLocaleString()}</div>
+            <div class="k">pages</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">
+              {readingSummary.multi_column_pages.toLocaleString()}
+            </div>
+            <div class="k">multi-column</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">
+              {readingSummary.total_reading_nodes.toLocaleString()}
+            </div>
+            <div class="k">reading nodes</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{readingSummary.total_spanners.toLocaleString()}</div>
+            <div class="k">page spanners</div>
+          </div>
+        </div>
+
+        <h3 class="sub-h">Reading-flow preview</h3>
+        <p class="dim small">
+          What a screen reader would emit, in correct order. Multi-column pages
+          are walked left column top-to-bottom, then right column —
+          <em>not</em> physical content-stream order.
+        </p>
+        {#if readingSummary.flow_preview.length > 0}
+          <ol class="flow-list">
+            {#each readingSummary.flow_preview as f, i}
+              <li class="flow-item" data-tag={f.tag}>
+                <span class="flow-idx">{i + 1}</span>
+                <span class="flow-tag">{f.tag}</span>
+                <span class="flow-text">{f.text || "(figure)"}</span>
+                <span class="flow-pg">p.{f.page}</span>
+              </li>
+            {/each}
+          </ol>
+          {#if readingSummary.total_reading_nodes > readingSummary.flow_preview.length}
+            <p class="dim small">
+              Showing first {readingSummary.flow_preview.length} of
+              {readingSummary.total_reading_nodes.toLocaleString()} reading-flow
+              nodes.
+            </p>
+          {/if}
+        {:else}
+          <p class="dim">
+            No reading-flow nodes detected — the page is likely empty or
+            consists entirely of artifacts.
+          </p>
+        {/if}
+
+        <h3 class="sub-h">Per-page columns</h3>
+        <div class="page-table page-table--outline" role="table">
+          <div class="row head row--outline" role="row">
+            <div role="columnheader">Page</div>
+            <div role="columnheader">Cols</div>
+            <div role="columnheader">Spanners</div>
+            <div role="columnheader">Artifacts</div>
+            <div role="columnheader">Read nodes</div>
+            <div role="columnheader"></div>
+          </div>
+          {#each readingSummary.pages as p (p.page_number)}
+            <div class="row row--outline" role="row">
+              <div role="cell">#{p.page_number}</div>
+              <div role="cell">
+                {p.column_count === 0 ? "—" : p.column_count}
+              </div>
+              <div role="cell">{p.spanner_count}</div>
+              <div role="cell">{p.artifact_count}</div>
+              <div role="cell">{p.reading_node_count}</div>
+              <div role="cell" class="dim small">
+                {p.column_count >= 2 ? "multi-column" : ""}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else if readingStatus.kind === "idle"}
+        <div class="empty">
+          <h2>Reading order — column-aware</h2>
+          <p>
+            PDF/UA requires screen readers to walk the document in
+            <em>logical</em> reading order, not the order operators happen to
+            appear in the content stream. On two-column research papers,
+            magazine layouts, and legal briefs that means: left column
+            top-to-bottom, <em>then</em> right column top-to-bottom — never
+            jumping back and forth mid-sentence.
+          </p>
+          <p class="dim">
+            Slab detects column bands by clustering text run midpoints,
+            promotes page-spanning headings and figures, and parks page chrome
+            (folio, repeating header/footer) as artifacts so screen readers
+            skip them. This pass alone covers Matterhorn checkpoint 09-001.
+          </p>
+        </div>
+      {/if}
+    </div>
   {:else if tab === "conformance"}
     <div class="conformance">
       {#if digest}
@@ -484,10 +664,10 @@
         <li><strong>Matterhorn registry</strong> — every failure condition, with verdict, sourced from the PDF Association protocol.</li>
         <li><strong>Layout extraction</strong> — every text run + image placement, with bbox + font size, ready for downstream tagging.</li>
         <li><strong>Structure classification</strong> — heuristic detection of headings (H1–H6), paragraphs, lists, figures + captions, and page artifacts.</li>
+        <li><strong>Reading order</strong> — column-aware serpentine traversal so multi-column papers read left column top-to-bottom then right column, not row-by-row across both. Covers Matterhorn 09-001.</li>
       </ul>
       <h3>What's next (v3.1.0)</h3>
       <ol>
-        <li>Reading order — column-aware serpentine traversal.</li>
         <li>Alt text — Beacon-generated descriptions for figures (cached per image hash).</li>
         <li>Tag — emit StructTreeRoot + Alt text + Lang into a real tagged PDF.</li>
         <li>Validate — run the auto-decidable Matterhorn checks against the tagged output.</li>
@@ -678,6 +858,69 @@
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 10px;
     overflow: hidden;
+  }
+  .flow-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 6px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    overflow: hidden;
+    counter-reset: flow;
+  }
+  .flow-item {
+    display: grid;
+    grid-template-columns: 36px 56px 1fr 50px;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .flow-item:last-child {
+    border-bottom: 0;
+  }
+  .flow-item .flow-idx {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim, #9aa3b3);
+    font-size: 11px;
+    text-align: right;
+    font-weight: 600;
+  }
+  .flow-item .flow-tag {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(160, 160, 255, 0.14);
+    color: #c0c0ff;
+    text-align: center;
+  }
+  .flow-item[data-tag^="H"] .flow-tag {
+    background: rgba(180, 140, 255, 0.18);
+    color: #d3bcff;
+  }
+  .flow-item[data-tag="Figure"] .flow-tag,
+  .flow-item[data-tag="Caption"] .flow-tag {
+    background: rgba(140, 220, 180, 0.18);
+    color: #a4e3c2;
+  }
+  .flow-item[data-tag="Artifact"] .flow-tag {
+    background: rgba(255, 200, 120, 0.16);
+    color: #ffd49a;
+  }
+  .flow-item .flow-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .flow-item .flow-pg {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim, #9aa3b3);
+    font-size: 12px;
+    text-align: right;
   }
   .outline-item {
     display: grid;
