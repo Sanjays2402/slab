@@ -318,3 +318,233 @@ p { color: var(--muted); margin: 0 0 12px; }
 @media (max-width: 1080px) { .tb-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 760px)  { .tb-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 460px)  { .tb-grid { grid-template-columns: 1fr; } }
+
+/* ════════════════════════════════════════════════════════
+   v3.9 — Nuvio-vibe pass: floating nav, glow hero,
+   releases row, contributor wall, inverted CTA card.
+   ════════════════════════════════════════════════════════ */
+
+/* Aurora glow behind the hero */
+.bg-glow {
+  position: fixed; top: -20vh; left: 50%; transform: translateX(-50%);
+  width: 110vw; height: 70vh;
+  background:
+    radial-gradient(60% 60% at 50% 30%, rgba(125, 211, 252, 0.18), transparent 60%),
+    radial-gradient(40% 40% at 30% 50%, rgba(168, 85, 247, 0.10), transparent 70%),
+    radial-gradient(40% 40% at 70% 60%, rgba(244, 63, 122, 0.10), transparent 70%);
+  filter: blur(40px);
+  pointer-events: none;
+  z-index: 0;
+}
+body > *:not(.bg-glow) { position: relative; z-index: 1; }
+
+/* ─── Floating capsule nav (overrides earlier .nav) ─── */
+.nav {
+  position: sticky; top: 18px;
+  max-width: 1080px; margin: 18px auto 0;
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 8px 8px 16px;
+  background: rgba(20, 23, 29, 0.72);
+  backdrop-filter: saturate(180%) blur(18px);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+  z-index: 20;
+}
+.nav .brand { display: flex; align-items: center; gap: 8px; padding: 4px 6px; }
+.nav .brand .logo {
+  width: 26px; height: 26px; border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.nav .brandname { font-weight: 700; letter-spacing: -0.01em; font-size: 14px; }
+.nav nav { display: flex; gap: 4px; flex: 1; justify-content: center; }
+.nav nav a {
+  color: var(--muted); font-size: 13px; font-weight: 500;
+  padding: 7px 12px; border-radius: 999px;
+  transition: color .15s, background .15s;
+}
+.nav nav a:hover { color: var(--ink); background: rgba(255,255,255,0.05); }
+.nav-right { display: flex; gap: 6px; align-items: center; }
+.star-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 12px; border-radius: 999px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--ink); font-size: 12px; font-weight: 600;
+}
+.star-pill:hover { background: rgba(255,255,255,0.08); }
+.star-pill .dot {
+  width: 3px; height: 3px; border-radius: 999px;
+  background: var(--muted);
+}
+.star-pill .stars { color: var(--muted); font-variant-numeric: tabular-nums; }
+.dl-pill {
+  padding: 7px 14px; border-radius: 999px;
+  background: var(--ink); color: var(--bg) !important;
+  font-size: 12px; font-weight: 600;
+}
+.dl-pill:hover { background: #fff; }
+.ghbtn { display: none; } /* kill the old one */
+
+/* ─── Hero — softer kicker + tighter spacing under the glow ─── */
+.hero { padding-top: 60px; }
+.kicker {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+  color: var(--muted);
+}
+
+/* ─── Eyebrow primitive ─── */
+.eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--muted);
+  margin: 0 0 12px;
+}
+.eyebrow.dark { color: rgba(0,0,0,0.55); }
+
+/* ─── Releases ─── */
+.releases {
+  padding-top: 100px; padding-bottom: 60px;
+  border-top: 1px solid var(--line);
+}
+.rel-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 24px; margin-bottom: 32px;
+}
+.rel-head h2 { margin: 0; }
+.ghost-pill {
+  padding: 10px 18px; border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink); font-size: 13px; font-weight: 600;
+}
+.ghost-pill:hover { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.18); }
+
+.rel-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
+}
+.rel-card {
+  background: var(--panel);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 22px 22px 18px;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color .15s, transform .15s;
+}
+.rel-card:hover { border-color: rgba(255,255,255,0.18); transform: translateY(-2px); }
+.rel-tag {
+  display: inline-block; align-self: flex-start;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  padding: 4px 9px; border-radius: 999px;
+  background: rgba(125, 211, 252, 0.12); color: #7dd3fc;
+  margin-bottom: 8px;
+}
+.rel-tag[data-tone="press"]   { background: rgba(244, 63, 122, 0.14); color: #f43f7a; }
+.rel-tag[data-tone="loom"]    { background: rgba(168, 85, 247, 0.14); color: #c084fc; }
+.rel-tag[data-tone="compact"] { background: rgba(34, 197, 94, 0.14);  color: #4ade80; }
+.rel-card h3 { font-size: 19px; margin: 0; font-weight: 700; }
+.rel-date { font-size: 12px; color: var(--muted); margin: 0; }
+.rel-body { font-size: 14px; color: var(--muted); margin: 10px 0 18px; line-height: 1.55; }
+.rel-actions {
+  margin-top: auto; display: flex; gap: 16px;
+  padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.05);
+  font-size: 13px;
+}
+.rel-actions a { color: var(--ink); font-weight: 500; }
+.rel-actions a.muted { color: var(--muted); }
+.rel-actions a:hover { color: #fff; }
+
+/* ─── Contributors ─── */
+.contrib { padding-top: 60px; padding-bottom: 60px; }
+.contrib-card {
+  background: var(--panel);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 24px;
+  padding: 36px 36px 28px;
+}
+.contrib-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap; margin-bottom: 28px;
+}
+.contrib-head h2 { margin: 0; }
+.contrib-meta { font-size: 13px; color: var(--muted); }
+.contrib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 18px 12px;
+}
+.contrib-avatar {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  text-align: center; color: var(--muted);
+  transition: transform .15s;
+}
+.contrib-avatar:hover { transform: translateY(-2px); }
+.contrib-avatar img {
+  width: 52px; height: 52px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: var(--panel-2);
+}
+.contrib-avatar .ca-name {
+  color: var(--ink); font-size: 12px; font-weight: 600;
+  max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.contrib-avatar .ca-count { font-size: 11px; color: var(--muted); }
+
+/* ─── Inverted community CTA (the bright moment) ─── */
+.cta-invert { padding-top: 40px; padding-bottom: 80px; }
+.ci-card {
+  background: linear-gradient(180deg, #f6f6f8 0%, #e9eaee 100%);
+  color: #0c0e12;
+  border-radius: 24px;
+  padding: 56px 40px;
+  text-align: center;
+}
+.ci-card h2 {
+  color: #0c0e12;
+  font-size: clamp(28px, 3vw, 40px);
+  margin: 0 0 14px;
+}
+.ci-sub {
+  color: rgba(0,0,0,0.6);
+  max-width: 560px; margin: 0 auto 24px;
+  font-size: 16px;
+}
+.ci-cta { display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.ci-primary {
+  padding: 11px 22px; border-radius: 999px;
+  background: #0c0e12; color: #fff !important;
+  font-size: 14px; font-weight: 600;
+}
+.ci-primary:hover { background: #1f2229; }
+.ci-ghost {
+  padding: 11px 22px; border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.15); color: #0c0e12;
+  font-size: 14px; font-weight: 600;
+}
+.ci-ghost:hover { background: rgba(0,0,0,0.04); }
+
+/* ─── Footer refresh ─── */
+.foot {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 24px 32px 40px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 12px;
+}
+.foot .foot-l { display: flex; align-items: center; gap: 8px; }
+.foot .links { display: flex; gap: 18px; flex: 1; justify-content: center; }
+.foot .foot-r { color: var(--muted); font-variant-numeric: tabular-nums; }
+.foot a:hover { color: var(--ink); }
+
+/* ─── Mobile tweaks for new components ─── */
+@media (max-width: 860px) {
+  .nav { flex-wrap: wrap; padding: 8px 14px; border-radius: 18px; }
+  .nav nav { order: 3; width: 100%; justify-content: flex-start; overflow-x: auto; }
+  .nav nav a { padding: 6px 10px; }
+  .nav-right { margin-left: auto; }
+  .rel-grid { grid-template-columns: 1fr; }
+  .rel-head { flex-direction: column; align-items: flex-start; }
+  .contrib-card { padding: 24px 18px; border-radius: 18px; }
+  .ci-card { padding: 36px 22px; }
+  .foot { flex-direction: column; gap: 12px; }
+  .foot .links { justify-content: center; flex-wrap: wrap; }
+}
