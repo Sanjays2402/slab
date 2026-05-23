@@ -4,7 +4,67 @@
 
 ---
 
-## STATUS: v3.1.0 "Loom" Slice 0 follow-up — Matterhorn codegen pipeline shipped
+## STATUS: v3.1.0 "Loom" Slice 1 — SHIPPED + MERGED TO MAIN
+
+**TICK 2026-05-23 01:48 PT** — 5 commits on `feature/v3.1.0-loom-slice-1`,
+merged to main as `0f33f66`. +1661 net LOC. `cargo test --lib pdf::loom`
+green (24/24 passing).
+
+### What shipped (Slice 1)
+
+1. `283acd2` **fix(loom): drop Deserialize from generated matterhorn structs**
+   Generated structs hold `&'static [...]` slices that can't satisfy
+   Deserialize without lifetime gymnastics. Stripped derives from all 4
+   structs (Verdict, FailureCondition, Section, Totals); aligned codegen
+   script. Was the root cause of windows-x64 main CI failure.
+
+2. `58f6527` **feat(loom): add content-stream layout extractor**
+   `src-tauri/src/pdf/loom/layout.rs` (929 LOC). Parses content streams
+   into `LayoutTree { pages: Vec<PageLayout> }` of TextRuns + ImagePlacements.
+   Tracks Tm/CTM with q/Q stack, Tf font state, Tj/TJ/'/" show operators,
+   Td/TD/T* with leading, Do for image XObjects. 11 unit tests all green.
+
+3. `c31d7d1` **feat(loom): expose layout + matterhorn digest via Tauri**
+   Two new commands: `slab_loom_layout_summary(input)` and
+   `slab_loom_matterhorn_digest()`. Wired into generate_handler!.
+
+4. `d08ae8c` **feat(loom): LoomPanel UI with Layout / Conformance / About tabs**
+   `src/lib/panels/LoomPanel.svelte` (614 LOC, 3 tabs). File picker on
+   Layout tab, Matterhorn digest (91/48/33/10) on Conformance tab, scope
+   docs on About. Wired into sidebar nav (♿ Loom (PDF/UA), ready: true),
+   panel switch, command palette.
+
+5. `9b2d549` **docs(loom): mark Slice 1 live on the accessibility landing page**
+
+### Merged to main
+
+`0f33f66` — merge commit. Pushed to origin. **Side-benefit: this unblocks
+main CI**, which had been failing on the matterhorn Deserialize bug
+introduced by the Slice 0 codegen tick. CI should green up on the next
+main run.
+
+### Buy-Button verdict
+
+PASS on **Pick-us test** (PDF/UA accessibility is a procurement table-stake
+no Acrobat-killer ships without) and PASS on **Notice-it test** (new
+sidebar entry, new panel, conformance numbers visible).
+
+### Next tick
+
+- **Verify main CI green** after the merge (Windows job especially — that's
+  the one Slice 0 broke).
+- Slice 2 of v3.1.0 plan: tag tree inference (parse /StructTreeRoot,
+  enrich LayoutTree with structural roles).
+
+LAST_WOW_TICK_AT: 2026-05-22 (codegen pipeline shipped)
+
+RECENTLY_CLOSED_ISSUES:
+- (none this tick — Slice 1 doesn't close a numbered issue; it advances
+  the v3.1.0 plan)
+
+---
+
+## PREVIOUS STATUS: v3.1.0 "Loom" Slice 0 follow-up — Matterhorn codegen pipeline shipped
 
 **TICK 2026-05-23 01:10 PT** — 4 commits, +1684 net LOC (schema 130 + codegen 446 + matterhorn.rs 934 + mod.rs 174). No Rust compile (still 523 MiB free, target/ at 2.5 GB; cargo clean deferred to next Rust tick).
 
