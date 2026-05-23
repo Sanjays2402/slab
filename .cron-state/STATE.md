@@ -5,7 +5,59 @@
 
 ---
 
-## STATUS: 🎬 v2.3.0 "Theater" RELEASED — 6 artifacts live on GitHub
+## STATUS: ⇄ v2.4.0 "Stack" Slice 1-3 SHIPPED — visual diff end-to-end on a feature branch
+
+**TICK 2026-05-22 19:05 PT** — MODE C, 4 commits on
+`feature/v2.4.0-stack-visual-diff`, 1026 insertions (net). End-to-end
+working capability: pixel-level visual PDF diff with coral/mint change-
+box overlay, scroll-locked split panes, n/N change navigation, plus
+new "Compare" sidebar entry, command-palette entry, detach support,
+release notes, and landing-page feature card.
+
+- `dd96f46` feat(visual-diff): `pdf::visual_diff` module + DTOs +
+  `mask_changes` (Rec.709 luma delta + 3x3 dilate) + `aabb_components`
+  (BFS flood-fill, min-mass filter) + `render_pdf_pages` (Poppler
+  pdftoppm) + `visual_diff_pdfs` orchestrator. 7 unit tests pin all
+  edge cases.
+- `fd5813a` feat(visual-diff): `slab_visual_diff_pdfs` Tauri command
+  wired in lib.rs with sensible defaults (DPI 150, threshold 20,
+  min_mass 8).
+- `9fa983e` feat(stack): `StackPanel.svelte` — side-by-side raster
+  viewer, coral/mint box overlay, scroll-lock toggle, n/N keyboard
+  jumps with 240ms smooth scroll, DPI/threshold/min-mass knobs.
+  Wired into sidebar (between Diff and Slides), DETACHABLE_PANELS,
+  CommandPalette detachable set, and routes/+page.svelte panel router.
+- `4450d6f` docs(stack): v2.4.0 release notes (Acrobat $239/yr vs
+  free+offline marketing copy) + landing-page "Visual diff — new in
+  v2.4" feature card with gradient pill badge.
+
+**Buy-Button**: 4/4. Pay-for-it (Acrobat Compare Files is $239/yr,
+Foxit Premium $129/yr, PDF Expert doesn't ship it at all). Notice-it
+(new "Compare" sidebar entry). Pick-us (contract reviewers can't work
+without visual diff). Tell-a-friend (coral/mint overlay over real
+contract pages is immediate screenshot bait).
+
+**Quality gates**: deferred to CI — Mac mini still at 2.0GB free disk,
+can't run a full debug build of slab-app locally. Branch CI will tell
+us in ~12 min. The branch hasn't been built before so this is a real
+verification, not a victory lap.
+
+**LAST_WOW_TICK_AT**: 2026-05-22 19:05 PT (this tick — coral/mint
+change-box overlay with n/N animated jumps is screenshot-bait, plus
+the underlying capability is a paid-tier-in-Acrobat feature given away
+free).
+
+**Next tick options:**
+- (a) Poll CI on `feature/v2.4.0-stack-visual-diff` — if green, MODE A
+  merge to main, tag v2.4.0, then MODE B finalize the release.
+- (b) Stack Slice 4-5: HTML export (`slab_visual_diff_export_html`) +
+  Beacon "Summarize the changes in 5 bullets" wired into the Compare
+  panel's right sidebar. Bundle into v2.4.0 before merging.
+- (c) If CI red, fix on the feature branch.
+
+---
+
+## STATUS PRIOR: 🎬 v2.3.0 "Theater" RELEASED — 6 artifacts live on GitHub
 
 **TICK 2026-05-22 18:52 PT** — MODE B finalize complete + version-string
 sync. v2.3.0 Theater is now a published GitHub release with 6 desktop
