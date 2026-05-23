@@ -48,6 +48,7 @@
   import StackPanel from "$lib/panels/StackPanel.svelte";
   import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
   import PressPanel from "$lib/panels/PressPanel.svelte";
+  import FormsPanel from "$lib/panels/FormsPanel.svelte";
   import LoupePanel from "$lib/panels/LoupePanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
@@ -127,6 +128,7 @@
     { id: "stack", label: "Compare", icon: "⇄", ready: true },
     { id: "bedrock", label: "Archive (PDF/A)", icon: "⌬", ready: true },
     { id: "press", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
+    { id: "forms", label: "Forms", icon: "✎", ready: true },
     { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
     { id: "theater", label: "Theater", icon: "❖", ready: true },
@@ -445,6 +447,17 @@
       if (!inField) {
         e.preventDefault();
         active = "press";
+        return;
+      }
+    }
+    // Forms (v3.9.0 Quill): focus the AcroForm inspector. Default Mod+Shift+F.
+    if (matches(e, "forms.open")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "forms";
         return;
       }
     }
@@ -983,6 +996,8 @@
     <BedrockPanel />
   {:else if active === "press"}
     <PressPanel />
+  {:else if active === "forms"}
+    <FormsPanel />
   {:else if active === "loupe"}
     <LoupePanel />
   {:else if active === "slides"}
