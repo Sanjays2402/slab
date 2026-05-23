@@ -4,7 +4,65 @@
 
 ---
 
-## STATUS: v3.3.0 Bindery plan written (planning tick) + main CI green for d4e6004
+## STATUS: v3.4.0 Discovery plan written (planning tick — Bates + legal stamps)
+
+**TICK 2026-05-23 03:32 PT** — planning tick via writing-plans skill.
+
+### What shipped
+- **Plan**: `docs/plans/2026-05-23-v3.4.0-discovery-bates.md` (~29 KB,
+  6 slices + release, ~1360 net LOC across 12 commits). Targets the Adobe
+  Acrobat Pro DC ($239/yr) Bates-numbering buyer: prefix + zero-padded
+  monotonic counter chained across a whole production set, with a
+  Relativity/Concordance/Everlaw-compatible CSV+JSON load file. Adds the four
+  canonical legal stamps (CONFIDENTIAL / AEO / PRIVILEGED / DRAFT) +
+  custom-text diagonal. WOW = live preview re-rendering on every keystroke.
+- Buy-Button audit passes all 4 (Pay-for-it, Pick-us, Notice-it,
+  Tell-a-friend). Litigation paralegals are the 500-person-law-firm
+  "enterprise seat" customer Sanjay flagged.
+- Verified existing primitive: `src-tauri/src/pdf/bates.rs` (375 LOC,
+  `apply_bates` + `BatesOpts` + `BatesReport`) is shipped and tested but
+  has zero Tauri command, zero frontend, zero batch driver. v3.4.0 is the
+  "wire it all up + ship batch" release.
+- Issue backlog re-polled: `gh issue list --state open` returned `[]`.
+  Override expired. Roadmap-fill mode active.
+
+### Why v3.4.0 Discovery over the other open plans
+Existing written plans waiting to ship: v3.1.0 Loom Slice 2+, v3.2.0 Press,
+v3.3.0 Bindery (just written last tick). Bates is the higher-priority pick
+because:
+1. The core primitive ALREADY EXISTS — fastest path from plan → shipped
+   capability of any pending plan.
+2. Litigation discovery is the single most-cited paid-PDF feature on
+   r/macapps / r/Lawyertalk threads about Acrobat alternatives.
+3. v3.3.0 Bindery (just-planned print-shop imposition) is also enterprise
+   but serves a smaller market (commercial printers) than litigation
+   support (every law firm above 5 attorneys).
+
+### Tick-size honesty
+Planning tick — writing-plans skill explicitly invoked, output is 1
+markdown file. Logging as `[cron PLAN]`, not a SHIP tick. Per writing-plans
+skill: "A good plan makes implementation obvious." Three implementer-grade
+plans now queued (Bindery, Press, Discovery) for the next 3 ship ticks.
+
+### Next-tick options (priority order)
+1. **Execute v3.4.0 Discovery Slice 1+2** (the new plan) — core primitive
+   already exists, so Slice 1 (~40 LOC) + Slice 2 batch driver (~280 LOC)
+   = ~6 commits / ~320 LOC in one tick. Then Slice 3 (legal stamps) in the
+   following tick. Fast wins.
+2. **OR** execute v3.3.0 Bindery Slice 1+2 (booklet imposition) — also
+   ready.
+3. **OR** resume v3.1.0 Loom Slice 2 (tag tree inference).
+
+Pick by disk pressure: currently 1.9 GiB free, TIGHT. Plan-only tick was the
+right call here. Next ship tick MUST `cargo clean` first if it's a cold
+build, OR pick the Discovery Slice 2 path (incremental compile of one new
+module — should fit in current target/ space).
+
+LAST_WOW_TICK_AT: 2026-05-23 (Indic locales merged earlier this tick window)
+
+---
+
+## ARCHIVED: v3.3.0 Bindery plan written
 
 **TICK 2026-05-23 03:15 PT** — planning tick via writing-plans skill.
 
