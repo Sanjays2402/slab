@@ -9,6 +9,7 @@ pub mod auto_redact;
 pub mod bates;
 pub mod bates_batch;
 pub mod booklet;
+pub mod compactor;
 pub mod compress;
 pub mod crop;
 pub mod diff;

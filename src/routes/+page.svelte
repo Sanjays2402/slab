@@ -25,6 +25,7 @@
   import LegalStampPanel from "$lib/panels/LegalStampPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
   import VeilPanel from "$lib/panels/VeilPanel.svelte";
+  import CompactPanel from "$lib/panels/CompactPanel.svelte";
   import NupPanel from "$lib/panels/NupPanel.svelte";
   import MarkdownPanel from "$lib/panels/MarkdownPanel.svelte";
   import GrayscalePanel from "$lib/panels/GrayscalePanel.svelte";
@@ -110,6 +111,7 @@
     { id: "stamp", label: "Legal Stamp", icon: "✸", ready: true },
     { id: "redact", label: "Redact", icon: "▮", ready: true },
     { id: "veil", label: "Veil", icon: "🛡", ready: true },
+    { id: "compact", label: "Compact", icon: "📦", ready: true },
     { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
     { id: "nup", label: "N-up", icon: "▦", ready: true },
     { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
@@ -940,6 +942,8 @@
     <RedactPanel />
   {:else if active === "veil"}
     <VeilPanel />
+  {:else if active === "compact"}
+    <CompactPanel />
   {:else if active === "autoredact"}
     <AutoRedactPanel />
   {:else if active === "nup"}
