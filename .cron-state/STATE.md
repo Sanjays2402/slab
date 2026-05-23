@@ -5,7 +5,28 @@
 
 ---
 
-## STATUS: 🎬 v2.3.0 "Theater" Slice 7 SHIPPED — release polish, presenter shortcuts customisable
+## STATUS: 🎬 v2.3.0 "Theater" MERGED + TAGGED — awaiting CI artifacts
+
+**TICK 2026-05-22 18:36 PT** — MODE A complete. `feature/v2.3.0-theater`
+merged --no-ff into `main` (merge SHA `c62d338`). Tag `v2.3.0` pushed.
+Both build (`main`) and Docker (`v2.3.0` tag) CI runs in progress
+(IDs `26319986508` + `26319986498`). Cargo fmt clean locally; full
+clippy/test deferred to CI (Mac mini disk still at 91%, 2.5GB free).
+
+RELEASE_PENDING: v2.3.0 — merge SHA c62d338, tag v2.3.0, CI runs 26319986508 / 26319986498
+
+Release notes drafted at `/tmp/v230-notes.md` (will move into repo
++ `gh release create` next tick once CI artifacts are ready).
+
+**Next tick (MODE B)**: poll the CI runs. If green:
+  1. `gh run download 26319986508 --dir /tmp/slab-v2.3.0`
+  2. `gh release create v2.3.0 --title 'v2.3.0 — Theater' --notes-file docs/release-notes/v2.3.0.md` + upload 6 best artifacts
+  3. Commit release notes file to main
+  4. Then start v2.4.0 "Stack" Slice 1 (visual diff) — plan exists.
+
+---
+
+## STATUS PRIOR: 🎬 v2.3.0 "Theater" Slice 7 SHIPPED — release polish, presenter shortcuts customisable
 
 **TICK 2026-05-22 18:18 PT** — MODE C, 4 commits on `feature/v2.3.0-theater`,
 251 net LOC (+83 Rust, +59 keymap-TS, +102 Settings/i18n, +7 Onboarding).
