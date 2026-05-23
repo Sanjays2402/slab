@@ -4,7 +4,61 @@
 
 ---
 
-## STATUS: v3.4.0 Discovery — backend SHIPPED on feature/v3.4.0-discovery-slice-1-3
+## STATUS: v3.4.0 Discovery — SLICE 5 (frontend WOW) shipped on feature/v3.4.0-discovery-slice-1-3
+
+**TICK 2026-05-23 04:15 PT** — Slice 5 + CI fmt hotfix. Backend already
+landed last tick; this tick is the buyer-facing surface — the panels + the
+live preview WOW + the keyboard + palette wiring.
+
+### What shipped (branch `feature/v3.4.0-discovery-slice-1-3`, pushed)
+- `34ed195` feat(ui): BatesPanel + LegalStampPanel with live preview
+  (+1251 LOC across 2 new Svelte files; live SVG preview re-renders on
+  every keystroke / slider / position click — that's the wow)
+- `8b56c22` feat(ui): wire panels into sidebar + Cmd/Ctrl+Shift+B / +S
+  shortcuts + command palette (auto via features array)
+- `601ffaf` feat(i18n): bates + legal-stamp feature names across 7 locales
+  (en/es/fr/ar/hi/ta/te)
+- `d48b0c2` docs: ShortcutsOverlay group + CHANGELOG marketing-grade
+  v3.4.0 Discovery section
+- `1b6435e` fix(pdf): cargo fmt — alphabetical module order in pdf.rs
+  (unblocks CI that was red on the prior tick's commits)
+
+5 commits, +1353 net LOC. Frontend tick — no Rust recompile needed
+locally (disk was at 99% / 3.1 GiB free, can't afford a cold build).
+`pnpm check` green (0 errors, 46 pre-existing CSS warnings unchanged).
+
+### Buy-Button audit
+- Pay-for-it ✅ — Bates is THE feature paralegals pay $239/yr for. We
+  now match the entire Adobe Acrobat Pro DC discovery workflow free.
+- Pick-us ✅ — Adobe batches ~5 at a time with no load file. Slab
+  batches an entire production set in one click and emits a Relativity-
+  compatible CSV.
+- Notice-it ✅ — two new sidebar entries (№ Bates, ✸ Legal Stamp) +
+  two new keyboard shortcuts in the cheat sheet.
+- Tell-a-friend ✅ — the live preview is the screenshot moment.
+  Position grid + opacity slider + rotation slider all animate live.
+
+LAST_WOW_TICK_AT: 2026-05-23 (live SVG preview re-rendering on every
+keystroke — paralegals see `ACME000001` land in the bottom-right
+corner before they touch a document)
+
+### Next-tick options
+1. **Verify CI green** on `1b6435e` (post-push release check rule).
+   First clean CI on this branch since Slice 4 — if green, ready to
+   merge to main + tag v3.4.0.
+2. **Slice 6 — Release** — once CI is green: merge to main, tag v3.4.0,
+   bump package.json + Cargo.toml + tauri.conf.json, write release
+   notes, attach 6 build artifacts.
+3. **If CI still red** — investigate with `gh run view --log-failed`.
+
+### Disk story
+Still tight (3.1 GiB free / 99% used at tick start). Frontend-only tick
+respected the constraint. Next tick if it's the release tick will need
+`cargo clean` first.
+
+---
+
+## ARCHIVED: v3.4.0 Discovery — backend SHIPPED on feature/v3.4.0-discovery-slice-1-3
 
 **TICK 2026-05-23 03:48 PT** — Slices 1-3 of the just-written plan, plus
 Slice 4 (Tauri commands). Backend feature-complete, frontend next tick.
