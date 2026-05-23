@@ -43,11 +43,16 @@
 //   * review       — TODO (Slice 6)
 //   * emit         — TODO (Slice 7)
 
+pub mod alt_text;
 pub mod classify;
 pub mod layout;
 pub mod matterhorn;
 pub mod reading_order;
 
+pub use alt_text::{
+    alt_text_for_bbox, default_cache_dir as default_alt_text_cache_dir, enrich_with_alt_text,
+    AltTextOptions, AltTextStats,
+};
 pub use classify::{classify, NodeKind, StructNode, StructTree, StructTreePage};
 pub use layout::{
     extract_layout, extract_layout_from_doc, Bbox, ImagePlacement, LayoutTree, PageLayout, TextRun,
