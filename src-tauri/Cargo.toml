@@ -133,6 +133,21 @@ rquickjs = { version = "0.11", default-features = false, features = ["std"] }
 # bloat.
 crossbeam-channel = "0.5"
 
+# Signet (v3.10.0) — PKCS#7 detached digital signatures for PDFs.
+# Pure-Rust RustCrypto stack avoids OpenSSL on Windows/Linux/macOS bundles
+# and keeps the Tauri binary single-blob portable. See ADR 0011.
+cms = { version = "0.2", features = ["builder"] }
+x509-cert = { version = "0.2", features = ["pem", "builder"] }
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+p256 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
+p384 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
+der = "0.7"
+pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
+spki = "0.7"
+const-oid = { version = "0.9", features = ["db"] }
+pem = "3"
+directories = "5"
+
 # Server (v2.1.0 "Server" 🐳) — optional axum HTTP server stack for
 # `slab-server`. Gated behind the `server` feature so the desktop bundle
 # stays lean; Docker / homelab builds opt-in with `--features server`.
@@ -157,6 +172,8 @@ tempfile = "3"
 # Beacon mock HTTP server for provider unit tests (no real Ollama in CI).
 mockito = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Signet (v3.10.0) — RNG for generating throwaway self-signed certs in tests.
+rand = "0.8"
 
 [profile.release]
 opt-level = "s"      # optimize for size
