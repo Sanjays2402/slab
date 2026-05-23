@@ -70,6 +70,13 @@
       hint: "Add a folder to the Library first → the FTS5 index builds in the background.",
     },
     {
+      icon: "🎬",
+      title: "Present from any document",
+      body:
+        "Press ⇧⌘P (or Ctrl+Shift+P) on any open PDF to enter Theater — audience window fullscreens on your second display while a presenter panel with timer, notes, ink and laser stays on your laptop. Acrobat charges for this; Slab ships it free.",
+      hint: "Esc exits Theater; B blacks out the audience; I toggles the pen.",
+    },
+    {
       icon: "⌘",
       title: "Command Palette",
       body:
