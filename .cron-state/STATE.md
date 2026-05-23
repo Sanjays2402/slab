@@ -4,9 +4,45 @@
 
 ---
 
-## STATUS: v3.10.0 Signet MERGED + TAGGED. Awaiting CI build for GitHub release artifacts.
+## STATUS: v3.10.0 Signet RELEASED — 6 artifacts uploaded, Docker image live, all CI green.
 
-**TICK 2026-05-23 14:34 PT (Saturday off-hours)** — MODE A RELEASE executed.
+**TICK 2026-05-23 15:02 PT (Saturday off-hours)** — MODE B FINALIZE executed.
+- CI run 26344139015 (build + 4-platform bundle) — **all success** ✅
+- CI run 26344139022 (Docker slab-server) — **success** ✅
+- Downloaded all 4 artifact bundles to `/tmp/slab-release-3.10.0` (2.0Gi free was enough — disk now 2.0Gi after extraction).
+- `gh release create v3.10.0 --title "v3.10.0 — Signet"` with marketing-tone notes (Adobe $239/yr framing, RustCrypto privacy wedge) and 6 artifacts:
+  - Slab_3.10.0_aarch64.dmg (macOS Apple Silicon)
+  - Slab_3.10.0_x64.dmg (macOS Intel)
+  - Slab_3.10.0_amd64.deb (Linux)
+  - Slab_3.10.0_amd64.AppImage (Linux portable)
+  - Slab_3.10.0_x64-setup.exe (Windows NSIS)
+  - Slab_3.10.0_x64_en-US.msi (Windows MSI)
+- Docker image `ghcr.io/sanjays2402/slab-server:v3.10.0` live.
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.10.0
+- RELEASE_PENDING cleared.
+
+### Post-push release check ✓
+- All on-tag workflows green (build #26344139015 + Docker #26344139022).
+- Release published (not Draft).
+- No CI failures in last 24h.
+
+### Next tick — MODE C DEVELOP (v3.11.0)
+1. Re-poll `gh issue list` (currently 0 open).
+2. Create branch `feature/v3.11.0-signet-trust` for Signet follow-on:
+   ECDSA-already-supported, so target: **RFC 3161 timestamp-authority
+   integration** (CAdES-T grade) + CRL distribution-point surfacing
+   (revocation hints, not full check) + **batch sign** for legal workflows.
+3. Disk: 2.0Gi free at tick end. Will need `cargo clean -p slab-app` before
+   next Tauri bundle build.
+
+### LAST_WOW_TICK_AT: 2026-05-23T21:20Z (Signet end-to-end sign+verify — within 24h)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.10.0 Signet — published this tick (CI 26344139015 + 26344139022)
+
+---
+
+## PRIOR TICK 2026-05-23 14:34 PT — MODE A RELEASE executed.
 
 - Merged `feature/v3.10.0-signet` → `main` with `--no-ff` (merge SHA `bd0aa70`).
 - Bumped version 3.9.0 → **3.10.0** across Cargo.toml, Cargo.lock, tauri.conf.json, package.json (commit `8dc38ad`).
