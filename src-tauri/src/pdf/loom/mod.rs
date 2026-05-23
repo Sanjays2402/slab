@@ -46,6 +46,7 @@
 pub mod classify;
 pub mod layout;
 pub mod matterhorn;
+pub mod reading_order;
 
 pub use classify::{classify, NodeKind, StructNode, StructTree, StructTreePage};
 pub use layout::{
@@ -56,6 +57,7 @@ pub use matterhorn::{
     section_by_id, FailureCondition, Section, Totals, Verdict, APPLIES_TO, CONDITIONS_COUNT,
     PROTOCOL_VERSION, SECTIONS, TOTALS,
 };
+pub use reading_order::{order_reading, ReadingOrder, ReadingOrderPage};
 
 /// Project-wide coverage snapshot — the numbers that drive the
 /// `/accessibility.html` Matterhorn coverage cards and the GitHub release
