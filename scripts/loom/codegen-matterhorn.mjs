@@ -171,12 +171,12 @@ function genRust(registry, counts) {
   p("");
   p("#![allow(dead_code)] // helpers consumed in Slice 2+ of v3.1.0 Loom");
   p("");
-  p("use serde::{Deserialize, Serialize};");
+  p("use serde::Serialize;");
   p("");
   p("/// Whether a Matterhorn failure condition is decidable by the validate");
   p("/// pass alone (`Auto`), requires human review (`Human`), or depends on");
   p("/// Slab features not yet shipped (`OutOfScope`).");
-  p("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]");
+  p("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]");
   p("pub enum Verdict {");
   p("    Auto,");
   p("    Human,");
@@ -193,7 +193,7 @@ function genRust(registry, counts) {
   p("    }");
   p("}");
   p("");
-  p("#[derive(Debug, Clone, Copy, Serialize, Deserialize)]");
+  p("#[derive(Debug, Clone, Copy, Serialize)]");
   p("pub struct FailureCondition {");
   p("    /// Hyphenated id, e.g. `\"01-007\"`.");
   p("    pub id: &'static str,");
@@ -203,7 +203,7 @@ function genRust(registry, counts) {
   p("    pub section_id: &'static str,");
   p("}");
   p("");
-  p("#[derive(Debug, Clone, Copy, Serialize, Deserialize)]");
+  p("#[derive(Debug, Clone, Copy, Serialize)]");
   p("pub struct Section {");
   p("    pub id: &'static str,");
   p("    pub title: &'static str,");
@@ -211,7 +211,7 @@ function genRust(registry, counts) {
   p("    pub conditions: &'static [FailureCondition],");
   p("}");
   p("");
-  p("#[derive(Debug, Clone, Copy, Serialize, Deserialize)]");
+  p("#[derive(Debug, Clone, Copy, Serialize)]");
   p("pub struct Totals {");
   p("    pub sections: usize,");
   p("    pub failure_conditions_in_this_registry: usize,");

@@ -367,6 +367,107 @@ fn slab_page_count(input: PathBuf) -> CmdResult<u32> {
     do_page_count(&input).into()
 }
 
+/// Lightweight summary used by the Loom panel so it can render counts
+/// without shipping every individual run + image bbox over the IPC bridge.
+#[derive(Serialize)]
+pub struct LoomLayoutSummary {
+    pub pages: Vec<LoomPageSummary>,
+    pub total_runs: usize,
+    pub total_images: usize,
+}
+
+#[derive(Serialize)]
+pub struct LoomPageSummary {
+    pub page_number: u32,
+    pub width: f32,
+    pub height: f32,
+    pub run_count: usize,
+    pub image_count: usize,
+    /// Approximate distinct font sizes used on this page, rounded to 1pt,
+    /// sorted descending. Useful for heading-detection diagnostics.
+    pub distinct_font_sizes: Vec<u32>,
+}
+
+#[tauri::command]
+fn slab_loom_layout_summary(input: PathBuf) -> CmdResult<LoomLayoutSummary> {
+    use crate::pdf::loom::extract_layout;
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let tree = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let pages = tree
+        .pages
+        .iter()
+        .map(|p| {
+            let mut sizes: Vec<u32> = p
+                .runs
+                .iter()
+                .map(|r| r.font_size.round() as u32)
+                .collect();
+            sizes.sort_unstable();
+            sizes.dedup();
+            sizes.reverse();
+            sizes.truncate(8);
+            LoomPageSummary {
+                page_number: p.page_number,
+                width: p.width,
+                height: p.height,
+                run_count: p.runs.len(),
+                image_count: p.images.len(),
+                distinct_font_sizes: sizes,
+            }
+        })
+        .collect();
+    let total_runs = tree.total_runs();
+    let total_images = tree.total_images();
+    CmdResult::Ok {
+        value: LoomLayoutSummary {
+            pages,
+            total_runs,
+            total_images,
+        },
+    }
+}
+
+/// Matterhorn registry digest for the Loom panel's Conformance tab.
+#[derive(Serialize)]
+pub struct LoomMatterhornDigest {
+    pub protocol_version: &'static str,
+    pub applies_to: &'static str,
+    pub registry_total: usize,
+    pub full_protocol_total: usize,
+    pub auto: usize,
+    pub human: usize,
+    pub out_of_scope: usize,
+    pub auto_share_of_full_protocol: f64,
+}
+
+#[tauri::command]
+fn slab_loom_matterhorn_digest() -> CmdResult<LoomMatterhornDigest> {
+    use crate::pdf::loom::{CoverageSnapshot, APPLIES_TO, PROTOCOL_VERSION};
+    let snap = CoverageSnapshot::from_registry();
+    CmdResult::Ok {
+        value: LoomMatterhornDigest {
+            protocol_version: PROTOCOL_VERSION,
+            applies_to: APPLIES_TO,
+            registry_total: snap.registry_total,
+            full_protocol_total: snap.full_protocol_total,
+            auto: snap.auto,
+            human: snap.human,
+            out_of_scope: snap.out_of_scope,
+            auto_share_of_full_protocol: snap.auto_share_of_full_protocol,
+        },
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3102,6 +3203,8 @@ pub fn run() {
             slab_find_matching_pages,
             slab_outline_starts,
             slab_page_count,
+            slab_loom_layout_summary,
+            slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
             slab_delete_pages,
