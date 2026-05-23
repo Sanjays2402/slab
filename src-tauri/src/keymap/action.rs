@@ -38,6 +38,7 @@ pub enum ActionId {
     TheaterToggleBlackout,
     TheaterToggleInk,
     TheaterExit,
+    BedrockOpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +237,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Exit Theater",
         group: "Theater",
         default_binding: "Escape",
+    },
+    ActionInfo {
+        id: ActionId::BedrockOpen,
+        key: "bedrock.open",
+        label: "Archive as PDF/A",
+        group: "Archive",
+        default_binding: "Mod+Shift+A",
     },
 ];
 

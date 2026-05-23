@@ -415,6 +415,17 @@
         return;
       }
     }
+    // Bedrock (v3.0.0): focus the PDF/A archive panel. Default Mod+Shift+A.
+    if (matches(e, "bedrock.open")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "bedrock";
+        return;
+      }
+    }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
     if (active !== "reader") return;
