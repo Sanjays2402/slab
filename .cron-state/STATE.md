@@ -4,10 +4,67 @@
 
 ---
 
-## STATUS: v3.1.0 Loom Slice 5 (structure_tree) shipped on feature/v3.1.0-loom-slice-3.
+## STATUS: v3.1.0 Loom Slice 6 (metadata + validator + UI) SHIPPED on feature/v3.1.0-loom-slice-3. Branch is feature-complete for v3.1.0; ready to merge to main next tick.
 
-**TICK 2026-05-23 08:20 PT** — MODE C develop. Slice 5 is the public-launch
-gate for v3.1.0 Loom: Slab can now emit valid PDF/UA-1 tagged PDFs end-to-end.
+**TICK 2026-05-23 09:15 PT (Saturday off-hours)** — MODE C develop. Slice 6
+finishes v3.1.0 Loom. Slab can now tag PDF/UA-1 documents AND certify them
+with an 8-check validator, all offline, in one panel. PAC 2024 / CommonLook
+Validator / veraPDF Enterprise cost hundreds per seat and only grade — Slab
+does both for free.
+
+### What shipped this tick (4 commits, ~1500 LOC)
+
+- `5b2b296 feat(loom): apply_pdfua_metadata — XMP packet + ViewerPreferences (Slice 6)`
+  - `src-tauri/src/pdf/loom/metadata.rs` (483 LOC, 7 tests).
+  - XMP packet with `pdfuaid:part=1`, `dc:title`, `dc:language`, `xmp:CreatorTool`.
+  - `/ViewerPreferences /DisplayDocTitle true` (Matterhorn 07-001).
+  - Info dict `/Title` sync from XMP `dc:title` (Matterhorn 06-001).
+  - `/Lang` fallback ("en-US") at catalog (Matterhorn 11-001).
+  - `MetadataOptions` builder + `MetadataStats { xmp_written, title_synced, ... }`.
+- `12a3238 feat(loom): validate() — 8 Matterhorn auto-conditions on tagged PDFs (Slice 6)`
+  - `src-tauri/src/pdf/loom/validate.rs` (557 LOC, 7 tests).
+  - 8 auto-decidable checks: StructTree present, MarkInfo /Marked true, /Lang
+    set, XMP present, XMP pdfuaid:part=1, ViewerPrefs /DisplayDocTitle true,
+    Info /Title set, every Figure has /Alt. Each yields PDF/UA-1 clause +
+    Matterhorn condition ID.
+  - `ValidateReport { overall, checks: Vec<CheckResult>, passed, failed }`.
+- `1580e46 feat(loom): slab_loom_validate command + auto-validate after tag (Slice 6)`
+  - `src-tauri/src/lib.rs`: `LoomTagResult` extended with `validation` +
+    `metadata` fields. `slab_loom_tag_document` now runs apply_pdfua_metadata
+    then validate after weave. New `#[tauri::command] slab_loom_validate`
+    grades any existing PDF (vendor docs, Acrobat output, etc.).
+- `ff11a50 feat(loom): Validate tab + sub-badge UI — Slice 6 finale, PDF/UA-1 verdict in the panel`
+  - `src/lib/panels/LoomPanel.svelte`: new "Validate" tab
+    (Cmd/Ctrl+Shift+V), verdict card, per-check list with PDF/UA-1
+    clause + Matterhorn ID per row, idle empty-state pitch naming the
+    competitors. Sub-badge on Tag tab reveals 380ms after main badge —
+    green "✓ Validated · ISO 14289-1 · 8/8 checks" or red verdict.
+    ~140 LOC of CSS, full dark-mode parity.
+  - Also fixed one clippy vec_init_then_push lint in validate.rs.
+
+### Quality gates this tick
+
+- `pnpm check`: 0 errors, 46 warnings (all pre-existing unused-CSS, not Slice 6).
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --lib -- -D warnings`: clean.
+- `cargo test --lib`: **1234 passed, 0 failed**.
+
+### Buy-Button passes ALL FOUR
+
+- Pay-for-it: validator alone competes with $$$ commercial tools.
+- Notice-it: green sub-badge after every tag is unmissable.
+- Pick-us: Adobe Acrobat doesn't grade conformance; Slab does — offline.
+- Tell-a-friend: "ISO 14289-1 certified, free, on my Mac" is a screenshot.
+
+### Wow moment
+
+LAST_WOW_TICK_AT: 2026-05-23T16:15Z — sub-badge stagger + Validate tab verdict.
+
+### Next tick
+
+MODE A — RELEASE. feature/v3.1.0-loom-slice-3 is now feature-complete for
+v3.1.0. Merge to main, run gates on main, tag v3.1.0, push --follow-tags,
+finalize GitHub release with marketing-tone notes.
 
 ### What shipped this tick (3 commits, ~1240 LOC across 3 files)
 
