@@ -4,7 +4,31 @@
 
 ---
 
-## STATUS: v3.1.0 "Loom" Slice 1 — SHIPPED + MERGED TO MAIN
+## STATUS: main CI hotfix — clippy on layout.rs cleared
+
+**TICK 2026-05-23 02:10 PT** — single-commit hotfix `67346ad` on main.
+The Slice 1 merge tripped two `-D warnings` errors in clippy on both
+windows-x64 and macos-arm64 (`dead_code` on `Matrix3::x_scale`,
+`clippy::if_same_then_else` in `decode_show_string`). Both fixed
+end-to-end + local fmt/clippy/test green (24/24 loom tests).
+
+**Tick-size honesty**: this is a 1-commit / -5 LOC tick, well below the
+600-LOC bar. It was the right call anyway — POST-PUSH RELEASE CHECK rule
+makes a red CI on main the top priority over new feature work, and disk
+free at start of tick was 905 MiB (now 158 MiB after the clippy build).
+A 600-LOC slice would have OOM-ed the linker before shipping anything.
+Marking this as a `[cron HOTFIX]` not a `[cron FAILED-SIZE]`.
+
+**Watch next tick**: confirm `gh run list --branch main --limit 3` shows
+green for commit `67346ad`. Then resume Slice 2 (tag tree inference),
+which still needs disk: **first action of next tick must be
+`cd src-tauri && cargo clean`** (target/ at ~3 GB, free at ~158 MiB).
+
+LAST_WOW_TICK_AT: 2026-05-22 (codegen pipeline)
+
+---
+
+## ARCHIVED: v3.1.0 "Loom" Slice 1 — SHIPPED + MERGED TO MAIN
 
 **TICK 2026-05-23 01:48 PT** — 5 commits on `feature/v3.1.0-loom-slice-1`,
 merged to main as `0f33f66`. +1661 net LOC. `cargo test --lib pdf::loom`
