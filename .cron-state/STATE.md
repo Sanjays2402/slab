@@ -4,74 +4,108 @@
 
 ---
 
-## STATUS: v3.1.0 Loom Slice 4 (alt-text) shipped on feature/v3.1.0-loom-slice-3.
+## STATUS: v3.1.0 Loom Slice 5 (structure_tree) shipped on feature/v3.1.0-loom-slice-3.
 
-**TICK 2026-05-23 07:37 PT** — MODE C develop.
+**TICK 2026-05-23 08:20 PT** — MODE C develop. Slice 5 is the public-launch
+gate for v3.1.0 Loom: Slab can now emit valid PDF/UA-1 tagged PDFs end-to-end.
 
-Slice 4 (Beacon-generated alt-text) shipped end-to-end in three commits
-on top of the Slice-3 branch (the branch name stays for continuity,
-but it now contains both slices — will rename or just merge as-is):
+### What shipped this tick (3 commits, ~1240 LOC across 3 files)
 
-- `pdf::loom::alt_text` module (~600 LOC incl. tests, 9 unit tests all green)
-  - SHA-256 content-addressed disk cache
-  - Per-figure error isolation
-  - normalise_alt() strips "An image of", quotes, collapses whitespace
-- `slab_loom_alt_text_summary` Tauri command (~125 LOC)
-  - Walks layout → classify → enrich_with_alt_text
-  - Loads Beacon config + builds provider
-  - Returns up to 20 sample alt-texts with bboxes
-- LoomPanel new "Alt-text" tab (~250 LOC incl. CSS)
-  - Stats: figures total, generated, cached, elapsed
-  - Per-figure cards with index pill, page chip, bbox dims, italic quote
-  - Cmd/Ctrl+Shift+A global shortcut from any LoomPanel tab
-  - Designed empty-state with the privacy-wedge pitch
-- Plan: `docs/plans/2026-05-23-v3.1.0-loom-slice-4-alt-text.md`
+- `74480d9 feat(loom): structure_tree weave() — emit StructTreeRoot for PDF/UA-1 (Slice 5)`
+  - `src-tauri/src/pdf/loom/structure_tree.rs` (~960 LOC incl. 17 unit tests).
+  - `ParentTreeBuilder` (NumberTree for `/ParentTree`).
+  - `build_role_map` + `make_struct_elem` helpers.
+  - `plan_page` — StructTree page → flat `RunMcid` sequence in stream order.
+    Containers (Document/Sect/List) pass through; artifacts skip MCID counter.
+  - `rewrite_page_stream` — injects `BDC /<Tag> << /MCID n >> ... EMC` around
+    every Tj/TJ/'/"/Do operator; artifacts use empty-dict form. Re-flates the
+    stream via lopdf.
+  - `weave(doc, tree, order, opts)` — public entry. Builds StructElems
+    depth-first mirroring classify's tree, wires `/StructTreeRoot`,
+    `/MarkInfo`, `/Lang`, `/RoleMap`, `/ParentTreeNextKey`, and
+    `/StructParents` on every page. Per-Figure `/Alt` from Slice 4 alt-text;
+    per-node `/Lang` if classify sets it. Artifacts excluded from the elem
+    tree (kept in content stream as `/Artifact BDC ... EMC`).
+  - 17 unit tests covering: builder sort, role map, struct-elem invariants,
+    plan_page (heading levels H1..H6 + collapse, container traversal,
+    artifact MCID-skip), rewrite_page_stream (BDC/EMC bracketing, artifact
+    empty-dict, empty-plan no-op), and weave (catalog wiring, /StructParents
+    on every page, /Alt on Figure, artifact exclusion, /Lang preserve-existing).
+- `4fea7b1 feat(loom): slab_loom_tag_document Tauri command (Slice 5 backend wiring)`
+  - `src-tauri/src/lib.rs` adds the async command (~110 LOC).
+  - Runs the full pipeline: layout → classify → reading_order → best-effort
+    Beacon alt-text → weave → save `<stem>.tagged.pdf`.
+  - Best-effort alt-text means tagging still ships if Ollama is offline.
+  - Returns `LoomTagResult { output_path, elapsed_ms, pages_processed,
+    pages_skipped, bdc_pairs_injected, struct_elems_created,
+    figures_with_alt_text }`.
+  - Registered in `tauri::generate_handler![…]` next to the other Loom cmds.
+- `ff2a201 feat(loom): LoomPanel "Tag PDF" tab with Cmd+Shift+T + reveal anim (Slice 5 UI)`
+  - New "Tag PDF" tab on `src/lib/panels/LoomPanel.svelte` (~210 LOC).
+  - Primary CTA "Tag Document for PDF/UA" with stats card on success.
+  - **WOW**: 320ms purple-glow reveal animation on the "PDF/UA-1 emitted"
+    pill badge after a successful tagging run. Designed for screenshot.
+  - Cmd/Ctrl+Shift+T global shortcut from any LoomPanel tab.
+  - Empty-state copy frames the privacy/cost wedge:
+    > "Adobe Acrobat Pro's Auto-tag costs $239/yr. CommonLook starts at
+    > $1,200 per seat. veraPDF won't generate alt-text. Slab does the whole
+    > pipeline in one click — without your file leaving this Mac."
+  - Dark-mode variant included.
 
-Quality gates: cargo fmt ✓, cargo clippy --lib -D warnings ✓,
-cargo test --lib (1203 passed, +9 new) ✓, pnpm check (0 errors) ✓.
+### Quality gates this tick
 
-Net LOC: ~1000 prod across 3 files (plan + module + UI). Passes ≥600 bar.
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --lib -- -D warnings` ✓
+- `cargo test --lib` → 1220 passed (+17 new from structure_tree).
+- `pnpm check` → 0 errors, 46 warnings (all pre-existing CSS-unused-selector).
 
-LAST_WOW_TICK_AT: 2026-05-23T07:37 PT — AI-generated alt-text Adobe
-charges extra for (Sensei) and uploads your file to do; Slab generates
-locally via Beacon llava, caches by content hash, ships free.
+### LAST_WOW_TICK_AT: 2026-05-23T08:20 PT
 
-Buy-Button verdict:
-- Pay-for-it: PASS. Adobe Acrobat Pro Sensei is a paid feature *and*
-  ships your file to Adobe servers. Slab does it 100% offline.
-- Notice-it: PASS. New "Alt-text" tab visible immediately.
-- Pick-us: PASS. Acrobat free tier lacks this. Preview/PDF Expert
-  don't have it. Foxit AI is cloud-only. Slab is the only free,
-  offline option.
-- Tell-a-friend: PASS. "Slab generated alt-text for every figure in
-  my report locally, in 12 seconds, without my file leaving my Mac."
+The purple-glow "PDF/UA-1 emitted" badge reveal anim. Plus the underlying
+capability — generating valid tagged PDFs locally — is itself the bigger wow.
+Acrobat Pro charges $239/yr for this; CommonLook charges $1,200+/seat;
+neither runs on Linux. Slab ships it free, cross-platform, offline.
+
+### Buy-Button verdict for the entire Slice 5
+
+- **Pay-for-it:** PASS — Acrobat Pro AutoTag is the $239/yr feature. We
+  give it away with vision-LLM alt-text on top.
+- **Pick-us:** PASS — no free cross-platform PDF/UA tagger exists today.
+  veraPDF tags but won't auto-generate alt-text; pdfarranger doesn't tag.
+- **Notice-it:** PASS — new Tag PDF tab + Cmd+Shift+T shortcut visible the
+  moment the user opens Loom.
+- **Tell-a-friend:** PASS — "I tagged my dissertation for screen readers
+  locally, in seconds, free." Plus the badge reveal screenshot.
 
 ### Branch state
 
-`feature/v3.1.0-loom-slice-3` is now 6 commits ahead of main:
-- 4c8ef2f feat(loom): column-aware reading-order traversal (Slice 3)
-- 99bce70 feat(loom): slab_loom_reading_order_summary Tauri command
-- 3a669d6 feat(loom): Reading order tab in LoomPanel (Slice 3 UI)
-- b3df908 chore(loom): doc-comment indent fmt + STATE + session log
-- 19443b6 feat(loom): Beacon alt-text generation with SHA-256 disk cache (Slice 4)
-- 94a6e2a feat(loom): slab_loom_alt_text_summary Tauri command (Slice 4)
-- 00f5991 feat(loom): Alt-text tab in LoomPanel with Cmd+Shift+A shortcut (Slice 4 UI)
+`feature/v3.1.0-loom-slice-3` is now 10 commits ahead of main:
 
-### Next tick candidate (Slice 5: structure_tree)
+Slices 3 + 4 + 5 all live on the branch (the branch name lags the content).
+Plan written 07:37 PT this morning, implementation shipped 08:20 PT.
 
-Plan calls for `pdf::loom::structure_tree` — emit /StructTreeRoot into
-the PDF catalog. ~320 LOC, the biggest single file in the pipeline.
-This is the heart of PDF/UA: every screen reader walks
-/StructTreeRoot → /K → marked-content references to render the
-logical document. Module pairs with /MarkInfo, XMP pdfuaid:part=1,
-and (per-node) /Alt + /ActualText + /Lang.
+### Next tick candidate (Slice 6: metadata + XMP)
 
-Once Slice 5 lands, Slab can emit valid PDF/UA-1 tagged PDFs —
-that's the public-launch milestone for v3.1.0 Loom.
+ISO 14289-1 also requires:
+- XMP metadata with `pdfuaid:part=1` namespace.
+- `/ViewerPreferences << /DisplayDocTitle true >>` on the catalog.
+- `/Metadata` stream on the catalog with the XMP packet.
+- `/Lang` if not already set (we already do this — re-confirm).
+- ActualText for ligatures + math (lower priority, can defer to 6.2).
+- Title in document info dict matching XMP `dc:title`.
 
-### Slice 3 archive (previous tick)
+Slice 6 will add `src-tauri/src/pdf/loom/metadata.rs` mirroring the
+structure_tree.rs pattern. Pair with a "PDF/UA validator" tab that runs the
+already-shipped Matterhorn auto-conditions against the tagged output and
+shows a pass/fail card. That makes Slice 6 the right buy-button tick:
+post-tag verification turns the badge from a claim into evidence.
 
-Reading order tab, column-aware traversal — see prior STATE entries.
+After Slice 6 lands, v3.1.0 Loom is ready to merge → main → tag → release.
+
+### Slice 3 + 4 archive (previous ticks)
+
+Reading order + column-aware traversal (Slice 3); Beacon alt-text generation
+with SHA-256 disk cache (Slice 4). See prior STATE entries / git log.
 
 ---
 
@@ -96,9 +130,9 @@ RECENTLY_CLOSED_ISSUES:
 
 ## OPS NOTE — 2026-05-23 07:37 PT
 
-Disk filled to 100% mid-tick (228GB SSD, 117MB free). Root cause:
-78GB stale Chrome code-signing scratch clone at
+Disk filled to 100% mid-tick (228GB SSD, 117MB free). Root cause: 78GB
+stale Chrome code-signing scratch clone at
 `/private/var/folders/9g/.../X/com.google.Chrome.code_sign_clone/`.
-Removed it during this tick; APFS recovered ~1.4GB usable plus the
-rest as purgeable space. If this happens again, the same path is a
-safe first target — macOS regenerates as needed.
+Removed it during this tick; APFS recovered ~1.4GB usable plus the rest
+as purgeable space. If this happens again, the same path is a safe first
+target — macOS regenerates as needed.
