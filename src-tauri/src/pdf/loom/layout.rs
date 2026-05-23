@@ -174,6 +174,7 @@ impl Matrix3 {
     }
 
     /// Scale factor on the x axis.
+    #[allow(dead_code)] // symmetric pair to y_scale; consumed by Slice 2 (tag tree inference)
     fn x_scale(self) -> f32 {
         (self.a * self.a + self.c * self.c).sqrt()
     }
@@ -442,9 +443,7 @@ fn decode_show_string(o: &Object) -> Option<String> {
     }
     let mut s = String::with_capacity(bytes.len());
     for b in bytes {
-        if b.is_ascii() && !b.is_ascii_control() {
-            s.push(b as char);
-        } else if b == b'\n' || b == b'\r' || b == b'\t' {
+        if (b.is_ascii() && !b.is_ascii_control()) || b == b'\n' || b == b'\r' || b == b'\t' {
             s.push(b as char);
         } else {
             s.push('?');

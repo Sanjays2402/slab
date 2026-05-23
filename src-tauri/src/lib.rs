@@ -407,11 +407,7 @@ fn slab_loom_layout_summary(input: PathBuf) -> CmdResult<LoomLayoutSummary> {
         .pages
         .iter()
         .map(|p| {
-            let mut sizes: Vec<u32> = p
-                .runs
-                .iter()
-                .map(|r| r.font_size.round() as u32)
-                .collect();
+            let mut sizes: Vec<u32> = p.runs.iter().map(|r| r.font_size.round() as u32).collect();
             sizes.sort_unstable();
             sizes.dedup();
             sizes.reverse();
