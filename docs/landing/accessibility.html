@@ -177,19 +177,19 @@
     <p>The Matterhorn Protocol (PDF Association, 2021) is the industry-standard PDF/UA-1 ruleset. It defines 136 failure conditions across 31 sections. We classify each:</p>
     <div class="cols">
       <article class="auto">
-        <h3>Auto · projected ≈ 68 / 136</h3>
-        <p>Decidable from the PDF object model alone. Slab runs the check during the <strong>validate</strong> pass and emits PASS / FAIL without human review.</p>
+        <h3>Auto &middot; 48 transcribed / projected &asymp; 68 of 136</h3>
+        <p>Decidable from the PDF object model alone. Slab runs the check during the <strong>validate</strong> pass and emits PASS / FAIL without human review. Today: 48 conditions transcribed and code-generated into <code>matterhorn.rs</code>; projection &asymp; 68 once Slices&nbsp;5&ndash;7 transcribe the remaining 45 not-yet-classified conditions.</p>
       </article>
       <article class="human">
-        <h3>Human · projected ≈ 38 / 136</h3>
-        <p>Requires judgement — e.g. "is this image decorative or does it carry meaning?" Surfaced in the <strong>Review</strong> tab with the offending node highlighted, so a reviewer can confirm or flag.</p>
+        <h3>Human &middot; 33 transcribed / projected &asymp; 38 of 136</h3>
+        <p>Requires judgement &mdash; e.g. &ldquo;is this image decorative or does it carry meaning?&rdquo; Surfaced in the <strong>Review</strong> tab with the offending node highlighted, so a reviewer can confirm or flag.</p>
       </article>
       <article class="oos">
-        <h3>Out of scope (v3.1.0) · ≈ 30 / 136</h3>
-        <p>Depends on Slab features not yet shipped — multimedia, complex form fields, signature subset. Each lands in a follow-on release; the checkpoint registry tracks them.</p>
+        <h3>Out of scope (v3.1.0) &middot; 10 transcribed / &asymp; 30 of 136</h3>
+        <p>Depends on Slab features not yet shipped &mdash; multimedia, complex form fields, signature subset. Each lands in a follow-on release; the checkpoint registry tracks them.</p>
       </article>
     </div>
-    <p class="footnote">Slice 0 of Loom (committed today) transcribed 91 of 136 failure conditions into our <a href="https://github.com/Sanjays2402/slab/blob/main/docs/specs/matterhorn-1.1.json">canonical JSON registry</a>. The remaining 45 will land as each validate section is implemented. Verdict assignments will be reviewed by an external accessibility consultant before v3.1.0 GA.</p>
+    <p class="footnote">Slice&nbsp;0 of Loom transcribed <strong>91 of 136 failure conditions</strong> (66.9% of the protocol) into our <a href="https://github.com/Sanjays2402/slab/blob/main/docs/specs/matterhorn-1.1.json">canonical JSON registry</a>, validated by a <a href="https://github.com/Sanjays2402/slab/blob/main/docs/specs/matterhorn-1.1.schema.json">JSON Schema</a> and code-generated into the <a href="https://github.com/Sanjays2402/slab/blob/main/src-tauri/src/pdf/loom/matterhorn.rs">Rust validate engine</a> by <a href="https://github.com/Sanjays2402/slab/blob/main/scripts/loom/codegen-matterhorn.mjs">a deterministic codegen script</a>. CI verifies the registry, the generated Rust, and the public coverage numbers on this page never drift apart. Verdict assignments will be reviewed by an external accessibility consultant before v3.1.0 GA.</p>
   </section>
 
   <section class="a11y-privacy">
