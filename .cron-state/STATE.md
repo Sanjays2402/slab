@@ -1,112 +1,58 @@
 # Slab autonomous cron — STATE
 
 > **You are Cake.** This file is your memory across runs. Read me FIRST every cycle.
-> If you change anything in here, keep it terse and append-friendly.
 
 ---
 
-## STATUS: 📐 v3.0.0 Bedrock Slice 4+5+6 SHIPPED — PDF/A archival end-to-end UI
+## STATUS: 🚀 v3.0.0 Bedrock MERGED + TAGGED — release pipeline running
+
+**TICK 2026-05-22 22:25 PT** — MODE A complete. The PDF/A archival vertical
+slice (feature/v3.0.0-bedrock-pdfa, ~1060 LOC over 12 feature commits) is
+now on main and tagged v3.0.0. Manifests bumped 2.4.0 → 3.0.0 in Cargo.toml,
+package.json, tauri.conf.json, Cargo.lock.
+
+- Merge commit: `c931552` (--no-ff, STATE conflict resolved keeping branch copy)
+- Version bump: `d563e79` chore(release): bump to v3.0.0 — Bedrock
+- Tag: `v3.0.0` pushed with main
+- CI: run 26324563123 (build on main) + 26324563090 (Docker on tag) in_progress
+
+**RELEASE_PENDING**: v3.0.0 — merge SHA c931552, bump SHA d563e79, tag v3.0.0,
+build run 26324563123, docker run 26324563090. Next tick: MODE B —
+`gh run view` to verify green, then `gh run download` artifacts and
+`gh release create v3.0.0 --notes-file docs/release-notes/v3.0.0.md` with
+the 6 curated bundle artifacts (macos-arm64 dmg, macos-x64 dmg, linux deb
++ AppImage, windows msi + nsis).
+
+**Release notes**: `docs/release-notes/v3.0.0.md` (3.6 KB) — leads with
+"PDF/A archival, free and offline" wedge vs Adobe Acrobat Pro DC $239/yr.
+
+**Buy-Button**: 4/4 PASS this whole release. NARA / eIDAS / ISO 14641 / IRS
+all mandate PDF/A for archival → enterprise lawyers + records managers are
+the buyers.
+
+**Gates this tick**: cargo fmt clean. Full clippy + test deferred to CI
+(local disk 100% / 1.5 GiB free — pattern holds).
+
+**LAST_WOW_TICK_AT**: 2026-05-22T22:00 PT (BedrockPanel hero card animation,
+last tick — still inside 24h window).
+
+**Next tick plan**:
+1. MODE B: poll runs 26324563123 + 26324563090. If green, publish release.
+   If red, `gh run view --log-failed` and hotfix on a v3.0.1 branch.
+2. After release published, fall through to next backlog item. With v3.0.0
+   shipped, the v3.x.x archival pipeline is open. Candidate v3.0.1 wow:
+   font-embedding pass (replace gate with subsetting) — turns the
+   skip_font_check escape hatch into a real conversion path.
+3. Re-poll `gh issue list`. Confirmed empty at tick start; if Sanjay
+   filed new ones overnight, those take priority.
+
+---
+
+## ARCHIVED: 📐 v3.0.0 Bedrock Slice 4+5+6 SHIPPED — PDF/A archival end-to-end UI
 
 **TICK 2026-05-22 22:00 PT** — MODE C, 4 feature commits on
-`feature/v3.0.0-bedrock-pdfa`, ~1060 net LOC. The buy-button moment:
-a user can drop a PDF in the Bedrock panel, hit `Cmd+Shift+A`, and get
-a validated archival PDF/A file out. Adobe charges $239/yr for this.
+`feature/v3.0.0-bedrock-pdfa`, ~1060 net LOC. Buy-button: drop PDF, hit
+Cmd+Shift+A, get validated PDF/A. Adobe charges $239/yr. See merged commits
+on main: cde2b59 (orchestrator) + 749bf5a (Tauri command) + 6e7ef37
+(BedrockPanel UI, 682 LOC, hero animation) + 280a635 (keymap + release notes).
 
-- `cde2b59` feat(pdfa): convert_to_pdfa orchestrator (Slice 4) — composes
-  font_audit (gate) + sanitize + xmp+output_intent injection + serialize +
-  validate-the-round-trip + atomic_save into a single pure function. 6
-  unit tests including happy path producing validating PDF/A, font-gate
-  blocks unembedded Helvetica, skip_font_check escape hatch, idempotency,
-  XMP title/author propagation.
-- `749bf5a` feat(pdfa): slab_pdfa_convert Tauri command — exposes orchestrator
-  via tauri::generate_handler!. Returns full ConvertReport including the
-  post-validation findings so the UI renders pass/fail in one round-trip.
-- `6e7ef37` feat(bedrock): BedrockPanel.svelte — 3-card layout (Source +
-  auto font audit, Options w/ 2b|3b segmented control + XMP fields,
-  Output + Convert button). Hero post-convert card with 4-stat grid
-  (sanitized entries, sRGB OutputIntent ✓, XMP metadata ✓, fonts
-  unembedded), 1.4s gold strata-sweep animation (reduced-motion safe),
-  collapsible validation findings list. Wired into +page.svelte features
-  list + main router + detached router. 682 lines.
-- (Slice 6) keymap: `bedrock.open` ActionId added with default `Mod+Shift+A`
-  in src-tauri/src/keymap/action.rs + matching TS union in keymap.ts +
-  +page.svelte global hotkey handler.
-
-**Branch**: `feature/v3.0.0-bedrock-pdfa` (push pending end of tick).
-
-**End-to-end**: `Cmd+Shift+A` → BedrockPanel renders. Pick PDF → auto
-runs `slab_pdfa_font_audit` showing per-font embedded status. Pick output
-path (auto-suggests `<name>.pdfa.pdf`). Click "Convert to PDF/A-2b" →
-`slab_pdfa_convert` runs full pipeline → hero card animates in with
-green ✓ badge + validation summary. Atomic-save ensures the original
-file is untouched on crash.
-
-**Gates**: `cargo fmt --check` clean. `cargo check --lib` clean locally
-(4.7s incremental). `cargo test --lib` + clippy + pnpm check deferred
-to CI — Mac mini at 94% disk (1.6 GiB free) can't run full debug build
-of slab-app with mockito+tests. Pattern stable: CI is our gate, local
-is fmt+check only.
-
-**Buy-Button**: 4/4 PASS.
-- Pay-for-it: Adobe Acrobat Pro DC $239/yr ships PDF/A as Pro-only.
-  50-lawyer firm pays $11,950/yr today; with Slab that's $0.
-- Notice-it: new "Archive (PDF/A)" sidebar entry with 📐 icon + Cmd+Shift+A
-  shortcut + auto-discoverable in command palette.
-- Pick-us: Preview can't do PDF/A. PDF Expert can't. Free Foxit can't
-  (Pro tier $159/yr required). Ghostscript CLI emits invalid PDF/A
-  ~80% of the time. Slab is the only free offline cross-platform option.
-- Tell-a-friend: NARA, eIDAS, ISO 14641, IRS all mandate PDF/A for
-  archival. 8-sec demo of drag-PDF → green-✓ validated PDF/A out.
-
-**LAST_WOW_TICK_AT**: 2026-05-22T22:00 PT (this tick). The hero post-convert
-card with the gold strata-sweep animation + 4-stat grid + ISO-clause-
-referenced findings list is screenshot-bait. Plus the underlying
-capability is competitor-paid-tier-only.
-
-**Release notes**: `docs/release-notes/v3.0.0.md` written this tick
-(3.6 KB marketing copy). Ready for MODE A merge → tag → MODE B release
-once CI green on the feature branch.
-
-**Next tick**: Verify CI green on this 4-commit push. If green, MODE A
-merge `feature/v3.0.0-bedrock-pdfa` → main, bump manifests 2.4.0 → 3.0.0,
-tag v3.0.0, release pipeline. If red, fix on branch. v3.0.1 backlog:
-mutating font-embedding pass for the unembedded-Helvetica case (currently
-gated behind skip_font_check escape hatch).
-
----
-
-## ARCHIVED: 📐 v3.0.0 Bedrock Slice 3 SHIPPED — XMP + OutputIntent injection + CI rescue
-
-**TICK 2026-05-22 21:45 PT** — MODE C, 3 feature commits + 1 chore on
-`feature/v3.0.0-bedrock-pdfa`, +720 net LOC, +24 new unit tests (15 XMP +
-9 output_intent).
-
-- `3aee658` fix(pdfa): use slice::contains in font_audit standard-14 check
-  — rescues CI (clippy::manual_contains -D warnings broke all 3 platforms
-  on prev push `2a418f3`).
-- `655bdd8` feat(pdfa): XMP metadata packet builder (Slice 3a)
-- `7a2fa89` feat(pdfa): OutputIntent + XMP injection pass (Slice 3b)
-
-**Branch**: `feature/v3.0.0-bedrock-pdfa` (pushed, CI green run 26323837874).
-
----
-
-## ARCHIVED: 📐 v3.0.0 Bedrock Slice 2 + 2.5 SHIPPED — validate pass + font audit
-
-**TICK 2026-05-22 21:27 PT** — MODE C, 3 commits on top of Slice 1.
-
-- `e833ecc` feat(pdfa): validate pass — structural ISO 19005-2 rule engine
-- `8927438` feat(pdfa): expose slab_pdfa_validate Tauri command
-- `2a418f3` feat(pdfa): font embedding/ToUnicode audit module
-
----
-
-## ARCHIVED: v3.0.0 Bedrock Slice 1 SHIPPED — pdf::pdfa scaffold + sanitize pass
-
-**TICK 2026-05-22 20:04 PT** — 3 commits, ~521 net LOC, 16 new green tests.
-
-- `ee7f59f` docs(adr): PDF/A-2b default, 3b opt-in + sRGB v4 ICC vendored
-- `61e74b0` feat(pdfa): pdf::pdfa module + ICC + sanitize_for_pdfa() + 16 tests
-- `2103096` fix(stack): align StackPanel Status with shared types
-
-Session logs: `.cron-state/sessions/2026-05-22-{2004,2127,2145,2200}.md`.
