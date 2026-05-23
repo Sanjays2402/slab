@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Slab — 5-second silent hero demo
+  Storyboard (1.0s per beat, loops every 6s with 1s pause):
+    0.0–1.0   Blank Slab window appears.
+    1.0–2.0   A PDF "drops" in from the top-right (drag-and-drop metaphor).
+    2.0–3.0   OCR pass: light sweeps over the page; orange dotted boxes
+              outline detected text regions.
+    3.0–4.0   Auto-redact: black bars slide over PII matches.
+    4.0–5.0   Flatten + PDF/A badge: purple "Archival ✓" stamp lands.
+    5.0–6.0   Hold final frame, then fade to start for loop.
+  Fully offline, no external assets, ≤ 12 KB. Honors prefers-reduced-motion.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img"
+     aria-label="Slab demo: drop a PDF, OCR sweeps the page, PII gets redacted, document is flattened to PDF/A — all in five seconds.">
+  <defs>
+    <linearGradient id="winbg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1f26"/>
+      <stop offset="1" stop-color="#14171d"/>
+    </linearGradient>
+    <linearGradient id="pdfgrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fafafa"/>
+      <stop offset="1" stop-color="#e7e7ea"/>
+    </linearGradient>
+    <linearGradient id="ocrsweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7dd3fc" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#7dd3fc" stop-opacity="0.55"/>
+      <stop offset="0.55" stop-color="#7dd3fc" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#7dd3fc" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6c5ce7"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <!-- App window chrome -->
+  <rect x="0" y="0" width="960" height="600" rx="14" fill="url(#winbg)"/>
+  <rect x="0" y="0" width="960" height="38" fill="#0e1116"/>
+  <circle cx="22" cy="19" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="19" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="19" r="6" fill="#28c840"/>
+  <text x="480" y="24" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+        font-size="13" fill="#9aa3b2">Slab — Untitled.pdf</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="38" width="160" height="562" fill="#0e1116"/>
+  <g font-family="ui-sans-serif,system-ui,sans-serif" font-size="12" fill="#9aa3b2">
+    <text x="20" y="80">Open</text>
+    <text x="20" y="108">Pages</text>
+    <text x="20" y="136">Annotate</text>
+    <text x="20" y="164">Redact</text>
+    <text x="20" y="192">OCR</text>
+    <text x="20" y="220">Sign &amp; Flatten</text>
+    <text x="20" y="248">Bedrock (PDF/A)</text>
+    <text x="20" y="276">Loupe (Preflight)</text>
+    <text x="20" y="304">Beacon (AI)</text>
+  </g>
+  <rect x="0" y="232" width="4" height="22" fill="#a78bfa">
+    <animate attributeName="y" values="232;192;164;232" keyTimes="0;0.5;0.66;1" dur="6s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- The PDF page (drops in 0–1s) -->
+  <g>
+    <animateTransform attributeName="transform" type="translate"
+      values="900,-700; 400,80; 400,80; 400,80; 400,80; 400,80"
+      keyTimes="0; 0.16; 0.33; 0.66; 0.83; 1"
+      dur="6s" repeatCount="indefinite"/>
+    <g>
+      <rect x="0" y="0" width="380" height="500" rx="6" fill="url(#pdfgrad)" stroke="#cfd2d8"/>
+      <!-- Document text lines (placeholder content) -->
+      <g fill="#23262d">
+        <rect x="32" y="44"  width="180" height="14" rx="2"/>
+        <rect x="32" y="72"  width="316" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="86"  width="290" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="100" width="304" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="114" width="240" height="6"  rx="1" fill="#5b6068"/>
+
+        <rect x="32" y="148" width="120" height="10" rx="2"/>
+        <rect x="32" y="172" width="316" height="6"  rx="1" fill="#5b6068"/>
+        <!-- PII line: SSN -->
+        <rect x="32" y="186" width="80"  height="8"  rx="1" fill="#5b6068"/>
+        <text x="120" y="194" font-family="ui-monospace,monospace" font-size="11" fill="#23262d">123-45-6789</text>
+        <rect x="32" y="200" width="316" height="6"  rx="1" fill="#5b6068"/>
+
+        <rect x="32" y="234" width="316" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="248" width="296" height="6"  rx="1" fill="#5b6068"/>
+        <!-- PII line: email -->
+        <rect x="32" y="262" width="60"  height="8"  rx="1" fill="#5b6068"/>
+        <text x="100" y="270" font-family="ui-monospace,monospace" font-size="11" fill="#23262d">jane.doe@acme.com</text>
+        <rect x="32" y="276" width="304" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="290" width="240" height="6"  rx="1" fill="#5b6068"/>
+
+        <rect x="32" y="324" width="316" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="338" width="316" height="6"  rx="1" fill="#5b6068"/>
+        <rect x="32" y="352" width="190" height="6"  rx="1" fill="#5b6068"/>
+      </g>
+
+      <!-- OCR sweep band (visible 2–3s) -->
+      <rect x="-200" y="20" width="200" height="480" fill="url(#ocrsweep)" opacity="0">
+        <animate attributeName="opacity" values="0;0;1;1;0;0;0;0"
+                 keyTimes="0; 0.33; 0.34; 0.49; 0.50; 0.66; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+        <animateTransform attributeName="transform" type="translate"
+          values="0,0; 0,0; 0,0; 580,0; 580,0; 580,0; 580,0; 580,0"
+          keyTimes="0; 0.33; 0.34; 0.49; 0.50; 0.66; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+      </rect>
+
+      <!-- OCR detected boxes (visible 2.5–3s) -->
+      <g fill="none" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3 2" opacity="0">
+        <animate attributeName="opacity" values="0;0;0;1;1;0;0;0"
+                 keyTimes="0; 0.33; 0.41; 0.42; 0.49; 0.50; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+        <rect x="28" y="40"  width="188" height="22"/>
+        <rect x="28" y="68"  width="324" height="50"/>
+        <rect x="28" y="144" width="128" height="18"/>
+        <rect x="28" y="168" width="324" height="38"/>
+        <rect x="28" y="230" width="324" height="68"/>
+        <rect x="28" y="320" width="324" height="40"/>
+      </g>
+
+      <!-- Redaction bars (slide in 3–4s, cover the PII text) -->
+      <g>
+        <rect x="120" y="184" width="0" height="14" fill="#0c0c0d">
+          <animate attributeName="width" values="0;0;0;0;0;108;108;108"
+                   keyTimes="0; 0.33; 0.50; 0.55; 0.56; 0.62; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+        </rect>
+        <rect x="100" y="260" width="0" height="14" fill="#0c0c0d">
+          <animate attributeName="width" values="0;0;0;0;0;132;132;132"
+                   keyTimes="0; 0.33; 0.50; 0.57; 0.58; 0.64; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+        </rect>
+      </g>
+
+      <!-- PDF/A flatten badge (lands 4–5s, holds) -->
+      <g opacity="0">
+        <animate attributeName="opacity" values="0;0;0;0;0;0;1;1"
+                 keyTimes="0; 0.33; 0.50; 0.66; 0.70; 0.71; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+        <animateTransform attributeName="transform" type="translate"
+          values="240,440; 240,440; 240,440; 240,440; 240,460; 240,440; 240,440; 240,440"
+          keyTimes="0; 0.33; 0.50; 0.66; 0.69; 0.71; 0.83; 1" dur="6s" repeatCount="indefinite"/>
+        <rect x="0" y="0" width="120" height="44" rx="10" fill="url(#badge)" filter="url(#soft)" opacity="0.6"/>
+        <rect x="0" y="0" width="120" height="44" rx="10" fill="url(#badge)"/>
+        <text x="60" y="20" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+              font-size="11" fill="#ffffff" font-weight="700" letter-spacing="0.06em">PDF/A-2b</text>
+        <text x="60" y="35" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+              font-size="10" fill="#ffffff" opacity="0.9">Archival ✓</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Caption strip (changes per beat) -->
+  <g font-family="ui-sans-serif,system-ui,sans-serif" font-size="13" fill="#9aa3b2">
+    <text x="180" y="565">
+      <tspan>
+        <animate attributeName="opacity" values="1;1;0;0;0;0;0;1" keyTimes="0;0.16;0.17;0.33;0.66;0.83;0.99;1" dur="6s" repeatCount="indefinite"/>
+        Drop a PDF →
+      </tspan>
+    </text>
+    <text x="180" y="565" opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0;0;0;0" keyTimes="0;0.17;0.18;0.33;0.34;0.50;0.99;1" dur="6s" repeatCount="indefinite"/>
+      OCR sweeping the page…
+    </text>
+    <text x="180" y="565" opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0;0;0;0" keyTimes="0;0.50;0.51;0.66;0.67;0.70;0.99;1" dur="6s" repeatCount="indefinite"/>
+      Auto-redact PII (SSN, email)
+    </text>
+    <text x="180" y="565" opacity="0">
+      <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.70;0.71;0.95;0.99;1" dur="6s" repeatCount="indefinite"/>
+      Flatten to PDF/A — fully offline, free.
+    </text>
+  </g>
+</svg>
