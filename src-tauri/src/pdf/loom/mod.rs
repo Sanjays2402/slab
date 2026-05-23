@@ -50,6 +50,7 @@ pub mod matterhorn;
 pub mod metadata;
 pub mod reading_order;
 pub mod structure_tree;
+pub mod validate;
 
 pub use alt_text::{
     alt_text_for_bbox, default_cache_dir as default_alt_text_cache_dir, enrich_with_alt_text,
