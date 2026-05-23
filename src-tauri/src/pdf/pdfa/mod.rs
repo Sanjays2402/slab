@@ -8,6 +8,8 @@
 
 pub mod convert;
 pub mod font_audit;
+pub mod font_embed;
+pub mod font_table;
 pub mod icc;
 pub mod inspect;
 pub mod output_intent;
