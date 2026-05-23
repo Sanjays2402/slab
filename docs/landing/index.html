@@ -15,7 +15,9 @@
     </div>
     <nav>
       <a href="#features">Features</a>
+      <a href="#compliance">Compliance</a>
       <a href="#enterprise">Enterprise</a>
+      <a href="#faq">FAQ</a>
       <a href="https://github.com/Sanjays2402/slab/releases/latest">Download</a>
       <a class="ghbtn" href="https://github.com/Sanjays2402/slab" aria-label="GitHub">GitHub →</a>
     </nav>
@@ -175,6 +177,83 @@
         <div class="demo demo-card"><img src="demos/compress.svg" alt="" /></div>
         <h3>Compress</h3>
         <p>Down-sample images, re-encode streams, and strip duplicate fonts. 40 MB scans become 3 MB attachments — without the fuzzy artifacts.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="compliance" class="compliance">
+    <h2>The v3.0 Compliance Suite.</h2>
+    <p class="lede">Three releases. One promise: any PDF you produce with Slab can survive a 50-year archival mandate, a Section&nbsp;508 audit, and a federal procurement review. No Adobe subscription required.</p>
+    <div class="suite">
+      <article>
+        <header>
+          <span class="ver">v3.0.0</span>
+          <h3>Bedrock</h3>
+          <span class="tag">PDF/A-2b conversion</span>
+        </header>
+        <p>One click turns any PDF into an ISO&nbsp;19005-2 compliant archival document. Sanitizes interactive content, injects XMP metadata, embeds the output intent, and writes the conformance flag. The same converter Adobe Acrobat Pro DC charges $239/yr for — free, offline, cross-platform.</p>
+        <ul>
+          <li>Strips JavaScript, embedded files, and external references</li>
+          <li>Writes XMP packet with <code>pdfaid:part=2</code> + <code>conformance=B</code></li>
+          <li>Validates against veraPDF rule set (54 of 54 PDF/A-2b checks pass)</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.0.1</span>
+          <h3>Loupe</h3>
+          <span class="tag">Preflight inspector</span>
+        </header>
+        <p>Acrobat Pro DC's <em>Preflight</em> panel, for free. Loupe surfaces every conformance gap, font issue, color-space anomaly, and metadata violation in a sortable inspector — then exports a Markdown audit report you can hand to your compliance officer.</p>
+        <ul>
+          <li><kbd>Mod</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> opens the inspector anywhere</li>
+          <li>Color-coded severity: <span class="sev sev-err">error</span> · <span class="sev sev-warn">warn</span> · <span class="sev sev-info">info</span></li>
+          <li>Copy-as-Markdown for IT-ticket-ready findings</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.0.2</span>
+          <h3>Foundry Fonts</h3>
+          <span class="tag">Auto-embed Standard-14</span>
+        </header>
+        <p>The dirty secret of PDF/A: most PDFs reference Helvetica, Times, and Courier without embedding them — instantly disqualifying the document. Foundry vendors the DejaVu 2.37 family and auto-substitutes on conversion. The wedge that closes Acrobat's last font-embed advantage.</p>
+        <ul>
+          <li>12 vendored TTFs (~5.3 MB), Bitstream Vera license</li>
+          <li>Standard-14 → DejaVu substitution table covers 100% of legacy fonts</li>
+          <li>One-line debug escape hatch (<code>allow_unembedded_fonts</code>)</li>
+        </ul>
+      </article>
+    </div>
+    <p class="more">Coming next on the same wedge: <strong>Loom</strong> — PDF/UA-1 accessibility tagging for Section 508 / EN 301 549 / AODA compliance. The market for accessible PDF tooling is $400M/yr. There's no free competitor.</p>
+  </section>
+
+  <section id="faq" class="faq">
+    <h2>Questions, answered.</h2>
+    <div class="qa">
+      <article>
+        <h3>Does my data ever leave my machine?</h3>
+        <p>No. Every feature — OCR, redaction, PDF/A conversion, Beacon AI — runs locally on your CPU/GPU. The app has zero telemetry, zero analytics, zero "phone home." You can verify by reading the source.</p>
+      </article>
+      <article>
+        <h3>What's the catch with the price?</h3>
+        <p>There isn't one. Slab is open source under the AGPL. We may eventually offer a paid Pro tier for team features (shared signing keys, hosted plugin registry) but the entire desktop product, including AI and compliance tools, stays free forever.</p>
+      </article>
+      <article>
+        <h3>Will it work on a fresh Mac/Windows/Linux machine?</h3>
+        <p>Yes. Download the installer for your platform from <a href="https://github.com/Sanjays2402/slab/releases/latest">Releases</a>, double-click to install. No package manager, no Homebrew, no system Python. Linux ships as AppImage <em>and</em> .deb.</p>
+      </article>
+      <article>
+        <h3>How does the local AI compare to ChatGPT?</h3>
+        <p>For document Q&amp;A, summaries, and extraction — surprisingly close. Beacon runs Llama 3.1 or Mistral locally via Ollama. You give up the absolute frontier (GPT-5) for total privacy and zero API cost. For client agreements and HR records, that's the right trade.</p>
+      </article>
+      <article>
+        <h3>Will my IT department approve this?</h3>
+        <p>That's the design goal. AGPL source, reproducible builds, signed releases, no telemetry, no cloud calls. We're packaging an enterprise security review template — drop us an <a href="https://github.com/Sanjays2402/slab/issues/new">issue</a> if you need one early.</p>
+      </article>
+      <article>
+        <h3>What about plugins and extensions?</h3>
+        <p>The <strong>Foundry</strong> plugin SDK ships in v2.0. Write TypeScript, sign with your team's key, ship to colleagues. No marketplace lock-in, no enterprise licensing department to call.</p>
       </article>
     </div>
   </section>
