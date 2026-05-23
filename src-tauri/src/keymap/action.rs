@@ -32,6 +32,12 @@ pub enum ActionId {
     ZoomOut,
     BeaconSend,
     LibrarySearch,
+    TheaterStart,
+    TheaterNext,
+    TheaterPrev,
+    TheaterToggleBlackout,
+    TheaterToggleInk,
+    TheaterExit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,6 +195,48 @@ const ACTIONS: &[ActionInfo] = &[
         group: "Library",
         default_binding: "Mod+Shift+F",
     },
+    ActionInfo {
+        id: ActionId::TheaterStart,
+        key: "theater.start",
+        label: "Start Theater (presenter mode)",
+        group: "Theater",
+        default_binding: "Mod+Shift+P",
+    },
+    ActionInfo {
+        id: ActionId::TheaterNext,
+        key: "theater.next",
+        label: "Next slide",
+        group: "Theater",
+        default_binding: "PageDown",
+    },
+    ActionInfo {
+        id: ActionId::TheaterPrev,
+        key: "theater.prev",
+        label: "Previous slide",
+        group: "Theater",
+        default_binding: "PageUp",
+    },
+    ActionInfo {
+        id: ActionId::TheaterToggleBlackout,
+        key: "theater.blackout",
+        label: "Toggle blackout",
+        group: "Theater",
+        default_binding: "B",
+    },
+    ActionInfo {
+        id: ActionId::TheaterToggleInk,
+        key: "theater.ink",
+        label: "Toggle ink/laser pen",
+        group: "Theater",
+        default_binding: "I",
+    },
+    ActionInfo {
+        id: ActionId::TheaterExit,
+        key: "theater.exit",
+        label: "Exit Theater",
+        group: "Theater",
+        default_binding: "Escape",
+    },
 ];
 
 impl ActionId {
@@ -310,5 +358,40 @@ mod tests {
         assert_eq!(d[&ActionId::TabsGoto1].to_string(), "Mod+1");
         assert_eq!(d[&ActionId::TabsGoto9].to_string(), "Mod+9");
         assert_eq!(d[&ActionId::BeaconSend].to_string(), "Mod+Enter");
+    }
+
+    #[test]
+    fn theater_defaults_are_presenter_native() {
+        // Locks Slice 7 of the v2.3.0 "Theater" plan: presenter-mode
+        // shortcuts must stay stable so muscle memory survives upgrades.
+        let d = default_keymap();
+        assert_eq!(d[&ActionId::TheaterStart].to_string(), "Mod+Shift+P");
+        assert_eq!(d[&ActionId::TheaterNext].to_string(), "PageDown");
+        assert_eq!(d[&ActionId::TheaterPrev].to_string(), "PageUp");
+        assert_eq!(d[&ActionId::TheaterToggleBlackout].to_string(), "B");
+        assert_eq!(d[&ActionId::TheaterToggleInk].to_string(), "I");
+        assert_eq!(d[&ActionId::TheaterExit].to_string(), "Escape");
+    }
+
+    #[test]
+    fn theater_actions_share_one_group() {
+        // The Settings → Keymap panel sections rows by `group`. The six
+        // Theater actions must all live under "Theater" so they appear
+        // as one block, not scattered across other groups.
+        for id in [
+            ActionId::TheaterStart,
+            ActionId::TheaterNext,
+            ActionId::TheaterPrev,
+            ActionId::TheaterToggleBlackout,
+            ActionId::TheaterToggleInk,
+            ActionId::TheaterExit,
+        ] {
+            assert_eq!(
+                id.info().group,
+                "Theater",
+                "{} not in Theater group",
+                id.as_str()
+            );
+        }
     }
 }
