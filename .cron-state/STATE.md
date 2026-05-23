@@ -4,7 +4,48 @@
 
 ---
 
-## STATUS: v3.4.0 Discovery — MERGED TO MAIN + TAG PUSHED, awaiting CI artifacts
+## STATUS: v3.5.0 Veil plan WRITTEN (planning tick) — v3.4.0 release still mid-CI
+
+**TICK 2026-05-23 04:45 PT** — `writing-plans` skill explicitly invoked by
+Sanjay/cron, so this was a planning tick by design. v3.4.0 build still
+`in_progress` (run 26331594957), so MODE B FINALIZE deferred to next tick.
+Docker workflow for v3.4.0 already succeeded (run 26331594960).
+
+### What shipped
+- **Plan**: `docs/plans/2026-05-23-v3.5.0-veil-true-redaction.md` (~34 KB,
+  6 slices, ~13 commits, ~1510 net LOC + ~670 test LOC). Targets the OTHER
+  Adobe Acrobat Pro DC ($239/yr) buyer feature — true redaction. Today
+  `pdf/redact.rs` only paints black bars (the file's own comment admits
+  "future work"); v3.5.0 IS that work: content-stream text excision, image
+  XObject scrubbing, annotation strip, XMP/Info/embedded-files/JS sanitize,
+  plus a side-by-side Inspector that proves the redaction is real
+  (drag-select on left = nothing copies). WOW = the Inspector.
+- Buy-Button: passes all 4 (Pay-for-it, Pick-us, Notice-it, Tell-a-friend).
+- Verified existing primitives: `redact.rs` (223 LOC), `auto_redact.rs`
+  (289 LOC), `extract.rs` exist — Veil reuses `RedactRect`, `media_box`,
+  and the visible-bar painter; adds content-stream walk + sanitize.
+
+### Tick-size honesty
+Planning tick — `writing-plans` skill invoked. Per skill: "A good plan
+makes implementation obvious." Logging as `[cron PLAN]`. Two ticks worth
+of ready-to-execute plans are now queued (v3.5.0 Veil + the older v3.3.0
+Bindery / v3.2.0 Press / v3.1.0 Loom Slice 2).
+
+### Next-tick options (priority order)
+1. **MODE B FINALIZE v3.4.0** — first thing, check `gh run view 26331594957`.
+   If green: download artifacts, `gh release create v3.4.0`, clear
+   RELEASE_PENDING.
+2. **THEN execute v3.5.0 Veil Slice 1** — pure helper, ~280 LOC + 5 tests,
+   no Rust recompile pressure (small new module). Plan is implementer-grade.
+3. **OR** if CI still red on v3.4.0, debug with `gh run view --log-failed`.
+
+RELEASE_PENDING: v3.4.0 — merge SHA a398df2, tag v3.4.0, CI build run 26331594957 (in_progress at tick end), docker run 26331594960 (success). Release notes at /tmp/v3.4.0-notes.md (re-create from prior STATE section if /tmp wiped — title `v3.4.0 — Discovery`, theme Adobe DC discovery workflow free + offline).
+
+LAST_WOW_TICK_AT: 2026-05-23 (live SVG preview re-rendering on every keystroke for Bates/legal stamp — last actual wow ship; this tick was plan-only).
+
+---
+
+## ARCHIVED: v3.4.0 Discovery — MERGED TO MAIN + TAG PUSHED, awaiting CI artifacts
 
 **TICK 2026-05-23 04:35 PT** — MODE A RELEASE executed. Merged
 `feature/v3.4.0-discovery-slice-1-3` into `main` (merge SHA `a398df2`),
