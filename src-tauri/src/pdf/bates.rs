@@ -103,6 +103,14 @@ pub struct BatesReport {
     pub next_start: u64,
 }
 
+/// Format a single Bates label. Pure function; reused by the batch driver
+/// and the load-file writer. If `n` needs more digits than `digits`, we
+/// widen rather than truncate (silent truncation is a discovery hazard).
+pub fn bates_label_for(n: u64, prefix: &str, digits: u8) -> String {
+    let body = format!("{:0width$}", n, width = digits as usize);
+    format!("{}{}", prefix, body)
+}
+
 pub fn apply_bates(input: &Path, output: &Path, opts: &BatesOpts) -> Result<BatesReport, PdfError> {
     if !input.exists() {
         return Err(PdfError::InputMissing(input.display().to_string()));
@@ -147,12 +155,7 @@ pub fn apply_bates(input: &Path, output: &Path, opts: &BatesOpts) -> Result<Bate
 
     for (idx, (_page_num, page_id)) in entries.iter().enumerate() {
         let bates_num = opts.start_at + idx as u64;
-        let label = format!(
-            "{}{:0>width$}",
-            opts.prefix,
-            bates_num,
-            width = opts.digits as usize
-        );
+        let label = bates_label_for(bates_num, &opts.prefix, opts.digits);
         if first_label.is_none() {
             first_label = Some(label.clone());
         }
@@ -371,5 +374,21 @@ mod tests {
         let dst = tmp.path().join("out.pdf");
         let err = apply_bates(&bogus, &dst, &BatesOpts::default()).unwrap_err();
         assert!(matches!(err, PdfError::InputMissing(_)));
+    }
+
+    #[test]
+    fn bates_label_basic() {
+        assert_eq!(bates_label_for(1, "ACME", 6), "ACME000001");
+        assert_eq!(bates_label_for(42, "", 4), "0042");
+        assert_eq!(bates_label_for(999_999, "X", 6), "X999999");
+    }
+
+    #[test]
+    fn bates_label_overflow_widens() {
+        // Documented behavior: if n needs more digits than `digits`,
+        // we widen (never truncate). Truncation would silently corrupt a
+        // production set — unacceptable.
+        assert_eq!(bates_label_for(1_000_000, "ACME", 6), "ACME1000000");
+        assert_eq!(bates_label_for(12_345, "", 3), "12345");
     }
 }
