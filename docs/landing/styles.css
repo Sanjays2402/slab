@@ -136,3 +136,32 @@ p { color: var(--muted); margin: 0 0 12px; }
 @media (prefers-reduced-motion: reduce) {
   .demo object { animation: none !important; }
 }
+
+/* v2.4.0 — visual diff feature highlight */
+.features article.new {
+  outline: 1px solid rgba(108, 92, 231, 0.4);
+  outline-offset: -1px;
+  position: relative;
+}
+.features article.new .badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #6c5ce7, #4ade80);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+  vertical-align: middle;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.features article kbd {
+  background: #2a2a2e;
+  color: #eee;
+  border: 1px solid #3a3a3e;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
