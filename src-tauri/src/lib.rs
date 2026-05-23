@@ -1188,6 +1188,22 @@ fn slab_pages_build(input: PathBuf, opts: PagesBuildOpts, output: PathBuf) -> Cm
     do_pages_build(&input, &opts, &output).into()
 }
 
+// --- v3.9.0 "Quill" — AcroForm inspect + fill ------------------------------
+
+#[tauri::command]
+fn slab_forms_inspect(input: PathBuf) -> CmdResult<crate::pdf::forms::FormsReport> {
+    crate::pdf::forms::inspect(&input).into()
+}
+
+#[tauri::command]
+fn slab_forms_fill(
+    input: PathBuf,
+    values: std::collections::HashMap<String, String>,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::forms::FillReport> {
+    crate::pdf::forms::fill(&input, &values, &output).into()
+}
+
 #[tauri::command]
 fn slab_find_text_spans(input: PathBuf) -> CmdResult<Vec<PageSpans>> {
     do_find_text_spans(&input).into()
@@ -3928,6 +3944,8 @@ pub fn run() {
             slab_reorder_pages,
             slab_apply_page_ops,
             slab_pages_build,
+            slab_forms_inspect,
+            slab_forms_fill,
             slab_find_text_spans,
             slab_replace_text_span,
             slab_diff_pdfs,
