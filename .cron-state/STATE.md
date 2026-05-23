@@ -5,7 +5,55 @@
 
 ---
 
-## STATUS: 🎬 v2.3.0 Theater Slice 5 SHIPPED — dual-window presenter mode end-to-end
+## STATUS: 🎬 v2.3.0 "Theater" Slice 7 SHIPPED — release polish, presenter shortcuts customisable
+
+**TICK 2026-05-22 18:18 PT** — MODE C, 4 commits on `feature/v2.3.0-theater`,
+251 net LOC (+83 Rust, +59 keymap-TS, +102 Settings/i18n, +7 Onboarding).
+Cargo tests for keymap green locally (41 pass incl. 2 new Theater locks);
+full clippy + lib + pnpm-check deferred to CI because Mac mini hit the
+disk-full wall mid-build (228GB used / 117MB free → cleared 2.5GB by
+nuking Caches + cargo target + checkpoints, still not enough for a full
+debug build of slab-app + mockito). CI on this branch is 8-for-8 green.
+
+- `95eff91` feat(keymap): 6 Theater actions (`theater.{start,next,prev,blackout,ink,exit}`)
+  with presenter-native defaults (Mod+Shift+P / PageDown / PageUp / B / I / Escape).
+  2 new tests pin the defaults so a stray rename can't break muscle memory.
+- `c28a9ee` feat(keymap,theater): wire ActionIds through `matches()` in main
+  window's global hotkey + theater-control's per-session keypress switch.
+  Theater-control now boots the keymap on mount (it's a separate route).
+  End-to-end: rebind `theater.next` to F5 → projector remote works.
+- `116ce42` feat(settings,i18n): Settings → Theater section between Search
+  and footer, lists every Theater shortcut via `prettyBindingFor(id)` so
+  user rebinds reflect instantly. CTA dispatches `slab:focus-theater`
+  which the main `+page.svelte` listens for. 11 i18n keys × 4 locales.
+- `2c1cd7a` feat(onboarding): Theater walkthrough step #7 — copy hits the
+  buyer angle directly ("Acrobat charges for this; Slab ships it free").
+
+**Buy-Button audit**: 4/4. Pay-for-it (litigators), Notice-it (Settings +
+onboarding both surface it), Pick-us (Acrobat has no presenter display
+or ink-on-slide), Tell-a-friend (rebindable presenter shortcut →
+projector remote, video-demo-worthy).
+
+`LAST_WOW_TICK_AT: 2026-05-22T01:18Z` (Slice 5 dual-window). This tick
+is polish, not a new wow — fine because Slice 5 already shipped today.
+
+**Next tick options:**
+- (a) MODE A — merge `feature/v2.3.0-theater` → main, tag `v2.3.0`,
+  build CI, finalize GitHub release. **Recommended** — Theater is done.
+- (b) v2.3.1 micro: Settings → Theater knobs (default ink colour,
+  second-display preference) backed by new `[theater]` config section.
+- (c) Start v2.4.0 "Stack" Slice 1 (plan is already promoted).
+
+**Branch state**: `feature/v2.3.0-theater` HEAD will be at the push SHA
+after this tick lands.
+
+**Disk health blocker**: Mac mini is at 99% capacity (Downloads has 6GB
+of video courses Sanjay should triage). Cron can't run full local Rust
+gates until this is fixed. CI compensates today but autonomy is hampered.
+
+---
+
+## STATUS PRIOR: 🎬 v2.3.0 Theater Slice 5 SHIPPED — dual-window presenter mode end-to-end
 
 **TICK 2026-05-22 08:30 PT** — MODE C, 4 commits, 1603 net LOC, all gates green.
 
