@@ -596,7 +596,7 @@ fn slab_loom_classify_summary(input: PathBuf) -> CmdResult<LoomClassifySummary> 
 
 /// Slice 3 result for the LoomPanel Outline tab: per-page column count
 /// + sample of the first N reading-order labels so users can see Loom's
-/// re-ordering live.
+///   re-ordering live.
 #[derive(Serialize)]
 pub struct LoomReadingOrderSummary {
     pub total_pages: usize,
