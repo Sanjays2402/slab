@@ -4,9 +4,11 @@
 //! passes (sanitize, fonts, output_intent, xmp, validate) are wired.
 //!
 //! Current state: slice 1 — sanitize pass + ICC profile bytes.
+//! Slice 2 — validate pass (structural ISO 19005-2 rules) — added 2026-05-22.
 
 pub mod icc;
 pub mod sanitize;
+pub mod validate;
 
 /// Conformance level requested by the caller.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
