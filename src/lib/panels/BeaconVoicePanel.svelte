@@ -322,7 +322,7 @@
 
 <div class="voice-panel">
   <header>
-    <h2>🔊 Voice Mode</h2>
+    <h2>◊ Voice Mode</h2>
     <p class="subtitle">
       Hear Beacon answers out loud, or read any text. Runs entirely on
       your machine — no API calls.

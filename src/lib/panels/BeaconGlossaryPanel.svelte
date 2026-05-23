@@ -212,7 +212,7 @@
 
 <section class="panel glossary">
   <header>
-    <h2>📖 Glossary</h2>
+    <h2>⌥ Glossary</h2>
     <p class="hint">
       Auto-extract jargon, acronyms, and italicised terms with plain-English definitions.
     </p>

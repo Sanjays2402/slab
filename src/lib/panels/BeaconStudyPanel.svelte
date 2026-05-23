@@ -170,7 +170,7 @@
 
 <section class="panel">
   <header>
-    <h2>🎓 Study Mode</h2>
+    <h2>⊜ Study Mode</h2>
     <p class="subtitle">
       Beacon turns your PDF into Q&A flashcards. Spaced-repetition
       scheduling (SM-2 lite) decides what to show you next.

@@ -147,7 +147,7 @@
 
 <section class="panel citations">
   <header>
-    <h2>📑 Citations</h2>
+    <h2>❞ Citations</h2>
     <p class="hint">Find inline citations and link them to the bibliography.</p>
   </header>
 
