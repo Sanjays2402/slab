@@ -841,6 +841,111 @@ async fn slab_loom_alt_text_summary(input: PathBuf) -> CmdResult<LoomAltTextSumm
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoomTagResult {
+    pub output_path: String,
+    pub elapsed_ms: u64,
+    pub pages_processed: usize,
+    pub pages_skipped: usize,
+    pub bdc_pairs_injected: usize,
+    pub struct_elems_created: usize,
+    pub figures_with_alt_text: usize,
+}
+
+/// Slice 5: tag a PDF for PDF/UA-1 conformance and write `<name>.tagged.pdf`.
+///
+/// Runs the full Loom pipeline: layout → classify → reading_order →
+/// (best-effort) alt-text → structure_tree::weave. Best-effort alt-text means
+/// if Beacon is unavailable the tagging still ships — figures just get
+/// generic alt placeholders left to the human-review pass.
+#[tauri::command]
+async fn slab_loom_tag_document(input: PathBuf) -> CmdResult<LoomTagResult> {
+    use crate::pdf::loom::{
+        classify, default_alt_text_cache_dir, enrich_with_alt_text, extract_layout, order_reading,
+        structure_tree::{weave, WeaveOptions},
+        AltTextOptions,
+    };
+    use lopdf::Document;
+
+    let started = std::time::Instant::now();
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(l) => l,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let mut tree = classify(&layout);
+    let page_geom: Vec<(f32, f32)> = layout.pages.iter().map(|p| (p.width, p.height)).collect();
+    let order = order_reading(&tree, &page_geom);
+
+    // Best-effort alt-text — non-fatal on Beacon unavailability.
+    if let Ok(cfg) = do_load_beacon_config() {
+        if let Ok(provider) = ai::config::make_provider(&cfg.beacon) {
+            let cache_dir = default_alt_text_cache_dir();
+            let _ = enrich_with_alt_text(
+                &input,
+                &mut tree,
+                provider,
+                &AltTextOptions::default(),
+                &cache_dir,
+            )
+            .await;
+        }
+    }
+
+    let mut doc = match Document::load_mem(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("load PDF: {}", e),
+            };
+        }
+    };
+    let opts = WeaveOptions {
+        fallback_lang: Some("en-US".into()),
+    };
+    let stats = match weave(&mut doc, &tree, &order, &opts) {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("weave: {}", e),
+            };
+        }
+    };
+
+    let out_path = {
+        let stem = input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("document");
+        let dir = input.parent().unwrap_or(std::path::Path::new("."));
+        dir.join(format!("{}.tagged.pdf", stem))
+    };
+    if let Err(e) = doc.save(&out_path) {
+        return CmdResult::Err {
+            message: format!("save {}: {}", out_path.display(), e),
+        };
+    }
+
+    CmdResult::Ok {
+        value: LoomTagResult {
+            output_path: out_path.display().to_string(),
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            pages_processed: stats.pages_processed,
+            pages_skipped: stats.pages_skipped,
+            bdc_pairs_injected: stats.bdc_pairs_injected,
+            struct_elems_created: stats.struct_elems_created,
+            figures_with_alt_text: stats.figures_with_alt_text,
+        },
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3580,6 +3685,7 @@ pub fn run() {
             slab_loom_classify_summary,
             slab_loom_reading_order_summary,
             slab_loom_alt_text_summary,
+            slab_loom_tag_document,
             slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
