@@ -717,6 +717,130 @@ fn slab_loom_reading_order_summary(input: PathBuf) -> CmdResult<LoomReadingOrder
     }
 }
 
+/// Slice 4 result for the LoomPanel "Alt-text" tab: per-figure
+/// alt-text plus cache + error stats.
+#[derive(Serialize)]
+pub struct LoomAltTextSummary {
+    pub figures_total: usize,
+    pub generated: usize,
+    pub cache_hits: usize,
+    pub skipped_tiny: usize,
+    pub skipped_preexisting: usize,
+    pub errors: usize,
+    pub elapsed_ms: u64,
+    /// First up to 20 figures with their generated/cached alt-text.
+    pub samples: Vec<LoomAltTextSample>,
+}
+
+#[derive(Serialize)]
+pub struct LoomAltTextSample {
+    pub page: u32,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub alt_text: String,
+}
+
+#[tauri::command]
+async fn slab_loom_alt_text_summary(input: PathBuf) -> CmdResult<LoomAltTextSummary> {
+    use crate::pdf::loom::{
+        classify, default_alt_text_cache_dir, enrich_with_alt_text, extract_layout, AltTextOptions,
+        NodeKind, StructNode,
+    };
+
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let mut tree = classify(&layout);
+
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("load Beacon config: {e}"),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("build provider: {e}"),
+            }
+        }
+    };
+
+    let cache_dir = default_alt_text_cache_dir();
+    let opts = AltTextOptions::default();
+    let started = std::time::Instant::now();
+    let stats = match enrich_with_alt_text(&input, &mut tree, provider, &opts, &cache_dir).await {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("alt-text enrich: {e}"),
+            }
+        }
+    };
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    // Collect up to 20 samples.
+    fn collect_samples(
+        nodes: &[StructNode],
+        page: u32,
+        out: &mut Vec<LoomAltTextSample>,
+        cap: usize,
+    ) {
+        for n in nodes {
+            if out.len() >= cap {
+                return;
+            }
+            if matches!(n.kind, NodeKind::Figure) {
+                if let Some(alt) = &n.alt_text {
+                    out.push(LoomAltTextSample {
+                        page,
+                        x: n.bbox.x0,
+                        y: n.bbox.y0,
+                        width: n.bbox.x1 - n.bbox.x0,
+                        height: n.bbox.y1 - n.bbox.y0,
+                        alt_text: alt.clone(),
+                    });
+                }
+            }
+            collect_samples(&n.children, page, out, cap);
+        }
+    }
+    let mut samples = Vec::new();
+    for p in &tree.pages {
+        if samples.len() >= 20 {
+            break;
+        }
+        collect_samples(&p.nodes, p.page_number, &mut samples, 20);
+    }
+
+    CmdResult::Ok {
+        value: LoomAltTextSummary {
+            figures_total: stats.figures_total,
+            generated: stats.generated,
+            cache_hits: stats.cache_hits,
+            skipped_tiny: stats.skipped_tiny,
+            skipped_preexisting: stats.skipped_preexisting,
+            errors: stats.errors,
+            elapsed_ms,
+            samples,
+        },
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3455,6 +3579,7 @@ pub fn run() {
             slab_loom_layout_summary,
             slab_loom_classify_summary,
             slab_loom_reading_order_summary,
+            slab_loom_alt_text_summary,
             slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
