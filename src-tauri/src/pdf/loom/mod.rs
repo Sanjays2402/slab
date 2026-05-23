@@ -47,6 +47,7 @@ pub mod alt_text;
 pub mod classify;
 pub mod layout;
 pub mod matterhorn;
+pub mod metadata;
 pub mod reading_order;
 pub mod structure_tree;
 
