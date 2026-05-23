@@ -40,6 +40,7 @@ pub enum ActionId {
     TheaterExit,
     BedrockOpen,
     PressOpen,
+    FormsOpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +253,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Convert to PDF/X-4 (Press)",
         group: "Press",
         default_binding: "Mod+Shift+X",
+    },
+    ActionInfo {
+        id: ActionId::FormsOpen,
+        key: "forms.open",
+        label: "Forms inspector & fill",
+        group: "Forms",
+        default_binding: "Mod+Shift+F",
     },
 ];
 
