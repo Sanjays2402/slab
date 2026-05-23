@@ -4,7 +4,39 @@
 
 ---
 
-## STATUS: v3.5.0 Veil — MERGED TO MAIN + TAG PUSHED, awaiting CI artifacts
+## STATUS: v3.6.0 Compactor — MERGED + TAGGED, CI in flight. v3.5.0 PUBLISHED.
+
+**TICK 2026-05-23 06:39 PT** — Double-header.
+
+1. **v3.5.0 finalized**: CI build run 26333577007 green; downloaded 6
+   artifacts; `gh release create v3.5.0` published with marketing notes.
+   URL: https://github.com/Sanjays2402/slab/releases/tag/v3.5.0
+2. **v3.6.0 Compactor** branch `feature/v3.6.0-compactor` (4 commits,
+   ~1551 net LOC) merged --no-ff into main as `67086d8`. Tagged `v3.6.0`
+   (clean, no emoji). Pushed with `--follow-tags`.
+   - Gates green: fmt ✓ clippy ✓ pnpm check ✓ (0 err / 46 pre-existing warns)
+   - CI build run **26334187463** (main) — in_progress
+   - Docker run **26334187486** (tag v3.6.0) — in_progress
+
+### Next-tick MODE B FINALIZE checklist for v3.6.0
+
+1. `gh run view 26334187463` — must be `success`.
+2. `gh run download 26334187463 --dir /tmp/slab-release-3.6.0`.
+3. `gh release create v3.6.0 --title "v3.6.0 — Compactor" --notes-file ...`
+   with the 6 standard artifacts (DMG arm64/x64, deb, AppImage, exe, msi).
+4. Marketing notes angle: "Acrobat Pro 'Reduce File Size' equivalent, $0,
+   100% offline. Real image downsample + JPEG re-encode + metadata strip."
+
+LAST_WOW_TICK_AT: 2026-05-23T06:39 PT (Compactor — real size reduction,
+the Adobe Acrobat Pro paid feature, given away free).
+
+RECENTLY_CLOSED_ISSUES:
+- v3.5.0 published (release URL above)
+- v3.6.0 merged + tagged (awaiting CI)
+
+---
+
+## (archived) STATUS: v3.5.0 Veil — MERGED TO MAIN + TAG PUSHED, awaiting CI artifacts
 
 **TICK 2026-05-23 06:08 PT** — MODE A RELEASE executed for Veil.
 
