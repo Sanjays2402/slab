@@ -40,6 +40,7 @@ pub mod pdfa;
 pub mod polyglot;
 pub mod preflight;
 pub mod redact;
+pub mod redact_true;
 pub mod repair;
 pub mod reverse;
 pub mod sanitize;
