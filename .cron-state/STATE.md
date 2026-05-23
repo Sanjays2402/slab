@@ -4,7 +4,40 @@
 
 ---
 
-## STATUS: v3.10.0 Signet feature-complete on feature/v3.10.0-signet — sign + verify end-to-end, 34 signet tests passing, Tauri commands + SignetPanel UI shipped. Ready to merge to main next tick if CI is green.
+## STATUS: v3.10.0 Signet MERGED + TAGGED. Awaiting CI build for GitHub release artifacts.
+
+**TICK 2026-05-23 14:34 PT (Saturday off-hours)** — MODE A RELEASE executed.
+
+- Merged `feature/v3.10.0-signet` → `main` with `--no-ff` (merge SHA `bd0aa70`).
+- Bumped version 3.9.0 → **3.10.0** across Cargo.toml, Cargo.lock, tauri.conf.json, package.json (commit `8dc38ad`).
+- Quality gates on main:
+  - cargo fmt --all -- --check ✓
+  - cargo clippy --lib --all-targets -- -D warnings ✓
+  - cargo test --lib → **1363 passed, 0 failed**
+  - pnpm check → 0 errors, 63 warnings (a11y on SignetPanel labels — pre-existing pattern)
+- Tagged `v3.10.0` with marketing-tone annotation (no emoji per Sanjay's rule).
+- Pushed `main --follow-tags` → CI runs **26344139015** (build) + **26344139022** (Docker) in flight.
+
+### RELEASE_PENDING: v3.10.0 — merge SHA bd0aa70, tag v3.10.0, CI runs 26344139015 (build) + 26344139022 (Docker)
+
+### Next tick — MODE B FINALIZE
+1. `gh run view 26344139015` — if green, `gh run download` artifacts to `/tmp/slab-release-3.10.0`.
+2. `gh release create v3.10.0 --title "v3.10.0 — Signet"` with marketing-grade notes + 6 artifacts (mac arm64/x64 dmg, linux deb+AppImage, win nsis+msi).
+3. Verify Docker tag workflow (26344139022) also green.
+4. Clear RELEASE_PENDING line.
+5. Then v3.11.0 candidate: **ECDSA P-256/P-384 signing** + revocation hints + batch sign (Signet follow-on), OR fold into v3.10.1 hotfix if Signet has post-release bugs. Re-poll `gh issue list` first.
+
+### Ops note
+Disk hit 100% (185Mi) during cargo link — recovered by removing `~/Library/Caches/com.microsoft.VSCode.ShipIt` (920MB) and `Chrome.code_sign_clone`. **1.1Gi free** at tick end; should hold for one finalize tick but next big build will need more cleanup.
+
+### LAST_WOW_TICK_AT: 2026-05-23T21:20Z (Signet end-to-end sign+verify — still within 24h)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.10.0 Signet merged + tagged (this tick) — release artifacts pending CI.
+
+---
+
+## PRIOR STATUS: v3.10.0 Signet feature-complete on feature/v3.10.0-signet — sign + verify end-to-end, 34 signet tests passing, Tauri commands + SignetPanel UI shipped. Ready to merge to main next tick if CI is green.
 
 **TICK 2026-05-23 14:17 PT (Saturday off-hours)** — MODE C develop, BIG slice fold-in.
 4 commits, ~2200 net LOC + 17 new tests, on `feature/v3.10.0-signet`:
