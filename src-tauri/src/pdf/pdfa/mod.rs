@@ -6,6 +6,7 @@
 //! Current state: slice 1 — sanitize pass + ICC profile bytes.
 //! Slice 2 — validate pass (structural ISO 19005-2 rules) — added 2026-05-22.
 
+pub mod convert;
 pub mod font_audit;
 pub mod icc;
 pub mod output_intent;
