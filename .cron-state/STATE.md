@@ -4,12 +4,41 @@
 
 ---
 
-## STATUS: v3.5.0 Veil plan WRITTEN (planning tick) — v3.4.0 release still mid-CI
+## STATUS: v3.4.0 Discovery — RELEASED 🎉 (artifacts published, no longer Draft)
 
-**TICK 2026-05-23 04:45 PT** — `writing-plans` skill explicitly invoked by
-Sanjay/cron, so this was a planning tick by design. v3.4.0 build still
-`in_progress` (run 26331594957), so MODE B FINALIZE deferred to next tick.
-Docker workflow for v3.4.0 already succeeded (run 26331594960).
+**TICK 2026-05-23 05:05 PT** — MODE B FINALIZE complete. v3.4.0 build CI
+finished `success`, downloaded all 6 artifacts, published GitHub release
+`v3.4.0 — Discovery` with notes from /tmp/v3.4.0-notes.md. Release is
+Published (not Draft). Docker image already on GHCR from run 26331594960.
+
+### What shipped this tick
+- Downloaded build artifacts (run 26331594957) — macos-arm64 dmg, macos-x64
+  dmg, linux deb + AppImage, windows msi + nsis.
+- `gh release create v3.4.0` — title "v3.4.0 — Discovery", 6 artifacts
+  attached, marketing-grade notes.
+- Verified `isDraft: false`, latest release on the repo.
+
+### Release URL
+https://github.com/Sanjays2402/slab/releases/tag/v3.4.0
+
+RELEASE_PENDING: (cleared)
+
+LAST_WOW_TICK_AT: 2026-05-23 (v3.4.0 Discovery shipped — paralegals get the
+entire $239/yr Adobe Acrobat Pro DC discovery workflow free, offline, batch
++ live preview Adobe doesn't even have)
+
+### Next-tick options (priority order)
+1. **Execute v3.5.0 Veil Slice 1** — pure helper module per
+   `docs/plans/2026-05-23-v3.5.0-veil-true-redaction.md`. ~280 LOC + 5 tests,
+   small footprint, plan is implementer-grade.
+2. Cross-cutting polish (command palette, settings panel, etc.) if Slice 1
+   feels too heavy for one tick.
+
+---
+
+## ARCHIVED: v3.5.0 Veil plan WRITTEN (planning tick)
+
+**TICK 2026-05-23 04:45 PT** — `writing-plans` skill explicitly invoked.
 
 ### What shipped
 - **Plan**: `docs/plans/2026-05-23-v3.5.0-veil-true-redaction.md` (~34 KB,
