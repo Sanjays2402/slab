@@ -14,8 +14,10 @@
 //!   _(planned, Task 4.)_
 //! - `verify` — re-hash + re-validate a signed PDF. _(planned, Task 5.)_
 
+pub mod cms_blob;
 pub mod identity;
 pub mod trust;
 
+pub use cms_blob::{build_pkcs7_detached, parse_signed_data, sha256};
 pub use identity::{KeyAlgorithm, SignetError, SigningIdentity};
 pub use trust::{ChainStatus, TrustStore};

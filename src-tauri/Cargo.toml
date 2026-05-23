@@ -136,7 +136,7 @@ crossbeam-channel = "0.5"
 # Signet (v3.10.0) — PKCS#7 detached digital signatures for PDFs.
 # Pure-Rust RustCrypto stack avoids OpenSSL on Windows/Linux/macOS bundles
 # and keeps the Tauri binary single-blob portable. See ADR 0011.
-cms = "0.2"
+cms = { version = "0.2", features = ["builder"] }
 x509-cert = { version = "0.2", features = ["pem", "builder"] }
 rsa = { version = "0.9", features = ["pem", "sha2"] }
 p256 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
