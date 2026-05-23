@@ -3866,6 +3866,139 @@ fn slab_beacon_voice_stt_list_models() -> Vec<crate::ai::stt::WhisperModelInfo> 
     crate::ai::stt::list_whisper_models()
 }
 
+// ─── Signet (v3.10.0): PDF digital signatures ──────────────────────────────
+//
+// Three commands the renderer needs:
+//   - signet_load_identity → preview a PEM cert+key for the signer UI
+//   - signet_sign          → produce a signed copy of a PDF
+//   - signet_verify        → list every signature in a PDF + their status
+
+#[derive(serde::Serialize)]
+pub struct SignetIdentityPreviewDto {
+    pub subject_cn: String,
+    pub algorithm: String,
+    pub not_before_unix: i64,
+    pub not_after_unix: i64,
+    pub chain_len: usize,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SignetSignArgs {
+    pub input_path: String,
+    pub output_path: String,
+    pub cert_pem_path: String,
+    pub key_pem_path: String,
+    pub key_password: Option<String>,
+    pub reason: Option<String>,
+    pub location: Option<String>,
+    pub contact_info: Option<String>,
+    pub field_name: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetSignResultDto {
+    pub output_bytes: u64,
+    pub byte_range: [u64; 4],
+    pub field_name: String,
+    pub signature_hex_used: usize,
+    pub elapsed_ms: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetVerifiedDto {
+    pub field_name: String,
+    pub signer_cn: String,
+    pub signed_at_unix: i64,
+    pub byte_range: [u64; 4],
+    pub coverage: crate::pdf::signet::Coverage,
+    pub digest_status: crate::pdf::signet::DigestStatus,
+    pub crypto_status: crate::pdf::signet::CryptoStatus,
+    pub chain_status: crate::pdf::signet::ChainStatus,
+    pub cert_subject: String,
+    pub cert_issuer: String,
+    pub cert_not_before: i64,
+    pub cert_not_after: i64,
+}
+
+#[tauri::command]
+async fn signet_load_identity(
+    cert_pem_path: String,
+    key_pem_path: String,
+    key_password: Option<String>,
+) -> Result<SignetIdentityPreviewDto, String> {
+    let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
+        std::path::Path::new(&cert_pem_path),
+        std::path::Path::new(&key_pem_path),
+        key_password.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SignetIdentityPreviewDto {
+        subject_cn: id.subject_cn,
+        algorithm: id.algorithm.label().to_string(),
+        not_before_unix: id.not_before_unix,
+        not_after_unix: id.not_after_unix,
+        chain_len: id.chain_der.len(),
+    })
+}
+
+#[tauri::command]
+async fn signet_sign(args: SignetSignArgs) -> Result<SignetSignResultDto, String> {
+    let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
+        std::path::Path::new(&args.cert_pem_path),
+        std::path::Path::new(&args.key_pem_path),
+        args.key_password.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    let opts = crate::pdf::signet::SignOptions {
+        reason: args.reason,
+        location: args.location,
+        contact_info: args.contact_info,
+        field_name: args.field_name,
+    };
+    let report = crate::pdf::signet::sign_pdf(
+        std::path::Path::new(&args.input_path),
+        std::path::Path::new(&args.output_path),
+        &id,
+        &opts,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SignetSignResultDto {
+        output_bytes: report.output_bytes,
+        byte_range: report.byte_range,
+        field_name: report.field_name,
+        signature_hex_used: report.signature_hex_used,
+        elapsed_ms: report.elapsed_ms,
+    })
+}
+
+#[tauri::command]
+async fn signet_verify(input_path: String) -> Result<Vec<SignetVerifiedDto>, String> {
+    // Best-effort: load the user's trust store from the default location.
+    // If the directory doesn't exist, fall back to an empty store — chain
+    // checks will report SelfSigned/Untrusted as appropriate.
+    let store = crate::pdf::signet::TrustStore::load_default()
+        .unwrap_or_else(|_| crate::pdf::signet::TrustStore::new());
+    let results = crate::pdf::signet::verify(std::path::Path::new(&input_path), &store)
+        .map_err(|e| e.to_string())?;
+    Ok(results
+        .into_iter()
+        .map(|v| SignetVerifiedDto {
+            field_name: v.field_name,
+            signer_cn: v.signer_cn,
+            signed_at_unix: v.signed_at_unix,
+            byte_range: v.byte_range,
+            coverage: v.coverage,
+            digest_status: v.digest_status,
+            crypto_status: v.crypto_status,
+            chain_status: v.chain_status,
+            cert_subject: v.cert_subject,
+            cert_issuer: v.cert_issuer,
+            cert_not_before: v.cert_not_before,
+            cert_not_after: v.cert_not_after,
+        })
+        .collect())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -4093,6 +4226,9 @@ pub fn run() {
             slab_beacon_voice_stt_is_recording,
             slab_beacon_voice_stt_cancel,
             slab_beacon_voice_stt_list_models,
+            signet_load_identity,
+            signet_sign,
+            signet_verify,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
