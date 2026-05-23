@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://slab.app/specs/matterhorn-1.1.schema.json",
+  "title": "Slab Matterhorn 1.1 Failure-Condition Registry",
+  "description": "Schema for docs/specs/matterhorn-1.1.json — the single source of truth for which leaf-level Matterhorn Protocol 1.1 failure conditions the Slab Loom validate pass covers, and whether each is decidable from the PDF object model alone (auto), requires human review (human), or depends on Slab features not yet shipped (outOfScope). The Rust module src-tauri/src/pdf/loom/matterhorn.rs is generated from a registry that conforms to this schema by scripts/loom/codegen-matterhorn.mjs.",
+  "type": "object",
+  "required": [
+    "protocol",
+    "version",
+    "publisher",
+    "publishedYear",
+    "appliesTo",
+    "totals",
+    "coverage",
+    "verdictGlossary",
+    "sections"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Relative or absolute pointer to this schema."
+    },
+    "protocol": {
+      "type": "string",
+      "const": "Matterhorn Protocol"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Matterhorn Protocol version this registry mirrors."
+    },
+    "publisher": {
+      "type": "string",
+      "description": "Organisation that publishes the protocol (PDF Association)."
+    },
+    "publishedYear": {
+      "type": "integer",
+      "minimum": 2014,
+      "maximum": 2099
+    },
+    "appliesTo": {
+      "type": "string",
+      "description": "Human-readable name of the ISO standard the protocol targets (e.g. ISO 14289-1:2014)."
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "sections",
+        "failureConditions_inThisRegistry",
+        "failureConditions_inFullProtocol",
+        "auto",
+        "human",
+        "outOfScope_v3_1_0",
+        "notYetTranscribed"
+      ],
+      "properties": {
+        "sections": { "type": "integer", "minimum": 1, "maximum": 31 },
+        "failureConditions_inThisRegistry": { "type": "integer", "minimum": 0 },
+        "failureConditions_inFullProtocol": { "type": "integer", "minimum": 0 },
+        "auto": { "type": "integer", "minimum": 0 },
+        "human": { "type": "integer", "minimum": 0 },
+        "outOfScope_v3_1_0": { "type": "integer", "minimum": 0 },
+        "notYetTranscribed": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "string",
+      "description": "Plain-English summary of how much of the protocol is currently transcribed."
+    },
+    "verdictGlossary": {
+      "type": "object",
+      "required": ["auto", "human", "outOfScope"],
+      "properties": {
+        "auto": { "type": "string" },
+        "human": { "type": "string" },
+        "outOfScope": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 31,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "isoClause", "failureConditions"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]{2}$",
+            "description": "Two-digit Matterhorn section id (01..31)."
+          },
+          "title": { "type": "string", "minLength": 1 },
+          "isoClause": {
+            "type": "string",
+            "description": "ISO 14289-1 clause reference, or '—' if none."
+          },
+          "failureConditions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "title", "verdict"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9]{2}-[0-9]{3}$",
+                  "description": "Hyphenated section-condition id, e.g. 01-007."
+                },
+                "title": { "type": "string", "minLength": 1 },
+                "verdict": {
+                  "type": "string",
+                  "enum": ["auto", "human", "outOfScope"]
+                },
+                "notes": {
+                  "type": "string",
+                  "description": "Optional implementation note, citation, or rationale."
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
