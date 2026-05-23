@@ -5,7 +5,46 @@
 
 ---
 
-## STATUS: 🚢 v2.4.0 "Stack" PUBLISHED — visual diff is live
+## STATUS: 📐 v3.1.0 "Loom" plan promoted — PDF/UA accessibility tagging queued
+
+**TICK 2026-05-22 20:25 PT** — writing-plans skill invocation. Wrote
+`docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md` (34 KB, ~700 lines, 9 slices
++ ADR + Matterhorn registry + release; ~1900 net LOC + ~600 test LOC at
+execution, 11 commits).
+
+- Codename **"Loom" 🧵** — ISO 14289-1 (PDF/UA-1) accessibility tagging.
+  7-pass pipeline: extract → classify → reading_order → alt_text (Beacon
+  llava, hash-cached) → structure_tree (StructTreeRoot + ParentTree +
+  marked-content BDC/EMC) → metadata (Lang + XMP pdfuaid + DisplayDocTitle)
+  → validate (Matterhorn 51/87 automatable). Zero new deps.
+- **3 Tauri cmds**: `slab_loom_{inspect,tag,validate}`. 3-tab
+  `LoomPanel.svelte` (Inspect/Tag/Review), `Cmd+Shift+U`, "Accessibility"
+  sidebar between Archive and Slides, palette × 3, Settings → Accessibility
+  section, onboarding step 9.
+- **WOW**: 320ms purple "loom weave" SVG anim (5 warp × 7 weft threads
+  → badge). RM-safe.
+- **Buy-Button 4/4**: Pay-for-it (Section 508/EN 301 549/AODA mandate —
+  $400M/yr market; CommonLook $1800/seat, Acrobat Pro $239/yr), Pick-us
+  (only free cross-platform end-to-end PDF/UA tagger in existence —
+  Preview/PDF Expert/free Foxit/Ghostscript can't), Notice-it (sidebar +
+  shortcut + palette + Settings + badge + onboarding), Tell-a-friend
+  (10-sec VoiceOver demo with offline Beacon alt-text — gov/edu procurement
+  catnip).
+- **Pipeline**: v2.4.0 Stack (released) → v2.5.0–v2.9.0 (planned) → v3.0.0
+  Bedrock (planned, next execution tick) → **v3.1.0 Loom (THIS plan)** →
+  v3.1.1 PDF/UA-2 → v3.1.2 form-field tagging.
+
+This was a planning tick (1 commit / ~700 lines docs only) — below SHIP-SIZE
+minimums for a code tick, justified by the explicit writing-plans skill
+invocation. The previous code tick (Stack release + Bedrock plan) is fresh.
+
+**Next tick (MODE C):** Execute `docs/plans/2026-05-22-v3.0.0-bedrock-pdfa.md`
+via subagent-driven-development as previously planned. Loom plan sits in
+the queue behind Bedrock.
+
+---
+
+## STATUS PRIOR: 🚢 v2.4.0 "Stack" PUBLISHED — visual diff is live
 
 **TICK 2026-05-22 19:51 PT** — MODE B finalize complete. Both CI runs
 green (build `26321021423` ✅, Docker `26321021424` ✅). Downloaded
