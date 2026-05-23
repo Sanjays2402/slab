@@ -503,6 +503,555 @@ fn slab_loom_matterhorn_digest() -> CmdResult<LoomMatterhornDigest> {
     }
 }
 
+/// Slice 2 result surfaced to the LoomPanel: per-page node counts plus a
+/// few sample headings so the UI can show what the classifier actually
+/// thinks the document's outline looks like.
+#[derive(Serialize)]
+pub struct LoomClassifySummary {
+    pub total_pages: usize,
+    pub total_nodes: usize,
+    pub heading_count: usize,
+    pub paragraph_count: usize,
+    pub list_count: usize,
+    pub list_item_count: usize,
+    pub figure_count: usize,
+    pub artifact_count: usize,
+    /// Up to 20 detected headings as `{level, text}`, in document order.
+    pub headings: Vec<LoomClassifyHeading>,
+    pub pages: Vec<LoomClassifyPage>,
+}
+
+#[derive(Serialize)]
+pub struct LoomClassifyHeading {
+    pub page: u32,
+    pub level: u8,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct LoomClassifyPage {
+    pub page_number: u32,
+    pub headings: usize,
+    pub paragraphs: usize,
+    pub list_items: usize,
+    pub figures: usize,
+    pub artifacts: usize,
+}
+
+#[tauri::command]
+fn slab_loom_classify_summary(input: PathBuf) -> CmdResult<LoomClassifySummary> {
+    use crate::pdf::loom::{classify, extract_layout, NodeKind, StructNode};
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let tree = classify(&layout);
+
+    fn walk_collect(
+        nodes: &[StructNode],
+        page: u32,
+        per_page: &mut LoomClassifyPage,
+        headings: &mut Vec<LoomClassifyHeading>,
+        totals: &mut (usize, usize, usize, usize, usize, usize, usize),
+    ) {
+        for n in nodes {
+            totals.0 += 1; // total
+            match n.kind {
+                NodeKind::Heading(level) => {
+                    totals.1 += 1;
+                    per_page.headings += 1;
+                    if headings.len() < 20 {
+                        let mut text = n.text.trim().to_string();
+                        if text.len() > 120 {
+                            text.truncate(117);
+                            text.push_str("...");
+                        }
+                        headings.push(LoomClassifyHeading { page, level, text });
+                    }
+                }
+                NodeKind::Paragraph => {
+                    totals.2 += 1;
+                    per_page.paragraphs += 1;
+                }
+                NodeKind::List => {
+                    totals.3 += 1;
+                }
+                NodeKind::ListItem => {
+                    totals.4 += 1;
+                    per_page.list_items += 1;
+                }
+                NodeKind::Figure => {
+                    totals.5 += 1;
+                    per_page.figures += 1;
+                }
+                NodeKind::Artifact => {
+                    totals.6 += 1;
+                    per_page.artifacts += 1;
+                }
+                _ => {}
+            }
+            walk_collect(&n.children, page, per_page, headings, totals);
+        }
+    }
+
+    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut headings = Vec::new();
+    let mut pages = Vec::with_capacity(tree.pages.len());
+    for p in &tree.pages {
+        let mut pp = LoomClassifyPage {
+            page_number: p.page_number,
+            headings: 0,
+            paragraphs: 0,
+            list_items: 0,
+            figures: 0,
+            artifacts: 0,
+        };
+        walk_collect(&p.nodes, p.page_number, &mut pp, &mut headings, &mut totals);
+        pages.push(pp);
+    }
+    CmdResult::Ok {
+        value: LoomClassifySummary {
+            total_pages: tree.pages.len(),
+            total_nodes: totals.0,
+            heading_count: totals.1,
+            paragraph_count: totals.2,
+            list_count: totals.3,
+            list_item_count: totals.4,
+            figure_count: totals.5,
+            artifact_count: totals.6,
+            headings,
+            pages,
+        },
+    }
+}
+
+/// Slice 3 result for the LoomPanel Outline tab: per-page column count
+/// + sample of the first N reading-order labels so users can see Loom's
+///   re-ordering live.
+#[derive(Serialize)]
+pub struct LoomReadingOrderSummary {
+    pub total_pages: usize,
+    /// Pages on which Loom detected ≥ 2 narrow column bands.
+    pub multi_column_pages: usize,
+    /// Total reading-flow nodes (excludes artifacts).
+    pub total_reading_nodes: usize,
+    /// Total page-spanning nodes (figures, headings that cross columns,
+    /// full-width banners).
+    pub total_spanners: usize,
+    pub pages: Vec<LoomReadingOrderPage>,
+    /// First up to 40 reading-flow node labels in correct order across
+    /// the document. Useful preview for the LoomPanel.
+    pub flow_preview: Vec<LoomReadingOrderFlowEntry>,
+}
+
+#[derive(Serialize)]
+pub struct LoomReadingOrderPage {
+    pub page_number: u32,
+    pub column_count: usize,
+    pub spanner_count: usize,
+    pub artifact_count: usize,
+    pub reading_node_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct LoomReadingOrderFlowEntry {
+    pub page: u32,
+    /// PDF tag (P, H1..H6, L, LI, Figure, Caption, Artifact).
+    pub tag: &'static str,
+    /// First 80 chars of the node text.
+    pub text: String,
+}
+
+#[tauri::command]
+fn slab_loom_reading_order_summary(input: PathBuf) -> CmdResult<LoomReadingOrderSummary> {
+    use crate::pdf::loom::{classify, extract_layout, order_reading, NodeKind, StructNode};
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let tree = classify(&layout);
+    let geometry: Vec<(f32, f32)> = layout.pages.iter().map(|p| (p.width, p.height)).collect();
+    let order = order_reading(&tree, &geometry);
+
+    fn trunc(s: &str) -> String {
+        let t = s.trim();
+        if t.chars().count() > 80 {
+            let mut out: String = t.chars().take(77).collect();
+            out.push_str("...");
+            out
+        } else {
+            t.to_string()
+        }
+    }
+
+    fn flatten<'a>(out: &mut Vec<&'a StructNode>, nodes: &'a [StructNode]) {
+        for n in nodes {
+            out.push(n);
+            flatten(out, &n.children);
+        }
+    }
+
+    let mut total_reading_nodes = 0usize;
+    let mut total_spanners = 0usize;
+    let mut pages = Vec::with_capacity(order.pages.len());
+    let mut flow_preview: Vec<LoomReadingOrderFlowEntry> = Vec::new();
+    for p in &order.pages {
+        let mut flat: Vec<&StructNode> = Vec::new();
+        flatten(&mut flat, &p.nodes);
+        let reading_node_count = flat
+            .iter()
+            .filter(|n| !matches!(n.kind, NodeKind::Artifact))
+            .count();
+        total_reading_nodes += reading_node_count;
+        total_spanners += p.spanner_count;
+        pages.push(LoomReadingOrderPage {
+            page_number: p.page_number,
+            column_count: p.column_count,
+            spanner_count: p.spanner_count,
+            artifact_count: p.artifact_count,
+            reading_node_count,
+        });
+        for n in flat.into_iter() {
+            if flow_preview.len() >= 40 {
+                break;
+            }
+            // Skip empty figure placeholders + artifacts in the preview —
+            // they'd add noise without showing the reading order.
+            let text = trunc(&n.text);
+            if text.is_empty() && !matches!(n.kind, NodeKind::Figure) {
+                continue;
+            }
+            flow_preview.push(LoomReadingOrderFlowEntry {
+                page: p.page_number,
+                tag: n.kind.tag(),
+                text,
+            });
+        }
+    }
+    CmdResult::Ok {
+        value: LoomReadingOrderSummary {
+            total_pages: order.pages.len(),
+            multi_column_pages: order.multi_column_pages(),
+            total_reading_nodes,
+            total_spanners,
+            pages,
+            flow_preview,
+        },
+    }
+}
+
+/// Slice 4 result for the LoomPanel "Alt-text" tab: per-figure
+/// alt-text plus cache + error stats.
+#[derive(Serialize)]
+pub struct LoomAltTextSummary {
+    pub figures_total: usize,
+    pub generated: usize,
+    pub cache_hits: usize,
+    pub skipped_tiny: usize,
+    pub skipped_preexisting: usize,
+    pub errors: usize,
+    pub elapsed_ms: u64,
+    /// First up to 20 figures with their generated/cached alt-text.
+    pub samples: Vec<LoomAltTextSample>,
+}
+
+#[derive(Serialize)]
+pub struct LoomAltTextSample {
+    pub page: u32,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub alt_text: String,
+}
+
+#[tauri::command]
+async fn slab_loom_alt_text_summary(input: PathBuf) -> CmdResult<LoomAltTextSummary> {
+    use crate::pdf::loom::{
+        classify, default_alt_text_cache_dir, enrich_with_alt_text, extract_layout, AltTextOptions,
+        NodeKind, StructNode,
+    };
+
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(t) => t,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let mut tree = classify(&layout);
+
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("load Beacon config: {e}"),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("build provider: {e}"),
+            }
+        }
+    };
+
+    let cache_dir = default_alt_text_cache_dir();
+    let opts = AltTextOptions::default();
+    let started = std::time::Instant::now();
+    let stats = match enrich_with_alt_text(&input, &mut tree, provider, &opts, &cache_dir).await {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("alt-text enrich: {e}"),
+            }
+        }
+    };
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    // Collect up to 20 samples.
+    fn collect_samples(
+        nodes: &[StructNode],
+        page: u32,
+        out: &mut Vec<LoomAltTextSample>,
+        cap: usize,
+    ) {
+        for n in nodes {
+            if out.len() >= cap {
+                return;
+            }
+            if matches!(n.kind, NodeKind::Figure) {
+                if let Some(alt) = &n.alt_text {
+                    out.push(LoomAltTextSample {
+                        page,
+                        x: n.bbox.x0,
+                        y: n.bbox.y0,
+                        width: n.bbox.x1 - n.bbox.x0,
+                        height: n.bbox.y1 - n.bbox.y0,
+                        alt_text: alt.clone(),
+                    });
+                }
+            }
+            collect_samples(&n.children, page, out, cap);
+        }
+    }
+    let mut samples = Vec::new();
+    for p in &tree.pages {
+        if samples.len() >= 20 {
+            break;
+        }
+        collect_samples(&p.nodes, p.page_number, &mut samples, 20);
+    }
+
+    CmdResult::Ok {
+        value: LoomAltTextSummary {
+            figures_total: stats.figures_total,
+            generated: stats.generated,
+            cache_hits: stats.cache_hits,
+            skipped_tiny: stats.skipped_tiny,
+            skipped_preexisting: stats.skipped_preexisting,
+            errors: stats.errors,
+            elapsed_ms,
+            samples,
+        },
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoomTagResult {
+    pub output_path: String,
+    pub elapsed_ms: u64,
+    pub pages_processed: usize,
+    pub pages_skipped: usize,
+    pub bdc_pairs_injected: usize,
+    pub struct_elems_created: usize,
+    pub figures_with_alt_text: usize,
+    /// Slice 6: post-tag validator report. Auto-run on the in-memory tagged
+    /// doc so the UI can render a "Validated ✓ ISO 14289-1" sub-badge.
+    pub validation: crate::pdf::loom::validate::ValidateReport,
+    /// Slice 6: metadata stats (title applied? lang set? xmp size).
+    pub metadata: crate::pdf::loom::metadata::MetadataStats,
+}
+
+/// Slice 5: tag a PDF for PDF/UA-1 conformance and write `<name>.tagged.pdf`.
+///
+/// Runs the full Loom pipeline: layout → classify → reading_order →
+/// (best-effort) alt-text → structure_tree::weave. Best-effort alt-text means
+/// if Beacon is unavailable the tagging still ships — figures just get
+/// generic alt placeholders left to the human-review pass.
+#[tauri::command]
+async fn slab_loom_tag_document(input: PathBuf) -> CmdResult<LoomTagResult> {
+    use crate::pdf::loom::{
+        classify, default_alt_text_cache_dir, enrich_with_alt_text, extract_layout,
+        metadata::{apply_pdfua_metadata, MetadataOptions},
+        order_reading,
+        structure_tree::{weave, WeaveOptions},
+        validate::validate as run_validate,
+        AltTextOptions,
+    };
+    use lopdf::Document;
+
+    let started = std::time::Instant::now();
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let layout = match extract_layout(&bytes) {
+        Ok(l) => l,
+        Err(e) => return CmdResult::Err { message: e },
+    };
+    let mut tree = classify(&layout);
+    let page_geom: Vec<(f32, f32)> = layout.pages.iter().map(|p| (p.width, p.height)).collect();
+    let order = order_reading(&tree, &page_geom);
+
+    // Best-effort alt-text — non-fatal on Beacon unavailability.
+    if let Ok(cfg) = do_load_beacon_config() {
+        if let Ok(provider) = ai::config::make_provider(&cfg.beacon) {
+            let cache_dir = default_alt_text_cache_dir();
+            let _ = enrich_with_alt_text(
+                &input,
+                &mut tree,
+                provider,
+                &AltTextOptions::default(),
+                &cache_dir,
+            )
+            .await;
+        }
+    }
+
+    let mut doc = match Document::load_mem(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("load PDF: {}", e),
+            };
+        }
+    };
+    let opts = WeaveOptions {
+        fallback_lang: Some("en-US".into()),
+    };
+    let stats = match weave(&mut doc, &tree, &order, &opts) {
+        Ok(s) => s,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("weave: {}", e),
+            };
+        }
+    };
+
+    // Slice 6: apply PDF/UA-1 metadata (XMP packet + ViewerPreferences).
+    let title = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string());
+    let meta_stats = match apply_pdfua_metadata(
+        &mut doc,
+        &MetadataOptions {
+            title,
+            fallback_lang: Some("en-US".into()),
+            ..Default::default()
+        },
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("metadata: {}", e),
+            };
+        }
+    };
+
+    // Slice 6: validate the in-memory tagged doc so the UI can render a
+    // "Validated ✓ ISO 14289-1" sub-badge with per-condition checkmarks.
+    let validation = run_validate(&doc);
+
+    let out_path = {
+        let stem = input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("document");
+        let dir = input.parent().unwrap_or(std::path::Path::new("."));
+        dir.join(format!("{}.tagged.pdf", stem))
+    };
+    if let Err(e) = doc.save(&out_path) {
+        return CmdResult::Err {
+            message: format!("save {}: {}", out_path.display(), e),
+        };
+    }
+
+    CmdResult::Ok {
+        value: LoomTagResult {
+            output_path: out_path.display().to_string(),
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            pages_processed: stats.pages_processed,
+            pages_skipped: stats.pages_skipped,
+            bdc_pairs_injected: stats.bdc_pairs_injected,
+            struct_elems_created: stats.struct_elems_created,
+            figures_with_alt_text: stats.figures_with_alt_text,
+            validation,
+            metadata: meta_stats,
+        },
+    }
+}
+
+/// Slice 6: validate a PDF against ISO 14289-1 (PDF/UA-1).
+///
+/// Runs the 8 auto-decidable Matterhorn conditions against any PDF — the
+/// freshly-tagged Slab output, an Acrobat-tagged file, or an arbitrary PDF
+/// the user dropped onto the panel. Returns a `ValidateReport` the UI
+/// renders as a green/red conformance card with per-condition checkmarks.
+#[tauri::command]
+fn slab_loom_validate(input: PathBuf) -> CmdResult<crate::pdf::loom::validate::ValidateReport> {
+    use crate::pdf::loom::validate::validate as run_validate;
+    use lopdf::Document;
+
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("read {}: {}", input.display(), e),
+            };
+        }
+    };
+    let doc = match Document::load_mem(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            return CmdResult::Err {
+                message: format!("load PDF: {}", e),
+            };
+        }
+    };
+    CmdResult::Ok {
+        value: run_validate(&doc),
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3283,6 +3832,11 @@ pub fn run() {
             slab_outline_starts,
             slab_page_count,
             slab_loom_layout_summary,
+            slab_loom_classify_summary,
+            slab_loom_reading_order_summary,
+            slab_loom_alt_text_summary,
+            slab_loom_tag_document,
+            slab_loom_validate,
             slab_loom_matterhorn_digest,
             slab_rotate,
             slab_rotate_permanent,
