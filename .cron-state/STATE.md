@@ -4,29 +4,38 @@
 
 ---
 
-## STATUS: v3.8.0 Press PUBLISHED on GitHub Releases — 6 artifacts uploaded, Docker image live on GHCR.
+## STATUS: v3.9.0 Quill SHIPPED to main — AcroForm inspector + fill end-to-end. Awaiting CI build for release.
 
-**TICK 2026-05-23 12:03 PT (Saturday off-hours)** — MODE B FINALIZE executed.
-- CI run 26340379066 (build) → **success** ✅
-- CI run 26340379077 (Docker slab-server) → **success** ✅
-- `cargo clean -p slab-app` freed 2.4GB (disk was at 510Mi free pre-tick).
-- Downloaded all 4 artifact bundles via `gh run download 26340379066`.
-- `gh release create v3.8.0 --title "v3.8.0 — Press"` with marketing-tone notes (`/tmp/slab-v3.8.0-notes.md`) and 6 artifacts uploaded:
-  - Slab_3.8.0_aarch64.dmg / _x64.dmg (macOS)
-  - Slab_3.8.0_amd64.deb / .AppImage (Linux)
-  - Slab_3.8.0_x64-setup.exe / _x64_en-US.msi (Windows)
-- Docker image `ghcr.io/sanjays2402/slab-server:v3.8.0` live.
-- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.8.0
-- RELEASE_PENDING cleared.
-- Session log: `.cron-state/sessions/2026-05-23-1203.md`
-
-### Next tick — MODE C DEVELOP
-1. Poll `gh issue list` (was 0 open last tick).
-2. Start v3.9.0. Top candidate: **page ops** (insert/remove/reorder/permanent rotate) — the pdfarranger killer; enterprise PDF workflow that Acrobat charges for.
-3. Alternative: pivot to v0.10.0 Beacon AI pipeline (buyer magnet, was on roadmap).
-4. Decide at top of next tick. Honor ship-size: ≥4 commits, ≥600 LOC, end-to-end working capability.
+**TICK 2026-05-23 12:17 PT (Saturday off-hours)** — MODE C develop.
+4 commits, 1689 net LOC (`forms.rs` 841 + `FormsPanel.svelte` 501 + lib.rs 18
++ keymap.ts/keymap action 11 + `+page.svelte` 18 + version bumps). All gates
+green: cargo fmt/clippy clean, cargo test --lib **1329 passing** (+11 new),
+pnpm check 0 errors. Pushed `main` → `098f11b`. CI build run 26341610206
+queued. Session log: `.cron-state/sessions/2026-05-23-1217.md`.
 
 ### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (magenta press-roller wipe — within 24h)
+
+### What shipped this tick
+
+- `2066214 feat(forms): AcroForm inspector + fill backend (Slice 1)` — 11 tests
+- `02cfa65 feat(forms): Tauri commands slab_forms_inspect + slab_forms_fill (Slice 2)`
+- `2a44f6c feat(forms): FormsPanel.svelte + forms.open keymap action (Slice 3)`
+- `098f11b feat(forms): wire FormsPanel + bump v3.9.0 Quill (Slice 4)`
+
+### Buy-Button — PASS on 3 of 4
+
+- Pay-for-it ✓ — Acrobat Pro forms = $239/yr.
+- Pick-us ✓ — no free cross-platform PDF form filler with real inspector UI.
+- Notice-it ✓ — new sidebar entry + Cmd+Shift+F shortcut.
+- Tell-a-friend — solid with JSON template round-trip angle.
+
+### Next tick — MODE B FINALIZE
+
+1. Poll CI run 26341610206 (build). If success → tag v3.9.0 + release pipeline.
+2. If failed → triage from `gh run view --log-failed`.
+3. After v3.9.0 ships → re-poll issues; otherwise v3.10.0 candidates:
+   PKCS#7 digital signatures (Forms follow-on, enterprise legal) OR batch
+   automations (drag-folder pipelines).
 
 ## ARCHIVED: v3.8.0 Press — RELEASED 2026-05-23
 
