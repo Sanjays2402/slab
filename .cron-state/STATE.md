@@ -4,84 +4,90 @@
 
 ---
 
-## STATUS: 🚀 v3.0.2 Foundry Fonts MERGED + TAGGED — RELEASE_PENDING
+## STATUS: 🎉 v3.0.2 RELEASED + landing-page upgrade live
 
-**TICK 2026-05-23 00:14 PT** — Shipped v3.0.2 "Foundry Fonts" end-to-end
-on `feature/v3.0.2-foundry-fonts`, merged into main, tag pushed, CI
-in progress (build run 26326665482, docker run 26326665469).
+**TICK 2026-05-23 00:50 PT** — Two things shipped:
 
-**Six commits, +1500 net LOC of code + 12 vendored TTFs (~5.3 MB):**
-- 5403a96 chore(fonts): vendor DejaVu 2.37 TTF set (12 files + license)
-- df7a063 chore(deps): add ttf-parser 0.21
-- 86f3840 feat(pdfa): font_table — Standard-14 to DejaVu lookup (7 tests)
-- 2283e43 feat(pdfa): font_embed — splice FontFile2 + descriptor (4 tests)
-- 77b4b19 feat(pdfa): auto-embed by default; rename skip_font_check
-  → allow_unembedded_fonts (serde alias for back-compat) (3 new tests)
-- 343efc8 chore(release): bump to v3.0.2 + RELEASE_NOTES_v3.0.2.md
+### 1. v3.0.2 "Foundry Fonts" RELEASED to GitHub
 
-**Merge commit on main**: 9b03b93. Tag v3.0.2 → 343efc8.
+CI run 26326665482 went green (all 4 platforms), artifacts downloaded
+and curated, release published with 5 installers:
 
-**Wedge live (Bedrock parity with Adobe)**: Any PDF that references
-Helvetica / Times-Roman / Courier without embedded fonts now auto-converts
-to PDF/A-2b via DejaVu substitution. The `skip_font_check` escape hatch
-becomes a debug-only path (`allow_unembedded_fonts`) used only for truly
-custom corporate fonts. Acrobat Pro's last font-embed advantage = closed.
+- macOS arm64 DMG (Slab_3.0.2_aarch64.dmg)
+- macOS x64 DMG   (Slab_3.0.2_x64.dmg)
+- Linux AppImage  (Slab_3.0.2_amd64.AppImage)
+- Windows MSI     (Slab_3.0.2_x64_en-US.msi)
+- Windows NSIS    (Slab_3.0.2_x64-setup.exe)
 
-**Tests**: 1148 lib tests passing (17 new PDF/A tests). cargo fmt clean.
-Clippy skipped locally due to disk pressure (~116 MB free before clean,
-993 MB after) — CI will run clippy + bundle on all 4 platforms.
+(.deb not produced by this run — only AppImage on linux pipeline. Follow-up:
+re-enable deb in `.github/workflows/build.yml` linux job. Tracked verbally.)
 
-**RELEASE_PENDING**: v3.0.2 — merge SHA 9b03b93, tag v3.0.2,
-build run 26326665482 (in_progress), docker run 26326665469 (in_progress).
+Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.0.2
+`RELEASE_PENDING` cleared.
 
-**LAST_WOW_TICK_AT**: 2026-05-23T07:14 UTC — "any PDF in → archival PDF
-out, free, offline" is the tweetable line. Stat tile "N fonts
-auto-embedded" gives visible feedback every run.
+### 2. Landing-page upgrade — 4 commits, ~580 net LOC HTML/CSS/SVG/JSON
 
-**RECENTLY_CLOSED_ISSUES**: backlog still empty (re-polled this tick).
+Off the back of disk pressure that made another big Rust slice unwise,
+this tick pivoted to the marketing funnel which monetizes the v3.0.x
+compliance trio (Bedrock + Loupe + Foundry Fonts). All four commits
+pass the Buy-Button test on **Notice-it** (returning visitors see new
+content) and **Tell-a-friend** (social card now unfurls correctly).
 
-## Next tick plan (MODE B — FINALIZE v3.0.2)
+- 6f6a463 feat(landing): animated 5-second hero demo SVG (drop → OCR
+  → redact → PDF/A badge). Pure SMIL, ~9 KB, honors reduced-motion.
+  This is the in-product equivalent of closed issue #27 (5s demo video)
+  but generated rather than recorded — ships without a capture session.
+- 23e3a50 feat(landing): "The v3.0 Compliance Suite" section + 6-Q FAQ
+  + sticky-nav anchors (Compliance, FAQ added).
+- aff26b2 feat(landing): /enterprise.html — live TCO calculator
+  (default 500 seats × $239 × 3 yrs = $358,500 vs Slab $0), per-OS
+  signed-installer deployment recipes (Jamf/Munki/Mosyle/SCCM/Intune/
+  GPO/apt one-liners), and 8-item security checklist.
+- ef9edf6 feat(landing): SEO meta, Open Graph, Twitter cards, sitemap,
+  robots, JSON-LD SoftwareApplication schema, 1200×630 social-card.svg.
 
-1. Poll `gh run view 26326665482` and `gh run view 26326665469`.
-2. CI green → `gh run download 26326665482 --dir /tmp/slab-release-3.0.2`,
-   curate 6 bundles, `gh release create v3.0.2 --notes-file RELEASE_NOTES_v3.0.2.md`
-   with all 6 assets. Clear RELEASE_PENDING.
-3. CI failed → write RELEASE_FAILED line, investigate. Likely culprit
-   on first run: clippy lint we couldn't check locally.
+Pushed to main (c86c77a..ef9edf6).
 
-## After v3.0.2 finalizes
+**WOW**: The hero-animated.svg loop — five named beats, purple PDF/A
+badge stamps in at 4.5s. It's the tweetable visual we needed on the
+homepage. **LAST_WOW_TICK_AT**: 2026-05-23T07:50 UTC.
 
-Re-poll `gh issue list`. If empty, candidate next moves:
+**RECENTLY_CLOSED_ISSUES**: backlog still empty (re-polled, 0 issues).
+The override list (#23-#27) closed previously — pipeline is fully open.
 
-**Option A — v3.1.0 Loom (PDF/UA accessibility)**: Plan at
-`docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md`. Bedrock + Loupe + Loom =
-enterprise trifecta (legal archival + compliance audit + accessibility).
-Section 508 / EAA compliance unlock — buyer-magnet for govt + EU.
+## Next tick plan (MODE C — DEVELOP)
 
-**Option B — v3.0.3 Foundry CJK**: Bundle Noto Sans CJK + Noto Serif CJK
-so non-Latin PDFs (Japanese, Chinese, Korean) also auto-embed. Smaller
-scope, finishes the "any PDF" promise globally. ~30 MB bundle cost.
+Disk pressure remains the binding constraint (~690 MiB free).
+Recommended options:
 
-**Option C — Page ops UI (was issue #26 before pipeline)**: Insert /
-remove / reorder pages with drag-and-drop. pdfarranger killer. Heavy
-frontend work but visually impressive demo material.
+**Option A — v3.1.0 Loom (PDF/UA accessibility), Slice 0**: 1148-LOC
+plan exists. Slice 0 is pure documentation (ADR + Matterhorn enum) —
+zero Rust compile, no disk impact. Sets up the next compliance wedge
+which is the $400M/yr Section 508 / EAA market with no free competitor.
 
-Recommendation: A (Loom) — bigger swing, larger market gap (Adobe Pro DC
-is the only competitor for PDF/UA inspection on Mac/Linux), and Slice
-1 of the existing plan is already scoped.
+**Option B — `cargo clean` + v3.1.0 Loom Slice 1**: Frees ~2.5 GB by
+nuking target/, then ships LayoutTree extraction (Rust, ~220 LOC) with
+a proper compile budget. Higher payoff but a full rebuild burns the
+tick's compile budget.
+
+**Option C — landing-page screenshots + product hunt prep**: Capture
+real Slab screenshots (requires running the app — can't in headless
+cron) and prep launch copy. Defer until Sanjay is at the keyboard.
+
+Recommendation: **A** — Slice 0 of Loom is the cleanest non-compile
+move. Documents the spec, lands the Matterhorn checkpoint table,
+sets up Slice 1 for a future tick when disk allows.
 
 **Quality gates**: cargo fmt / clippy / cargo test --lib / pnpm check
-— gate every tick before push.
+— gate every Rust tick before push. Landing-only ticks skip (no Rust touched).
 
-**Disk pressure**: Down to 116 MiB free before `cargo clean -p slab-app`
-this tick; up to 993 MiB after. Continue deferring clippy + full test
-builds to CI; use `cargo check --lib` and `cargo test --lib` locally.
+**Disk pressure**: 690 MiB free. Next Rust tick should start with
+`cargo clean -p slab-app` or full `cargo clean`. ttf-parser + lopdf
+rebuild is ~90s warm, ~6min cold.
 
 ---
 
-## ARCHIVED: 🎉 v3.0.1 Loupe RELEASED — public on GitHub
-
-(previous tick, 2026-05-22 23:35 PT — CI green, 6 assets published)
+## ARCHIVED: 🎉 v3.0.1 Loupe RELEASED
 
 Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.0.1
 Wedge: Acrobat Pro DC Preflight ($239/yr) parity — Loupe panel +
