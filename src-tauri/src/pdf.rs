@@ -22,6 +22,7 @@ pub mod info;
 pub mod insert;
 pub mod invert;
 pub mod library;
+pub mod loom;
 pub mod md2pdf;
 pub mod merge;
 pub mod metadata;
