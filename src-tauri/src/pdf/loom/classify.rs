@@ -433,7 +433,7 @@ fn classify_page(
             // Below image: caption.y1 <= image.y0 (caption sits lower in PDF
             // coords means smaller y).
             let below_gap = img.bbox.y0 - node.bbox.y1;
-            if below_gap < 0.0 || below_gap > CAPTION_BELOW_PT {
+            if !(0.0..=CAPTION_BELOW_PT).contains(&below_gap) {
                 continue;
             }
             if node.bbox.width() > img.bbox.width() * CAPTION_WIDTH_FACTOR {
