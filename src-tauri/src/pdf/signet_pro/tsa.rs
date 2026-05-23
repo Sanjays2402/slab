@@ -234,7 +234,7 @@ mod tests {
         let digest = [0x77u8; 32];
         let der = build_timestamp_req(&digest, Some(42)).unwrap();
         let parsed = TimeStampReq::from_der(&der).expect("round-trip");
-        assert_eq!(parsed.cert_req, true);
+        assert!(parsed.cert_req);
         assert_eq!(parsed.message_imprint.hash_algorithm.oid, SHA256_OID);
         assert_eq!(parsed.message_imprint.hashed_message.as_bytes(), &digest);
     }

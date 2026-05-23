@@ -93,6 +93,7 @@ sha2 = "0.11"
 # library scanner. Skips broken symlinks gracefully and gives us a
 # stable iteration order. Single-file no-features-by-default crate.
 walkdir = "2"
+rayon = "1.10"
 
 # Lens (v0.13.0 Slice 5 Vision Q&A) — PNG decode + post-render rect crop.
 # `default-features = false` keeps the dep tree small: we only need PNG,
