@@ -5,7 +5,51 @@
 
 ---
 
-## STATUS: 🚢 v2.4.0 "Stack" PUBLISHED — visual diff is live
+## STATUS: 📐 v3.0.0 Bedrock Slice 1 SHIPPED — pdf::pdfa scaffold + sanitize pass
+
+**TICK 2026-05-22 20:04 PT** — MODE C, 3 commits, ~521 net LOC, 16 new green tests.
+
+- `ee7f59f` docs(adr): PDF/A-2b default, 3b opt-in + sRGB v4 ICC vendored
+- `61e74b0` feat(pdfa): pdf::pdfa module + ICC + sanitize_for_pdfa() + 16 tests
+- `2103096` fix(stack): align StackPanel Status with shared types — `pnpm check`
+  now passes (0 errors / was 11 from v2.4.0 release that skipped the gate)
+
+**Branch**: `feature/v3.0.0-bedrock-pdfa` (NOT yet pushed — local only).
+
+**End-to-end**: `pdf::pdfa::sanitize::sanitize_for_pdfa(&mut Document)` strips
+ISO 19005-2 §6.6 forbidden interactive features (OpenAction, AA, AcroForm.XFA,
+Names.JavaScript, page-level AA) and returns a `SanitizeReport` for the
+pre-flight UI. Encrypted PDFs rejected. Idempotent.
+
+**Gates**: fmt clean, clippy -D warnings clean, cargo test --lib pdf::pdfa →
+16 passed / 0 failed, pnpm check → 0 errors (was 11 before hotfix).
+
+**🚨 EMERGENCY DISCOVERIES THIS TICK:**
+
+1. **Mac mini disk was at 98% / 614 MiB free** — `cargo build` hit
+   `No space left on device`. Freed 3 GB by deleting `/tmp/slab-release-*`
+   (already-uploaded artifacts) + `target/debug/incremental`. Now 88% / 3.5 GiB.
+   **Action for Sanjay**: weekly `cargo clean` sweep across worktrees; the
+   `target/` dirs are ballooning (`src-tauri/target` was 5.3 GB alone).
+2. **v2.4.0 Stack release skipped `pnpm check`** — 11 TS errors in
+   `src/lib/panels/StackPanel.svelte` shipped to users in v2.4.0. Runtime
+   was fine (Rust DTOs matched), but the typecheck was broken. Fixed in
+   `2103096` this tick. **Cron MODE A merge gate must re-include `pnpm check`
+   as mandatory** (it's already in the rules — sibling cron skipped it).
+
+**Sibling cron coordination**: a parallel cron tick was active during this
+window (shared `/tmp/msg.txt` file timestamps overlapped). They did not
+push during my window. If they pushed Bedrock work after my push, rebase.
+
+**Next tick**: Push branch, then Slice 2 — font embedding audit (`pdf::pdfa::fonts`)
++ ToUnicode CMap injection. Or, if Bedrock already on main from a sibling,
+pick up wherever the active slice index points.
+
+Session log: `.cron-state/sessions/2026-05-22-2004.md`.
+
+---
+
+## STATUS PRIOR: 🚢 v2.4.0 "Stack" PUBLISHED — visual diff is live
 
 **TICK 2026-05-22 19:51 PT** — MODE B finalize complete. Both CI runs
 green (build `26321021423` ✅, Docker `26321021424` ✅). Downloaded
