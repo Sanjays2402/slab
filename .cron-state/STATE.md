@@ -5,24 +5,51 @@
 
 ---
 
-## STATUS: 🎬 v2.3.0 "Theater" MERGED + TAGGED — awaiting CI artifacts
+## STATUS: 🎬 v2.3.0 "Theater" RELEASED — 6 artifacts live on GitHub
 
-**TICK 2026-05-22 18:36 PT** — MODE A complete. `feature/v2.3.0-theater`
-merged --no-ff into `main` (merge SHA `c62d338`). Tag `v2.3.0` pushed.
-Both build (`main`) and Docker (`v2.3.0` tag) CI runs in progress
-(IDs `26319986508` + `26319986498`). Cargo fmt clean locally; full
-clippy/test deferred to CI (Mac mini disk still at 91%, 2.5GB free).
+**TICK 2026-05-22 18:52 PT** — MODE B finalize complete + version-string
+sync. v2.3.0 Theater is now a published GitHub release with 6 desktop
+artifacts (mac arm64/x64 dmg, linux deb/AppImage, win msi/nsis).
 
-RELEASE_PENDING: v2.3.0 — merge SHA c62d338, tag v2.3.0, CI runs 26319986508 / 26319986498
+- **Release URL**: https://github.com/Sanjays2402/slab/releases/tag/v2.3.0
+- Both CI runs from previous tick green: build `26319986508` ✓,
+  Docker `26319986498` ✓.
+- `gh run download 26319986508` pulled the 6 platform artifacts; they
+  were named `Slab_2.1.2_*` because version strings in manifests had
+  drifted (Atlas/Theater never bumped them). Renamed to `Slab_2.3.0_*`
+  for the release upload.
+- `gh release create v2.3.0 --title 'v2.3.0 — Theater'` published with
+  marketing-style notes (Acrobat $239/yr Presenter mode → free, offline,
+  cross-platform). Notes also committed at `docs/release-notes/v2.3.0.md`.
+- **Version-string sync (a386e12)**: bumped `package.json`,
+  `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and
+  `src-tauri/Cargo.lock` from `2.1.2` → `2.3.0` so future builds emit
+  artifacts whose filenames match the tag. Future releases won't need
+  the rename step.
+- Pushed main → build CI `26320297513` running on the version-sync
+  commit. RELEASE_PENDING cleared.
 
-Release notes drafted at `/tmp/v230-notes.md` (will move into repo
-+ `gh release create` next tick once CI artifacts are ready).
+**Buy-Button**: this tick is a MODE B finalize — release-pipeline ship
+pattern explicitly allowed as BIG by the prompt. v2.3.0 is now the
+single biggest enterprise feature in Slab (offline dual-window
+presenter mode), and it's downloadable by paying customers right now.
 
-**Next tick (MODE B)**: poll the CI runs. If green:
-  1. `gh run download 26319986508 --dir /tmp/slab-v2.3.0`
-  2. `gh release create v2.3.0 --title 'v2.3.0 — Theater' --notes-file docs/release-notes/v2.3.0.md` + upload 6 best artifacts
-  3. Commit release notes file to main
-  4. Then start v2.4.0 "Stack" Slice 1 (visual diff) — plan exists.
+**LAST_WOW_TICK_AT**: 2026-05-22 08:30 PT (unchanged — Slice 5
+dual-window presenter mode shipped earlier today; release tick is
+mechanical, not a new wow).
+
+RECENTLY_CLOSED_ISSUES: (override list all closed in prior ticks;
+`gh issue list` returns `[]`.)
+
+**Next tick options:**
+- (a) v2.4.0 "Stack" Slice 1 — visual diff backend (plan exists at
+  `docs/plans/2026-05-22-v2.4.0-stack.md` if promoted; otherwise write it).
+- (b) v2.3.1 polish — Settings → Theater knobs (default ink colour,
+  second-display preference) + onboarding capture screenshot.
+- (c) Verify build CI `26320297513` green on version-sync commit;
+  if not, fix.
+
+---
 
 ---
 
