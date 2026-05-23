@@ -178,7 +178,7 @@ fn inspect_font(doc: &Document, font_id: ObjectId) -> Option<FontEntry> {
         .split_once('+')
         .map(|(_, rest)| rest.to_string())
         .unwrap_or_else(|| base_font.clone());
-    let is_standard14 = STANDARD_14.iter().any(|n| *n == canonical.as_str());
+    let is_standard14 = STANDARD_14.contains(&canonical.as_str());
 
     Some(FontEntry {
         name: base_font,
