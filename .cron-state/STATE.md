@@ -5,7 +5,30 @@
 
 ---
 
-## STATUS: ⇄ v2.4.0 "Stack" Slice 1-3 SHIPPED — visual diff end-to-end on a feature branch
+## STATUS: 🎯 v2.4.0 "Stack" MERGED + TAGGED — RELEASE_PENDING
+
+**TICK 2026-05-22 19:25 PT** — MODE A complete. `feature/v2.4.0-stack-visual-diff`
+merged into main (`07eb543`), version manifests bumped 2.3.0 → 2.4.0
+(`package.json`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`), tag
+`v2.4.0` cut and pushed. CI in flight:
+- build (main push): run `26321021423` — in_progress (~25 min on macOS)
+- Docker (slab-server, v2.4.0 tag): run `26321021424` — in_progress
+
+RELEASE_PENDING: v2.4.0 — merge SHA `07eb543`, tag v2.4.0, build CI run `26321021423`, Docker CI run `26321021424`
+
+**Next tick (MODE B):** Poll both runs. If green:
+- `gh run download 26321021423 --dir /tmp/slab-release-v2.4.0`
+- Curate 6 artifacts (mac arm64/x64 dmg, linux deb/AppImage, win msi/nsis).
+  Filenames should now be `Slab_2.4.0_*` thanks to the version-string sync.
+- `gh release create v2.4.0 --title 'v2.4.0 — Stack' --notes-file docs/release-notes/v2.4.0.md`
+  + upload artifacts. Marketing notes already written.
+- Clear RELEASE_PENDING, append to RECENTLY_CLOSED.
+
+If red: `gh run view <id> --log-failed`, fix on a hotfix branch, cut v2.4.1.
+
+---
+
+## STATUS PRIOR: ⇄ v2.4.0 "Stack" Slice 1-3 SHIPPED — visual diff end-to-end on a feature branch
 
 **TICK 2026-05-22 19:05 PT** — MODE C, 4 commits on
 `feature/v2.4.0-stack-visual-diff`, 1026 insertions (net). End-to-end
