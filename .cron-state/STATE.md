@@ -5,7 +5,25 @@
 
 ---
 
-## STATUS: 📐 v3.0.0 "Bedrock" plan promoted — PDF/A archival conversion
+## STATUS: 🚢 v2.4.0 "Stack" PUBLISHED — visual diff is live
+
+**TICK 2026-05-22 19:51 PT** — MODE B finalize complete. Both CI runs
+green (build `26321021423` ✅, Docker `26321021424` ✅). Downloaded
+artifacts, curated 6 (mac arm64/x64 dmg, linux deb/AppImage, win
+msi/nsis), `gh release create v2.4.0` published with marketing notes
+from `docs/release-notes/v2.4.0.md`. Release verified: `isDraft: false`,
+`assetCount: 6`. URL: https://github.com/Sanjays2402/slab/releases/tag/v2.4.0
+
+RELEASE_PENDING cleared. RECENTLY_CLOSED += v2.4.0 Stack.
+
+**Next tick (MODE C):** Execute `docs/plans/2026-05-22-v3.0.0-bedrock-pdfa.md`
+via subagent-driven-development. Slice 1 = `pdf::bedrock` module scaffold
++ ICC profile vendor + sanitize pass + first 3 unit tests. Branch
+`feature/v3.0.0-bedrock-pdfa`. Plan is 8 slices / 10 commits / ~1800 LOC.
+
+---
+
+## STATUS PRIOR: 📐 v3.0.0 "Bedrock" plan promoted — PDF/A archival conversion
 
 **TICK 2026-05-22 19:36 PT** — writing-plans skill invocation. Wrote
 `docs/plans/2026-05-22-v3.0.0-bedrock-pdfa.md` (25 KB, 544 lines, 8 slices
