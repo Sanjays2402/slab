@@ -276,8 +276,15 @@ p { color: var(--muted); margin: 0 0 12px; }
   border-radius: var(--radius); padding: 18px 16px 16px;
   display: flex; flex-direction: column; gap: 8px;
   transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
-  color: var(--ink);
+  color: var(--ink); min-height: 148px; position: relative;
 }
+/* Unified per-category palette (overrides inline --c on tiles) */
+.tb-tile[data-cat="organize"]      { --c: #3b82f6; }
+.tb-tile[data-cat="optimize"]      { --c: #14b8a6; }
+.tb-tile[data-cat="convert"]       { --c: #22c55e; }
+.tb-tile[data-cat="edit"]          { --c: #eab308; }
+.tb-tile[data-cat="security"]      { --c: #ef4444; }
+.tb-tile[data-cat="intelligence"]  { --c: #a855f7; }
 .tb-tile:hover {
   transform: translateY(-3px); border-color: var(--c, var(--accent-2));
   box-shadow: 0 12px 32px rgba(0,0,0,.4);
@@ -295,10 +302,11 @@ p { color: var(--muted); margin: 0 0 12px; }
 }
 .tb-ic svg { width: 22px; height: 22px; }
 .tb-new {
-  font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+  font-size: 9px; font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase;
-  background: linear-gradient(135deg, var(--c, #6c5ce7), #4ade80);
-  color: white; padding: 1.5px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 22%, transparent);
+  color: var(--c); padding: 2px 7px; border-radius: 999px;
+  position: absolute; top: 14px; right: 14px;
 }
 
 .tb-foot {
