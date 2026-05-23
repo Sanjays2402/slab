@@ -69,6 +69,10 @@ use pdf::bates_batch::{
     apply_bates_batch as do_apply_bates_batch, BatchInput as BatesBatchInput,
     BatchReport as BatesBatchReport,
 };
+use pdf::compactor::{
+    compact as do_compact, estimate as do_compactor_estimate, CompactOptions, CompactPreset,
+    CompactReport, EstimateReport,
+};
 use pdf::compress::{compress as do_compress, CompressReport};
 use pdf::crop::{crop as do_crop, CropOpts};
 use pdf::diff::{diff_pdfs as do_diff_pdfs, export_report as do_diff_export_report, DocDiff};
@@ -856,6 +860,38 @@ fn slab_info(input: PathBuf) -> CmdResult<PdfInfo> {
 #[tauri::command]
 fn slab_compress(input: PathBuf, output: PathBuf) -> CmdResult<CompressReport> {
     do_compress(&input, &output).into()
+}
+
+fn resolve_compact_opts(preset: &str, custom: Option<CompactOptions>) -> CompactOptions {
+    match (preset, custom) {
+        ("custom", Some(c)) => c,
+        ("screen", _) => CompactOptions::from_preset(CompactPreset::Screen),
+        ("ebook", _) => CompactOptions::from_preset(CompactPreset::Ebook),
+        ("printer", _) => CompactOptions::from_preset(CompactPreset::Printer),
+        ("prepress", _) => CompactOptions::from_preset(CompactPreset::Prepress),
+        _ => CompactOptions::from_preset(CompactPreset::Ebook),
+    }
+}
+
+#[tauri::command]
+fn slab_compactor_estimate(
+    input: PathBuf,
+    preset: String,
+    custom: Option<CompactOptions>,
+) -> CmdResult<EstimateReport> {
+    let opts = resolve_compact_opts(&preset, custom);
+    do_compactor_estimate(&input, opts).into()
+}
+
+#[tauri::command]
+fn slab_compactor_compact(
+    input: PathBuf,
+    output: PathBuf,
+    preset: String,
+    custom: Option<CompactOptions>,
+) -> CmdResult<CompactReport> {
+    let opts = resolve_compact_opts(&preset, custom);
+    do_compact(&input, &output, opts).into()
 }
 
 #[tauri::command]
@@ -3282,6 +3318,8 @@ pub fn run() {
             slab_extract_text_save,
             slab_info,
             slab_compress,
+            slab_compactor_estimate,
+            slab_compactor_compact,
             slab_encrypt,
             slab_decrypt,
             slab_watermark,
