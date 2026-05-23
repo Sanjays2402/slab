@@ -128,7 +128,7 @@
     samples: LoomAltTextSample[];
   };
 
-  type Tab = "layout" | "outline" | "reading" | "alt-text" | "conformance" | "about";
+  type Tab = "layout" | "outline" | "reading" | "alt-text" | "tag" | "conformance" | "about";
   let tab: Tab = "layout";
 
   let inputPath = "";
@@ -140,6 +140,18 @@
   let readingStatus: Status = idle;
   let altSummary: LoomAltTextSummary | null = null;
   let altStatus: Status = idle;
+  type LoomTagResult = {
+    output_path: string;
+    elapsed_ms: number;
+    pages_processed: number;
+    pages_skipped: number;
+    bdc_pairs_injected: number;
+    struct_elems_created: number;
+    figures_with_alt_text: number;
+  };
+  let tagResult: LoomTagResult | null = null;
+  let tagStatus: Status = idle;
+  let tagBadgeReveal = false;
   let status: Status = idle;
 
   onMount(() => {
@@ -289,6 +301,36 @@
     }
   }
 
+  async function runTag() {
+    if (!inputPath) return;
+    tagStatus = {
+      kind: "working",
+      msg: "Tagging document for PDF/UA-1 — layout, classify, alt-text, weave…",
+    };
+    tagResult = null;
+    tagBadgeReveal = false;
+    try {
+      const r = await invoke<CmdResult<LoomTagResult>>(
+        "slab_loom_tag_document",
+        { input: inputPath },
+      );
+      if (r.kind === "ok") {
+        tagResult = r.value;
+        const sec = (r.value.elapsed_ms / 1000).toFixed(1);
+        tagStatus = {
+          kind: "ok",
+          msg: `Tagged ${r.value.pages_processed} page${r.value.pages_processed === 1 ? "" : "s"} in ${sec}s · ${r.value.struct_elems_created.toLocaleString()} StructElems · ${r.value.bdc_pairs_injected.toLocaleString()} marked-content sequences.`,
+        };
+        // Trigger badge reveal animation on next tick.
+        setTimeout(() => (tagBadgeReveal = true), 50);
+      } else {
+        tagStatus = { kind: "err", msg: r.message };
+      }
+    } catch (e) {
+      tagStatus = { kind: "err", msg: String(e) };
+    }
+  }
+
   function onKeydown(e: KeyboardEvent) {
     // Cmd/Ctrl+Shift+A → generate alt-text on the currently-loaded file.
     const isMod = e.metaKey || e.ctrlKey;
@@ -297,6 +339,14 @@
         e.preventDefault();
         tab = "alt-text";
         runAltText();
+      }
+    }
+    // Cmd/Ctrl+Shift+T → tag the loaded PDF for PDF/UA-1.
+    if (isMod && e.shiftKey && e.key.toLowerCase() === "t") {
+      if (inputPath && tagStatus.kind !== "working") {
+        e.preventDefault();
+        tab = "tag";
+        runTag();
       }
     }
   }
@@ -339,6 +389,12 @@
       aria-selected={tab === "alt-text"}
       class:active={tab === "alt-text"}
       on:click={() => (tab = "alt-text")}>Alt-text</button
+    >
+    <button
+      role="tab"
+      aria-selected={tab === "tag"}
+      class:active={tab === "tag"}
+      on:click={() => (tab = "tag")}>Tag PDF</button
     >
     <button
       role="tab"
@@ -782,6 +838,102 @@
             result is cached by image content hash, so re-running on the
             same document is instant. Press
             <kbd>⌘⇧A</kbd> on the loaded PDF to start.
+          </p>
+        </div>
+      {/if}
+    </div>
+  {:else if tab === "tag"}
+    <div class="tag">
+      <div class="picker">
+        <button class="primary" on:click={pickPdf}>Pick PDF…</button>
+        <div class="path" title={inputPath}>
+          {inputPath ? basename(inputPath) : "no file selected"}
+        </div>
+        <button
+          class="primary tag-cta"
+          disabled={!inputPath || tagStatus.kind === "working"}
+          on:click={runTag}
+          title="Tag document for PDF/UA-1 (Cmd/Ctrl+Shift+T)"
+        >
+          {tagStatus.kind === "working"
+            ? "Tagging…"
+            : "Tag Document for PDF/UA"}
+        </button>
+        <kbd class="shortcut" aria-hidden="true">⌘⇧T</kbd>
+      </div>
+
+      {#if tagStatus.kind !== "idle"}
+        <p class="status" data-kind={tagStatus.kind}>{tagStatus.msg}</p>
+      {/if}
+
+      {#if tagResult}
+        <div class="tag-result">
+          <div class="tag-badge" class:reveal={tagBadgeReveal}>
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path
+                d="M9 16.2l-3.5-3.5L4 14.2l5 5L20 8.2l-1.5-1.5z"
+                fill="currentColor"
+              />
+            </svg>
+            <span>PDF/UA-1 emitted</span>
+          </div>
+          <div class="totals totals--four">
+            <div class="totals__item">
+              <div class="n">{tagResult.pages_processed.toLocaleString()}</div>
+              <div class="k">pages tagged</div>
+            </div>
+            <div class="totals__item">
+              <div class="n">{tagResult.struct_elems_created.toLocaleString()}</div>
+              <div class="k">StructElems</div>
+            </div>
+            <div class="totals__item">
+              <div class="n">{tagResult.bdc_pairs_injected.toLocaleString()}</div>
+              <div class="k">marked-content</div>
+            </div>
+            <div class="totals__item">
+              <div class="n">
+                {(tagResult.elapsed_ms / 1000).toFixed(1)}s
+              </div>
+              <div class="k">elapsed</div>
+            </div>
+          </div>
+          <p class="dim small">
+            Output: <code>{tagResult.output_path}</code>
+            {#if tagResult.figures_with_alt_text > 0}
+              · {tagResult.figures_with_alt_text} figure{tagResult.figures_with_alt_text === 1 ? "" : "s"} carry
+              <code>/Alt</code>
+            {/if}
+            {#if tagResult.pages_skipped > 0}
+              · {tagResult.pages_skipped} page{tagResult.pages_skipped === 1 ? "" : "s"} skipped (multi-stream)
+            {/if}
+          </p>
+          <p class="dim small">
+            Open the tagged PDF in NVDA, VoiceOver, or JAWS — the screen
+            reader will now walk headings, paragraphs, lists, and figure
+            descriptions in logical order instead of guessing from the page
+            grid.
+          </p>
+        </div>
+      {:else if tagStatus.kind === "idle"}
+        <div class="empty">
+          <h2>Tag your PDF for screen readers — locally, free</h2>
+          <p>
+            ISO 14289-1 (PDF/UA-1) requires every PDF to carry a
+            <code>/StructTreeRoot</code> so assistive technology can read it.
+            Untagged PDFs read as raw coordinate-ordered text — headings,
+            lists, and figures collapse into noise.
+          </p>
+          <p>
+            Adobe Acrobat Pro's "Auto-tag" feature does this for $239/yr.
+            CommonLook sells per-seat licenses starting at $1,200. veraPDF
+            tags but won't generate alt-text. Slab does the whole pipeline
+            in one click — layout extraction, structure classification,
+            multi-column reading order, Beacon-generated alt-text, and the
+            marked-content rewrite — without your file leaving this Mac.
+          </p>
+          <p>
+            Press <kbd>⌘⇧T</kbd> on the loaded PDF to tag it. The result
+            lands next to the original as <code>&lt;name&gt;.tagged.pdf</code>.
           </p>
         </div>
       {/if}
@@ -1370,5 +1522,59 @@
     font-family: ui-monospace, SFMono-Regular, monospace;
     border: 1px solid var(--border);
     margin-left: 4px;
+  }
+  .tag-cta {
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    color: white;
+    border: none;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(124, 58, 237, 0.2);
+  }
+  .tag-cta:hover:not([disabled]) {
+    background: linear-gradient(135deg, #6d28d9 0%, #9333ea 100%);
+    box-shadow: 0 4px 14px rgba(124, 58, 237, 0.35);
+  }
+  .tag-cta[disabled] {
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .tag-result {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .tag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    color: #6d28d9;
+    font-weight: 600;
+    font-size: 0.92rem;
+    width: max-content;
+    border: 1px solid #ddd6fe;
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+    transition:
+      opacity 320ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 320ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 480ms ease-out;
+  }
+  .tag-badge.reveal {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 6px rgba(124, 58, 237, 0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    .tag-badge {
+      background: linear-gradient(135deg, #2e1065 0%, #4c1d95 100%);
+      color: #ddd6fe;
+      border-color: #5b21b6;
+    }
   }
 </style>
