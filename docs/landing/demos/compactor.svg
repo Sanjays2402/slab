@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" role="img" aria-label="Compactor — file shrinks from 80 MB to 12 MB">
+  <defs>
+    <style>
+      .big { fill:#e2e8f0; stroke:#94a3b8; stroke-width:.75 }
+      .sm  { fill:#dcfce7; stroke:#16a34a; stroke-width:.75 }
+      .line { fill:#cbd5e1 }
+      .tag  { font: 700 11px ui-monospace,monospace; fill:#0f172a }
+      .delta{ font: 700 14px ui-monospace,monospace; fill:#16a34a }
+      .arrow{ stroke:#475569; stroke-width:1.5; fill:none; marker-end:url(#a) }
+      @keyframes shrink {
+        0%, 15% { transform: scale(1); opacity: 1 }
+        55%, 100% { transform: scale(.45); opacity: 1 }
+      }
+      @keyframes label {
+        0%,55% { opacity: 0; transform: translateY(4px) }
+        70%,100% { opacity: 1; transform: translateY(0) }
+      }
+      .shrinkme { transform-origin: 100px 100px; animation: shrink 3.6s ease-in-out infinite }
+      .smtag, .delta-anim { animation: label 3.6s ease-out infinite }
+      @media (prefers-reduced-motion: reduce) {
+        .shrinkme { animation:none; transform:scale(.45) }
+        .smtag, .delta-anim { animation:none; opacity:1; transform:none }
+      }
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="320" height="200" fill="#f8fafc"/>
+
+  <!-- Big file (shrinks) -->
+  <g class="shrinkme">
+    <rect class="big" x="40" y="40" width="120" height="120" rx="6"/>
+    <g class="line">
+      <rect x="56" y="60" width="88" height="4" rx="1"/>
+      <rect x="56" y="70" width="72" height="4" rx="1"/>
+      <rect x="56" y="84" width="88" height="40" rx="2"/>
+      <rect x="56" y="130" width="60" height="4" rx="1"/>
+    </g>
+    <text class="tag" x="100" y="155" text-anchor="middle">80 MB</text>
+  </g>
+
+  <!-- Arrow -->
+  <path class="arrow" d="M170 100 L210 100"/>
+
+  <!-- Result file (revealed) -->
+  <g>
+    <rect class="sm" x="230" y="70" width="60" height="60" rx="4"/>
+    <text class="tag smtag" x="260" y="105" text-anchor="middle">12 MB</text>
+  </g>
+
+  <text class="delta delta-anim" x="160" y="34" text-anchor="middle">−85%</text>
+  <text x="160" y="186" text-anchor="middle" font="600 10px ui-sans-serif,system-ui" font-size="10" fill="#475569">Web · Print · Archive profiles — all local</text>
+</svg>

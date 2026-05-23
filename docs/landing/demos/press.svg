@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" role="img" aria-label="Press — CMYK roller sweeps across the page, PDF/X-4 badge appears">
+  <defs>
+    <clipPath id="pageClip"><rect x="80" y="35" width="160" height="120" rx="3"/></clipPath>
+    <style>
+      .page { fill:#fff; stroke:#94a3b8; stroke-width:.75 }
+      .line { fill:#cbd5e1 }
+      .badge { fill:#ec4899; stroke:#be185d; stroke-width:.75 }
+      .btxt { font: 700 8px ui-sans-serif,system-ui; fill:#fff }
+      @keyframes roll { 0%{transform:translateX(-80px)} 70%,100%{transform:translateX(160px)} }
+      @keyframes stamp { 0%,70%{opacity:0;transform:scale(.4)} 85%,100%{opacity:1;transform:scale(1)} }
+      .roller { animation: roll 3.6s ease-in-out infinite }
+      .badgewrap { animation: stamp 3.6s ease-out infinite; transform-origin:200px 135px }
+      @media (prefers-reduced-motion: reduce) {
+        .roller { animation:none; transform:translateX(160px) }
+        .badgewrap { animation:none; opacity:1; transform:none }
+      }
+    </style>
+  </defs>
+  <rect width="320" height="200" fill="#f8fafc"/>
+  <!-- page -->
+  <rect class="page" x="80" y="35" width="160" height="120" rx="3"/>
+  <g class="line">
+    <rect x="92"  y="50" width="120" height="3" rx="1"/>
+    <rect x="92"  y="58" width="100" height="3" rx="1"/>
+    <rect x="92"  y="70" width="120" height="3" rx="1"/>
+    <rect x="92"  y="78" width="90"  height="3" rx="1"/>
+    <rect x="92"  y="92" width="60"  height="44" rx="2"/>
+    <rect x="158" y="92" width="58"  height="20" rx="2"/>
+    <rect x="158" y="116" width="58" height="20" rx="2"/>
+  </g>
+
+  <!-- CMYK roller sweep -->
+  <g clip-path="url(#pageClip)">
+    <g class="roller">
+      <rect x="0" y="35" width="20" height="120" fill="#06b6d4" opacity=".55"/>
+      <rect x="20" y="35" width="20" height="120" fill="#ec4899" opacity=".55"/>
+      <rect x="40" y="35" width="20" height="120" fill="#eab308" opacity=".55"/>
+      <rect x="60" y="35" width="20" height="120" fill="#111827" opacity=".55"/>
+    </g>
+  </g>
+
+  <!-- badge -->
+  <g class="badgewrap">
+    <rect class="badge" x="170" y="125" width="60" height="22" rx="4"/>
+    <text class="btxt" x="200" y="139" text-anchor="middle">PDF/X-4 ✓</text>
+  </g>
+
+  <text x="160" y="184" text-anchor="middle" font="600 10px ui-sans-serif,system-ui" font-size="10" fill="#475569">FOGRA51 · GRACoL2013 · prepress-ready</text>
+</svg>

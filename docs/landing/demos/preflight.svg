@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" role="img" aria-label="Preflight inspector — severity rows light up">
+  <defs>
+    <style>
+      .panel { fill:#0f172a }
+      .row { fill:#1e293b; stroke:#334155; stroke-width:.5 }
+      .txt { font: 600 8px ui-monospace,monospace; fill:#cbd5e1 }
+      .sev { rx:2; }
+      .err  { fill:#ef4444 }
+      .warn { fill:#f59e0b }
+      .info { fill:#3b82f6 }
+      .ok   { fill:#22c55e }
+      @keyframes pop { 0%,10%{opacity:0;transform:translateX(-4px)} 25%,100%{opacity:1;transform:translateX(0)} }
+      .r1 { animation: pop 3.6s ease infinite; animation-delay:0s }
+      .r2 { animation: pop 3.6s ease infinite; animation-delay:.4s }
+      .r3 { animation: pop 3.6s ease infinite; animation-delay:.8s }
+      .r4 { animation: pop 3.6s ease infinite; animation-delay:1.2s }
+      .r5 { animation: pop 3.6s ease infinite; animation-delay:1.6s }
+      @media (prefers-reduced-motion: reduce) {
+        .r1,.r2,.r3,.r4,.r5 { animation:none; opacity:1; transform:none }
+      }
+    </style>
+  </defs>
+  <rect width="320" height="200" fill="#f8fafc"/>
+  <rect class="panel" x="30" y="22" width="260" height="156" rx="6"/>
+  <text class="txt" x="42" y="40" fill="#94a3b8">PREFLIGHT — 5 findings</text>
+  <g class="r1">
+    <rect class="row" x="40" y="50" width="240" height="18" rx="3"/>
+    <rect class="sev err" x="46" y="55" width="6" height="8"/>
+    <text class="txt" x="58" y="62">Font Helvetica not embedded · Bedrock will fix</text>
+  </g>
+  <g class="r2">
+    <rect class="row" x="40" y="72" width="240" height="18" rx="3"/>
+    <rect class="sev err" x="46" y="77" width="6" height="8"/>
+    <text class="txt" x="58" y="84">XMP missing pdfaid:part · auto-inject on convert</text>
+  </g>
+  <g class="r3">
+    <rect class="row" x="40" y="94" width="240" height="18" rx="3"/>
+    <rect class="sev warn" x="46" y="99" width="6" height="8"/>
+    <text class="txt" x="58" y="106">Image stream not /DeviceCMYK — Press will convert</text>
+  </g>
+  <g class="r4">
+    <rect class="row" x="40" y="116" width="240" height="18" rx="3"/>
+    <rect class="sev info" x="46" y="121" width="6" height="8"/>
+    <text class="txt" x="58" y="128">2 embedded JavaScript blocks · Veil strips</text>
+  </g>
+  <g class="r5">
+    <rect class="row" x="40" y="138" width="240" height="18" rx="3"/>
+    <rect class="sev ok" x="46" y="143" width="6" height="8"/>
+    <text class="txt" x="58" y="150">/StructTreeRoot present · Loom-ready</text>
+  </g>
+  <text x="160" y="194" text-anchor="middle" font="600 9px ui-sans-serif,system-ui" font-size="9" fill="#475569">Copy-as-Markdown audit report — ⌘⇧I</text>
+</svg>
