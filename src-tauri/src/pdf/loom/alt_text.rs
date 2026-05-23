@@ -197,10 +197,9 @@ async fn process_one_figure(
     let msgs = vec![
         ChatMessage {
             role: ChatRole::System,
-            content:
-                "You are Beacon, generating accessibility alt-text. Reply with a \
+            content: "You are Beacon, generating accessibility alt-text. Reply with a \
                  single sentence, no preface, no markdown."
-                    .into(),
+                .into(),
         },
         ChatMessage {
             role: ChatRole::User,
@@ -212,9 +211,7 @@ async fn process_one_figure(
         temperature: Some(0.1),
         max_tokens: Some(120),
     };
-    let resp = provider
-        .chat_with_images(&msgs, &[b64], &chat_opts)
-        .await?;
+    let resp = provider.chat_with_images(&msgs, &[b64], &chat_opts).await?;
     let alt = normalise_alt(&resp.content);
     if alt.is_empty() {
         return Err(AiError::InvalidResponse("empty alt-text reply".into()));
@@ -362,7 +359,9 @@ mod tests {
             _msgs: &[ChatMessage],
             _opts: &ChatOpts,
         ) -> Result<ChatResponse, AiError> {
-            Err(AiError::InvalidResponse("text chat not used in tests".into()))
+            Err(AiError::InvalidResponse(
+                "text chat not used in tests".into(),
+            ))
         }
         async fn chat_with_images(
             &self,
@@ -412,10 +411,7 @@ mod tests {
             normalise_alt("  An image of  a red square on white.  "),
             "A red square on white."
         );
-        assert_eq!(
-            normalise_alt("\"A blue dot.\""),
-            "A blue dot."
-        );
+        assert_eq!(normalise_alt("\"A blue dot.\""), "A blue dot.");
         assert_eq!(
             normalise_alt("This image shows\n\n a flowchart with three nodes."),
             "A flowchart with three nodes."

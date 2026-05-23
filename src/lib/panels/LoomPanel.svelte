@@ -108,7 +108,27 @@
     flow_preview: LoomReadingOrderFlowEntry[];
   };
 
-  type Tab = "layout" | "outline" | "reading" | "conformance" | "about";
+  type LoomAltTextSample = {
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    alt_text: string;
+  };
+
+  type LoomAltTextSummary = {
+    figures_total: number;
+    generated: number;
+    cache_hits: number;
+    skipped_tiny: number;
+    skipped_preexisting: number;
+    errors: number;
+    elapsed_ms: number;
+    samples: LoomAltTextSample[];
+  };
+
+  type Tab = "layout" | "outline" | "reading" | "alt-text" | "conformance" | "about";
   let tab: Tab = "layout";
 
   let inputPath = "";
@@ -118,6 +138,8 @@
   let classifyStatus: Status = idle;
   let readingSummary: LoomReadingOrderSummary | null = null;
   let readingStatus: Status = idle;
+  let altSummary: LoomAltTextSummary | null = null;
+  let altStatus: Status = idle;
   let status: Status = idle;
 
   onMount(() => {
@@ -231,7 +253,56 @@
       readingStatus = { kind: "err", msg: String(e) };
     }
   }
+
+  async function runAltText() {
+    if (!inputPath) return;
+    altStatus = {
+      kind: "working",
+      msg: "Generating alt-text via Beacon (this may take a moment per figure)…",
+    };
+    altSummary = null;
+    try {
+      const r = await invoke<CmdResult<LoomAltTextSummary>>(
+        "slab_loom_alt_text_summary",
+        { input: inputPath },
+      );
+      if (r.kind === "ok") {
+        altSummary = r.value;
+        const v = r.value;
+        const sec = (v.elapsed_ms / 1000).toFixed(1);
+        if (v.figures_total === 0) {
+          altStatus = {
+            kind: "ok",
+            msg: "No figures detected — nothing to describe.",
+          };
+        } else {
+          altStatus = {
+            kind: "ok",
+            msg: `Generated ${v.generated} · ${v.cache_hits} cached · ${v.errors} error${v.errors === 1 ? "" : "s"} across ${v.figures_total} figure${v.figures_total === 1 ? "" : "s"} in ${sec}s.`,
+          };
+        }
+      } else {
+        altStatus = { kind: "err", msg: r.message };
+      }
+    } catch (e) {
+      altStatus = { kind: "err", msg: String(e) };
+    }
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    // Cmd/Ctrl+Shift+A → generate alt-text on the currently-loaded file.
+    const isMod = e.metaKey || e.ctrlKey;
+    if (isMod && e.shiftKey && e.key.toLowerCase() === "a") {
+      if (inputPath && altStatus.kind !== "working") {
+        e.preventDefault();
+        tab = "alt-text";
+        runAltText();
+      }
+    }
+  }
 </script>
+
+<svelte:window on:keydown={onKeydown} />
 
 <section class="loom">
   <header class="loom__head">
@@ -262,6 +333,12 @@
       aria-selected={tab === "reading"}
       class:active={tab === "reading"}
       on:click={() => (tab = "reading")}>Reading order</button
+    >
+    <button
+      role="tab"
+      aria-selected={tab === "alt-text"}
+      class:active={tab === "alt-text"}
+      on:click={() => (tab = "alt-text")}>Alt-text</button
     >
     <button
       role="tab"
@@ -591,6 +668,120 @@
             promotes page-spanning headings and figures, and parks page chrome
             (folio, repeating header/footer) as artifacts so screen readers
             skip them. This pass alone covers Matterhorn checkpoint 09-001.
+          </p>
+        </div>
+      {/if}
+    </div>
+  {:else if tab === "alt-text"}
+    <div class="alt-text">
+      <div class="picker">
+        <button class="primary" on:click={pickPdf}>Pick PDF…</button>
+        <div class="path" title={inputPath}>
+          {inputPath ? basename(inputPath) : "no file selected"}
+        </div>
+        <button
+          class="primary"
+          disabled={!inputPath || altStatus.kind === "working"}
+          on:click={runAltText}
+          title="Generate alt-text for every figure (Cmd/Ctrl+Shift+A)"
+        >
+          {altStatus.kind === "working"
+            ? "Generating…"
+            : "Generate alt-text"}
+        </button>
+        <kbd class="shortcut" aria-hidden="true">⌘⇧A</kbd>
+      </div>
+
+      {#if altStatus.kind !== "idle"}
+        <p class="status" data-kind={altStatus.kind}>{altStatus.msg}</p>
+      {/if}
+
+      {#if altSummary}
+        <div class="totals totals--four">
+          <div class="totals__item">
+            <div class="n">{altSummary.figures_total.toLocaleString()}</div>
+            <div class="k">figures</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{altSummary.generated.toLocaleString()}</div>
+            <div class="k">generated</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{altSummary.cache_hits.toLocaleString()}</div>
+            <div class="k">cached</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">
+              {(altSummary.elapsed_ms / 1000).toFixed(1)}s
+            </div>
+            <div class="k">elapsed</div>
+          </div>
+        </div>
+
+        {#if altSummary.errors > 0 || altSummary.skipped_tiny > 0 || altSummary.skipped_preexisting > 0}
+          <p class="dim small">
+            {#if altSummary.skipped_preexisting > 0}
+              {altSummary.skipped_preexisting} preserved (had existing alt-text)·
+            {/if}
+            {#if altSummary.skipped_tiny > 0}
+              {altSummary.skipped_tiny} skipped (too small)·
+            {/if}
+            {#if altSummary.errors > 0}
+              <span class="err-inline">{altSummary.errors} failed</span>
+            {/if}
+          </p>
+        {/if}
+
+        <h3 class="sub-h">Figure descriptions</h3>
+        <p class="dim small">
+          Generated locally via Beacon — your file never leaves this machine.
+          Adobe Acrobat Pro charges extra for this and uploads to Adobe's
+          servers; Slab does it free, offline, with a content-addressed
+          cache so reruns are instant.
+        </p>
+        {#if altSummary.samples.length > 0}
+          <ul class="alt-list">
+            {#each altSummary.samples as s, i}
+              <li class="alt-item">
+                <div class="alt-meta">
+                  <span class="alt-idx">{i + 1}</span>
+                  <span class="alt-page">p.{s.page}</span>
+                  <span class="alt-dim"
+                    >{Math.round(s.width)}×{Math.round(s.height)}pt</span
+                  >
+                </div>
+                <blockquote class="alt-quote">{s.alt_text}</blockquote>
+              </li>
+            {/each}
+          </ul>
+          {#if altSummary.figures_total > altSummary.samples.length}
+            <p class="dim small">
+              Showing first {altSummary.samples.length} of {altSummary.figures_total}
+              figures.
+            </p>
+          {/if}
+        {:else}
+          <p class="dim">
+            No figure descriptions to display — either no figures were found
+            or every one was skipped or errored.
+          </p>
+        {/if}
+      {:else if altStatus.kind === "idle"}
+        <div class="empty">
+          <h2>AI alt-text — for every figure, fully offline</h2>
+          <p>
+            PDF/UA §7.3 and WCAG 2.2 SC 1.1.1 require every meaningful image
+            in a PDF to carry an <code>/Alt</code> description so screen
+            readers can convey it to blind users. Most teams skip this step
+            because it's tedious; the few that don't hand-write captions or
+            use Adobe Sensei (which uploads your file to Adobe's servers).
+          </p>
+          <p>
+            Slab generates alt-text locally via the Beacon vision provider
+            (Ollama llava by default). Your file stays on this machine. The
+            result is cached by image content hash, so re-running on the
+            same document is instant. Press
+            <kbd>⌘⇧A</kbd> on the loaded PDF to start.
           </p>
         </div>
       {/if}
@@ -1110,5 +1301,74 @@
     background: rgba(120, 180, 255, 0.1);
     padding: 1px 5px;
     border-radius: 4px;
+  }
+  .alt-list {
+    list-style: none;
+    margin: 12px 0 16px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .alt-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: var(--bg-2);
+  }
+  .alt-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .alt-idx {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .alt-page {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--bg-3);
+    color: var(--text);
+  }
+  .alt-dim {
+    font-variant-numeric: tabular-nums;
+  }
+  .alt-quote {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-style: italic;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+  }
+  .err-inline {
+    color: var(--err, #dc2626);
+    font-weight: 600;
+  }
+  .shortcut {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--bg-3);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    border: 1px solid var(--border);
+    margin-left: 4px;
   }
 </style>
