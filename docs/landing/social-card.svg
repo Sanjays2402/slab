@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Slab social card — 1200×630, Open Graph / Twitter Card -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img"
+     aria-label="Slab — Enterprise PDF workstation. Free, offline, cross-platform.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c0e12"/>
+      <stop offset="1" stop-color="#181b22"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6c5ce7"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.2" r="0.6">
+      <stop offset="0" stop-color="#f5a3a3" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#f5a3a3" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <g transform="translate(80,100)">
+    <g>
+      <rect width="56" height="56" rx="14" fill="url(#badge)"/>
+      <text x="28" y="38" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+            font-size="30" fill="#fff" font-weight="700">S</text>
+    </g>
+    <text x="80" y="42" font-family="ui-sans-serif,system-ui,sans-serif"
+          font-size="34" fill="#e9ecf2" font-weight="700">Slab</text>
+  </g>
+  <g transform="translate(80,220)">
+    <text font-family="ui-sans-serif,system-ui,sans-serif" font-size="72"
+          fill="#e9ecf2" font-weight="700" letter-spacing="-0.02em">
+      <tspan x="0" dy="0">The PDF workstation</tspan>
+      <tspan x="0" dy="84">that respects your files.</tspan>
+    </text>
+    <text x="0" y="226" font-family="ui-sans-serif,system-ui,sans-serif" font-size="24"
+          fill="#9aa3b2">Free · offline · cross-platform · open source</text>
+  </g>
+  <g transform="translate(80,520)">
+    <rect width="220" height="44" rx="22" fill="url(#badge)"/>
+    <text x="110" y="29" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+          font-size="14" fill="#fff" font-weight="700" letter-spacing="0.08em">PDF/A · OCR · REDACT · AI</text>
+    <text x="240" y="32" font-family="ui-monospace,monospace" font-size="14" fill="#7dd3fc">v3.0.2 Foundry Fonts</text>
+  </g>
+  <g transform="translate(820,140)" opacity="0.85">
+    <rect width="300" height="380" rx="10" fill="#fafafa"/>
+    <g fill="#5b6068">
+      <rect x="24" y="34" width="160" height="14" rx="2" fill="#23262d"/>
+      <rect x="24" y="62" width="252" height="6"  rx="1"/>
+      <rect x="24" y="76" width="232" height="6"  rx="1"/>
+      <rect x="24" y="90" width="244" height="6"  rx="1"/>
+      <rect x="24" y="120" width="120" height="10" rx="2" fill="#23262d"/>
+      <rect x="24" y="142" width="252" height="6"  rx="1"/>
+      <rect x="24" y="156" width="232" height="6"  rx="1"/>
+      <rect x="24" y="170" width="240" height="6"  rx="1"/>
+      <rect x="24" y="184" width="180" height="6"  rx="1"/>
+      <rect x="24" y="216" width="252" height="6"  rx="1"/>
+      <rect x="24" y="230" width="232" height="6"  rx="1"/>
+    </g>
+    <!-- Redaction bar -->
+    <rect x="120" y="148" width="120" height="14" fill="#0c0c0d"/>
+    <!-- PDF/A badge -->
+    <g transform="translate(160,310)">
+      <rect width="120" height="44" rx="10" fill="url(#badge)"/>
+      <text x="60" y="20" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+            font-size="11" fill="#fff" font-weight="700" letter-spacing="0.06em">PDF/A-2b</text>
+      <text x="60" y="35" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif"
+            font-size="10" fill="#fff">Archival ✓</text>
+    </g>
+  </g>
+</svg>

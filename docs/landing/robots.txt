@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://sanjays2402.github.io/slab/sitemap.xml
