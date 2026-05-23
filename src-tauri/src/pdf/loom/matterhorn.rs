@@ -12,12 +12,12 @@
 
 #![allow(dead_code)] // helpers consumed in Slice 2+ of v3.1.0 Loom
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Whether a Matterhorn failure condition is decidable by the validate
 /// pass alone (`Auto`), requires human review (`Human`), or depends on
 /// Slab features not yet shipped (`OutOfScope`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum Verdict {
     Auto,
     Human,
@@ -34,7 +34,7 @@ impl Verdict {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct FailureCondition {
     /// Hyphenated id, e.g. `"01-007"`.
     pub id: &'static str,
@@ -44,7 +44,7 @@ pub struct FailureCondition {
     pub section_id: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Section {
     pub id: &'static str,
     pub title: &'static str,
@@ -52,7 +52,7 @@ pub struct Section {
     pub conditions: &'static [FailureCondition],
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Totals {
     pub sections: usize,
     pub failure_conditions_in_this_registry: usize,
