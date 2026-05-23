@@ -4,7 +4,27 @@
 
 ---
 
-## STATUS: v3.9.0 Quill SHIPPED to main — AcroForm inspector + fill end-to-end. Awaiting CI build for release.
+## STATUS: v3.9.0 Quill awaiting CI bundle (run 26341610206 — macOS done, Linux+Win building). v3.10.0 Signet plan written.
+
+**TICK 2026-05-23 12:46 PT (Saturday off-hours)** — PLANNING tick.
+Wrote `docs/plans/2026-05-23-v3.10.0-signet-digital-signatures.md` — full 9-task
+plan for PKCS#7 digital signatures (sign + verify, pure-Rust RustCrypto,
+cross-platform, wax-seal wow). Did NOT ship code because (a) v3.9.0 CI still
+bundling, (b) Sanjay actively editing `docs/landing/index.html` in working tree
+at the moment cron fired (mtime 12:46:01 = tick start), (c) disk at 1.1 Gi free
+— no headroom for a Tauri build. Session log: `.cron-state/sessions/2026-05-23-1246.md`.
+
+### Next tick — MODE B FINALIZE (then start Signet)
+1. Poll CI 26341610206 — if green, finalize v3.9.0 Quill release.
+2. Once Quill released: `git checkout -b feature/v3.10.0-signet` and execute
+   Tasks 1–4 of the Signet plan as one mega-tick (~900 LOC, 4 commits, sign
+   end-to-end).
+
+### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (within 24h — no new wow needed)
+
+---
+
+## PRIOR STATUS: v3.9.0 Quill SHIPPED to main — AcroForm inspector + fill end-to-end. Awaiting CI build for release.
 
 **TICK 2026-05-23 12:17 PT (Saturday off-hours)** — MODE C develop.
 4 commits, 1689 net LOC (`forms.rs` 841 + `FormsPanel.svelte` 501 + lib.rs 18
