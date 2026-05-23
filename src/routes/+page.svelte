@@ -17,6 +17,7 @@
   import MetadataPanel from "$lib/panels/MetadataPanel.svelte";
   import PageNumbersPanel from "$lib/panels/PageNumbersPanel.svelte";
   import SignPanel from "$lib/panels/SignPanel.svelte";
+  import LoomPanel from "$lib/panels/LoomPanel.svelte";
   import CropPanel from "$lib/panels/CropPanel.svelte";
   import InsertPanel from "$lib/panels/InsertPanel.svelte";
   import HeaderFooterPanel from "$lib/panels/HeaderFooterPanel.svelte";
@@ -98,6 +99,7 @@
     { id: "metadata", label: "Metadata", icon: "ⓘ", ready: true },
     { id: "numbers", label: "Numbers", icon: "№", ready: true },
     { id: "sign", label: "Sign", icon: "✍", ready: true },
+    { id: "loom", label: "Loom (PDF/UA)", icon: "♿", ready: true },
     { id: "crop", label: "Crop", icon: "⊟", ready: true },
     { id: "insert", label: "Insert", icon: "＋", ready: true },
     { id: "headerfooter", label: "Header/Footer", icon: "≡", ready: true },
@@ -862,6 +864,8 @@
     <PageNumbersPanel />
   {:else if active === "sign"}
     <SignPanel />
+  {:else if active === "loom"}
+    <LoomPanel />
   {:else if active === "crop"}
     <CropPanel />
   {:else if active === "insert"}
