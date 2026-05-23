@@ -4,7 +4,20 @@
 
 ---
 
-## STATUS: v3.7.0 Loom PUBLISHED on GitHub Releases — 6 artifacts uploaded, Docker image live on GHCR. Pipeline clear; v3.8.0 Press plan in `docs/plans/` ready to start next tick.
+## STATUS: v3.8.0 Press Slices 1+2 SHIPPED on `feature/v3.8.0-press` — ADR + FOGRA51/GRACoL ICC vendored, OutputIntent enum, normalize_color() pass with 17 passing tests. Next tick: Slice 3 (geometry) + Slice 4 (orchestrator) — gets us to CLI-level "any PDF → valid PDF/X-4".
+
+**TICK 2026-05-23 10:15 PT (Saturday off-hours)** — MODE C develop. 4 commits, ~680 net LOC + ~280 LOC tests + 5.5MB ICC profiles. All gates green. Session log: `.cron-state/sessions/2026-05-23-1015.md`.
+
+### Next tick
+- Slice 3: `pdf::press::geometry::ensure_print_boxes` — synthesize TrimBox, optional 3mm BleedBox.
+- Slice 4: `pdf::press::orchestrate::convert_to_pdfx4` — glue passes 1-6 (sanitize → font_embed → color → geometry → xmp → output_intent). Extends `pdfa::xmp::XmpBuilder` with PdfX4 variant and `pdfa::output_intent` with `IntentSubtype::GtsPdfX`.
+- Target ship at end of next tick: working CLI-level conversion.
+
+### LAST_WOW_TICK_AT: 2026-05-23T16:15Z (Loom Slice 6 sub-badge stagger — Slice 1+2 was plumbing, no new wow needed; daily budget satisfied)
+
+---
+
+## PRIOR STATUS: v3.7.0 Loom PUBLISHED on GitHub Releases — 6 artifacts uploaded, Docker image live on GHCR.
 
 **TICK 2026-05-23 10:00 PT (Saturday off-hours)** — MODE B FINALIZE executed:
 - CI run 26337874627 (build) — **success** ✅
