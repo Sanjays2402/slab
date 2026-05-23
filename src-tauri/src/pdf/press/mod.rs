@@ -28,6 +28,7 @@
 //! implementation plan.
 
 pub mod color;
+pub mod geometry;
 
 /// The two output-intent ICC profiles Slab v3.8.0 ships with.
 ///
