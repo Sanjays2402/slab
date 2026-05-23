@@ -442,6 +442,24 @@ fn slab_diff_export_report(old: PathBuf, new: PathBuf, output: PathBuf) -> CmdRe
     }
 }
 
+/// v2.4.0 "Stack" — visual (pixel-level) PDF diff. Renders both sides at
+/// `dpi` via Poppler, masks per-pixel luma delta, and returns axis-aligned
+/// change boxes alongside the existing line-level diff. Defaults are tuned
+/// for legible-text PDFs: 150 DPI, luma threshold 20, min mass 8.
+#[tauri::command]
+fn slab_visual_diff_pdfs(
+    old: PathBuf,
+    new: PathBuf,
+    dpi: Option<u32>,
+    threshold: Option<u8>,
+    min_mass: Option<u32>,
+) -> CmdResult<crate::pdf::visual_diff::VisualDiff> {
+    let dpi = dpi.unwrap_or(150).clamp(36, 300);
+    let threshold = threshold.unwrap_or(20);
+    let min_mass = min_mass.unwrap_or(8);
+    crate::pdf::visual_diff::visual_diff_pdfs(&old, &new, dpi, threshold, min_mass).into()
+}
+
 #[tauri::command]
 fn slab_slides_analyze(input: PathBuf) -> CmdResult<SlideReport> {
     do_slides_analyze(&input).into()
@@ -3054,6 +3072,7 @@ pub fn run() {
             slab_replace_text_span,
             slab_diff_pdfs,
             slab_diff_export_report,
+            slab_visual_diff_pdfs,
             slab_slides_analyze,
             slab_theater_export_annotated,
             slab_theater_start,
