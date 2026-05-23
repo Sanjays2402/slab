@@ -35,6 +35,17 @@ impl SanitizeReport {
     }
 }
 
+/// Non-destructive variant of [`sanitize_for_pdfa`]. Clones the document
+/// internally and returns the report describing what *would* be removed,
+/// without touching the caller's document.
+///
+/// Used by the Loupe inspector (v3.0.1) to preview the sanitize delta
+/// before the user commits to a conversion.
+pub fn sanitize_dry_run(doc: &Document) -> Result<SanitizeReport, SanitizeError> {
+    let mut scratch = doc.clone();
+    sanitize_for_pdfa(&mut scratch)
+}
+
 /// Catalog-level keys that PDF/A-2 §6.6 forbids outright. They are
 /// always stripped (no opt-in / opt-out).
 const FORBIDDEN_CATALOG_KEYS: &[&[u8]] = &[

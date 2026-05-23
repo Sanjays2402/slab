@@ -9,10 +9,16 @@
 pub mod convert;
 pub mod font_audit;
 pub mod icc;
+pub mod inspect;
 pub mod output_intent;
 pub mod sanitize;
 pub mod validate;
 pub mod xmp;
+
+pub use font_audit::{audit_fonts, FontAuditReport, FontEntry};
+pub use inspect::{inspect_pdfa, InspectionReport, LevelAssessment, Verdict};
+pub use sanitize::{sanitize_dry_run, sanitize_for_pdfa, SanitizeReport};
+pub use validate::{validate_doc, validate_pdfa, Severity, ValidationFinding, ValidationReport};
 
 /// Conformance level requested by the caller.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
