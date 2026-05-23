@@ -4,7 +4,38 @@
 
 ---
 
-## STATUS: v3.10.0 Signet RELEASED — 6 artifacts uploaded, Docker image live, all CI green.
+## STATUS: v3.11.0 Signet Pro kickoff — plan + ADR 0012 + module scaffolding on feature/v3.11.0-signet-pro.
+
+**TICK 2026-05-23 15:14 PT (Saturday off-hours)** — writing-plans skill invocation.
+
+Branch: `feature/v3.11.0-signet-pro` (pushed, CI run 26345068650 queued).
+
+Shipped:
+- `docs/plans/2026-05-23-v3.11.0-signet-pro.md` — 8-task TDD breakdown
+  (RFC 3161 TSA + visible appearances + batch sign).
+- `docs/adr/0012-signet-pro-tsa-batch.md` — design rationale.
+- `src-tauri/src/pdf/signet_pro/{mod,tsa,appearance,batch}.rs` — public
+  type stubs + module wiring (compiles, clippy-clean, fmt-clean).
+- 2 commits: `d7df6af` (plan) + scaffold commit.
+
+Quality gates all green: cargo check, fmt, clippy -D warnings, pnpm check.
+
+### Next tick — Task 2 of the plan: RFC 3161 TimeStampReq encoder
+- Implement `build_timestamp_req` in `signet_pro/tsa.rs` with `der`+`spki`.
+- TDD: failing test asserts SHA-256 OID + digest bytes appear in DER output.
+- Verify `cms` crate already in deps tree (it is — used by v3.10.0).
+
+### Disk: 1.4Gi free at tick end. Pre-existing pressure; will need
+`cargo clean -p slab-app` before next bundle build.
+
+### LAST_WOW_TICK_AT: 2026-05-23T21:20Z (Signet end-to-end sign+verify; <24h)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.10.0 Signet — published prior tick.
+
+---
+
+## PRIOR STATUS: v3.10.0 Signet RELEASED — 6 artifacts uploaded, Docker image live, all CI green.
 
 **TICK 2026-05-23 15:02 PT (Saturday off-hours)** — MODE B FINALIZE executed.
 - CI run 26344139015 (build + 4-platform bundle) — **all success** ✅
