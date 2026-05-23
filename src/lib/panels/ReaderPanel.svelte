@@ -158,7 +158,7 @@
   let eventBus: any = null;
   let linkService: any = null;
   let findController: any = null;
-  let pdfViewer: any = null;
+  let pdfViewer: any = $state(null);
   let thumbsAbortController: AbortController | null = null;
 
   // ---------- File loading ----------

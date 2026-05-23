@@ -86,8 +86,8 @@
     pages_total: number;
   } | null>(null);
 
-  let scrollContainer: HTMLDivElement | null = null;
-  let inputEl: HTMLTextAreaElement | null = null;
+  let scrollContainer: HTMLDivElement | null = $state(null);
+  let inputEl: HTMLTextAreaElement | null = $state(null);
 
   // ---------- Voice Mode: Listen (v1.9.1 STT) ----------
   //
