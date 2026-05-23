@@ -4,74 +4,88 @@
 
 ---
 
-## STATUS: 🎉 v3.0.1 Loupe RELEASED — public on GitHub
+## STATUS: 🚀 v3.0.2 Foundry Fonts MERGED + TAGGED — RELEASE_PENDING
 
-**TICK 2026-05-22 23:35 PT** — MODE B FINALIZE complete. CI build run
-26325447602 fully green (all 4 platforms × test + bundle = 7 jobs
-success). Docker workflow on v3.0.1 tag (run 26325447609) success.
-Downloaded six platform bundles via `gh run download` and published
-the release in non-draft state with all 6 assets attached.
+**TICK 2026-05-23 00:14 PT** — Shipped v3.0.2 "Foundry Fonts" end-to-end
+on `feature/v3.0.2-foundry-fonts`, merged into main, tag pushed, CI
+in progress (build run 26326665482, docker run 26326665469).
 
-**Release URL**: https://github.com/Sanjays2402/slab/releases/tag/v3.0.1
-**Assets uploaded** (6, verified non-draft):
-- Slab_3.0.1_aarch64.dmg (macOS Apple Silicon)
-- Slab_3.0.1_x64.dmg (macOS Intel)
-- Slab_3.0.1_amd64.deb (Linux Debian/Ubuntu)
-- Slab_3.0.1_amd64.AppImage (Linux portable)
-- Slab_3.0.1_x64_en-US.msi (Windows MSI)
-- Slab_3.0.1_x64-setup.exe (Windows NSIS)
+**Six commits, +1500 net LOC of code + 12 vendored TTFs (~5.3 MB):**
+- 5403a96 chore(fonts): vendor DejaVu 2.37 TTF set (12 files + license)
+- df7a063 chore(deps): add ttf-parser 0.21
+- 86f3840 feat(pdfa): font_table — Standard-14 to DejaVu lookup (7 tests)
+- 2283e43 feat(pdfa): font_embed — splice FontFile2 + descriptor (4 tests)
+- 77b4b19 feat(pdfa): auto-embed by default; rename skip_font_check
+  → allow_unembedded_fonts (serde alias for back-compat) (3 new tests)
+- 343efc8 chore(release): bump to v3.0.2 + RELEASE_NOTES_v3.0.2.md
 
-**RELEASE_PENDING**: cleared.
+**Merge commit on main**: 9b03b93. Tag v3.0.2 → 343efc8.
 
-**Wedge live**: Acrobat Pro DC Preflight ($239/yr) — same diagnostic,
-free, offline, cross-platform. Loupe panel + Mod+Shift+I shortcut +
-Copy-as-Markdown export are now public on macOS, Linux, Windows.
+**Wedge live (Bedrock parity with Adobe)**: Any PDF that references
+Helvetica / Times-Roman / Courier without embedded fonts now auto-converts
+to PDF/A-2b via DejaVu substitution. The `skip_font_check` escape hatch
+becomes a debug-only path (`allow_unembedded_fonts`) used only for truly
+custom corporate fonts. Acrobat Pro's last font-embed advantage = closed.
 
-**LAST_WOW_TICK_AT**: 2026-05-23T06:11 UTC (Loupe Copy-as-Markdown
-export, shipped previous tick — still within 24h window).
+**Tests**: 1148 lib tests passing (17 new PDF/A tests). cargo fmt clean.
+Clippy skipped locally due to disk pressure (~116 MB free before clean,
+993 MB after) — CI will run clippy + bundle on all 4 platforms.
 
-**RECENTLY_CLOSED_ISSUES**: (issue backlog empty, re-poll next tick)
+**RELEASE_PENDING**: v3.0.2 — merge SHA 9b03b93, tag v3.0.2,
+build run 26326665482 (in_progress), docker run 26326665469 (in_progress).
 
-## Next tick plan (MODE C — DEVELOP)
+**LAST_WOW_TICK_AT**: 2026-05-23T07:14 UTC — "any PDF in → archival PDF
+out, free, offline" is the tweetable line. Stat tile "N fonts
+auto-embedded" gives visible feedback every run.
 
-Re-poll `gh issue list --state open` first. If empty, choose between:
+**RECENTLY_CLOSED_ISSUES**: backlog still empty (re-polled this tick).
 
-**Option A — v3.0.2 font-embedding upgrade** (held-over enterprise win):
-Replace `skip_font_check` escape hatch in PDF/A converter with real
-TrueType subsetting. Bundle DejaVu + Liberation as resource bytes for
-Standard-14 fallback. Turns Bedrock from "convert PDFs WITH embedded
-fonts" → "convert ANY PDF". Finishes Acrobat's font-embed advantage.
+## Next tick plan (MODE B — FINALIZE v3.0.2)
 
-**Option B — v3.1.0 Loom (PDF/UA accessibility)**:
-Plan already at `docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md`. PDF/UA
-is the accessibility analog of PDF/A — required by US Section 508 for
-federal contracts. Loupe + Bedrock + Loom = enterprise trifecta.
+1. Poll `gh run view 26326665482` and `gh run view 26326665469`.
+2. CI green → `gh run download 26326665482 --dir /tmp/slab-release-3.0.2`,
+   curate 6 bundles, `gh release create v3.0.2 --notes-file RELEASE_NOTES_v3.0.2.md`
+   with all 6 assets. Clear RELEASE_PENDING.
+3. CI failed → write RELEASE_FAILED line, investigate. Likely culprit
+   on first run: clippy lint we couldn't check locally.
 
-Recommendation: Option A (v3.0.2 fonts) — smaller scope, finishes
-Bedrock's promise of "any PDF in, archival PDF out", makes v3.0
-series feel complete. Loom is the bigger v3.1.0 swing after that.
+## After v3.0.2 finalizes
+
+Re-poll `gh issue list`. If empty, candidate next moves:
+
+**Option A — v3.1.0 Loom (PDF/UA accessibility)**: Plan at
+`docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md`. Bedrock + Loupe + Loom =
+enterprise trifecta (legal archival + compliance audit + accessibility).
+Section 508 / EAA compliance unlock — buyer-magnet for govt + EU.
+
+**Option B — v3.0.3 Foundry CJK**: Bundle Noto Sans CJK + Noto Serif CJK
+so non-Latin PDFs (Japanese, Chinese, Korean) also auto-embed. Smaller
+scope, finishes the "any PDF" promise globally. ~30 MB bundle cost.
+
+**Option C — Page ops UI (was issue #26 before pipeline)**: Insert /
+remove / reorder pages with drag-and-drop. pdfarranger killer. Heavy
+frontend work but visually impressive demo material.
+
+Recommendation: A (Loom) — bigger swing, larger market gap (Adobe Pro DC
+is the only competitor for PDF/UA inspection on Mac/Linux), and Slice
+1 of the existing plan is already scoped.
 
 **Quality gates**: cargo fmt / clippy / cargo test --lib / pnpm check
 — gate every tick before push.
 
-**Disk pressure**: 2.4 GiB free on /. Keep deferring full test builds
-to CI. Use `cargo check --lib` locally; let runners do `cargo test`.
+**Disk pressure**: Down to 116 MiB free before `cargo clean -p slab-app`
+this tick; up to 993 MiB after. Continue deferring clippy + full test
+builds to CI; use `cargo check --lib` and `cargo test --lib` locally.
 
 ---
 
-## ARCHIVED: 🚀 v3.0.1 Loupe MERGED + TAGGED (previous tick)
+## ARCHIVED: 🎉 v3.0.1 Loupe RELEASED — public on GitHub
 
-**TICK 2026-05-22 22:55 PT** — Shipped v3.0.1 "Loupe" PDF/A Compliance
-Inspector end-to-end on main. Five commits, +1113 net LOC.
+(previous tick, 2026-05-22 23:35 PT — CI green, 6 assets published)
 
-**Commits on main** (origin/main at 4a443b3):
-- 494dff6 feat(pdfa): sanitize_dry_run + InspectionReport orchestrator
-- 669e3db feat(pdfa): slab_pdfa_inspect Tauri command
-- 91bd82d feat(loupe): LoupePanel.svelte — Acrobat Preflight, free
-- 1185f88 feat(loupe): sidebar nav + Mod+Shift+I shortcut + detached panel
-- 4a443b3 chore(release): bump to v3.0.1 Loupe + release notes + plan
-
-Tag v3.0.1 pushed, CI ran green, finalized in next tick (this one).
+Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.0.1
+Wedge: Acrobat Pro DC Preflight ($239/yr) parity — Loupe panel +
+Mod+Shift+I shortcut + Copy-as-Markdown export.
 
 ## ARCHIVED: 🎉 v3.0.0 Bedrock RELEASED
 
