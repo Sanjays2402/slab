@@ -40,6 +40,7 @@ pub mod pages_undo;
 pub mod pdfa;
 pub mod polyglot;
 pub mod preflight;
+pub mod press;
 pub mod redact;
 pub mod redact_true;
 pub mod repair;

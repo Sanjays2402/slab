@@ -47,6 +47,7 @@
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import StackPanel from "$lib/panels/StackPanel.svelte";
   import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
+  import PressPanel from "$lib/panels/PressPanel.svelte";
   import LoupePanel from "$lib/panels/LoupePanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
@@ -125,6 +126,7 @@
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "stack", label: "Compare", icon: "⇄", ready: true },
     { id: "bedrock", label: "Archive (PDF/A)", icon: "⌬", ready: true },
+    { id: "press", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
     { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
     { id: "theater", label: "Theater", icon: "❖", ready: true },
@@ -432,6 +434,17 @@
       if (!inField) {
         e.preventDefault();
         active = "bedrock";
+        return;
+      }
+    }
+    // Press (v3.8.0): focus the PDF/X-4 convert panel. Default Mod+Shift+X.
+    if (matches(e, "press.open")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "press";
         return;
       }
     }
@@ -968,6 +981,8 @@
     <StackPanel />
   {:else if active === "bedrock"}
     <BedrockPanel />
+  {:else if active === "press"}
+    <PressPanel />
   {:else if active === "loupe"}
     <LoupePanel />
   {:else if active === "slides"}

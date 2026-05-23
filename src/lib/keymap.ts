@@ -51,7 +51,8 @@ export type ActionId =
   | "theater.blackout"
   | "theater.ink"
   | "theater.exit"
-  | "bedrock.open";
+  | "bedrock.open"
+  | "press.open";
 
 export interface KeymapAction {
   id: ActionId;

@@ -1052,6 +1052,88 @@ fn slab_loom_validate(input: PathBuf) -> CmdResult<crate::pdf::loom::validate::V
     }
 }
 
+/// v3.8.0 Press: one-click PDF/X-4 conversion (ISO 15930-7).
+///
+/// Takes any PDF and produces a fully PDF/X-4 compliant document offline:
+/// strips JavaScript, embeds Standard-14 fonts, installs ICC default
+/// colour spaces, synthesizes TrimBox + optional 3mm bleed, writes the
+/// PDF/X-4 XMP metadata packet (pdfxid namespace), and adds the
+/// `/Catalog /OutputIntents` entry with /S /GTS_PDFX backed by the
+/// vendored FOGRA51 or GRACoL2013 ICC profile.
+///
+/// `intent` accepts `"fogra51"` or `"gracol2013"`.
+#[tauri::command]
+fn slab_press_convert(
+    input: PathBuf,
+    output: PathBuf,
+    intent: String,
+    add_bleed: bool,
+    title: Option<String>,
+) -> CmdResult<PressConvertReportDto> {
+    use crate::pdf::press::{convert_to_pdfx4, ConvertOptions, OutputIntent};
+
+    let intent_enum = match OutputIntent::from_wire(&intent) {
+        Some(i) => i,
+        None => {
+            return CmdResult::Err {
+                message: format!(
+                    "unknown intent {:?}; expected \"fogra51\" or \"gracol2013\"",
+                    intent
+                ),
+            };
+        }
+    };
+
+    let opts = ConvertOptions {
+        output_intent: intent_enum,
+        add_bleed,
+        title,
+        creator_tool: None,
+    };
+    match convert_to_pdfx4(&input, &output, &opts) {
+        Ok(r) => CmdResult::Ok {
+            value: PressConvertReportDto::from(r),
+        },
+        Err(e) => CmdResult::Err { message: e },
+    }
+}
+
+/// Frontend-friendly view of `pdf::press::ConvertReport`. ObjectIds in
+/// the internal report aren't serde-friendly, so this DTO flattens the
+/// stats the UI actually wants.
+#[derive(Debug, serde::Serialize)]
+pub struct PressConvertReportDto {
+    output_path: String,
+    elapsed_ms: u128,
+    fonts_embedded: usize,
+    javascript_stripped: usize,
+    annotations_sanitized: usize,
+    color_pages_touched: usize,
+    color_default_entries_added: usize,
+    trimbox_synthesized: usize,
+    trimbox_preserved: usize,
+    bleed_added: usize,
+    intent_label: String,
+}
+
+impl From<crate::pdf::press::ConvertReport> for PressConvertReportDto {
+    fn from(r: crate::pdf::press::ConvertReport) -> Self {
+        Self {
+            output_path: r.output_path.display().to_string(),
+            elapsed_ms: r.elapsed_ms,
+            fonts_embedded: r.fonts_embedded,
+            javascript_stripped: r.javascript_stripped,
+            annotations_sanitized: r.annotations_sanitized,
+            color_pages_touched: r.color_pages_touched,
+            color_default_entries_added: r.color_default_entries_added,
+            trimbox_synthesized: r.trimbox_synthesized,
+            trimbox_preserved: r.trimbox_preserved,
+            bleed_added: r.bleed_added,
+            intent_label: r.intent_label,
+        }
+    }
+}
+
 #[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
@@ -3838,6 +3920,7 @@ pub fn run() {
             slab_loom_tag_document,
             slab_loom_validate,
             slab_loom_matterhorn_digest,
+            slab_press_convert,
             slab_rotate,
             slab_rotate_permanent,
             slab_delete_pages,

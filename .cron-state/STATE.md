@@ -4,7 +4,48 @@
 
 ---
 
-## STATUS: v3.7.0 Loom PUBLISHED on GitHub Releases — 6 artifacts uploaded, Docker image live on GHCR. Pipeline clear; v3.8.0 Press plan in `docs/plans/` ready to start next tick.
+## STATUS: v3.8.0 Press Slice 6 SHIPPED on `feature/v3.8.0-press` — **PressPanel UI live end-to-end**. Inspect/Convert/Validate tabs, Mod+Shift+X shortcut, sidebar entry, and the magenta press-roller wipe wow with PDF/X-4 ✓ badge reveal. Branch is **feature-complete** for v3.8.0 → MERGE TO MAIN next tick.
+
+**TICK 2026-05-23 11:14 PT (Saturday off-hours)** — MODE C develop. 4 commits, ~630 net LOC (PressPanel.svelte 604 + +page.svelte 15 + keymap.ts 1 + keymap/action.rs 8). All gates green (cargo fmt/clippy/test 1318 passing, pnpm check 0 errors). Session log: `.cron-state/sessions/2026-05-23-1114.md`.
+
+### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (magenta press-roller wipe — 380ms CMYK ink-roller sweep + PDF/X-4 ✓ FOGRA51/GRACoL2013 badge reveal, reduced-motion safe)
+
+### Next tick — MODE A RELEASE
+1. `git checkout main && git pull`
+2. `git merge --no-ff feature/v3.8.0-press -m "Merge v3.8.0 'Press' — one-click PDF/X-4 conversion"`
+3. Bump version 3.7.0 → 3.8.0 across Cargo.toml + tauri.conf.json + package.json.
+4. Quality gates on main.
+5. Tag v3.8.0 with marketing-tone annotation (no emoji in tag/commit per Sanjay's rule).
+6. Push main --follow-tags. Set RELEASE_PENDING for MODE B finalize next tick.
+
+### What shipped this tick
+
+- `f3ac2a2 feat(press): register press.open keymap action (Mod+Shift+X)`
+- `80de330 feat(press): extend ActionId union with press.open`
+- `826d065 feat(press): PressPanel.svelte — Inspect/Convert/Validate tabs (Slice 6)`
+- `a53766f feat(press): wire PressPanel into +page.svelte (sidebar + shortcut)`
+
+### Buy-Button verdict — PASS on 4 of 4
+
+- Pay-for-it: Acrobat Pro charges $239/yr for PDF/X-4 export → Slab does it free + offline.
+- Notice-it: New sidebar entry + Cmd+Shift+X shortcut.
+- Pick-us: No free cross-platform PDF/X-4 converter exists with a real UI.
+- Tell-a-friend: Magenta press-roller wipe is screenshottable.
+
+### Ops note
+
+Disk hit 100% again pre-compile. Cleared Chrome code-sign clone (78GB) +
+`cargo clean -p slab-app` (8.8GB). 5.6GB free after. If this recurs the
+clean target is recoverable cheaply; the Chrome clone keeps coming back
+whenever Chrome updates.
+
+---
+
+## PRIOR STATUS: v3.8.0 Press Slices 1+2 SHIPPED on `feature/v3.8.0-press` — ADR + FOGRA51/GRACoL ICC vendored, OutputIntent enum, normalize_color() pass with 17 passing tests.
+
+---
+
+## PRIOR STATUS: v3.7.0 Loom PUBLISHED on GitHub Releases — 6 artifacts uploaded, Docker image live on GHCR.
 
 **TICK 2026-05-23 10:00 PT (Saturday off-hours)** — MODE B FINALIZE executed:
 - CI run 26337874627 (build) — **success** ✅
