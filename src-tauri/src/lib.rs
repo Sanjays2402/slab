@@ -121,6 +121,7 @@ use pdf::pdfa::{
 };
 use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport};
 use pdf::redact::{redact as do_redact, RedactOpts};
+use pdf::redact_true::{redact_true as do_redact_true, TrueRedactReport};
 use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::scan_audit::{audit as do_scan_audit, ScanAuditReport};
@@ -931,6 +932,15 @@ fn slab_header_footer(input: PathBuf, output: PathBuf, opts: HFOpts) -> CmdResul
 #[tauri::command]
 fn slab_redact(input: PathBuf, output: PathBuf, opts: RedactOpts) -> CmdResult<u32> {
     do_redact(&input, &output, opts).into()
+}
+
+#[tauri::command]
+fn slab_redact_true(
+    input: PathBuf,
+    output: PathBuf,
+    opts: RedactOpts,
+) -> CmdResult<TrueRedactReport> {
+    do_redact_true(&input, &output, opts).into()
 }
 
 #[tauri::command]
@@ -3283,6 +3293,7 @@ pub fn run() {
             slab_insert,
             slab_header_footer,
             slab_redact,
+            slab_redact_true,
             slab_nup,
             slab_md2pdf,
             slab_grayscale,
