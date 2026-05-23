@@ -4,9 +4,30 @@
 
 ---
 
-## STATUS: v3.7.0 Loom MERGED + TAGGED + PUSHED. CI build still in progress. v3.8.0 Press plan written this tick; awaiting MODE B finalize next tick.
+## STATUS: v3.7.0 Loom PUBLISHED on GitHub Releases — 6 artifacts uploaded, Docker image live on GHCR. Pipeline clear; v3.8.0 Press plan in `docs/plans/` ready to start next tick.
 
-**TICK 2026-05-23 09:43 PT (Saturday off-hours)** — writing-plans skill invoked by Sanjay's cron prompt; CI for v3.7.0 build (run 26337874627) still in_progress, so MODE B blocked. Drafted `docs/plans/2026-05-23-v3.8.0-press-pdf-x.md` — re-baselined the 2026-05-22 v3.2.0 plan to v3.8.0 (pipeline jumped during Loom dev) and shrunk it from ~1700 LOC of new code to ~1500 because v3.0.0 Bedrock landed the `pdf::pdfa::{icc,xmp,output_intent,sanitize,font_embed}` substrate. 6 slices + release, each tick passes ship-size on its own. Next tick: if CI green → finalize v3.7.0 release; then start v3.8.0 Slice 1+2.
+**TICK 2026-05-23 10:00 PT (Saturday off-hours)** — MODE B FINALIZE executed:
+- CI run 26337874627 (build) — **success** ✅
+- CI run 26337874606 (Docker slab-server) — **success** ✅
+- Downloaded all 4 artifact bundles (required freeing ~500MB of /tmp first — disk was at 355Mi free; cleaned old slab-release-3.4.0 + stale screenshots).
+- `gh release create v3.7.0 --title "v3.7.0 — Loom"` with marketing-tone notes (`/tmp/slab-v3.7.0-notes.md`) and 6 artifacts uploaded:
+  - Slab_3.7.0_aarch64.dmg (macOS Apple Silicon)
+  - Slab_3.7.0_x64.dmg (macOS Intel)
+  - Slab_3.7.0_amd64.deb (Linux)
+  - Slab_3.7.0_amd64.AppImage (Linux portable)
+  - Slab_3.7.0_x64-setup.exe (Windows NSIS)
+  - Slab_3.7.0_x64_en-US.msi (Windows MSI)
+- Docker image `ghcr.io/sanjays2402/slab-server:v3.7.0` live.
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.7.0
+- RELEASE_PENDING cleared.
+- Open issues polled: **0 open**. Next pipeline item: **v3.8.0 Press** (PDF/X-4 print production).
+
+### Next tick — MODE C DEVELOP
+1. Create branch `feature/v3.8.0-press`.
+2. Execute Slice 1 of `docs/plans/2026-05-23-v3.8.0-press-pdf-x.md` (ADR + ICC vendoring + module scaffold).
+3. Honor ship-size: bundle Slice 1+2 (ICC + scaffolding alone won't pass buy-button).
+
+### LAST_WOW_TICK_AT: 2026-05-23T16:15Z (Loom Slice 6 sub-badge stagger — within 24h window)
 
 
 
