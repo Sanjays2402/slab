@@ -4,7 +4,32 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro — Tasks 2/3/4/5 shipped (TSA encoder+parser, appearance, batch driver).
+## STATUS: v3.11.0 Signet Pro — Tasks 2/3/4/5 shipped end-to-end + UI surfaces wired.
+
+**TICK 2026-05-23 16:08 PT (Saturday off-hours)** — appearance Form XObject
+splicing wired into `sign_pdf`, single-file UI gets a visible-stamp toggle.
+
+Branch: `feature/v3.11.0-signet-pro` (1111bd6). 4 commits this tick:
+- 8996752 TSA HTTP fetch (mockito-tested, 12 tests)
+- 2e410e0 batch-sign Tauri command + dedicated Svelte panel (Buy-Button)
+- 1d39e42 visible-signature wire-in (Form XObject /AP /N) + verify-still-green test
+- 1111bd6 SignetPanel visible-stamp toggle (page + rect inputs)
+
+Full lib suite: **1394/1394 PASS**. Clippy `-D warnings` clean.
+**LAST_WOW_TICK_AT: 2026-05-23 16:08 PT** (visible signatures end-to-end —
+"look at my PDF, it has a real signature stamp" screenshot-worthy moment).
+
+Next tick:
+- CAdES-T upgrade: call `fetch_timestamp` after signing, splice TST as
+  `id-aa-timeStampToken` unsigned attr on SignerInfo (cms_blob.rs).
+- Add TSA URL field to SignOptions + UI panels (single + batch).
+- Then merge branch -> main, tag v3.11.0, finalize release.
+
+---
+
+<details><summary>Earlier history</summary>
+
+
 
 **TICK 2026-05-23 15:32 PT (Saturday off-hours)** — writing-plans skill: plan
 already saved last tick, this tick *executes* it.
@@ -608,3 +633,4 @@ stale Chrome code-signing scratch clone at
 Removed it during this tick; APFS recovered ~1.4GB usable plus the rest
 as purgeable space. If this happens again, the same path is a safe first
 target — macOS regenerates as needed.
+</details>
