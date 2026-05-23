@@ -4,7 +4,24 @@
 
 ---
 
-## STATUS: v3.8.0 Press Slice 6 SHIPPED on `feature/v3.8.0-press` — **PressPanel UI live end-to-end**. Inspect/Convert/Validate tabs, Mod+Shift+X shortcut, sidebar entry, and the magenta press-roller wipe wow with PDF/X-4 ✓ badge reveal. Branch is **feature-complete** for v3.8.0 → MERGE TO MAIN next tick.
+## STATUS: v3.8.0 Press MERGED + TAGGED on main — release pipeline running.
+
+**TICK 2026-05-23 11:33 PT (Saturday off-hours)** — MODE A RELEASE executed. Merge commit `ea8b46a`, version bump `74e60bb`, tag `v3.8.0` pushed. CI runs 26340379066 (build, main) + 26340379077 (Docker, tag) in_progress. All pre-push gates green (cargo fmt/clippy/test 1318 passing; pnpm check 0 errors). Session log: `.cron-state/sessions/2026-05-23-1133.md`.
+
+### RELEASE_PENDING: v3.8.0 — merge SHA ea8b46a, tag v3.8.0, CI run 26340379066 (build) + 26340379077 (Docker)
+
+### Next tick — MODE B FINALIZE
+1. `gh run view 26340379066` — if green, `gh run download --dir /tmp/slab-release-3.8.0`.
+2. `gh release create v3.8.0 --title "v3.8.0 — Press" --notes-file …` + upload 6 artifacts.
+3. Verify Docker tag workflow 26340379077.
+4. Clear RELEASE_PENDING.
+5. Next pipeline pick: v3.9.0 (issue #26 page ops, or roadmap-next).
+
+### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (magenta press-roller wipe — within 24h, no fresh wow required this tick)
+
+---
+
+## PRIOR STATUS: v3.8.0 Press Slice 6 SHIPPED on `feature/v3.8.0-press` — **PressPanel UI live end-to-end**. Inspect/Convert/Validate tabs, Mod+Shift+X shortcut, sidebar entry, and the magenta press-roller wipe wow with PDF/X-4 ✓ badge reveal. Branch is **feature-complete** for v3.8.0 → MERGE TO MAIN next tick.
 
 **TICK 2026-05-23 11:14 PT (Saturday off-hours)** — MODE C develop. 4 commits, ~630 net LOC (PressPanel.svelte 604 + +page.svelte 15 + keymap.ts 1 + keymap/action.rs 8). All gates green (cargo fmt/clippy/test 1318 passing, pnpm check 0 errors). Session log: `.cron-state/sessions/2026-05-23-1114.md`.
 
