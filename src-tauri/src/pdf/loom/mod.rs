@@ -48,6 +48,7 @@ pub mod classify;
 pub mod layout;
 pub mod matterhorn;
 pub mod reading_order;
+pub mod structure_tree;
 
 pub use alt_text::{
     alt_text_for_bbox, default_cache_dir as default_alt_text_cache_dir, enrich_with_alt_text,
