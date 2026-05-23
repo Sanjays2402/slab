@@ -397,15 +397,10 @@
       }
       return;
     }
-    // Theater (v2.3.0): Cmd/Ctrl+Shift+T → open the Theater presenter panel.
-    // Hardcoded (not yet in the customisable keymap.toml) — promoted to a
-    // proper ActionId once the v2.3.0 backend ships its config schema.
-    if (
-      e.shiftKey &&
-      (e.metaKey || e.ctrlKey) &&
-      !e.altKey &&
-      (e.key === "T" || e.key === "t")
-    ) {
+    // Theater (v2.3.0): customisable `theater.start` action — default
+    // Mod+Shift+P. Promoted to the real keymap in v2.3.0 Slice 7 so
+    // users can rebind it from Settings → Keymap → Theater.
+    if (matches(e, "theater.start")) {
       const tgt = e.target as HTMLElement | null;
       const inField =
         tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
@@ -478,6 +473,12 @@
     }
   }
 
+  // v2.3.0 Slice 7: Settings panel CTA fires this to ask us to switch
+  // into the Theater panel. Mirrors the library-search focus pattern.
+  function onFocusTheater() {
+    active = "theater";
+  }
+
   // LibraryPanel dispatches this when the user clicks a card. We open
   // the doc in a fresh Reader tab and flip the active feature so they
   // see it immediately.
@@ -518,6 +519,10 @@
   onMount(() => {
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+    // v2.3.0 Slice 7: Settings panel CTA dispatches `slab:focus-theater`
+    // to ask us to switch into the Theater panel. Same shape as the
+    // library-search focus event — keeps the contract uniform.
+    window.addEventListener("slab:focus-theater", onFocusTheater);
 
     // Cabinet: detect detached mode from URL params.
     let isDetached = false;
@@ -568,6 +573,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onGlobalKey);
     window.removeEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+    window.removeEventListener("slab:focus-theater", onFocusTheater);
     if (unlistenOpenDoc) {
       unlistenOpenDoc();
       unlistenOpenDoc = null;

@@ -51,6 +51,7 @@
     type TheaterState,
   } from "$lib/theater";
   import TheaterCanvas from "$lib/components/TheaterCanvas.svelte";
+  import { matches, bootKeymap } from "$lib/keymap";
 
   // ---- State ----
   let state: TheaterState | null = null;
@@ -74,6 +75,14 @@
 
   // ---- Lifecycle ----
   onMount(async () => {
+    // Bootstrap the keymap so `matches()` reflects the user's overrides
+    // (the theater-control window is its own SvelteKit route — bootKeymap
+    // ran in the main window but not here).
+    try {
+      await bootKeymap();
+    } catch {
+      /* matches() degrades to defaults silently */
+    }
     try {
       state = await theaterSnapshot();
     } catch (e) {
@@ -215,6 +224,34 @@
         (tgt as HTMLElement).blur();
         e.preventDefault();
       }
+      return;
+    }
+    // Customisable presenter actions (v2.3.0 Slice 7). User can rebind
+    // any of these in Settings → Keymap → Theater. We check `matches()`
+    // first so an override always wins over the legacy `e.key` switch.
+    if (matches(e, "theater.next")) {
+      e.preventDefault();
+      void doNext();
+      return;
+    }
+    if (matches(e, "theater.prev")) {
+      e.preventDefault();
+      void doPrev();
+      return;
+    }
+    if (matches(e, "theater.blackout")) {
+      e.preventDefault();
+      void doBlackout();
+      return;
+    }
+    if (matches(e, "theater.ink")) {
+      e.preventDefault();
+      void doInk();
+      return;
+    }
+    if (matches(e, "theater.exit")) {
+      e.preventDefault();
+      void doEnd();
       return;
     }
     switch (e.key) {
