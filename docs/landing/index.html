@@ -25,7 +25,7 @@
     "applicationSubCategory": "PDF editor",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
     "downloadUrl": "https://github.com/Sanjays2402/slab/releases/latest",
-    "softwareVersion": "3.0.2",
+    "softwareVersion": "3.8.0",
     "license": "https://www.gnu.org/licenses/agpl-3.0.html",
     "description": "Enterprise-grade PDF workstation with PDF/A archival, Preflight audit, local AI, OCR, redaction, signing, and visual diff. Free, offline, cross-platform.",
     "aggregateRating": null,
@@ -210,8 +210,8 @@
   </section>
 
   <section id="compliance" class="compliance">
-    <h2>The v3.0 Compliance Suite.</h2>
-    <p class="lede">Three releases. One promise: any PDF you produce with Slab can survive a 50-year archival mandate, a Section&nbsp;508 audit, and a federal procurement review. No Adobe subscription required.</p>
+    <h2>The v3 Enterprise Suite.</h2>
+    <p class="lede">Nine releases. One promise: every paid Acrobat Pro workflow — archival, accessibility, redaction, discovery, compression, and print production — done locally, for free. No subscription. No cloud round-trip. No file ever leaves your machine.</p>
     <div class="suite">
       <article>
         <header>
@@ -252,8 +252,73 @@
           <li>One-line debug escape hatch (<code>allow_unembedded_fonts</code>)</li>
         </ul>
       </article>
+      <article>
+        <header>
+          <span class="ver">v3.4.0</span>
+          <h3>Discovery</h3>
+          <span class="tag">Bates numbering + legal stamps</span>
+        </header>
+        <p>The Adobe Acrobat Pro discovery workflow, free and offline. Stamp a 10,000-page production set with a monotonic Bates counter, emit a Relativity / Concordance / Everlaw-compatible load file, and apply CONFIDENTIAL / ATTORNEYS' EYES ONLY / PRIVILEGED stamps — without your privileged documents ever touching a third-party server.</p>
+        <ul>
+          <li>Batch driver chains a single counter across an entire folder of PDFs</li>
+          <li>Loadfile CSV/JSON drops straight into eDiscovery platforms</li>
+          <li>Live SVG preview re-renders on every keystroke (<kbd>⌘⇧B</kbd> / <kbd>⌘⇧S</kbd>)</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.5.0</span>
+          <h3>Veil</h3>
+          <span class="tag">True redaction</span>
+        </header>
+        <p>Black rectangles drawn on top of a PDF are a malpractice lawsuit waiting to happen. Veil physically excises the underlying text, images, metadata, and hidden layers — the same standard Adobe charges $239/yr for, audit-clean against Acrobat's own redaction verifier.</p>
+        <ul>
+          <li>Sanitization sweep strips JS, attachments, form fields, hidden layers, XMP</li>
+          <li>Preview shows exactly what disappears before you commit</li>
+          <li>Output passes Adobe's redaction-verification check</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.6.0</span>
+          <h3>Compactor</h3>
+          <span class="tag">Reduce file size</span>
+        </header>
+        <p>Drop an 80 MB scan in, get a clean 12 MB file back. Real image downsampling to a target DPI, JPEG re-encoding at a configurable quality, and a metadata strip that nukes the cruft scanners leave behind — the "Reduce File Size" feature Acrobat charges $239/yr for, on-device and deterministic.</p>
+        <ul>
+          <li>Three profiles: Web (96 DPI) · Print (150) · Archive (300)</li>
+          <li>Liquid-Glass Compact panel with real-time size preview</li>
+          <li>Email-safe (&lt;25 MB) and court-filing-safe (&lt;10 MB) presets</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.7.0</span>
+          <h3>Loom</h3>
+          <span class="tag">PDF/UA-1 accessibility</span>
+        </header>
+        <p>Section 508 / EN 301 549 / WCAG 2.1 / ADA Title III — if you publish PDFs to the public sector, healthcare, or education, you need PDF/UA-1. CommonLook and PAC are paid Windows-only tools that ship your files to a server. Loom tags, alt-texts, and validates locally, free.</p>
+        <ul>
+          <li>Auto-tag full structure tree: H1–H6, paragraphs, lists, figures, reading order (<kbd>⌘⇧T</kbd>)</li>
+          <li>Beacon-generated alt-text with SHA-256 disk cache (<kbd>⌘⇧A</kbd>)</li>
+          <li>PDF/UA-1 validator with 8 Matterhorn auto-conditions, clause-cited (<kbd>⌘⇧V</kbd>)</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.8.0</span>
+          <h3>Press</h3>
+          <span class="tag">PDF/X-4 print production</span>
+        </header>
+        <p>One-click PDF/X-4 for prepress. Embed FOGRA51 or GRACoL2013 ICC profiles, normalize color, write the OutputIntent, set the trapping key, and re-emit a press-ready file — the $239/yr Acrobat Pro feature (and Enfocus PitStop's $719/seat starting price) reduced to a single keystroke.</p>
+        <ul>
+          <li>PressPanel with Inspect · Convert · Validate tabs (<kbd>⌘⇧X</kbd>)</li>
+          <li>FOGRA51 + GRACoL2013 ICC profiles bundled, zero configuration</li>
+          <li>Confirm conformance before sending to the printer — no rejection at prepress</li>
+        </ul>
+      </article>
     </div>
-    <p class="more">Coming next on the same wedge: <strong>Loom</strong> — PDF/UA-1 accessibility tagging for Section 508 / EN 301 549 / AODA compliance. The market for accessible PDF tooling is $400M/yr. There's no free competitor.</p>
+    <p class="more">All nine v3 releases ship today in <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.8.0"><strong>Slab&nbsp;v3.8.0</strong></a> — 1,318 tests passing, Clippy-clean, six platform bundles (macOS arm64/x64, Linux deb/AppImage, Windows msi/nsis), and a Docker image on GHCR. Zero telemetry, zero cloud calls, AGPL forever.</p>
   </section>
 
   <section id="faq" class="faq">
