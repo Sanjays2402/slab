@@ -8,8 +8,10 @@
 
 pub mod font_audit;
 pub mod icc;
+pub mod output_intent;
 pub mod sanitize;
 pub mod validate;
+pub mod xmp;
 
 /// Conformance level requested by the caller.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
