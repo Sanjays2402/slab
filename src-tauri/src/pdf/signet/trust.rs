@@ -32,7 +32,7 @@ use x509_cert::Certificate;
 use super::identity::SignetError;
 
 /// Outcome of validating a signer certificate against a trust store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ChainStatus {
     /// Chain successfully terminates at a cert in the store, all dates valid.
     Trusted,

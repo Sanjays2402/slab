@@ -18,8 +18,10 @@ pub mod cms_blob;
 pub mod identity;
 pub mod sign;
 pub mod trust;
+pub mod verify;
 
 pub use cms_blob::{build_pkcs7_detached, parse_signed_data, sha256};
 pub use identity::{KeyAlgorithm, SignetError, SigningIdentity};
 pub use sign::{sign_pdf, SignOptions, SignReport, SIGNATURE_HEX_PLACEHOLDER_BYTES};
 pub use trust::{ChainStatus, TrustStore};
+pub use verify::{verify, Coverage, CryptoStatus, DigestStatus, VerifiedSignature};
