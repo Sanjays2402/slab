@@ -3,6 +3,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import ReaderPanel from "$lib/panels/ReaderPanel.svelte";
+  import ToolboxPanel from "$lib/panels/ToolboxPanel.svelte";
   import MergePanel from "$lib/panels/MergePanel.svelte";
   import SplitPanel from "$lib/panels/SplitPanel.svelte";
   import SplitPatternPanel from "$lib/panels/SplitPatternPanel.svelte";
@@ -81,6 +82,7 @@
   };
 
   const features: Feature[] = [
+    { id: "toolbox", label: "Toolbox", icon: "▦", ready: true },
     { id: "reader", label: "Reader", icon: "▥", ready: true },
     { id: "library", label: "Library", icon: "❐", ready: true },
     { id: "library-search", label: "Search Library", icon: "⌕", ready: true },
@@ -134,7 +136,7 @@
     { id: "theater", label: "Theater", icon: "❖", ready: true },
   ];
 
-  let active = $state("reader");
+  let active = $state("toolbox");
   let paletteOpen = $state(false);
   let shortcutsOpen = $state(false);
 
@@ -843,7 +845,9 @@
 </aside>
 
 <main class="content">
-  {#if active === "reader"}
+  {#if active === "toolbox"}
+    <ToolboxPanel on:open={(e) => (active = (e as CustomEvent<{ id: string }>).detail.id)} />
+  {:else if active === "reader"}
     <!-- Tab strip — only shown for the Reader feature. -->
     <div class="tabstrip" role="tablist" aria-label="Open PDFs">
       {#each tabs as t (t.id)}
