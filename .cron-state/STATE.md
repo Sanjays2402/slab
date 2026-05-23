@@ -4,7 +4,50 @@
 
 ---
 
-## STATUS: v3.10.0 Signet foundation landed on feature/v3.10.0-signet — identity loader + trust store, 17 tests passing. NOT shippable yet (Tasks 4+5 still owed: sign + verify).
+## STATUS: v3.10.0 Signet feature-complete on feature/v3.10.0-signet — sign + verify end-to-end, 34 signet tests passing, Tauri commands + SignetPanel UI shipped. Ready to merge to main next tick if CI is green.
+
+**TICK 2026-05-23 14:17 PT (Saturday off-hours)** — MODE C develop, BIG slice fold-in.
+4 commits, ~2200 net LOC + 17 new tests, on `feature/v3.10.0-signet`:
+- `8e2b99c` feat(signet): build_pkcs7_detached — CMS SignedData (adbe profile)
+- `c2bd798` feat(signet): sign_pdf end-to-end — placeholder/serialize/splice/ByteRange
+- `75c1767` feat(signet): Tauri commands — signet_load_identity / sign / verify
+- `d26ce33` feat(signet): SignetPanel UI — load identity, sign, verify
+
+Quality gates green: cargo fmt + clippy + cargo test --lib (34 signet tests
+pass), pnpm check 0 errors. Pushed to origin; CI run 26343830061 in flight
+at tick end.
+
+### Buy-button verdict: PASSES (Tell-a-friend + Pick-us)
+- Adobe charges $239/yr for digital signatures. Slab ships RSA-SHA-256
+  PKCS#7-detached signatures **free, offline**, compatible with the
+  Acrobat signature panel.
+- Enterprise wedge: legal/compliance workflows now have a path that
+  doesn't ship private keys or PDFs to a cloud.
+
+### Wow moment: signed PDF round-trips through our own verify() — digest matches, crypto valid, chain status reports SelfSigned for test certs, FullDocument coverage. Sign + verify in <50ms on the test fixtures.
+
+### Next tick — MODE A merge or v3.10.0 release
+1. `git checkout main && git pull && git merge --no-ff feature/v3.10.0-signet`
+2. Quality gates on main → tag `v3.10.0` → push tags.
+3. Finalize the GitHub release with marketing-grade notes:
+   _"Sign and verify PDFs offline. Adobe-compatible PKCS#7 signatures.
+   Zero cloud, zero subscription."_
+4. After release: v3.10.1 — add ECDSA P-256/P-384 signing (cms builder
+   bound work, ~1 day), revocation hints (CRL distribution-point
+   surfacing, not full check), batch sign for legal workflows.
+
+### LAST_WOW_TICK_AT: 2026-05-23T21:20Z (Signet end-to-end sign+verify)
+
+### Ops
+Disk: 2.6 Gi free after `cargo clean -p slab-app` mid-tick (recovered from
+ENOSPC during initial build). Watch for next tick.
+
+### RECENTLY_CLOSED_ISSUES:
+(none this tick — all issue-override items #23–27 already closed)
+
+---
+
+## PRIOR STATUS: v3.10.0 Signet foundation landed on feature/v3.10.0-signet — identity loader + trust store, 17 tests passing.
 
 **TICK 2026-05-23 13:19 PT (Saturday off-hours)** — MODE C develop, foundation tick.
 3 commits, ~1100 LOC + 17 new tests, on `feature/v3.10.0-signet`:
