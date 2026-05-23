@@ -43,8 +43,12 @@
 //   * review       — TODO (Slice 6)
 //   * emit         — TODO (Slice 7)
 
+pub mod layout;
 pub mod matterhorn;
 
+pub use layout::{
+    extract_layout, extract_layout_from_doc, Bbox, ImagePlacement, LayoutTree, PageLayout, TextRun,
+};
 pub use matterhorn::{
     all_conditions, auto_conditions, find_condition, human_conditions, out_of_scope_conditions,
     section_by_id, FailureCondition, Section, Totals, Verdict, APPLIES_TO, CONDITIONS_COUNT,
