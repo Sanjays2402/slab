@@ -4,7 +4,25 @@
 
 ---
 
-## STATUS: v3.9.0 Quill awaiting CI bundle (run 26341610206 — macOS done, Linux+Win building). v3.10.0 Signet plan written.
+## STATUS: v3.9.0 Quill RELEASED (mac arm64+x64 dmg, win nsis+msi). Linux deferred to v3.9.1 (disk ENOSPC). v3.10.0 Signet ready to start.
+
+**TICK 2026-05-23 13:07 PT (Saturday off-hours)** — MODE B FINALIZE.
+CI run 26341610206 all green. Tagged `098f11b` → `v3.9.0`, pushed tag, created
+GitHub release with marketing notes + 4 artifacts (mac arm64/x64 dmg, win nsis/msi).
+Linux AppImage download hit ENOSPC at libwebkit2gtk extract — release notes
+say linux ships in v3.9.1. Session log: `.cron-state/sessions/2026-05-23-1307.md`.
+
+### Next tick — MODE C DEVELOP (v3.10.0 Signet)
+1. Verify on-tag workflows for v3.9.0 succeeded (`gh run list --limit 8`).
+2. `git checkout -b feature/v3.10.0-signet` and execute Tasks 1–4 of the
+   Signet plan as one mega-tick (~900 LOC, 4 commits, sign end-to-end).
+3. Linux v3.9.1 hotfix can wait — disk needs to clear first.
+
+### LAST_WOW_TICK_AT: 2026-05-23T18:20Z (magenta press-roller — within 24h)
+
+---
+
+## PRIOR STATUS: v3.9.0 Quill awaiting CI bundle (run 26341610206 — macOS done, Linux+Win building). v3.10.0 Signet plan written.
 
 **TICK 2026-05-23 12:46 PT (Saturday off-hours)** — PLANNING tick.
 Wrote `docs/plans/2026-05-23-v3.10.0-signet-digital-signatures.md` — full 9-task
