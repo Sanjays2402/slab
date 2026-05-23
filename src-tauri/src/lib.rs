@@ -107,6 +107,7 @@ use pdf::pdfa::{
         ConvertReport as PdfAConvertReport,
     },
     font_audit::{audit_fonts as do_pdfa_font_audit, FontAuditReport as PdfAFontAuditReport},
+    inspect::{inspect_pdfa as do_pdfa_inspect, InspectionReport as PdfAInspectionReport},
     validate::{validate_pdfa as do_pdfa_validate, ValidationReport as PdfAValidationReport},
     ConformanceLevel as PdfAConformanceLevel,
 };
@@ -918,6 +919,11 @@ fn slab_pdfa_convert(
     opts: PdfAConvertOpts,
 ) -> CmdResult<PdfAConvertReport> {
     do_pdfa_convert(&input, &output, opts).into()
+}
+
+#[tauri::command]
+fn slab_pdfa_inspect(input: PathBuf) -> CmdResult<PdfAInspectionReport> {
+    do_pdfa_inspect(&input).into()
 }
 
 #[tauri::command]
@@ -3160,6 +3166,7 @@ pub fn run() {
             slab_pdfa_validate,
             slab_pdfa_font_audit,
             slab_pdfa_convert,
+            slab_pdfa_inspect,
             slab_repair,
             slab_beacon_config_read,
             slab_beacon_config_write,
