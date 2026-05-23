@@ -25,7 +25,7 @@
     title?: string;
     author?: string;
     subject?: string;
-    skip_font_check: boolean;
+    allow_unembedded_fonts: boolean;
   };
 
   type Severity = "Error" | "Warning" | "Info";
@@ -46,6 +46,7 @@
     added_output_intent: boolean;
     added_xmp_metadata: boolean;
     font_count: number;
+    fonts_embedded: number;
     fonts_missing_embed: string[];
     output_bytes: number;
     validation: ValidationReport;
@@ -71,7 +72,7 @@
   let title = $state("");
   let author = $state("");
   let subject = $state("");
-  let skipFontCheck = $state(false);
+  let allowUnembedded = $state(false);
 
   let audit = $state<FontAuditReport | null>(null);
   let auditStatus = $state<Status>(idle);
@@ -155,7 +156,7 @@
       title: title.trim() || undefined,
       author: author.trim() || undefined,
       subject: subject.trim() || undefined,
-      skip_font_check: skipFontCheck,
+      allow_unembedded_fonts: allowUnembedded,
     };
     try {
       const r: CmdResult<ConvertReport> = await invoke("slab_pdfa_convert", { input, output, opts });
@@ -213,8 +214,9 @@
             {/each}
           </ul>
           <p class="hint">
-            Re-export from the source app with "embed all fonts" enabled, or check "Convert anyway"
-            below — the output will render correctly but may fail strict ISO validators.
+            Slab will auto-embed DejaVu substitutes for any Standard-14 font (Helvetica, Times, Courier
+            and their variants) — no action needed. For truly custom fonts shown above, re-export from
+            the source app with "embed all fonts" enabled, or check "Allow unembedded" below.
           </p>
         </details>
       {/if}
@@ -240,8 +242,8 @@
       <input class="ti" placeholder="Subject" bind:value={subject} />
 
       <label class="chk">
-        <input type="checkbox" bind:checked={skipFontCheck} />
-        <span>Convert anyway if fonts aren't embedded</span>
+        <input type="checkbox" bind:checked={allowUnembedded} />
+        <span>Allow unembedded custom fonts (skip strict validation)</span>
       </label>
     </div>
 
@@ -295,6 +297,10 @@
         <div class="stat">
           <div class="stat-num">{report.added_xmp_metadata ? "✓" : "—"}</div>
           <div class="stat-cap">XMP metadata</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">{report.fonts_embedded}</div>
+          <div class="stat-cap">fonts auto-embedded</div>
         </div>
         <div class="stat">
           <div class="stat-num">{report.fonts_missing_embed.length}</div>
