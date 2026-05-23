@@ -4,7 +4,38 @@
 
 ---
 
-## STATUS: v3.4.0 Discovery — SLICE 5 (frontend WOW) shipped on feature/v3.4.0-discovery-slice-1-3
+## STATUS: v3.4.0 Discovery — MERGED TO MAIN + TAG PUSHED, awaiting CI artifacts
+
+**TICK 2026-05-23 04:35 PT** — MODE A RELEASE executed. Merged
+`feature/v3.4.0-discovery-slice-1-3` into `main` (merge SHA `a398df2`),
+tagged `v3.4.0`, both pushed. Build + Docker workflows started.
+
+RELEASE_PENDING: v3.4.0 — merge SHA a398df2, tag v3.4.0, CI build run 26331594957, docker run 26331594960. Release notes drafted at /tmp/v3.4.0-notes.md (also pasted below).
+
+### What shipped this tick
+- `d51deb2` chore(release): bump version 3.0.2 -> 3.4.0 (package.json, Cargo.toml, Cargo.lock, tauri.conf.json)
+- `a398df2` Merge v3.4.0 Discovery — full marketing-grade merge message
+- `v3.4.0` tag pushed (annotated, clean title, no emoji per Sanjay 2026-05-22 rule)
+
+### Next-tick MODE B FINALIZE checklist
+1. `gh run view 26331594957` — must be `success` before continuing.
+2. `gh run download 26331594957 --dir /tmp/slab-release-3.4.0`
+3. Curate 6 artifacts: macos-arm64 dmg, macos-x64 dmg, linux deb, linux AppImage, windows msi, windows nsis.
+4. `gh release create v3.4.0 --title 'v3.4.0 — Discovery' --notes-file /tmp/v3.4.0-notes.md` + upload artifacts.
+5. Check `gh release list` — release must be Published, not Draft.
+6. Confirm Docker (`docker.yml`, run 26331594960) published image to GHCR.
+7. Remove RELEASE_PENDING from STATE.md.
+
+### Release notes (saved to /tmp/v3.4.0-notes.md — re-create if /tmp wiped)
+Title: `v3.4.0 — Discovery`
+Theme: "The Adobe Acrobat Pro DC discovery workflow, free and offline."
+Highlights: Bates numbering (single + batch + Relativity/Concordance/Everlaw load file), legal stamps (4 presets + custom), live SVG preview, Cmd+Shift+B / Cmd+Shift+S, 7 locales, 17 tests.
+
+LAST_WOW_TICK_AT: 2026-05-23 (the release ITSELF is the wow — paralegals get the entire $239/yr Adobe discovery workflow free, offline, batch-capable, with a live preview Adobe doesn't even ship)
+
+---
+
+## ARCHIVED: v3.4.0 Discovery — SLICE 5 (frontend WOW) shipped on feature/v3.4.0-discovery-slice-1-3
 
 **TICK 2026-05-23 04:15 PT** — Slice 5 + CI fmt hotfix. Backend already
 landed last tick; this tick is the buyer-facing surface — the panels + the
