@@ -89,6 +89,22 @@
   --shadow-md: 0 4px 16px rgba(15, 15, 20, 0.12);
 }
 
+/* Pure-white theme. Crisper than Light — paper-white surfaces, near-black
+ * ink, hairline borders. Sits between Light and high-contrast for users
+ * on glossy displays or who want maximum chroma against the document. */
+:root[data-theme="white"] {
+  --bg: #ffffff;
+  --bg-2: #ffffff;
+  --bg-3: #f6f6f8;
+  --border: #ececf1;
+  --border-strong: #b8b8c2;
+  --text: #0a0a0c;
+  --text-2: #3a3a44;
+  --text-3: #72727e;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
 /* Accent overrides — applied per [data-accent]. The default is orange
  * (set in :root above), so no rule needed for that case. */
 :root[data-accent="orange"] {
