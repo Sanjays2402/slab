@@ -18,6 +18,8 @@
   import { notify } from "$lib/notify";
   import { vimEnabled } from "$lib/vim/mode";
   import { LOCALES, locale, setLocale, t, tStore, type LocaleId } from "$lib/i18n";
+  import { bootKeymap, keymapView, prettyBindingFor } from "$lib/keymap";
+  import { onMount } from "svelte";
 
   // Local mirror of the current locale so the segmented control re-renders.
   let currentLocale = $state<LocaleId>("en");
@@ -80,6 +82,20 @@
     await update({ theme: "auto", accent: "orange", density: "comfortable" });
     if (saving === "saved") notify.success("Settings reset to defaults");
   }
+
+  // Boot the keymap so the Theater section can render up-to-date
+  // shortcut labels (including any user overrides) the moment the
+  // panel mounts. Subscribe to the view so we re-render after every
+  // rebind without manually wiring a derived store.
+  onMount(() => {
+    void bootKeymap();
+  });
+  $effect(() => {
+    // touch the store so Svelte tracks it; the prettyBindingFor calls
+    // in the template read the cache, so any rebind triggers a redraw.
+    const _ = $keymapView.actions.length;
+    void _;
+  });
 
   const THEME_OPTIONS: { id: ThemeMode; label: string; hint: string }[] = [
     { id: "auto", label: "Auto", hint: "Match system appearance" },
@@ -264,6 +280,36 @@
         onclick={() => window.dispatchEvent(new CustomEvent("slab:focus-library-search"))}
       >
         {$tStore("settings.search.cta")}
+      </button>
+    </div>
+  </div>
+
+  <!-- Theater v2.3.0 — Slice 7 polish. Surface the presenter-mode
+       shortcuts so first-time users discover them without hunting
+       through Keymap. Knobs (default ink colour, second-display
+       preference) live in `~/.slab/config.toml` for v2.3.1; the panel
+       here is an information surface + a CTA that opens the panel. -->
+  <div class="row">
+    <div class="row-info">
+      <h2>{$tStore("settings.theater.title")}</h2>
+      <p class="row-desc">{$tStore("settings.theater.desc")}</p>
+      <ul class="hint-list">
+        <li><kbd>{prettyBindingFor("theater.start")}</kbd> {$tStore("settings.theater.hint.start")}</li>
+        <li><kbd>{prettyBindingFor("theater.next")}</kbd> {$tStore("settings.theater.hint.next")}</li>
+        <li><kbd>{prettyBindingFor("theater.prev")}</kbd> {$tStore("settings.theater.hint.prev")}</li>
+        <li><kbd>{prettyBindingFor("theater.blackout")}</kbd> {$tStore("settings.theater.hint.blackout")}</li>
+        <li><kbd>{prettyBindingFor("theater.ink")}</kbd> {$tStore("settings.theater.hint.ink")}</li>
+        <li><kbd>{prettyBindingFor("theater.exit")}</kbd> {$tStore("settings.theater.hint.exit")}</li>
+        <li class="muted">{$tStore("settings.theater.hint.customize")}</li>
+      </ul>
+    </div>
+    <div class="row-control">
+      <button
+        type="button"
+        class="ghost"
+        onclick={() => window.dispatchEvent(new CustomEvent("slab:focus-theater"))}
+      >
+        {$tStore("settings.theater.cta")}
       </button>
     </div>
   </div>

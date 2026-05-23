@@ -41,6 +41,7 @@
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
+  import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
   import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
   import KeymapPanel from "$lib/panels/KeymapPanel.svelte";
   import PluginsPanel from "$lib/panels/PluginsPanel.svelte";
@@ -110,6 +111,7 @@
     { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
+    { id: "theater", label: "Theater", icon: "🎬", ready: true },
     { id: "settings", label: "Settings", icon: "⚙", ready: true },
     { id: "plugins", label: "Plugins", icon: "🧩", ready: true },
     { id: "keymap", label: "Shortcuts", icon: "⌨", ready: true },
@@ -395,6 +397,19 @@
       }
       return;
     }
+    // Theater (v2.3.0): customisable `theater.start` action — default
+    // Mod+Shift+P. Promoted to the real keymap in v2.3.0 Slice 7 so
+    // users can rebind it from Settings → Keymap → Theater.
+    if (matches(e, "theater.start")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "theater";
+        return;
+      }
+    }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
     if (active !== "reader") return;
@@ -458,6 +473,12 @@
     }
   }
 
+  // v2.3.0 Slice 7: Settings panel CTA fires this to ask us to switch
+  // into the Theater panel. Mirrors the library-search focus pattern.
+  function onFocusTheater() {
+    active = "theater";
+  }
+
   // LibraryPanel dispatches this when the user clicks a card. We open
   // the doc in a fresh Reader tab and flip the active feature so they
   // see it immediately.
@@ -498,6 +519,10 @@
   onMount(() => {
     window.addEventListener("keydown", onGlobalKey);
     window.addEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+    // v2.3.0 Slice 7: Settings panel CTA dispatches `slab:focus-theater`
+    // to ask us to switch into the Theater panel. Same shape as the
+    // library-search focus event — keeps the contract uniform.
+    window.addEventListener("slab:focus-theater", onFocusTheater);
 
     // Cabinet: detect detached mode from URL params.
     let isDetached = false;
@@ -548,6 +573,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onGlobalKey);
     window.removeEventListener("slab:open-library-doc", onLibraryOpen as EventListener);
+    window.removeEventListener("slab:focus-theater", onFocusTheater);
     if (unlistenOpenDoc) {
       unlistenOpenDoc();
       unlistenOpenDoc = null;
@@ -825,6 +851,8 @@
     <DiffPanel />
   {:else if active === "slides"}
     <SlidesPanel />
+  {:else if active === "theater"}
+    <TheaterPanel />
   {:else if active === "settings"}
     <SettingsPanel />
   {:else if active === "plugins"}

@@ -140,5 +140,18 @@
   "plugins.uninstallConfirm.cancel": "إلغاء",
   "plugins.uninstallConfirm.confirm": "إزالة",
   "plugins.uninstallConfirm.working": "جاري الإزالة…",
-  "features.library-search": "بحث المكتبة"
+  "features.library-search": "بحث المكتبة",
+  "settings.theater.title": "المسرح",
+  "settings.theater.desc": "قدّم أي ملف PDF كشرائح — ملء الشاشة على شاشة ثانية، مؤشر ليزر، طبقة حبر، إعتام.",
+  "settings.theater.hint.start": "افتح المسرح (لوحة المقدّم)",
+  "settings.theater.hint.next": "الشريحة التالية",
+  "settings.theater.hint.prev": "الشريحة السابقة",
+  "settings.theater.hint.blackout": "إعتام شاشة الجمهور",
+  "settings.theater.hint.ink": "تبديل الحبر / قلم الليزر",
+  "settings.theater.hint.exit": "الخروج من المسرح",
+  "settings.theater.hint.customize": "يمكنك تغيير هذه الاختصارات من قسم لوحة المفاتيح أدناه.",
+  "settings.theater.cta": "افتح لوحة المسرح",
+  "onboarding.theater.title": "قدِّم من أي مستند",
+  "onboarding.theater.body": "اضغط ⇧⌘P (أو Ctrl+Shift+P على ويندوز/لينكس) على أي PDF مفتوح لبدء المسرح — نافذة الجمهور على الشاشة الثانية ولوحة المقدّم مع المؤقّت والملاحظات والحبر والليزر.",
+  "onboarding.theater.hint": "Esc يخرج؛ B يُعتم؛ I يبدّل القلم."
 }

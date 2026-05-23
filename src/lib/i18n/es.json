@@ -140,5 +140,18 @@
   "plugins.uninstallConfirm.cancel": "Cancelar",
   "plugins.uninstallConfirm.confirm": "Desinstalar",
   "plugins.uninstallConfirm.working": "Desinstalando…",
-  "features.library-search": "Buscar biblioteca"
+  "features.library-search": "Buscar biblioteca",
+  "settings.theater.title": "Teatro",
+  "settings.theater.desc": "Presenta cualquier PDF como diapositivas — pantalla completa en un segundo monitor, puntero láser, capa de tinta, pantalla negra.",
+  "settings.theater.hint.start": "Abrir Teatro (panel del presentador)",
+  "settings.theater.hint.next": "Siguiente diapositiva",
+  "settings.theater.hint.prev": "Diapositiva anterior",
+  "settings.theater.hint.blackout": "Pantalla negra",
+  "settings.theater.hint.ink": "Alternar lápiz / puntero láser",
+  "settings.theater.hint.exit": "Salir de Teatro",
+  "settings.theater.hint.customize": "Reasigna estos atajos en Atajos abajo.",
+  "settings.theater.cta": "Abrir el panel de Teatro",
+  "onboarding.theater.title": "Presenta desde cualquier documento",
+  "onboarding.theater.body": "Pulsa ⇧⌘P (o Ctrl+Shift+P en Windows/Linux) en cualquier PDF abierto para iniciar Teatro — ventana de audiencia en tu segundo monitor, panel del presentador con cronómetro, notas, tinta y láser.",
+  "onboarding.theater.hint": "Esc sale; B pone pantalla negra; I activa el lápiz."
 }

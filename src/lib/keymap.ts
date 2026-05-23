@@ -44,7 +44,13 @@ export type ActionId =
   | "zoom.in"
   | "zoom.out"
   | "beacon.send"
-  | "library.search";
+  | "library.search"
+  | "theater.start"
+  | "theater.next"
+  | "theater.prev"
+  | "theater.blackout"
+  | "theater.ink"
+  | "theater.exit";
 
 export interface KeymapAction {
   id: ActionId;
