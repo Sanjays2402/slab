@@ -1,0 +1,104 @@
+/* Slab enterprise page — TCO + deployment + compliance checklist */
+
+.ehero {
+  padding-top: 80px; padding-bottom: 60px;
+  text-align: left; max-width: var(--maxw);
+}
+.ehero h1 { font-size: clamp(34px, 4.2vw, 56px); }
+.ehero .sub { font-size: 18px; max-width: 720px; color: var(--ink); opacity: 0.85; }
+
+.nav nav a.active { color: var(--ink); border-bottom: 1px solid var(--accent-2); padding-bottom: 2px; }
+
+/* ─── TCO calculator ─────────────────────────────────── */
+.tco {
+  padding-top: 60px; padding-bottom: 80px;
+  border-top: 1px solid var(--line);
+}
+.tco .calc {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 22px; margin-bottom: 24px;
+}
+.tco .calc label {
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.tco .calc input {
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; font-size: 16px;
+  font-family: ui-monospace, monospace;
+}
+.tco .calc input:focus { outline: 2px solid var(--accent-2); outline-offset: -1px; }
+
+.tco .result {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
+}
+.tco .result .card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 22px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.tco .result .hdr {
+  font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.tco .result .big {
+  font-size: 36px; font-weight: 700; letter-spacing: -0.02em;
+  font-family: ui-monospace, monospace; color: var(--ink);
+}
+.tco .result .sub { font-size: 13px; color: var(--muted); margin: 0; }
+.tco .result .slab    { background: linear-gradient(180deg, rgba(134,239,172,0.08), var(--panel)); }
+.tco .result .slab .big    { color: var(--good); }
+.tco .result .savings { background: linear-gradient(180deg, rgba(245,163,163,0.08), var(--panel)); }
+.tco .result .savings .big { color: var(--accent); }
+.tco .footnote { font-size: 12px; color: var(--muted); margin-top: 20px; }
+
+/* ─── Deployment ─────────────────────────────────────── */
+.deploy {
+  padding-top: 60px; padding-bottom: 80px;
+  border-top: 1px solid var(--line);
+}
+.deploy .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+.deploy article {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 22px;
+}
+.deploy pre {
+  background: #0a0c10; border: 1px solid var(--line);
+  border-radius: 8px; padding: 12px; margin: 12px 0 0;
+  font-size: 12px; color: var(--accent-2); overflow-x: auto;
+  font-family: ui-monospace, monospace;
+}
+.deploy code { font-family: ui-monospace, monospace; }
+
+/* ─── Security checklist ─────────────────────────────── */
+.check { list-style: none; padding: 0; margin: 0;
+         display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.check li {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; font-size: 14px; color: var(--muted);
+  position: relative; padding-left: 36px;
+}
+.check li::before {
+  content: "✓"; position: absolute; left: 12px; top: 12px;
+  color: var(--good); font-weight: 700;
+}
+.check li strong { color: var(--ink); font-weight: 600; }
+.check li code {
+  background: var(--bg); color: var(--accent-2);
+  padding: 1px 6px; border-radius: 4px; font-size: 12px;
+}
+
+/* ─── Final CTA ──────────────────────────────────────── */
+.cta-block {
+  padding-top: 60px; padding-bottom: 100px;
+  border-top: 1px solid var(--line); text-align: center;
+}
+.cta-block h2 { margin-bottom: 12px; }
+.cta-block p { max-width: 640px; margin: 0 auto 24px; font-size: 16px; }
+.cta-block .cta { justify-content: center; }
+
+@media (max-width: 860px) {
+  .tco .calc, .tco .result, .deploy .cols, .check {
+    grid-template-columns: 1fr;
+  }
+}

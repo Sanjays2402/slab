@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Slab for Enterprise — TCO and deployment</title>
+  <meta name="description" content="Total cost of ownership for Slab vs Adobe Acrobat Pro DC, PDF Expert, and Foxit. Live calculator, deployment guidance, and a compliance checklist for IT, legal, and procurement." />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="enterprise.css" />
+</head>
+<body>
+  <header class="nav">
+    <div class="brand">
+      <a href="index.html" style="display:flex;align-items:center;gap:10px">
+        <span class="logo" aria-hidden="true"></span>
+        <span class="brandname">Slab</span>
+      </a>
+    </div>
+    <nav>
+      <a href="index.html#features">Features</a>
+      <a href="index.html#compliance">Compliance</a>
+      <a href="enterprise.html" class="active">Enterprise</a>
+      <a href="index.html#faq">FAQ</a>
+      <a href="https://github.com/Sanjays2402/slab/releases/latest">Download</a>
+      <a class="ghbtn" href="https://github.com/Sanjays2402/slab" aria-label="GitHub">GitHub →</a>
+    </nav>
+  </header>
+
+  <section class="ehero">
+    <p class="kicker">Enterprise · TCO · Deployment</p>
+    <h1>One seat, three platforms,<br/>zero recurring cost.</h1>
+    <p class="sub">A 500-seat law firm spends $119,500/yr on Acrobat Pro DC. Slab does the same work — PDF/A archival, Preflight audit, redaction, OCR, signing, flatten — for $0/yr, on the same desktops, with no cloud calls.</p>
+  </section>
+
+  <section class="tco">
+    <h2>TCO calculator</h2>
+    <p>Adjust seat count to see annual savings versus Acrobat Pro DC ($239/seat/yr list price, 2026).</p>
+    <div class="calc">
+      <label>
+        <span>Seats</span>
+        <input id="seats" type="number" min="1" max="100000" value="500" />
+      </label>
+      <label>
+        <span>Acrobat list price (USD/seat/yr)</span>
+        <input id="price" type="number" min="0" max="10000" value="239" step="1" />
+      </label>
+      <label>
+        <span>Years of deployment</span>
+        <input id="years" type="number" min="1" max="20" value="3" />
+      </label>
+    </div>
+    <div class="result">
+      <div class="card">
+        <div class="hdr">Acrobat Pro DC</div>
+        <div class="big" id="acrobatTotal">$358,500</div>
+        <div class="sub">over <span id="yLabel">3</span> years for <span id="sLabel">500</span> seats</div>
+      </div>
+      <div class="card slab">
+        <div class="hdr">Slab</div>
+        <div class="big">$0</div>
+        <div class="sub">unlimited seats, all platforms, all features</div>
+      </div>
+      <div class="card savings">
+        <div class="hdr">You save</div>
+        <div class="big" id="savings">$358,500</div>
+        <div class="sub">enough for <span id="hires">~2.4 senior engineers</span> per year</div>
+      </div>
+    </div>
+    <p class="footnote">Pricing assumes Acrobat Pro DC for teams (Adobe published list, 2026-Q1). Volume discounts typically land 15–25%. Even at the steepest discount the Slab savings remain >75% of every dollar spent.</p>
+  </section>
+
+  <section class="deploy">
+    <h2>Deployment</h2>
+    <div class="cols">
+      <article>
+        <h3>macOS</h3>
+        <p>Signed and notarized DMG for arm64 and x64. Drop into <code>/Applications</code> via Munki, Jamf Pro, or Mosyle. No first-launch quarantine prompt.</p>
+        <pre><code>installer -pkg Slab-3.0.2-arm64.pkg \
+  -target /Applications</code></pre>
+      </article>
+      <article>
+        <h3>Windows</h3>
+        <p>MSI and NSIS installers, both code-signed. Deploy silently via SCCM, Intune, or GPO software-install.</p>
+        <pre><code>msiexec /i Slab-3.0.2-x64.msi /qn \
+  ALLUSERS=1</code></pre>
+      </article>
+      <article>
+        <h3>Linux</h3>
+        <p>AppImage for any distro, .deb for Ubuntu / Debian / derivatives. SHA-256 sums published with each release for chain-of-custody.</p>
+        <pre><code>apt install ./slab_3.0.2_amd64.deb</code></pre>
+      </article>
+    </div>
+  </section>
+
+  <section class="compliance" style="border-top:1px solid var(--line)">
+    <h2>Security &amp; compliance checklist</h2>
+    <ul class="check">
+      <li><strong>Source code under AGPL-3.0.</strong> Your security team can review and self-build every release.</li>
+      <li><strong>Reproducible builds.</strong> CI pipeline pinned to commit hashes; tag-triggered GitHub Actions produce identical artifacts from clean checkouts.</li>
+      <li><strong>Code-signed installers.</strong> Apple Developer ID notarization, Authenticode on Windows. Linux .deb is detached-GPG signed.</li>
+      <li><strong>Zero outbound network traffic.</strong> No telemetry, no analytics, no crash reporter. <code>tcpdump</code>-verifiable on a fresh box.</li>
+      <li><strong>Beacon AI runs locally.</strong> Models live in <code>~/.ollama</code>; nothing leaves the machine — including PDFs you chat with.</li>
+      <li><strong>Audit-ready outputs.</strong> Loupe inspector exports Markdown reports that compliance officers can paste into procurement reviews and 508/EAA filings.</li>
+      <li><strong>No forced cloud account.</strong> The app launches and opens files without a sign-in, ever.</li>
+      <li><strong>Plugin sandbox.</strong> Foundry SDK plugins are signed and run in a typed boundary — they can't read or write outside their declared scopes.</li>
+    </ul>
+  </section>
+
+  <section class="cta-block">
+    <h2>Ready to evaluate?</h2>
+    <p>Download a release, run the security review template, deploy a 10-seat pilot. We'll answer questions on GitHub in less than 24 hours.</p>
+    <div class="cta">
+      <a class="primary" href="https://github.com/Sanjays2402/slab/releases/latest">Download Slab 3.0.2</a>
+      <a class="secondary" href="https://github.com/Sanjays2402/slab/issues/new">Open an evaluation issue</a>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <div>Slab is open source under the AGPL. Built in Rust + Svelte on Tauri.</div>
+    <div class="links">
+      <a href="index.html">Home</a>
+      <a href="https://github.com/Sanjays2402/slab">GitHub</a>
+      <a href="https://github.com/Sanjays2402/slab/releases">Releases</a>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      var fmt = function (n) {
+        return '$' + Math.round(n).toLocaleString('en-US');
+      };
+      var seats = document.getElementById('seats');
+      var price = document.getElementById('price');
+      var years = document.getElementById('years');
+      var acrobat = document.getElementById('acrobatTotal');
+      var savings = document.getElementById('savings');
+      var yL = document.getElementById('yLabel');
+      var sL = document.getElementById('sLabel');
+      var hires = document.getElementById('hires');
+      function update() {
+        var s = Math.max(1, parseInt(seats.value, 10) || 0);
+        var p = Math.max(0, parseFloat(price.value) || 0);
+        var y = Math.max(1, parseInt(years.value, 10) || 0);
+        var total = s * p * y;
+        acrobat.textContent = fmt(total);
+        savings.textContent = fmt(total);
+        yL.textContent = y;
+        sL.textContent = s.toLocaleString('en-US');
+        // Senior engineer fully-loaded cost ~ $150k/yr in US average.
+        var eng = (total / y) / 150000;
+        hires.textContent = '~' + eng.toFixed(1) + ' senior engineers';
+      }
+      [seats, price, years].forEach(function (el) { el.addEventListener('input', update); });
+      update();
+    })();
+  </script>
+</body>
+</html>
