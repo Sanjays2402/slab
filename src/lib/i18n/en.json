@@ -199,5 +199,18 @@
   "plugins.permissions.review": "Review permissions",
   "plugins.permissions.reset": "Reset permissions",
   "plugins.permissions.granted": "Permissions",
-  "features.library-search": "Search Library"
+  "features.library-search": "Search Library",
+  "settings.theater.title": "Theater",
+  "settings.theater.desc": "Present any PDF as slides — fullscreen on a second display, laser pointer, ink overlay, blackout. Press and hold the shortcut to start.",
+  "settings.theater.hint.start": "Open Theater (presenter panel)",
+  "settings.theater.hint.next": "Next slide",
+  "settings.theater.hint.prev": "Previous slide",
+  "settings.theater.hint.blackout": "Blackout the audience screen",
+  "settings.theater.hint.ink": "Toggle ink / laser pen",
+  "settings.theater.hint.exit": "Exit Theater",
+  "settings.theater.hint.customize": "Rebind any of these in Keymap below.",
+  "settings.theater.cta": "Open Theater panel",
+  "onboarding.theater.title": "Present from any document",
+  "onboarding.theater.body": "Hit ⇧⌘P (or Ctrl+Shift+P on Windows/Linux) on any open PDF to enter Theater — audience window on your second display, presenter panel with timer, notes, ink, and laser on your laptop.",
+  "onboarding.theater.hint": "Esc exits Theater; B blacks out; I toggles the pen."
 }

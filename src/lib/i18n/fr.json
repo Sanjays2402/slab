@@ -140,5 +140,18 @@
   "plugins.uninstallConfirm.cancel": "Annuler",
   "plugins.uninstallConfirm.confirm": "Désinstaller",
   "plugins.uninstallConfirm.working": "Désinstallation…",
-  "features.library-search": "Recherche bibliothèque"
+  "features.library-search": "Recherche bibliothèque",
+  "settings.theater.title": "Théâtre",
+  "settings.theater.desc": "Présentez n'importe quel PDF en mode diapositives — plein écran sur un second écran, pointeur laser, calque d'encre, écran noir.",
+  "settings.theater.hint.start": "Ouvrir Théâtre (panneau présentateur)",
+  "settings.theater.hint.next": "Diapositive suivante",
+  "settings.theater.hint.prev": "Diapositive précédente",
+  "settings.theater.hint.blackout": "Écran noir",
+  "settings.theater.hint.ink": "Activer l'encre / pointeur laser",
+  "settings.theater.hint.exit": "Quitter Théâtre",
+  "settings.theater.hint.customize": "Personnalisez ces raccourcis dans Clavier ci-dessous.",
+  "settings.theater.cta": "Ouvrir le panneau Théâtre",
+  "onboarding.theater.title": "Présentez depuis un document",
+  "onboarding.theater.body": "Pressez ⇧⌘P (ou Ctrl+Shift+P sur Windows/Linux) sur un PDF ouvert pour lancer Théâtre — fenêtre audience sur le second écran, panneau présentateur avec minuteur, notes, encre et laser.",
+  "onboarding.theater.hint": "Échap quitte Théâtre ; B fait l'écran noir ; I bascule le stylo."
 }
