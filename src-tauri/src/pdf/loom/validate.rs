@@ -56,15 +56,16 @@ impl ValidateReport {
 
 /// Run the eight auto-decidable PDF/UA-1 checks on `doc`.
 pub fn validate(doc: &Document) -> ValidateReport {
-    let mut checks = Vec::with_capacity(8);
-    checks.push(check_struct_tree_present(doc));
-    checks.push(check_mark_info_marked(doc));
-    checks.push(check_catalog_lang(doc));
-    checks.push(check_xmp_metadata_present(doc));
-    checks.push(check_xmp_pdfuaid_part(doc));
-    checks.push(check_view_prefs_display_doc_title(doc));
-    checks.push(check_info_title(doc));
-    checks.push(check_figures_have_alt(doc));
+    let checks = vec![
+        check_struct_tree_present(doc),
+        check_mark_info_marked(doc),
+        check_catalog_lang(doc),
+        check_xmp_metadata_present(doc),
+        check_xmp_pdfuaid_part(doc),
+        check_view_prefs_display_doc_title(doc),
+        check_info_title(doc),
+        check_figures_have_alt(doc),
+    ];
     ValidateReport::new(checks)
 }
 

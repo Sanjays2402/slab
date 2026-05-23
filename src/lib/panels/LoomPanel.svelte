@@ -128,7 +128,7 @@
     samples: LoomAltTextSample[];
   };
 
-  type Tab = "layout" | "outline" | "reading" | "alt-text" | "tag" | "conformance" | "about";
+  type Tab = "layout" | "outline" | "reading" | "alt-text" | "tag" | "validate" | "conformance" | "about";
   let tab: Tab = "layout";
 
   let inputPath = "";
@@ -140,6 +140,24 @@
   let readingStatus: Status = idle;
   let altSummary: LoomAltTextSummary | null = null;
   let altStatus: Status = idle;
+  type LoomCheckResult = {
+    id: string;
+    title: string;
+    passed: boolean;
+    detail: string | null;
+  };
+  type LoomValidateReport = {
+    checks: LoomCheckResult[];
+    passed: number;
+    failed: number;
+    overall: boolean;
+  };
+  type LoomMetadataStats = {
+    xmp_bytes: number;
+    title_set: boolean;
+    lang_set: boolean;
+    viewer_prefs_set: boolean;
+  };
   type LoomTagResult = {
     output_path: string;
     elapsed_ms: number;
@@ -148,10 +166,15 @@
     bdc_pairs_injected: number;
     struct_elems_created: number;
     figures_with_alt_text: number;
+    validation: LoomValidateReport;
+    metadata: LoomMetadataStats;
   };
   let tagResult: LoomTagResult | null = null;
   let tagStatus: Status = idle;
   let tagBadgeReveal = false;
+  let tagValidateReveal = false;
+  let validateReport: LoomValidateReport | null = null;
+  let validateStatus: Status = idle;
   let status: Status = idle;
 
   onMount(() => {
@@ -309,6 +332,7 @@
     };
     tagResult = null;
     tagBadgeReveal = false;
+    tagValidateReveal = false;
     try {
       const r = await invoke<CmdResult<LoomTagResult>>(
         "slab_loom_tag_document",
@@ -323,11 +347,42 @@
         };
         // Trigger badge reveal animation on next tick.
         setTimeout(() => (tagBadgeReveal = true), 50);
+        // Slice 6: stagger the "Validated ✓ ISO 14289-1" sub-badge so it
+        // pops in just after the main pill — gives the screenshot a beat.
+        setTimeout(() => (tagValidateReveal = true), 380);
       } else {
         tagStatus = { kind: "err", msg: r.message };
       }
     } catch (e) {
       tagStatus = { kind: "err", msg: String(e) };
+    }
+  }
+
+  async function runValidate() {
+    if (!inputPath) return;
+    validateStatus = {
+      kind: "working",
+      msg: "Validating PDF against ISO 14289-1 …",
+    };
+    validateReport = null;
+    try {
+      const r = await invoke<CmdResult<LoomValidateReport>>(
+        "slab_loom_validate",
+        { input: inputPath },
+      );
+      if (r.kind === "ok") {
+        validateReport = r.value;
+        validateStatus = {
+          kind: r.value.overall ? "ok" : "err",
+          msg: r.value.overall
+            ? `Conforms to ISO 14289-1 · ${r.value.passed}/${r.value.checks.length} checks passed.`
+            : `Non-conforming · ${r.value.failed} of ${r.value.checks.length} checks failed.`,
+        };
+      } else {
+        validateStatus = { kind: "err", msg: r.message };
+      }
+    } catch (e) {
+      validateStatus = { kind: "err", msg: String(e) };
     }
   }
 
@@ -347,6 +402,14 @@
         e.preventDefault();
         tab = "tag";
         runTag();
+      }
+    }
+    // Cmd/Ctrl+Shift+V → validate the loaded PDF against ISO 14289-1.
+    if (isMod && e.shiftKey && e.key.toLowerCase() === "v") {
+      if (inputPath && validateStatus.kind !== "working") {
+        e.preventDefault();
+        tab = "validate";
+        runValidate();
       }
     }
   }
@@ -395,6 +458,12 @@
       aria-selected={tab === "tag"}
       class:active={tab === "tag"}
       on:click={() => (tab = "tag")}>Tag PDF</button
+    >
+    <button
+      role="tab"
+      aria-selected={tab === "validate"}
+      class:active={tab === "validate"}
+      on:click={() => (tab = "validate")}>Validate</button
     >
     <button
       role="tab"
@@ -877,6 +946,19 @@
             </svg>
             <span>PDF/UA-1 emitted</span>
           </div>
+          {#if tagResult.validation}
+            <div
+              class="tag-subbadge"
+              class:reveal={tagValidateReveal}
+              data-overall={tagResult.validation.overall ? "ok" : "fail"}
+            >
+              {#if tagResult.validation.overall}
+                ✓ Validated · ISO 14289-1 · {tagResult.validation.passed}/{tagResult.validation.checks.length} checks
+              {:else}
+                ✕ Validation: {tagResult.validation.failed} of {tagResult.validation.checks.length} checks failed
+              {/if}
+            </div>
+          {/if}
           <div class="totals totals--four">
             <div class="totals__item">
               <div class="n">{tagResult.pages_processed.toLocaleString()}</div>
@@ -934,6 +1016,94 @@
           <p>
             Press <kbd>⌘⇧T</kbd> on the loaded PDF to tag it. The result
             lands next to the original as <code>&lt;name&gt;.tagged.pdf</code>.
+          </p>
+        </div>
+      {/if}
+    </div>
+  {:else if tab === "validate"}
+    <div class="validate">
+      <div class="picker">
+        <button class="primary" on:click={pickPdf}>Pick PDF…</button>
+        <div class="path" title={inputPath}>
+          {inputPath ? basename(inputPath) : "no file selected"}
+        </div>
+        <button
+          class="primary tag-cta"
+          disabled={!inputPath || validateStatus.kind === "working"}
+          on:click={runValidate}
+          title="Validate against ISO 14289-1 (Cmd/Ctrl+Shift+V)"
+        >
+          {validateStatus.kind === "working"
+            ? "Validating…"
+            : "Validate against ISO 14289-1"}
+        </button>
+        <kbd class="shortcut" aria-hidden="true">⌘⇧V</kbd>
+      </div>
+
+      {#if validateStatus.kind !== "idle"}
+        <p class="status" data-kind={validateStatus.kind}>{validateStatus.msg}</p>
+      {/if}
+
+      {#if validateReport}
+        <div
+          class="validate-verdict"
+          data-overall={validateReport.overall ? "ok" : "fail"}
+        >
+          {#if validateReport.overall}
+            <span class="verdict-icon">✓</span>
+            <div>
+              <strong>Conforms to ISO 14289-1 (PDF/UA-1)</strong>
+              <div class="verdict-sub">
+                {validateReport.passed} of {validateReport.checks.length} auto-decidable
+                Matterhorn conditions pass. Hand-review the remaining
+                human-decidable items in the Conformance tab.
+              </div>
+            </div>
+          {:else}
+            <span class="verdict-icon">✕</span>
+            <div>
+              <strong>Non-conforming</strong>
+              <div class="verdict-sub">
+                {validateReport.failed} of {validateReport.checks.length} checks failed —
+                expand the list to see what's missing.
+              </div>
+            </div>
+          {/if}
+        </div>
+        <ul class="check-list" aria-label="Per-condition results">
+          {#each validateReport.checks as c (c.id)}
+            <li class="check-row" data-passed={c.passed ? "1" : "0"}>
+              <span class="check-dot" aria-hidden="true">{c.passed ? "✓" : "✕"}</span>
+              <div class="check-body">
+                <div class="check-title">
+                  <code>{c.id}</code> · {c.title}
+                </div>
+                {#if !c.passed && c.detail}
+                  <div class="check-detail">{c.detail}</div>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else if validateStatus.kind === "idle"}
+        <div class="empty">
+          <h2>Grade any PDF against ISO 14289-1 — instantly, locally, free</h2>
+          <p>
+            Drop a tagged PDF — your own, Acrobat's output, a vendor's — and
+            we'll run the eight auto-decidable failure conditions from the
+            <strong>Matterhorn Protocol 1.1</strong> against the file. You get a
+            green/red verdict and a per-condition list in under a second,
+            without your document ever leaving this Mac.
+          </p>
+          <p>
+            Commercial PDF/UA validators (PAC 2024, CommonLook Validator,
+            veraPDF Enterprise) start at a few hundred dollars per seat or
+            require a JVM and a CLI. Slab's runs in this panel.
+          </p>
+          <p>
+            Press <kbd>⌘⇧V</kbd> on the loaded PDF to validate. After a Tag
+            run, the verdict already shows next to the success badge —
+            you don't need to come here for tagged output.
           </p>
         </div>
       {/if}
@@ -1575,6 +1745,144 @@
       background: linear-gradient(135deg, #2e1065 0%, #4c1d95 100%);
       color: #ddd6fe;
       border-color: #5b21b6;
+    }
+  }
+
+  /* Slice 6 — Validate sub-badge + Validate tab styles ------------------- */
+  .tag-subbadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    width: max-content;
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity 280ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .tag-subbadge.reveal {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .tag-subbadge[data-overall="ok"] {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+  }
+  .tag-subbadge[data-overall="fail"] {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+  @media (prefers-color-scheme: dark) {
+    .tag-subbadge[data-overall="ok"] {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
+      color: #a7f3d0;
+      border-color: #047857;
+    }
+    .tag-subbadge[data-overall="fail"] {
+      background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+      color: #fecaca;
+      border-color: #b91c1c;
+    }
+  }
+
+  .validate {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .validate-verdict {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    padding: 14px 18px;
+    border-radius: 14px;
+    border: 1px solid var(--border, #e5e7eb);
+  }
+  .validate-verdict[data-overall="ok"] {
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    color: #065f46;
+    border-color: #a7f3d0;
+  }
+  .validate-verdict[data-overall="fail"] {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    color: #991b1b;
+    border-color: #fecaca;
+  }
+  .verdict-icon {
+    font-size: 1.6rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .verdict-sub {
+    margin-top: 4px;
+    font-size: 0.86rem;
+    opacity: 0.85;
+  }
+  .check-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .check-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border, #e5e7eb);
+    background: var(--bg-elevated, #fafafa);
+  }
+  .check-row[data-passed="1"] .check-dot {
+    color: #16a34a;
+  }
+  .check-row[data-passed="0"] .check-dot {
+    color: #dc2626;
+  }
+  .check-dot {
+    font-weight: 700;
+    width: 1em;
+  }
+  .check-title {
+    font-size: 0.88rem;
+  }
+  .check-title code {
+    background: rgba(0, 0, 0, 0.06);
+    padding: 1px 5px;
+    border-radius: 5px;
+    margin-right: 4px;
+  }
+  .check-detail {
+    margin-top: 3px;
+    font-size: 0.8rem;
+    color: var(--text-dim, #6b7280);
+  }
+  @media (prefers-color-scheme: dark) {
+    .validate-verdict[data-overall="ok"] {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
+      color: #a7f3d0;
+      border-color: #047857;
+    }
+    .validate-verdict[data-overall="fail"] {
+      background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+      color: #fecaca;
+      border-color: #b91c1c;
+    }
+    .check-row {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+    .check-title code {
+      background: rgba(255, 255, 255, 0.1);
     }
   }
 </style>
