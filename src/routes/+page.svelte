@@ -42,6 +42,7 @@
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
   import StackPanel from "$lib/panels/StackPanel.svelte";
   import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
+  import LoupePanel from "$lib/panels/LoupePanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
   import SettingsPanel from "$lib/panels/SettingsPanel.svelte";
@@ -114,6 +115,7 @@
     { id: "diff", label: "Diff", icon: "≢", ready: true },
     { id: "stack", label: "Compare", icon: "⇄", ready: true },
     { id: "bedrock", label: "Archive (PDF/A)", icon: "📐", ready: true },
+    { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
     { id: "theater", label: "Theater", icon: "🎬", ready: true },
     { id: "settings", label: "Settings", icon: "⚙", ready: true },
@@ -426,6 +428,23 @@
         return;
       }
     }
+    // Loupe (v3.0.1): focus the PDF/A inspector. Mod+Shift+I (hardcoded — joins
+    // the keymap registry in a future tick, kept simple for ship velocity).
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      (e.key === "I" || e.key === "i")
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "loupe";
+        return;
+      }
+    }
     // Tab shortcuts only fire when the Reader panel is the active feature.
     // Otherwise we'd hijack ⌘T for users wanting (e.g.) browser dev tools.
     if (active !== "reader") return;
@@ -644,6 +663,8 @@
       <StackPanel />
     {:else if detachedPanel === "bedrock"}
       <BedrockPanel />
+    {:else if detachedPanel === "loupe"}
+      <LoupePanel />
     {:else if detachedPanel === "slides"}
       <SlidesPanel />
     {:else if detachedPanel === "tables"}
@@ -873,6 +894,8 @@
     <StackPanel />
   {:else if active === "bedrock"}
     <BedrockPanel />
+  {:else if active === "loupe"}
+    <LoupePanel />
   {:else if active === "slides"}
     <SlidesPanel />
   {:else if active === "theater"}
