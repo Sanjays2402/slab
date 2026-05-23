@@ -57,12 +57,42 @@
     auto_share_of_full_protocol: number;
   };
 
-  type Tab = "layout" | "conformance" | "about";
+  type LoomClassifyHeading = {
+    page: number;
+    level: number;
+    text: string;
+  };
+
+  type LoomClassifyPage = {
+    page_number: number;
+    headings: number;
+    paragraphs: number;
+    list_items: number;
+    figures: number;
+    artifacts: number;
+  };
+
+  type LoomClassifySummary = {
+    total_pages: number;
+    total_nodes: number;
+    heading_count: number;
+    paragraph_count: number;
+    list_count: number;
+    list_item_count: number;
+    figure_count: number;
+    artifact_count: number;
+    headings: LoomClassifyHeading[];
+    pages: LoomClassifyPage[];
+  };
+
+  type Tab = "layout" | "outline" | "conformance" | "about";
   let tab: Tab = "layout";
 
   let inputPath = "";
   let summary: LoomLayoutSummary | null = null;
   let digest: LoomMatterhornDigest | null = null;
+  let classifySummary: LoomClassifySummary | null = null;
+  let classifyStatus: Status = idle;
   let status: Status = idle;
 
   onMount(() => {
@@ -125,6 +155,30 @@
   function autoPct(d: LoomMatterhornDigest): string {
     return `${(d.auto_share_of_full_protocol * 100).toFixed(1)}%`;
   }
+
+  async function runClassify() {
+    if (!inputPath) return;
+    classifyStatus = { kind: "working", msg: "Classifying structure…" };
+    classifySummary = null;
+    try {
+      const r = await invoke<CmdResult<LoomClassifySummary>>(
+        "slab_loom_classify_summary",
+        { input: inputPath },
+      );
+      if (r.kind === "ok") {
+        classifySummary = r.value;
+        const v = r.value;
+        classifyStatus = {
+          kind: "ok",
+          msg: `Detected ${v.heading_count} heading${v.heading_count === 1 ? "" : "s"}, ${v.paragraph_count.toLocaleString()} paragraphs, ${v.list_item_count} list item${v.list_item_count === 1 ? "" : "s"}, ${v.figure_count} figure${v.figure_count === 1 ? "" : "s"}, ${v.artifact_count} artifact${v.artifact_count === 1 ? "" : "s"}.`,
+        };
+      } else {
+        classifyStatus = { kind: "err", msg: r.message };
+      }
+    } catch (e) {
+      classifyStatus = { kind: "err", msg: String(e) };
+    }
+  }
 </script>
 
 <section class="loom">
@@ -144,6 +198,12 @@
       aria-selected={tab === "layout"}
       class:active={tab === "layout"}
       on:click={() => (tab = "layout")}>Layout</button
+    >
+    <button
+      role="tab"
+      aria-selected={tab === "outline"}
+      class:active={tab === "outline"}
+      on:click={() => (tab = "outline")}>Outline</button
     >
     <button
       role="tab"
@@ -244,6 +304,117 @@
         </span>
       </div>
     </div>
+  {:else if tab === "outline"}
+    <div class="outline">
+      <div class="picker">
+        <button class="primary" on:click={pickPdf}>Pick PDF…</button>
+        <div class="path" title={inputPath}>
+          {inputPath ? basename(inputPath) : "no file selected"}
+        </div>
+        <button
+          class="primary"
+          disabled={!inputPath || classifyStatus.kind === "working"}
+          on:click={runClassify}
+        >
+          {classifyStatus.kind === "working" ? "Classifying…" : "Detect structure"}
+        </button>
+      </div>
+
+      {#if classifyStatus.kind !== "idle"}
+        <p class="status" data-kind={classifyStatus.kind}>{classifyStatus.msg}</p>
+      {/if}
+
+      {#if classifySummary}
+        <div class="totals totals--four">
+          <div class="totals__item">
+            <div class="n">{classifySummary.heading_count.toLocaleString()}</div>
+            <div class="k">headings</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{classifySummary.paragraph_count.toLocaleString()}</div>
+            <div class="k">paragraphs</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{classifySummary.list_item_count.toLocaleString()}</div>
+            <div class="k">list items</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{classifySummary.figure_count.toLocaleString()}</div>
+            <div class="k">figures</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{classifySummary.artifact_count.toLocaleString()}</div>
+            <div class="k">artifacts</div>
+          </div>
+          <div class="totals__item">
+            <div class="n">{classifySummary.total_nodes.toLocaleString()}</div>
+            <div class="k">total nodes</div>
+          </div>
+        </div>
+
+        {#if classifySummary.headings.length > 0}
+          <h3 class="sub-h">Detected outline</h3>
+          <ul class="outline-list">
+            {#each classifySummary.headings as h}
+              <li class="outline-item" data-level={h.level}>
+                <span class="lvl">H{h.level}</span>
+                <span class="ot">{h.text || "(empty)"}</span>
+                <span class="pg">p.{h.page}</span>
+              </li>
+            {/each}
+          </ul>
+          {#if classifySummary.heading_count > classifySummary.headings.length}
+            <p class="dim small">
+              Showing first {classifySummary.headings.length} of
+              {classifySummary.heading_count} headings.
+            </p>
+          {/if}
+        {:else}
+          <p class="dim">
+            No headings detected. The classifier uses font-size buckets relative to
+            the document body size — a uniformly-sized document will show every
+            run as a paragraph.
+          </p>
+        {/if}
+
+        <h3 class="sub-h">Per-page breakdown</h3>
+        <div class="page-table page-table--outline" role="table">
+          <div class="row head row--outline" role="row">
+            <div role="columnheader">Page</div>
+            <div role="columnheader">H</div>
+            <div role="columnheader">P</div>
+            <div role="columnheader">LI</div>
+            <div role="columnheader">Figs</div>
+            <div role="columnheader">Artifacts</div>
+          </div>
+          {#each classifySummary.pages as p (p.page_number)}
+            <div class="row row--outline" role="row">
+              <div role="cell">#{p.page_number}</div>
+              <div role="cell">{p.headings}</div>
+              <div role="cell">{p.paragraphs}</div>
+              <div role="cell">{p.list_items}</div>
+              <div role="cell">{p.figures}</div>
+              <div role="cell">{p.artifacts}</div>
+            </div>
+          {/each}
+        </div>
+      {:else if classifyStatus.kind === "idle"}
+        <div class="empty">
+          <h2>Detect document structure</h2>
+          <p>
+            Loom's classifier infers PDF/UA logical structure from layout:
+            heading levels from font-size buckets, lists from bullet/number
+            markers, figures from image placements (with nearby captions),
+            and page chrome (folio + repeating header/footer) tagged as
+            artifacts so screen readers skip them.
+          </p>
+          <p class="dim">
+            This is the heuristic pass — Slice 5 ships the StructTreeRoot
+            writer that turns these decisions into a real tagged PDF.
+          </p>
+        </div>
+      {/if}
+    </div>
   {:else if tab === "conformance"}
     <div class="conformance">
       {#if digest}
@@ -312,13 +483,14 @@
       <ul>
         <li><strong>Matterhorn registry</strong> — every failure condition, with verdict, sourced from the PDF Association protocol.</li>
         <li><strong>Layout extraction</strong> — every text run + image placement, with bbox + font size, ready for downstream tagging.</li>
+        <li><strong>Structure classification</strong> — heuristic detection of headings (H1–H6), paragraphs, lists, figures + captions, and page artifacts.</li>
       </ul>
       <h3>What's next (v3.1.0)</h3>
       <ol>
-        <li>Segments — group runs into lines, columns, blocks.</li>
-        <li>Classify — H1..H6 / P / Figure / Table from heuristics.</li>
-        <li>Tag — emit StructTreeRoot + Alt text + Lang.</li>
-        <li>Validate — run the auto-decidable Matterhorn checks.</li>
+        <li>Reading order — column-aware serpentine traversal.</li>
+        <li>Alt text — Beacon-generated descriptions for figures (cached per image hash).</li>
+        <li>Tag — emit StructTreeRoot + Alt text + Lang into a real tagged PDF.</li>
+        <li>Validate — run the auto-decidable Matterhorn checks against the tagged output.</li>
         <li>Review — surface human-judgement checks in the UI.</li>
       </ol>
     </div>
@@ -489,6 +661,91 @@
     background: rgba(255, 255, 255, 0.06);
     font-size: 11px;
     color: var(--text-dim, #cfd6e3);
+  }
+  .sub-h {
+    margin: 22px 2px 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim, #9aa3b3);
+    font-weight: 600;
+  }
+  .outline-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 6px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .outline-item {
+    display: grid;
+    grid-template-columns: 44px 1fr 50px;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .outline-item:last-child {
+    border-bottom: 0;
+  }
+  .outline-item .lvl {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(120, 180, 255, 0.16);
+    color: #9bbcff;
+    text-align: center;
+  }
+  .outline-item[data-level="2"] .lvl {
+    background: rgba(180, 140, 255, 0.16);
+    color: #c3a8ff;
+  }
+  .outline-item[data-level="3"] .lvl {
+    background: rgba(140, 220, 180, 0.16);
+    color: #99d9ba;
+  }
+  .outline-item[data-level="4"] .lvl,
+  .outline-item[data-level="5"] .lvl,
+  .outline-item[data-level="6"] .lvl {
+    background: rgba(255, 200, 140, 0.16);
+    color: #ffc792;
+  }
+  .outline-item[data-level="2"] {
+    padding-left: 32px;
+  }
+  .outline-item[data-level="3"] {
+    padding-left: 52px;
+  }
+  .outline-item[data-level="4"] {
+    padding-left: 72px;
+  }
+  .outline-item[data-level="5"] {
+    padding-left: 92px;
+  }
+  .outline-item[data-level="6"] {
+    padding-left: 112px;
+  }
+  .outline-item .ot {
+    color: var(--text, #e6e9ef);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .outline-item .pg {
+    color: var(--text-dim, #9aa3b3);
+    font-size: 11px;
+    text-align: right;
+  }
+  .row--outline {
+    grid-template-columns: 70px 1fr 1fr 1fr 1fr 1fr;
+  }
+  .small {
+    font-size: 11px;
   }
   .dim {
     color: var(--text-dim, #6b7384);
