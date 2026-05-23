@@ -212,5 +212,10 @@
   "settings.theater.cta": "थिएटर पैनल खोलें",
   "onboarding.theater.title": "किसी भी दस्तावेज़ से प्रस्तुत करें",
   "onboarding.theater.body": "किसी भी खुली PDF पर ⇧⌘P (Windows/Linux पर Ctrl+Shift+P) दबाएँ — दूसरे डिस्प्ले पर ऑडियंस विंडो, आपके लैपटॉप पर टाइमर, नोट्स, इंक और लेज़र वाला प्रस्तोता पैनल।",
-  "onboarding.theater.hint": "Esc थिएटर से बाहर निकलता है; B ब्लैकआउट करता है; I पेन टॉगल करता है।"
+  "onboarding.theater.hint": "Esc थिएटर से बाहर निकलता है; B ब्लैकआउट करता है; I पेन टॉगल करता है।",
+  "features.loom": "लूम (PDF/UA)",
+  "features.stack": "तुलना",
+  "features.bedrock": "आर्काइव (PDF/A)",
+  "features.loupe": "लूप (PDF/A जाँच)",
+  "features.theater": "थिएटर"
 }

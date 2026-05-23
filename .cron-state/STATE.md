@@ -4,7 +4,50 @@
 
 ---
 
-## STATUS: main CI hotfix — clippy on layout.rs cleared
+## STATUS: stand-down tick — Sanjay WIP on feature/white-theme + disk critical
+
+**TICK 2026-05-23 02:44 PT** — no commits, no push. Two reasons:
+
+1. **HEAD is on `feature/white-theme`** with uncommitted Sanjay-authored work:
+   - Committed `d7414a7` (White theme: pure-white surface + near-black ink)
+   - **Untracked**: `src/lib/i18n/{hi,ta,te}.json` — 3 fresh Indic locale bundles
+     (Hindi, Tamil, Telugu), 214 keys each (parity with `en.json`), no missing keys.
+   - **Modified** `src/lib/i18n.ts` — wires hi/ta/te into `LOCALES`, `BUNDLES`,
+     `LocaleId` union, `VALID` set. Compiles clean per `pnpm check` (0 errors,
+     46 unrelated pre-existing CSS warnings).
+   Sanjay was clearly mid-stride. Cron will not commit human-authored WIP under
+   the Cake (cron) author. He can finish + commit himself; if he wants Cake to
+   take it over, he can leave a STATE note saying so.
+
+2. **Disk free = 537 MiB** on /System/Volumes/Data, `src-tauri/target` = 2.8 GB.
+   The "next tick must `cargo clean` first" plan from the previous STATE is
+   still in effect — but doing it on this branch while Sanjay has uncommitted
+   changes risks confusing his next `pnpm tauri dev` (cold rebuild = ~6 min on
+   his desk). Defer the clean until either (a) Sanjay commits + pushes the
+   White-theme/i18n work, or (b) Sanjay explicitly tells cron to take over.
+
+**Main CI verification (the actual job of this tick per prior STATE):**
+
+`gh run list --branch main --limit 3` — all 3 most recent runs completed
+**success**, including build for `67346ad` (the clippy hotfix). The Loom Slice
+1 merge + hotfix is fully green on main. ✅
+
+**Next tick options (whichever applies first):**
+
+- If Sanjay has committed + pushed his White-theme/i18n work → run quality
+  gates on his branch, merge to main, tag/release if appropriate.
+- If branch is still WIP at next tick → another stand-down (cron does not
+  trample human edits).
+- If branch is gone / clean → `cargo clean` + start Loom Slice 2 (tag tree
+  inference from `/StructTreeRoot`). Plan still at
+  `docs/plans/2026-05-22-v3.1.0-loom-pdf-ua.md` line 144.
+
+LAST_WOW_TICK_AT: 2026-05-23 (Matterhorn codegen pipeline; >24h marker resets
+on the next shipping tick).
+
+---
+
+## ARCHIVED: main CI hotfix — clippy on layout.rs cleared
 
 **TICK 2026-05-23 02:10 PT** — single-commit hotfix `67346ad` on main.
 The Slice 1 merge tripped two `-D warnings` errors in clippy on both

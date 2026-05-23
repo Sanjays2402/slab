@@ -212,5 +212,10 @@
   "settings.theater.cta": "థియేటర్ ప్యానెల్ తెరువు",
   "onboarding.theater.title": "ఏ పత్రం నుండి అయినా ప్రదర్శించు",
   "onboarding.theater.body": "తెరిచిన ఏ PDFపైనా ⇧⌘P (Windows/Linuxపై Ctrl+Shift+P) నొక్కండి — రెండవ డిస్ప్లేపై ప్రేక్షకుల విండో, మీ ల్యాప్‌టాప్‌పై టైమర్, నోట్‌లు, ఇంక్ మరియు లేజర్‌తో ప్రెజెంటర్ ప్యానెల్.",
-  "onboarding.theater.hint": "Esc థియేటర్ నుండి నిష్క్రమిస్తుంది; B బ్లాక్‌అవుట్ చేస్తుంది; I పెన్‌ను టోగుల్ చేస్తుంది."
+  "onboarding.theater.hint": "Esc థియేటర్ నుండి నిష్క్రమిస్తుంది; B బ్లాక్‌అవుట్ చేస్తుంది; I పెన్‌ను టోగుల్ చేస్తుంది.",
+  "features.loom": "లూమ్ (PDF/UA)",
+  "features.stack": "పోల్చండి",
+  "features.bedrock": "ఆర్కైవ్ (PDF/A)",
+  "features.loupe": "లూప్ (PDF/A తనిఖీ)",
+  "features.theater": "థియేటర్"
 }

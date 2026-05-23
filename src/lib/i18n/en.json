@@ -212,5 +212,10 @@
   "settings.theater.cta": "Open Theater panel",
   "onboarding.theater.title": "Present from any document",
   "onboarding.theater.body": "Hit ⇧⌘P (or Ctrl+Shift+P on Windows/Linux) on any open PDF to enter Theater — audience window on your second display, presenter panel with timer, notes, ink, and laser on your laptop.",
-  "onboarding.theater.hint": "Esc exits Theater; B blacks out; I toggles the pen."
+  "onboarding.theater.hint": "Esc exits Theater; B blacks out; I toggles the pen.",
+  "features.loom": "Loom (PDF/UA)",
+  "features.stack": "Compare",
+  "features.bedrock": "Archive (PDF/A)",
+  "features.loupe": "Loupe (PDF/A check)",
+  "features.theater": "Theater"
 }

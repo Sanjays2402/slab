@@ -212,5 +212,10 @@
   "settings.theater.cta": "தியேட்டர் பலகத்தைத் திற",
   "onboarding.theater.title": "எந்த ஆவணத்திலிருந்தும் வழங்கு",
   "onboarding.theater.body": "திறந்திருக்கும் எந்தப் PDF-ல் ⇧⌘P (Windows/Linux-ல் Ctrl+Shift+P) அழுத்துங்கள் — இரண்டாவது திரையில் பார்வையாளர் சாளரம், உங்கள் மடிக்கணினியில் டைமர், குறிப்புகள், மை மற்றும் லேசர் கொண்ட வழங்குநர் பலகம்.",
-  "onboarding.theater.hint": "Esc தியேட்டரை விட்டு வெளியேறுகிறது; B கறுப்பாக்குகிறது; I பேனை மாற்றுகிறது."
+  "onboarding.theater.hint": "Esc தியேட்டரை விட்டு வெளியேறுகிறது; B கறுப்பாக்குகிறது; I பேனை மாற்றுகிறது.",
+  "features.loom": "லூம் (PDF/UA)",
+  "features.stack": "ஒப்பிடு",
+  "features.bedrock": "காப்பகம் (PDF/A)",
+  "features.loupe": "லூப் (PDF/A சரிபார்)",
+  "features.theater": "தியேட்டர்"
 }
