@@ -57,6 +57,8 @@
   "features.crop": "قص",
   "features.insert": "إدراج",
   "features.headerfooter": "رأس/تذييل",
+  "features.bates": "ترقيم بيتس",
+  "features.stamp": "ختم قانوني",
   "features.redact": "إخفاء",
   "features.autoredact": "إخفاء تلقائي",
   "features.nup": "N في 1",

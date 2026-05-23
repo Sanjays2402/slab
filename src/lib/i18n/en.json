@@ -61,6 +61,8 @@
   "features.crop": "Crop",
   "features.insert": "Insert",
   "features.headerfooter": "Header/Footer",
+  "features.bates": "Bates",
+  "features.stamp": "Legal Stamp",
   "features.redact": "Redact",
   "features.autoredact": "Auto-Redact",
   "features.nup": "N-up",

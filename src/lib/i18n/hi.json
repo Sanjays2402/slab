@@ -61,6 +61,8 @@
   "features.crop": "क्रॉप",
   "features.insert": "इन्सर्ट",
   "features.headerfooter": "हेडर/फुटर",
+  "features.bates": "बेट्स",
+  "features.stamp": "कानूनी मुहर",
   "features.redact": "रिडैक्ट",
   "features.autoredact": "ऑटो-रिडैक्ट",
   "features.nup": "N-अप",
