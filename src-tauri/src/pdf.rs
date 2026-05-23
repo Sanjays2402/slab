@@ -18,6 +18,7 @@ pub mod edit_text;
 pub mod encrypt;
 pub mod extract;
 pub mod flatten;
+pub mod forms;
 pub mod grayscale;
 pub mod header_footer;
 pub mod info;
