@@ -29,6 +29,9 @@
 
 pub mod color;
 pub mod geometry;
+pub mod orchestrate;
+
+pub use orchestrate::{convert_to_pdfx4, ConvertOptions, ConvertReport};
 
 /// The two output-intent ICC profiles Slab v3.8.0 ships with.
 ///
