@@ -194,6 +194,16 @@ Compose 2, 4, 6, or 9 pages onto a single sheet for printing — landscape or po
 ### Markdown → PDF
 Write or paste Markdown, click Convert, get a clean PDF. Headings, **bold**, *italic*, `code`, lists, blockquotes, code blocks, horizontal rules — all rendered with standard Helvetica. No font embedding means tiny output files (~1 KB per page).
 
+### Bind — PDF → EPUB 3 *(v3.18.0)*
+
+Drop a research paper, novel, or long-form article. Get a reflowable EPUB 3 file your Kindle, Apple Books, Kobo, or Calibre opens natively. Adobe Acrobat doesn't ship EPUB export. Calibre's PDF→EPUB is a 2008 GUI. Slab's is offline, free, and ships on every platform.
+
+| Format | Slab | Acrobat | PDF Expert | Foxit | Calibre |
+| --- | --- | --- | --- | --- | --- |
+| EPUB 3 | ✅ Free, offline, 1-click | ❌ none | ❌ none | ❌ none | ⚠️ 2008 GUI |
+
+Bind splits on H1 headings by default (one chapter per section), emits semantic XHTML5 with `<h1>/<p>/<ul>/<table>` markup and a reflow-friendly stylesheet, and produces spec-compliant containers (mimetype-first / Stored compression / nav.xhtml / OPF). 13 e-reader languages out of the box.
+
 ![Markdown → PDF](docs/screenshots/26-markdown-pdf.png)
 
 ### Grayscale

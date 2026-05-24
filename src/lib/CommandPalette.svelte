@@ -258,6 +258,19 @@
       },
       keywords: "search library find query fts full text cross document indemnify clause atlas",
     });
+    // Bind v3.18.0 — PDF → EPUB 3. The screenshot-bait wedge: Calibre is
+    // the only mainstream PDF→EPUB tool and it's a 2008 GUI; Acrobat
+    // doesn't ship EPUB at all.
+    out.push({
+      id: "bind:convert",
+      title: "Convert PDF to EPUB",
+      subtitle: "For Kindle, Apple Books, Kobo — offline, free",
+      icon: "📖",
+      group: "Convert",
+      run: () => onSelectPanel("bind"),
+      keywords:
+        "bind epub ebook kindle apple books kobo calibre reflowable e-reader reader chapter convert export offline",
+    });
     // Theater v2.3.0 — open the presenter-mode control panel. Shortcut
     // ⇧⌘T (⇧^T on win/linux). The detailed key cheat sheet lives inside
     // the panel itself once it's open.

@@ -109,6 +109,7 @@ fn step_kind(s: &Step) -> String {
         Step::ConvertToPptx { .. } => "convert-to-pptx",
         Step::ConvertToMarkdown { .. } => "convert-to-markdown",
         Step::ConvertToHtml { .. } => "convert-to-html",
+        Step::ConvertToEpub { .. } => "convert-to-epub",
     }
     .into()
 }
@@ -249,6 +250,23 @@ fn apply_step(input: &Path, output: &Path, step: &Step) -> Result<(), PdfError> 
             };
             crate::pdf::markdown::convert_to_html(input, output, &opts)
                 .map_err(|e| PdfError::Other(format!("html: {e}")))?;
+            Ok(())
+        }
+        Step::ConvertToEpub {
+            detect_tables,
+            detect_lists,
+            split_on_h1,
+            language,
+        } => {
+            let opts = crate::pdf::epub::EpubOptions {
+                detect_tables: *detect_tables,
+                detect_lists: *detect_lists,
+                split_on_h1: *split_on_h1,
+                language: language.clone(),
+                ..Default::default()
+            };
+            crate::pdf::epub::convert_to_epub(input, output, &opts)
+                .map_err(|e| PdfError::Other(format!("epub: {e}")))?;
             Ok(())
         }
     }

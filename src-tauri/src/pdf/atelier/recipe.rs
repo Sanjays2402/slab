@@ -127,6 +127,20 @@ pub enum Step {
         #[serde(default = "default_embed_css")]
         embed_css: bool,
     },
+    /// Convert this PDF to an EPUB 3 `.epub` file (terminal step). Drop a
+    /// research paper, read it on your Kindle on the train tonight.
+    /// Calibre is the only mainstream tool that does PDF→EPUB and it's a
+    /// 2008 GUI; Acrobat doesn't ship EPUB export at all.
+    ConvertToEpub {
+        #[serde(default = "default_detect_tables")]
+        detect_tables: bool,
+        #[serde(default = "default_detect_lists")]
+        detect_lists: bool,
+        #[serde(default = "default_split_on_h1")]
+        split_on_h1: bool,
+        #[serde(default = "default_epub_language")]
+        language: String,
+    },
 }
 
 impl Step {
@@ -140,6 +154,7 @@ impl Step {
                 | Step::ConvertToPptx { .. }
                 | Step::ConvertToMarkdown { .. }
                 | Step::ConvertToHtml { .. }
+                | Step::ConvertToEpub { .. }
         )
     }
 
@@ -152,6 +167,7 @@ impl Step {
             Step::ConvertToPptx { .. } => "pptx",
             Step::ConvertToMarkdown { .. } => "md",
             Step::ConvertToHtml { .. } => "html",
+            Step::ConvertToEpub { .. } => "epub",
             _ => "pdf",
         }
     }
@@ -216,6 +232,12 @@ fn default_semantic_tags() -> bool {
 }
 fn default_embed_css() -> bool {
     true
+}
+fn default_split_on_h1() -> bool {
+    true
+}
+fn default_epub_language() -> String {
+    "en".into()
 }
 
 #[cfg(test)]
