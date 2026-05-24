@@ -45,6 +45,7 @@ pub mod preflight;
 pub mod press;
 pub mod redact;
 pub mod redact_true;
+pub mod reflow;
 pub mod repair;
 pub mod reverse;
 pub mod sanitize;

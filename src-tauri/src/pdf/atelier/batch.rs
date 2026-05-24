@@ -95,7 +95,9 @@ pub fn run_recipe_batch(
             });
             return;
         };
-        let out = out_dir.join(fname);
+        let out = out_dir
+            .join(fname)
+            .with_extension(recipe.output_extension());
         let inner_cb = |p: Progress| {
             on_progress(BatchProgress::StepProgress {
                 file_index: idx,
@@ -256,5 +258,39 @@ mod tests {
         let report = run_recipe_batch(in_dir.path(), out_dir.path(), &recipe, &|_| {}).unwrap();
         assert_eq!(report.total, 0);
         assert_eq!(report.succeeded, 0);
+    }
+
+    #[test]
+    fn batch_convert_to_docx_writes_docx_filenames() {
+        // The killer paralegal-bulk flow: drop a folder of 3 PDFs, recipe
+        // ends in ConvertToDocx, output dir should contain 3 `.docx`s
+        // (not `.pdf`s).
+        let in_dir = tempdir().unwrap();
+        let out_dir = tempdir().unwrap();
+        for i in 0..3 {
+            make_n_page_pdf(&in_dir.path().join(format!("brief{i}.pdf")), 1);
+        }
+        let recipe = Recipe {
+            name: "PDF → Word (batch)".into(),
+            version: 1,
+            steps: vec![Step::ConvertToDocx {
+                detect_tables: true,
+                detect_lists: true,
+                heading_size_ratio: 1.25,
+            }],
+        };
+        let report = run_recipe_batch(in_dir.path(), out_dir.path(), &recipe, &|_| {}).unwrap();
+        assert_eq!(report.total, 3);
+        assert_eq!(report.succeeded, 3);
+        for i in 0..3 {
+            let docx = out_dir.path().join(format!("brief{i}.docx"));
+            assert!(docx.exists(), "expected {:?}", docx);
+            // No matching .pdf written.
+            let pdf = out_dir.path().join(format!("brief{i}.pdf"));
+            assert!(!pdf.exists(), "should NOT exist: {:?}", pdf);
+            // First bytes are ZIP magic.
+            let bytes = std::fs::read(&docx).unwrap();
+            assert_eq!(&bytes[0..4], b"PK\x03\x04");
+        }
     }
 }

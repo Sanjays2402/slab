@@ -104,6 +104,7 @@ fn step_kind(s: &Step) -> String {
         Step::Flatten { .. } => "flatten",
         Step::Compactor => "compactor",
         Step::Linearize => "linearize",
+        Step::ConvertToDocx { .. } => "convert-to-docx",
     }
     .into()
 }
@@ -165,6 +166,21 @@ fn apply_step(input: &Path, output: &Path, step: &Step) -> Result<(), PdfError> 
                 ..Default::default()
             };
             crate::pdf::bates::apply_bates(input, output, &opts)?;
+            Ok(())
+        }
+        Step::ConvertToDocx {
+            detect_tables,
+            detect_lists,
+            heading_size_ratio,
+        } => {
+            let opts = crate::pdf::reflow::types::ReflowOptions {
+                detect_tables: *detect_tables,
+                detect_lists: *detect_lists,
+                heading_size_ratio: *heading_size_ratio,
+                ..Default::default()
+            };
+            crate::pdf::reflow::convert_to_docx(input, output, &opts)
+                .map_err(|e| PdfError::Other(format!("reflow: {e}")))?;
             Ok(())
         }
     }
@@ -306,5 +322,62 @@ mod tests {
         assert!(res.is_err());
         let e = events.lock().unwrap();
         assert!(matches!(e.last(), Some(Progress::Failed { .. })));
+    }
+
+    #[test]
+    fn recipe_runs_convert_to_docx_terminal_step() {
+        // Killer paralegal flow proof: a recipe ending in ConvertToDocx
+        // produces a real `.docx` file (ZIP archive starting with PK\x03\x04).
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("in.pdf");
+        make_n_page_pdf(&input, 2);
+        let output = dir.path().join("out.docx");
+
+        let recipe = Recipe {
+            name: "PDF → Word".into(),
+            version: 1,
+            steps: vec![Step::ConvertToDocx {
+                detect_tables: true,
+                detect_lists: true,
+                heading_size_ratio: 1.25,
+            }],
+        };
+        let report = run_recipe(&input, &output, &recipe, &|_| {}).expect("recipe ran");
+        assert_eq!(report.steps_completed, 1);
+        assert!(output.exists(), "DOCX output written");
+        let bytes = std::fs::read(&output).unwrap();
+        assert!(bytes.len() > 4, "DOCX has content");
+        assert_eq!(
+            &bytes[0..4],
+            b"PK\x03\x04",
+            "DOCX is a valid ZIP archive (paralegal can open in Word)"
+        );
+    }
+
+    #[test]
+    fn recipe_runs_compactor_then_convert_to_docx_chained() {
+        // Realistic chain: shrink the PDF first, then convert to Word.
+        // Mirrors how a paralegal uses Atelier: pre-process + final hand-off.
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("in.pdf");
+        make_n_page_pdf(&input, 1);
+        let output = dir.path().join("out.docx");
+        let recipe = Recipe {
+            name: "Compact + Word".into(),
+            version: 1,
+            steps: vec![
+                Step::Compactor,
+                Step::ConvertToDocx {
+                    detect_tables: true,
+                    detect_lists: true,
+                    heading_size_ratio: 1.25,
+                },
+            ],
+        };
+        let report = run_recipe(&input, &output, &recipe, &|_| {}).expect("recipe ran");
+        assert_eq!(report.steps_completed, 2);
+        assert!(output.exists());
+        let bytes = std::fs::read(&output).unwrap();
+        assert_eq!(&bytes[0..4], b"PK\x03\x04");
     }
 }

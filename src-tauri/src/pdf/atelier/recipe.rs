@@ -57,6 +57,50 @@ pub enum Step {
     /// rest of the document has finished downloading. Adobe Acrobat Pro
     /// charges $239/yr for this; Slab does it free + offline.
     Linearize,
+    /// Convert this PDF to a Word `.docx` file (terminal step — must be
+    /// the last step in a recipe). Lets paralegals chain
+    /// `OCR → AutoRedact → ConvertToDocx` in batch — the killer flow.
+    ///
+    /// Adobe Acrobat Pro charges $239/yr for "Export PDF to Word";
+    /// Slab ships it free, offline, on every OS.
+    ConvertToDocx {
+        #[serde(default = "default_detect_tables")]
+        detect_tables: bool,
+        #[serde(default = "default_detect_lists")]
+        detect_lists: bool,
+        #[serde(default = "default_heading_size_ratio")]
+        heading_size_ratio: f32,
+    },
+}
+
+impl Step {
+    /// True when this step changes the output container format (PDF → DOCX).
+    /// Currently only `ConvertToDocx` returns true. Used by the runner to
+    /// rewrite the user-supplied output filename extension.
+    pub fn changes_extension(&self) -> bool {
+        matches!(self, Step::ConvertToDocx { .. })
+    }
+
+    /// The output filename extension this step produces. Steps that
+    /// don't change extension return `"pdf"`.
+    pub fn output_extension(&self) -> &'static str {
+        match self {
+            Step::ConvertToDocx { .. } => "docx",
+            _ => "pdf",
+        }
+    }
+}
+
+impl Recipe {
+    /// The extension the final output file will carry. Looks at the last
+    /// step in the chain — if it's `ConvertToDocx`, the recipe yields
+    /// `.docx`; otherwise `.pdf`.
+    pub fn output_extension(&self) -> &'static str {
+        self.steps
+            .last()
+            .map(Step::output_extension)
+            .unwrap_or("pdf")
+    }
 }
 
 fn default_lang() -> String {
@@ -73,6 +117,15 @@ fn default_opacity() -> f32 {
 }
 fn default_flatten_dpi() -> u32 {
     150
+}
+fn default_detect_tables() -> bool {
+    true
+}
+fn default_detect_lists() -> bool {
+    true
+}
+fn default_heading_size_ratio() -> f32 {
+    1.25
 }
 
 #[cfg(test)]
@@ -148,11 +201,74 @@ mod tests {
             Step::Flatten { dpi: 300 },
             Step::Compactor,
             Step::Linearize,
+            Step::ConvertToDocx {
+                detect_tables: true,
+                detect_lists: true,
+                heading_size_ratio: 1.25,
+            },
         ];
         for s in steps {
             let j = serde_json::to_string(&s).unwrap();
             let back: Step = serde_json::from_str(&j).unwrap();
             assert_eq!(back, s);
         }
+    }
+
+    #[test]
+    fn convert_to_docx_kebab_kind_in_json() {
+        let s = Step::ConvertToDocx {
+            detect_tables: true,
+            detect_lists: true,
+            heading_size_ratio: 1.25,
+        };
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["kind"], "convert-to-docx");
+    }
+
+    #[test]
+    fn convert_to_docx_defaults_round_trip() {
+        // Forward-compat: a saved recipe that omits the option fields still loads.
+        let json = r#"{"kind":"convert-to-docx"}"#;
+        let s: Step = serde_json::from_str(json).unwrap();
+        match s {
+            Step::ConvertToDocx {
+                detect_tables,
+                detect_lists,
+                heading_size_ratio,
+            } => {
+                assert!(detect_tables);
+                assert!(detect_lists);
+                assert!((heading_size_ratio - 1.25).abs() < 1e-6);
+            }
+            _ => panic!("expected ConvertToDocx"),
+        }
+    }
+
+    #[test]
+    fn changes_extension_only_for_convert_to_docx() {
+        assert!(Step::ConvertToDocx {
+            detect_tables: true,
+            detect_lists: true,
+            heading_size_ratio: 1.25,
+        }
+        .changes_extension());
+        assert!(!Step::Compactor.changes_extension());
+        assert!(!Step::Linearize.changes_extension());
+        assert!(!Step::Flatten { dpi: 150 }.changes_extension());
+    }
+
+    #[test]
+    fn output_extension_pdf_or_docx() {
+        assert_eq!(
+            Step::ConvertToDocx {
+                detect_tables: true,
+                detect_lists: true,
+                heading_size_ratio: 1.25,
+            }
+            .output_extension(),
+            "docx"
+        );
+        assert_eq!(Step::Compactor.output_extension(), "pdf");
+        assert_eq!(Step::Linearize.output_extension(), "pdf");
     }
 }

@@ -30,6 +30,7 @@
   import VeilPanel from "$lib/panels/VeilPanel.svelte";
   import CompactPanel from "$lib/panels/CompactPanel.svelte";
   import StreamlinePanel from "$lib/panels/StreamlinePanel.svelte";
+  import ReflowPanel from "$lib/panels/ReflowPanel.svelte";
   import NupPanel from "$lib/panels/NupPanel.svelte";
   import MarkdownPanel from "$lib/panels/MarkdownPanel.svelte";
   import GrayscalePanel from "$lib/panels/GrayscalePanel.svelte";
@@ -123,6 +124,7 @@
     { id: "veil", label: "Veil", icon: "🛡", ready: true },
     { id: "compact", label: "Compact", icon: "📦", ready: true },
     { id: "streamline", label: "Streamline (Fast Web View)", icon: "⚡", ready: true },
+    { id: "reflow", label: "Reflow (PDF → Word)", icon: "📝", ready: true },
     { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
     { id: "nup", label: "N-up", icon: "▦", ready: true },
     { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
@@ -999,6 +1001,8 @@
     <CompactPanel />
   {:else if active === "streamline"}
     <StreamlinePanel />
+  {:else if active === "reflow"}
+    <ReflowPanel />
   {:else if active === "autoredact"}
     <AutoRedactPanel />
   {:else if active === "nup"}

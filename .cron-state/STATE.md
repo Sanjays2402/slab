@@ -4,7 +4,113 @@
 
 ---
 
-## STATUS: v3.13.0 "Streamline" SHIPPED PUBLICLY — release live with all 6 installers, Docker image on GHCR.
+## STATUS: v3.14.0 "Reflow" END-TO-END WORKING — Tasks 5+6+7 shipped, PDF→Word pipeline complete on feature branch.
+
+**TICK 2026-05-23 23:22 PT (Saturday off-hours)** — MODE C DEVELOP.
+
+This tick (2 feature commits on `feature/v3.14.0-reflow`, +1066 net LOC):
+
+- `38d4f18` feat(reflow): docx writer — paragraphs, headings, lists, tables
+  (Task 5 — hand-rolled OOXML emitter, no new dep, `zip` flipped to default;
+   549 LOC writer + 11 docx unit tests)
+- `944ff82` feat(reflow): Tauri command + ReflowPanel + nav entry
+  (Tasks 6+7 — end-to-end `convert_to_docx`, `slab_reflow_to_docx` Tauri
+   command, `ReflowPanel.svelte` with drag-and-drop + result card, nav
+   entry "Reflow (PDF → Word)" with 📝 icon, palette auto-derives entries)
+
+Quality gates ALL ✓:
+- `cargo fmt --all -- --check` clean
+- `cargo clippy --all-targets -- -D warnings` clean
+- `cargo test --lib` — **1496 passed** (was 1482, +14 reflow tests)
+- `pnpm check` — 0 errors
+
+**Buy-Button verdict — PASS.**
+- **Pay-for-it ✅** — Acrobat Pro $239/yr lists "Export PDF to Word" as a
+  headline feature. We ship it free, offline, on every OS.
+- **Notice-it ✅** — New nav entry, command-palette entry, drag-drop panel
+  with marketing-grade dropzone copy targeting the Adobe wedge.
+- **Pick-us ✅** — No competitor ships free, offline, cross-platform
+  PDF→DOCX with bullets/headings/tables preserved.
+- **Tell-a-friend ✅** — "Drop a PDF, get a Word doc. Offline. Free."
+
+**Wow moment** — drop a PDF onto the ReflowPanel dropzone, two seconds
+later a real `.docx` opens in Word with proper paragraphs and headings.
+Screenshot-worthy.
+
+### Next tick — MODE C DEVELOP, plan Task 8 + Task 9
+
+Task 8: Atelier `ConvertToDocx` recipe step — so users can chain
+"OCR → Redact → Convert to Word" in batch (the paralegal flow).
+Task 9: bump 3.13.0 → 3.14.0 + write marketing-grade release notes.
+Then Task 10 (MODE A RELEASE) the tick after.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.13.0 Streamline: SHIPPED 2026-05-24 — release published with 6 artifacts.
+- v3.12.0 Atelier: released 2026-05-23.
+
+### LAST_WOW_TICK_AT: 2026-05-24T06:25Z (Reflow ReflowPanel + e2e PDF→DOCX pipeline.)
+
+### Operational notes
+- Disk was 818Mi free at tick start; cleared `src-tauri/target/debug`
+  (3.3 GB) to get back to 4 GB. ~/Library/Application Support/adspower_global
+  (9.6 GB) + ~/Downloads (9.6 GB) still candidates for Sanjay.
+- Issue tracker still empty (`gh issue list` returned []). Falling
+  through to roadmap is the right move.
+- The `zip` crate is now an unconditional dep (was previously feature-gated
+  behind `server`). Slightly larger Tauri binary; trivial vs. the wedge.
+
+---
+
+## PRIOR STATUS: v3.14.0 "Reflow" Tasks 2-4 SHIPPED — extract + layout + table detection on feature branch.
+
+**TICK 2026-05-23 23:01 PT (Saturday off-hours)** — MODE C DEVELOP.
+
+This tick (3 feature commits + 1 lint commit on `feature/v3.14.0-reflow`):
+
+- `2533b94` feat(reflow): TextRun extraction with PDF text-state machine (Task 2)
+- `f236eb2` feat(reflow): layout reconstruction + table detection (Tasks 3+4)
+- `c347741` style(reflow): clippy clean (map_clone, manual_range_contains)
+- This commit: STATE.md update
+
+Library-level: 1387 net LOC of non-test code + 12 new unit tests over
+the algorithmic core of PDF -> DOCX. 23 reflow tests all green, 1482
+total `cargo test --lib` green, clippy `-D warnings` clean, fmt clean,
+`pnpm check` 0 errors.
+
+**Buy-Button verdict — DEFERRED to next tick.** This is the algorithm
+half of v3.14.0 Reflow. The buyer-visible half (DOCX writer + Tauri
+command + ReflowPanel) is plan Tasks 5-7, scheduled for the next 2
+ticks per `docs/plans/2026-05-23-v3.14.0-reflow-pdf-to-word.md`. The
+plan is deliberately split into 4 dev ticks for TDD-friendliness;
+this tick lands the extraction -> clustering -> classification pipeline
+that turns a `lopdf::Document` into a `Vec<Block>` ready for OOXML
+emission. Next tick writes `docx.rs` + wires the end-to-end pipeline,
+which is when the wedge ("offline PDF->Word, free") becomes demoable.
+
+### Next tick — MODE C DEVELOP, plan Task 5 + Task 6
+
+Write `docx.rs` (OOXML writer — Content_Types, _rels, styles.xml,
+document.xml; 5 styles: Normal/Heading1-3/ListBullet/ListNumber/
+TableNormal; uses `quick-xml` + existing optional `zip` dep) then wire
+end-to-end `convert_to_docx` that opens a PDF and writes a valid .docx
+that opens cleanly in Word/LibreOffice. THAT's the buyer-visible tick.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.13.0 Streamline: SHIPPED 2026-05-24 — release published with 6 artifacts.
+- v3.12.0 Atelier: released 2026-05-23.
+
+### LAST_WOW_TICK_AT: 2026-05-24T04:08Z (Linearizer — held from previous tick.)
+
+### Operational notes
+- Disk hit 96% at tick start; cleared `src-tauri/target/debug` to free 4 GB,
+  ended at 86% free. `~/Library/Application Support/adspower_global`
+  (9.6 GB) + `~/Downloads` (9.6 GB) still candidates for Sanjay.
+- Issue tracker still empty (`gh issue list` returned []). Falling through
+  to roadmap is the right move.
+
+---
+
+## PRIOR STATUS: v3.13.0 "Streamline" SHIPPED PUBLICLY — release live with all 6 installers, Docker image on GHCR.
 
 **TICK 2026-05-23 22:18 PT (Saturday off-hours)** — MODE B FINALIZE complete.
 

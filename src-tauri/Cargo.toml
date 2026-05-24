@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "3.13.0"
+version = "3.14.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -160,13 +160,13 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
 # Zip the multi-file "split" responses so the client gets one download
 # regardless of how many output PDFs the operation produced.
-zip = { version = "2", default-features = false, features = ["deflate", "time"], optional = true }
+zip = { version = "2", default-features = false, features = ["deflate", "time"] }
 
 [features]
 default = []
 # Opt-in flag for the `slab-server` binary. Desktop Tauri builds leave
 # this off so they don't pay the axum/tower compile + binary-size cost.
-server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:mime", "dep:tracing", "dep:tracing-subscriber", "dep:zip"]
+server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:mime", "dep:tracing", "dep:tracing-subscriber"]
 
 [dev-dependencies]
 tempfile = "3"
