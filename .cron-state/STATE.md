@@ -4,7 +4,43 @@
 
 ---
 
-## STATUS: v3.12.0 Atelier — version bumped, release notes drafted. MERGE-to-main DEFERRED.
+## STATUS: v3.12.0 Atelier MERGED + TAGGED — CI in flight, finalize next tick.
+
+**TICK 2026-05-23 19:1x PT (Saturday off-hours)** — MODE A RELEASE executed.
+Merged `feature/v3.12.0-atelier` into `main` (merge SHA `4fb11e0`). 19 files,
++2233 LOC: full `pdf::atelier` module (recipe/run/batch/cmds), Svelte
+AtelierPanel, typed TS client, Mod+Shift+R keymap, +Cargo/Tauri/package.json
+version bumps, release notes, session log.
+
+Quality gates on main post-merge:
+- cargo fmt --all -- --check ✓
+- cargo clippy --lib --all-targets -- -D warnings ✓
+- cargo test --lib → **1418 passed, 0 failed** (+20 since v3.11.0)
+- pnpm check → 0 errors, 62 warnings (all pre-existing)
+
+Tagged `v3.12.0` with marketing-tone annotation from release-notes file (no
+emoji in tag title). Pushed `main --follow-tags`. CI runs in flight:
+- **26349407913** — build (4-platform bundle) on main
+- **26349407898** — Docker (slab-server) on v3.12.0 tag
+- **26349407658** — Pages deploy (landing site)
+
+### RELEASE_PENDING: v3.12.0 — merge SHA 4fb11e0, tag v3.12.0, CI runs 26349407913 (build) + 26349407898 (Docker)
+
+### Next tick — MODE B FINALIZE
+1. `gh run view 26349407913` — if green, `gh run download` to `/tmp/slab-release-3.12.0`.
+2. Curate 6 best artifacts (mac arm/x64 dmg, linux deb+AppImage, win nsis+msi).
+3. `gh release create v3.12.0 --title "v3.12.0 — Atelier" --notes-file .cron-state/release-notes-v3.12.0.md` + upload artifacts.
+4. Verify Docker image `ghcr.io/sanjays2402/slab-server:v3.12.0` is live.
+5. Clear RELEASE_PENDING. Re-poll `gh issue list` for next priority.
+
+### Honest note on the working tree:
+`docs/landing/index.html` was uncommitted in Sanjay's checkout at the start
+of this tick (mtime 18:59 PT). It carried over the branch switch cleanly —
+no conflicts because the merge didn't touch it. Sanjay's edits are still
+sitting unstaged on main. Untouched.
+
+## (archived previous status)
+## PRIOR STATUS: v3.12.0 Atelier — version bumped, release notes drafted. MERGE-to-main DEFERRED.
 
 **TICK 2026-05-23 18:5x PT (Saturday off-hours)** — release-prep tick.
 
