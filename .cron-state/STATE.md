@@ -4,86 +4,36 @@
 
 ---
 
-## STATUS: v3.12.0 Atelier — Task 5 SHIPPED (UI live end-to-end), ready for release on next tick.
+## STATUS: v3.12.0 Atelier — version bumped, release notes drafted. MERGE-to-main DEFERRED.
 
-**TICK 2026-05-23 18:3x PT (Saturday off-hours)** — MODE C DEVELOP, Task 5.
+**TICK 2026-05-23 18:5x PT (Saturday off-hours)** — release-prep tick.
 
-### Shipped this tick (4 commits, 1169 net LOC added, pushed to feature/v3.12.0-atelier):
-- `afda26b` — keymap: atelier.open action (Mod+Shift+R), no collisions.
-- `f970dea` — `src/lib/atelier.ts` typed client (144 LOC): Step / Recipe / BatchProgress mirroring serde kebab-case, Channel-wrapping runBatch().
-- `481f36a` — `src/lib/panels/AtelierPanel.svelte` (1000 LOC): three-column Liquid Glass — palette + recipe builder w/ drag-reorder + folder pickers + Run + LIVE per-file × per-step matrix (cells: pending grey · running blue · done green · fail red). Cmd/Ctrl+Enter runs batch.
-- `0cacd42` — wire into +page.svelte: sidebar entry, panel switch, global Mod+Shift+R handler.
+### Shipped (1 commit on feature/v3.12.0-atelier):
+- `ebe4778` — version 3.11.0 → 3.12.0 in Cargo.toml + Cargo.lock + package.json + tauri.conf.json; release notes drafted at `.cron-state/release-notes-v3.12.0.md` (marketing-tone, leads with "Adobe Action Wizard, free + offline").
 
-### Quality gates ALL GREEN:
+### Why this tick is small (HONEST):
+- **CI run 26348824398**: tests green on all 3 platforms; **bundle job still queued/not started**. Don't tag until artifacts proven.
+- **Working tree**: `docs/landing/index.html` has uncommitted edits, mtime 18:53 PT (1 minute before tick fired) = Sanjay actively editing. Switching to `main` to merge would surprise him.
+- **Disk**: 1.5 GiB free (`src-tauri/target` = 3.2 GiB).
+
+### Quality gates this tick:
 - `cargo fmt --all -- --check` ✓
-- `cargo clippy --lib --all-targets -- -D warnings` ✓
-- `cargo test --lib keymap::` → 41/41 PASS
-- `cargo test --lib atelier` → 20/20 PASS (no regressions)
-- `pnpm check` → **0 errors**, 62 warnings (one new pre-existing-pattern a11y nit)
+- `pnpm check` → 0 errors, 62 warnings (all pre-existing)
+- Skipped cargo clippy/test — mechanical version bump, CI on push exercises it.
 
-### Buy-Button: PASSES on 3 of 4
-- Pay-for-it ✓ — Adobe Action Wizard ($239/yr) equivalent, free + offline.
-- Pick-us ✓ — no free cross-platform tool does parallel folder-recipe runs with live UI.
-- Tell-a-friend ✓ — the live matrix lighting up over a folder of PDFs IS the screenshot.
+### LAST_WOW_TICK_AT: 2026-05-24T01:42Z (live progress matrix — still within 24h)
 
-### LAST_WOW_TICK_AT: 2026-05-24T01:42Z (live progress matrix end-to-end — this IS the wow tick.)
-
-### CI: build run 26348824398 queued on feature/v3.12.0-atelier.
-
-### Disk: 4.2 GiB free after mid-tick `cargo clean` (3.5 GiB recovered). Will need another clean before MODE A bundle build.
-
-### Next tick — Task 6 + 7 (release v3.12.0):
-1. **Task 6** — version bump 3.11.0 → 3.12.0 across Cargo.toml + Cargo.lock + package.json + tauri.conf.json. Draft release notes leading with "Adobe Action Wizard, free + offline."
-2. **Task 7** — MODE A RELEASE: merge `feature/v3.12.0-atelier` → main with `--no-ff`, tag `v3.12.0`, push tags, MODE B finalize next tick when CI green.
-3. Poll CI 26348824398 first — if red, fix before merging.
-
-Plan: `docs/plans/2026-05-23-v3.12.0-atelier-workflow-automation.md`
+### Next tick — MODE A RELEASE (assuming bundle CI green):
+1. Re-poll `gh run view 26348824398` — confirm bundle job succeeded.
+2. If `docs/landing/index.html` still dirty: `git stash push -m "sanjay landing edits"` before switching branches; restore after release.
+3. `git checkout main && git pull && git merge --no-ff feature/v3.12.0-atelier -m "Merge v3.12.0 'Atelier' — workflow automation"`.
+4. Quality gates on main (fmt + clippy + cargo test --lib + pnpm check).
+5. `git tag -a v3.12.0 -F .cron-state/release-notes-v3.12.0.md` then push `main --follow-tags`.
+6. Record `RELEASE_PENDING: v3.12.0 — tag v3.12.0, CI runs <build> + <docker>`.
 
 ### RECENTLY_CLOSED_ISSUES:
 - v3.11.0 Signet Pro: released 2026-05-23.
-- v3.12.0 Atelier (in progress): backend + UI done; release pending.
-
----
-
-## PRIOR STATUS: v3.12.0 Atelier — Tasks 1-4 SHIPPED on feature branch (backend complete).
-
-**TICK 2026-05-23 18:1x PT (Saturday off-hours)** — MODE C DEVELOP executed.
-Cut `feature/v3.12.0-atelier` from main; shipped Tasks 1-4 of the Atelier
-plan end-to-end in this tick.
-
-### Shipped (4 commits, 951 net LOC, pushed):
-- `def83f3` — Recipe + Step data model (serde JSON round-trip, kebab tags, version forward-compat).
-- `1aabd8f` — run_recipe driver: pipes one PDF through ordered steps, emits Started/Completed/Failed progress events. Bridges to real pdf::* primitives (watermark, flatten, compactor, ocr, auto_redact, bates) with their actual opts shapes.
-- `e3b72a3` — run_recipe_batch parallel folder driver (rayon). Per-file × per-step progress matrix. Failures recorded, never abort the batch. Non-PDF files skipped. Deterministic sort.
-- `173b4aa` — Tauri commands: atelier_run_batch (Channel<BatchProgress>), atelier_save_recipe, atelier_load_recipes (auto-seeds "Nightly Discovery" preset on empty), atelier_delete_recipe. Filename sanitization prevents path escape.
-
-### Quality gates ALL GREEN this tick:
-- `cargo fmt --all -- --check` ✓
-- `cargo clippy --lib --all-targets -- -D warnings` ✓
-- `cargo test --lib` → **1418 passed, 0 failed** (+20 atelier tests since v3.11.0)
-- `pnpm check` → 0 errors, 61 warnings (pre-existing a11y nits)
-
-### Disk: started 99% full → freed 4.2 GiB via `cargo clean` mid-tick (and cleared /tmp/slab-release-*). Now 4.6 GiB free, 98% used. Will need another clean before MODE A merge.
-
-### Buy-Button check (this tick):
-- Pay-for-it: ✓ — Adobe Action Wizard ($239/yr) equivalent backend.
-- Pick-us: ✓ — closes a major enterprise gap.
-- Tell-a-friend: deferred to Task 5 (the live progress grid IS the screenshot).
-
-### CI: build run `26348435216` queued on feature branch (feature branches build same as main).
-
-### Next tick — finish v3.12.0:
-**Task 5** — Svelte AtelierPanel.svelte (drag-build palette → builder → run panel with live grid). Wire nav + Cmd+Shift+A shortcut + command palette entries. THIS is the wow-tick — the live progress grid lighting up over 200 files = the screenshot.
-**Task 6** — version bump 3.11.0 → 3.12.0 + release notes draft.
-**Task 7** — MODE A RELEASE: merge → tag → CI → MODE B finalize.
-
-Plan: `docs/plans/2026-05-23-v3.12.0-atelier-workflow-automation.md`
-
-### LAST_WOW_TICK_AT: 2026-05-23 16:08 PT (within 24h — visible sig stamps banked the wow. Next wow is the Task 5 live progress grid.)
-
-### RECENTLY_CLOSED_ISSUES:
-- v3.11.0 Signet Pro: merged 2026-05-23, tag v3.11.0, release published 17:3x PT.
-- v3.12.0 Atelier (in progress): backend done, UI + release in next tick.
+- v3.12.0 Atelier: backend + UI + version bump on feature branch; release pending.
 
 ---
 
