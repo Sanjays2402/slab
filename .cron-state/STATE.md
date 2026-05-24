@@ -4,7 +4,60 @@
 
 ---
 
-## STATUS: ✅ v3.19.0 'Marquee' PUBLISHED — GitHub release live (2026-05-24 07:?? PT)
+## STATUS: 📋 v3.20.0 'Hopper' plan written — ready to execute (2026-05-24 07:18 PT)
+
+**TICK 2026-05-24 07:15 PT (Sunday off-hours, writing-plans skill invoked).**
+
+Sanjay (via the writing-plans skill) asked for an implementation plan
+this tick instead of a normal ship tick. Output:
+
+- **`docs/plans/2026-05-24-v3.20.0-hopper.md`** — full 8-task plan for
+  v3.20.0 "Hopper", the watched-folder PDF automation feature
+  (Hazel + Adobe AutoAction + AI paralegal in one box).
+- Passes all 4 buy-button tests, has a designed wow moment (live log
+  with morph-rename animation), bundles into 4 cron ticks.
+- Reuses existing `pdf::atelier::run_recipe` + `ai::ollama` —
+  only one new crate dep (`notify = "6.1"`).
+
+### Why Hopper, not Beacon
+
+STATE.md previously pointed to "v3.20.0 Beacon" as the next big
+feature, but Beacon is already heavily shipped throughout the v3.x
+line (chat / search / PII / citations / glossary / study / voice /
+vision panels all live). The proposal at
+`.cron-state/proposals/v0.10.0-beacon-ai.md` is essentially complete.
+
+Looking at what would actually move the buy-button needle next:
+**no competitor has drop-folder PDF automation with local AI rename.**
+Adobe gates it behind enterprise. Hazel doesn't speak PDF. PDF Expert
+doesn't have automation at all. That's the wedge.
+
+### Next tick (off-hours)
+
+Execute Task 1+2 of the Hopper plan (branch + notify dep + module
+skeleton + sqlite registry with unit tests). ~600 LOC, 2-3 commits.
+
+### LAST_WOW_TICK_AT: 2026-05-24T13:46Z (v3.19.0 Marquee — browser playground live)
+
+(Plan tick doesn't bump this — Hopper's wow ships in tick 3 of the
+plan with the live-log animation.)
+
+### Sanjay TODO (carried over)
+
+- Complete `docs/ops/try-slab-deploy.md` steps 1-6 to wire up Cloudflare
+  Pages and make try.slab.app actually serve from the workflow.
+- Optional: record 5-second demo video for landing (issue #27, all
+  override issues closed).
+- Free disk on the mini — only 5.4 GiB free even after `cargo clean`.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.18.0
+- v3.19.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.19.0
+
+---
+
+## PRIOR STATUS: v3.19.0 'Marquee' PUBLISHED — GitHub release live (2026-05-24 07:?? PT)
 
 **TICK 2026-05-24 06:57 PT (Sunday off-hours)** — MODE B FINALIZE complete.
 
