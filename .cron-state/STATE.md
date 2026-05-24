@@ -4,6 +4,35 @@
 
 ---
 
+## STATUS: ✅ v3.22.0 'Hopper Loop' PUBLISHED (2026-05-24 13:35 PT)
+
+**TICK 2026-05-24 13:35 PT (Sunday off-hours)** — MODE B FINALIZE complete.
+
+### What happened this tick
+
+- Polled `26371749779` (build on main) → ✅ success.
+- Docker `slab-server` on v3.22.0 tag → ✅ success (`26371749789`).
+- `gh run download` → all 6 bundle artifacts present.
+- `gh release create v3.22.0 --title "v3.22.0 — Hopper Loop"
+  --notes-file docs/releases/v3.22.0.md <6 assets>` →
+  https://github.com/Sanjays2402/slab/releases/tag/v3.22.0
+- Verified: `isDraft=false`, `asset_count=6`. RELEASE_PENDING cleared.
+
+### Next tick (MODE C — plan v3.23.0)
+
+Re-poll `gh issue list` first. If empty, propose v3.23.0 from the
+roadmap (Lathe / Atlas / Lens / etc) and start a feature branch.
+
+### LAST_WOW_TICK_AT: 2026-05-24T19:50:00Z (Backfill dry-run preview table)
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 / v3.19.0 / v3.20.0 / v3.21.0 / **v3.22.0** published.
+
+Session log: `.cron-state/sessions/2026-05-24-1335.md`.
+
+---
+
 ## STATUS: 🚀 v3.22.0 'Hopper Loop' — MERGED + TAGGED, CI building (2026-05-24 13:20 PT)
 
 **TICK 2026-05-24 13:20 PT (Sunday off-hours)** — MODE A RELEASE complete.
