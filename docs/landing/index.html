@@ -25,7 +25,7 @@
     "applicationSubCategory": "PDF editor",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
     "downloadUrl": "https://github.com/Sanjays2402/slab/releases/latest",
-    "softwareVersion": "3.11.0",
+    "softwareVersion": "3.12.0",
     "license": "https://www.gnu.org/licenses/agpl-3.0.html",
     "description": "Enterprise-grade PDF workstation with PDF/A archival, Preflight audit, local AI, OCR, redaction, signing, and visual diff. Free, offline, cross-platform.",
     "aggregateRating": null,
@@ -464,12 +464,17 @@
         <h3>Timestamps + batch sign <span class="badge">v3.11 Signet Pro</span></h3>
         <p>RFC 3161 CAdES-T tokens from any TSA (DigiCert, FreeTSA, your CA). Batch-sign 200 contracts in parallel with one key. Visible signature stamps on any page.</p>
       </article>
+      <article class="new">
+        <div class="demo demo-card"><img src="demos/compactor.svg" alt="" /></div>
+        <h3>Workflow recipes <span class="badge">v3.12 Atelier</span></h3>
+        <p>Drag-reorder steps — OCR → redact → Bates → flatten → sign. Save as "Nightly Discovery". Point at a folder, walk away. Parallel batch driver lights up a live matrix. <kbd>⌘⇧R</kbd>.</p>
+      </article>
     </div>
   </section>
 
   <section id="compliance" class="compliance">
     <h2>The v3 Enterprise Suite.</h2>
-    <p class="lede">Twelve releases. One promise: every paid Acrobat Pro workflow — archival, accessibility, redaction, discovery, compression, print production, form filling, and digital signatures — done locally, for free. No subscription. No cloud round-trip. No file ever leaves your machine.</p>
+    <p class="lede">Thirteen releases. One promise: every paid Acrobat Pro workflow — archival, accessibility, redaction, discovery, compression, print production, form filling, digital signatures, and batch automation — done locally, for free. No subscription. No cloud round-trip. No file ever leaves your machine.</p>
     <div class="suite">
       <article>
         <header>
@@ -614,8 +619,22 @@
           <li>Visible stamp: name · date · reason on any page rectangle</li>
         </ul>
       </article>
+      <article>
+        <header>
+          <span class="ver">v3.12.0</span>
+          <h3>Atelier</h3>
+          <span class="tag">Workflow automation</span>
+        </header>
+        <p>Adobe Action Wizard costs $239/yr and ships your PDFs to Adobe's cloud. Atelier does the same thing — better — free, offline, parallel, on every OS. Drag steps into a recipe (OCR · redact · Bates · flatten · sign · watermark), save it as "Nightly Discovery," point at a folder, walk away. Every PDF in the folder runs the entire pipeline in parallel while a live matrix lights up step-by-step.</p>
+        <ul>
+          <li>Drag-reorder recipe builder + save/load named recipes</li>
+          <li>Rayon-backed parallel batch: 200 PDFs · OCR + Bates + flatten + sign overnight</li>
+          <li>Live per-file × per-step progress matrix (pending → running → done → failed)</li>
+          <li><kbd>⌘⇧R</kbd> opens Atelier · <kbd>⌘⏎</kbd> runs the active recipe</li>
+        </ul>
+      </article>
     </div>
-    <p class="more">All twelve v3 releases ship today in <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.11.0"><strong>Slab&nbsp;v3.11.0</strong></a> — 1,408 tests passing, Clippy-clean, six platform bundles (macOS arm64/x64, Linux deb/AppImage, Windows msi/nsis), and a Docker image on GHCR. Zero telemetry, zero cloud calls, AGPL forever.</p>
+    <p class="more">All thirteen v3 releases ship today in <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.12.0"><strong>Slab&nbsp;v3.12.0</strong></a> — 1,418 tests passing, Clippy-clean, six platform bundles (macOS arm64/x64, Linux deb/AppImage, Windows msi/nsis), and a Docker image on GHCR. Zero telemetry, zero cloud calls, AGPL forever.</p>
   </section>
 
   <section id="faq" class="faq">
@@ -696,7 +715,17 @@
     </div>
     <div class="rel-grid">
       <article class="rel-card">
-        <div class="rel-tag" data-tone="press">SIGNET PRO</div>
+        <div class="rel-tag" data-tone="press">ATELIER</div>
+        <h3>v3.12.0 — Atelier</h3>
+        <p class="rel-date">May 24, 2026</p>
+        <p class="rel-body">Workflow recipes that run while you sleep. Drag OCR · redact · Bates · flatten · sign into a pipeline, save it, point at a folder. Parallel batch driver, live progress matrix. <kbd>⌘⇧R</kbd>.</p>
+        <div class="rel-actions">
+          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.12.0">Release notes →</a>
+          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.12.0">GitHub</a>
+        </div>
+      </article>
+      <article class="rel-card">
+        <div class="rel-tag" data-tone="loom">SIGNET PRO</div>
         <h3>v3.11.0 — Signet Pro</h3>
         <p class="rel-date">May 24, 2026</p>
         <p class="rel-body">RFC 3161 CAdES-T timestamps from any TSA, parallel batch sign 200 PDFs with one key, and visible signature stamps baked into the page. LTV-enabled in Acrobat.</p>
@@ -706,23 +735,13 @@
         </div>
       </article>
       <article class="rel-card">
-        <div class="rel-tag" data-tone="loom">SIGNET</div>
+        <div class="rel-tag" data-tone="compact">SIGNET</div>
         <h3>v3.10.0 — Signet</h3>
         <p class="rel-date">May 23, 2026</p>
         <p class="rel-body">PKCS#7 detached signatures — the same <code>adbe.pkcs7.detached</code> Acrobat reads. RSA + ECDSA. Sign &amp; verify in &lt;50&nbsp;ms. Your private key never leaves the machine.</p>
         <div class="rel-actions">
           <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.10.0">Release notes →</a>
           <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.10.0">GitHub</a>
-        </div>
-      </article>
-      <article class="rel-card">
-        <div class="rel-tag" data-tone="compact">QUILL</div>
-        <h3>v3.9.0 — Quill</h3>
-        <p class="rel-date">May 23, 2026</p>
-        <p class="rel-body">Fill PDF forms without paying Adobe $239/yr. AcroForm inspector, one-click flatten, JSON template round-trip. Forms sidebar + <kbd>⌘⇧F</kbd>.</p>
-        <div class="rel-actions">
-          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.9.0">Release notes →</a>
-          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.9.0">GitHub</a>
         </div>
       </article>
     </div>
@@ -776,7 +795,7 @@
       <a href="accessibility.html">Accessibility</a>
       <a href="enterprise.html">Enterprise</a>
     </div>
-    <div class="foot-r">v3.11.0 · AGPL-3.0</div>
+    <div class="foot-r">v3.12.0 · AGPL-3.0</div>
   </footer>
 
   <script>
