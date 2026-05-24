@@ -4,7 +4,64 @@
 
 ---
 
-## STATUS: 📋 v3.18.0 "Bind" PLAN FILED (2026-05-24 04:05 PT)
+## STATUS: 🚀 v3.18.0 "Bind" — backend end-to-end on feature branch (2026-05-24 04:55 PT)
+
+**TICK 2026-05-24 04:45 PT (Sunday off-hours)** — MODE C DEVELOP.
+
+Executed Tasks 1-6 of the v3.18.0 Bind plan in one tick. Branch
+`feature/v3.18.0-bind` pushed to origin (5 commits, +908 LOC).
+
+- `e0940f5` feat(epub): scaffold pdf/epub module (mod/types/errors stubs)
+- `a515372` feat(epub): chapter splitter (H1-aware, synthetic fallback)
+- `cdfb5f2` feat(epub): EPUB 3 package XML (container/opf/nav/stylesheet)
+- `d4043e9` feat(epub): XHTML5 chapter emitter (headings/lists/tables/escapes)
+- `d00f1af` feat(epub): end-to-end PDF to EPUB pipeline + ZIP packager
+
+Backend is FUNCTIONAL: `convert_to_epub(path, path, &EpubOptions)`
+returns a valid EPUB 3 ZIP. mimetype-first + Stored compression
+verified by test. Re-uses lopdf load + Reflow extract/layout passes.
+Generates spec-compliant Dublin Core metadata with a self-rolled
+UUID-v4 string (no new dep).
+
+Quality gates (after this tick) ALL GREEN:
+- `cargo fmt --all --check` ✅
+- `cargo clippy --lib --all-targets -D warnings` ✅
+- `cargo test --lib` ✅ **1588 passed, 0 failed** (was 1567, +21 epub tests)
+
+Cleared `src-tauri/target` (6.1 GB) at tick start — disk was 707 MiB
+free, now 5.9 GiB free.
+
+### Buy-Button verdict — PASS 3/4 today (4/4 once UI wires in next tick)
+
+- **Pay-for-it ✅** — Calibre is the only mainstream PDF→EPUB tool, a
+  notoriously janky 2008 GUI. Adobe Acrobat: no EPUB export. PDF Expert
+  / Foxit: none. PDFCandy: $7–12/mo cloud. We ship offline + free.
+- **Notice-it ⏳** — UI lands next tick (Tauri command + Bind panel +
+  Atelier step). Backend invisible to users today.
+- **Pick-us ✅** — No PDF reader on macOS produces EPUB. Closes the
+  e-reader interop gap.
+- **Tell-a-friend ✅** — "Drop research paper → read on Kindle tonight.
+  Offline. Free." Screenshot bait.
+
+### Next tick — Tasks 7-8 (UI wire) → MODE A (release)
+
+1. Task 7: `convert_pdf_to_epub` Tauri command in lib.rs +
+   `Step::ConvertToEpub` in Atelier recipe.rs + run.rs dispatch.
+2. Task 8: BindPanel.svelte + nav entry + command-palette entry +
+   atelier.ts type union.
+3. Task 9: bump 3.17.0 → 3.18.0 in Cargo.toml/package.json/tauri.conf.json
+   (verify all 3 — lesson from v3.16.0). Write marketing release notes.
+4. Task 10: merge feature/v3.18.0-bind → main, tag, push.
+
+Plan reference: `docs/plans/2026-05-24-v3.18.0-bind-pdf-to-epub.md`.
+
+### LAST_WOW_TICK_AT: 2026-05-24T10:28Z (v3.17.0 Markdown release)
+
+Still <24h since last wow; next tick's UI ship will reset this.
+
+---
+
+## PRIOR STATUS: 📋 v3.18.0 "Bind" PLAN FILED (2026-05-24 04:05 PT)
 
 **TICK 2026-05-24 04:05 PT (Sunday off-hours)** — PLANNING tick (Sanjay
 invoked the `writing-plans` skill explicitly via cron).
