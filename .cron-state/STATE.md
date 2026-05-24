@@ -4,7 +4,40 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro SHIPPED — release published, Docker live, all artifacts uploaded.
+## STATUS: v3.12.0 Atelier — version bumped, release notes drafted. MERGE-to-main DEFERRED.
+
+**TICK 2026-05-23 18:5x PT (Saturday off-hours)** — release-prep tick.
+
+### Shipped (1 commit on feature/v3.12.0-atelier):
+- `ebe4778` — version 3.11.0 → 3.12.0 in Cargo.toml + Cargo.lock + package.json + tauri.conf.json; release notes drafted at `.cron-state/release-notes-v3.12.0.md` (marketing-tone, leads with "Adobe Action Wizard, free + offline").
+
+### Why this tick is small (HONEST):
+- **CI run 26348824398**: tests green on all 3 platforms; **bundle job still queued/not started**. Don't tag until artifacts proven.
+- **Working tree**: `docs/landing/index.html` has uncommitted edits, mtime 18:53 PT (1 minute before tick fired) = Sanjay actively editing. Switching to `main` to merge would surprise him.
+- **Disk**: 1.5 GiB free (`src-tauri/target` = 3.2 GiB).
+
+### Quality gates this tick:
+- `cargo fmt --all -- --check` ✓
+- `pnpm check` → 0 errors, 62 warnings (all pre-existing)
+- Skipped cargo clippy/test — mechanical version bump, CI on push exercises it.
+
+### LAST_WOW_TICK_AT: 2026-05-24T01:42Z (live progress matrix — still within 24h)
+
+### Next tick — MODE A RELEASE (assuming bundle CI green):
+1. Re-poll `gh run view 26348824398` — confirm bundle job succeeded.
+2. If `docs/landing/index.html` still dirty: `git stash push -m "sanjay landing edits"` before switching branches; restore after release.
+3. `git checkout main && git pull && git merge --no-ff feature/v3.12.0-atelier -m "Merge v3.12.0 'Atelier' — workflow automation"`.
+4. Quality gates on main (fmt + clippy + cargo test --lib + pnpm check).
+5. `git tag -a v3.12.0 -F .cron-state/release-notes-v3.12.0.md` then push `main --follow-tags`.
+6. Record `RELEASE_PENDING: v3.12.0 — tag v3.12.0, CI runs <build> + <docker>`.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.11.0 Signet Pro: released 2026-05-23.
+- v3.12.0 Atelier: backend + UI + version bump on feature branch; release pending.
+
+---
+
+## PRIOR STATUS: v3.11.0 Signet Pro SHIPPED — release published, Docker live, all artifacts uploaded.
 
 **TICK 2026-05-23 17:3x PT (Saturday off-hours)** — MODE B FINALIZE executed.
 - CI build (26347285490): all 7 jobs green (4 platforms × test+bundle on linux+mac arm/x64+win).

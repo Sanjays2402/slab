@@ -4522,6 +4522,10 @@ pub fn run() {
             signet_verify,
             signet_pro_batch_sign,
             signet_pro_batch_plan,
+            crate::pdf::atelier::cmds::atelier_save_recipe,
+            crate::pdf::atelier::cmds::atelier_load_recipes,
+            crate::pdf::atelier::cmds::atelier_delete_recipe,
+            crate::pdf::atelier::cmds::atelier_run_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

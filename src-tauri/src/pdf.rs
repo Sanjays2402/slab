@@ -5,6 +5,7 @@
 
 pub mod annot_export;
 pub mod annotations;
+pub mod atelier;
 pub mod auto_redact;
 pub mod bates;
 pub mod bates_batch;

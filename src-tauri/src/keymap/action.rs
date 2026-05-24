@@ -41,6 +41,7 @@ pub enum ActionId {
     BedrockOpen,
     PressOpen,
     FormsOpen,
+    AtelierOpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +261,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Forms inspector & fill",
         group: "Forms",
         default_binding: "Mod+Shift+F",
+    },
+    ActionInfo {
+        id: ActionId::AtelierOpen,
+        key: "atelier.open",
+        label: "Atelier — recipe runner",
+        group: "Atelier",
+        default_binding: "Mod+Shift+R",
     },
 ];
 
