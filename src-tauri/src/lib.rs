@@ -1653,6 +1653,7 @@ fn slab_markdown_to_html(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn slab_bind_to_epub(
     input: PathBuf,
     output: PathBuf,
