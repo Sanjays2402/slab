@@ -199,18 +199,21 @@ mod tests {
                     old_line: Some(1),
                     new_line: Some(1),
                     text: "intro".into(),
+                    words: None,
                 },
                 LineDiff {
                     op: DiffOp::Delete,
                     old_line: Some(2),
                     new_line: None,
                     text: "old clause".into(),
+                    words: None,
                 },
                 LineDiff {
                     op: DiffOp::Insert,
                     old_line: None,
                     new_line: Some(2),
                     text: "new clause".into(),
+                    words: None,
                 },
             ],
             summary: DiffSummary {
@@ -256,6 +259,7 @@ mod tests {
                 old_line: Some(1),
                 new_line: Some(1),
                 text: "unchanged".into(),
+                words: None,
             }],
             summary: DiffSummary::default(),
         });

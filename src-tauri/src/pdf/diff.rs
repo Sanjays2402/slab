@@ -27,6 +27,27 @@ pub enum DiffOp {
     Delete,
 }
 
+/// One kind of token-level edit inside a changed line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WordOp {
+    /// Token appears in both old and new at this position.
+    Equal,
+    /// Token only in the new document.
+    Insert,
+    /// Token only in the old document.
+    Delete,
+}
+
+/// One token-level segment within a changed line. `text` includes any trailing
+/// whitespace so a sequence of `WordDiff` segments can be re-joined byte-for-
+/// byte to reconstruct the original line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordDiff {
+    pub op: WordOp,
+    pub text: String,
+}
+
 /// One line-level edit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LineDiff {
@@ -37,6 +58,11 @@ pub struct LineDiff {
     pub new_line: Option<u32>,
     /// Verbatim line content (no trailing newline).
     pub text: String,
+    /// Per-token diff for this line. Only populated when the line-level pass
+    /// coalesced a `Delete`+`Insert` pair into a "changed" cluster; otherwise
+    /// `None`. The frontend renders this as inline `<ins>`/`<del>` spans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<WordDiff>>,
 }
 
 /// Page-level diff aggregate.
@@ -152,6 +178,7 @@ fn diff_page(
                     old_line: Some(old_lineno),
                     new_line: Some(new_lineno),
                     text,
+                    words: None,
                 });
                 last_was_delete = false;
             }
@@ -163,6 +190,7 @@ fn diff_page(
                     old_line: Some(old_lineno),
                     new_line: None,
                     text,
+                    words: None,
                 });
                 last_was_delete = true;
             }
@@ -174,6 +202,7 @@ fn diff_page(
                     old_line: None,
                     new_line: Some(new_lineno),
                     text,
+                    words: None,
                 });
                 if last_was_delete {
                     // One logical "replace" — bump `changed` (we keep the
@@ -460,6 +489,7 @@ mod tests {
                 old_line: Some(1),
                 new_line: Some(1),
                 text: "unchanged".into(),
+                words: None,
             }],
             summary: DiffSummary::default(),
         };
@@ -529,5 +559,55 @@ mod tests {
     fn sanitize_for_md_strips_backticks_and_newlines() {
         assert_eq!(sanitize_for_md("a`b\nc\rd"), "a'b c d");
         assert_eq!(sanitize_for_md("  spaced  "), "spaced");
+    }
+}
+
+#[cfg(test)]
+mod word_diff_types_tests {
+    use super::*;
+
+    #[test]
+    fn word_diff_serializes_with_lowercase_op() {
+        let w = WordDiff {
+            op: WordOp::Insert,
+            text: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&w).unwrap();
+        assert!(json.contains("\"op\":\"insert\""));
+        assert!(json.contains("\"text\":\"hello\""));
+    }
+
+    #[test]
+    fn line_diff_carries_optional_words() {
+        let l = LineDiff {
+            op: DiffOp::Insert,
+            old_line: None,
+            new_line: Some(3),
+            text: "foo bar".to_string(),
+            words: Some(vec![
+                WordDiff {
+                    op: WordOp::Equal,
+                    text: "foo ".into(),
+                },
+                WordDiff {
+                    op: WordOp::Insert,
+                    text: "bar".into(),
+                },
+            ]),
+        };
+        assert_eq!(l.words.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn line_diff_without_words_omits_field_from_json() {
+        let l = LineDiff {
+            op: DiffOp::Equal,
+            old_line: Some(1),
+            new_line: Some(1),
+            text: "x".into(),
+            words: None,
+        };
+        let json = serde_json::to_string(&l).unwrap();
+        assert!(!json.contains("words"));
     }
 }
