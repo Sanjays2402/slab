@@ -1264,6 +1264,21 @@ fn slab_stack_export_redline(
     }
 }
 
+/// v3.24.0 "Stack Pro" — three-way PDF compare. Given a common ancestor
+/// `base` plus two divergent revisions (`mine`, `theirs`), classifies every
+/// base line as unchanged / mine-only / theirs-only / both-agree / conflict.
+/// Returns a `ThreeWayDiff` the Svelte panel renders as a 3-column view
+/// with a conflict ribbon — the canonical legal/dev-team feature Litera
+/// Compare charges $400/seat/yr for. Acrobat doesn't ship it.
+#[tauri::command]
+fn slab_diff3_pdfs(
+    base: PathBuf,
+    mine: PathBuf,
+    theirs: PathBuf,
+) -> CmdResult<crate::pdf::diff3::ThreeWayDiff> {
+    crate::pdf::diff3::three_way_diff(&base, &mine, &theirs).into()
+}
+
 /// v2.4.0 "Stack" — visual (pixel-level) PDF diff. Renders both sides at
 /// `dpi` via Poppler, masks per-pixel luma delta, and returns axis-aligned
 /// change boxes alongside the existing line-level diff. Defaults are tuned
@@ -4607,6 +4622,7 @@ pub fn run() {
             slab_replace_text_span,
             slab_diff_pdfs,
             slab_diff_export_report,
+            slab_diff3_pdfs,
             slab_visual_diff_pdfs,
             slab_stack_export_redline,
             slab_slides_analyze,
