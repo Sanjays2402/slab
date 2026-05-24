@@ -4,7 +4,46 @@
 
 ---
 
-## STATUS: v3.12.0 Atelier MERGED + TAGGED — CI in flight, finalize next tick.
+## STATUS: v3.12.0 Atelier — bundles 3/4 green, Win still building. v3.13.0 Streamline PLAN landed.
+
+**TICK 2026-05-23 19:25 PT (Saturday off-hours)** — writing-plans skill invocation.
+v3.12.0 build run 26349407913: tests 3/3 ✓, bundles macOS-arm/x64 + linux ✓,
+windows still in_progress. Docker (26349407898) ✓. Pages (26349407658) ✓.
+Cannot MODE B FINALIZE this tick — Win bundle artifact required for the
+6-installer release. Disk 813 MiB free, no headroom for a local Tauri build,
+so no code shipped. Used the tick for the next-version plan.
+
+Shipped this tick (1 commit, ~1220 LOC markdown):
+- `2d6f49a docs(plan): v3.13.0 Streamline — Fast Web View linearization`
+  8-task TDD plan in `docs/plans/2026-05-23-v3.13.0-streamline-fast-web-view.md`.
+  Buy-Button: Adobe Acrobat Pro $239/yr exclusive; PDF Expert doesn't ship it.
+  Headline wow: "first-page-ready 12 MB → 188 KB" before/after panel.
+
+Honest sizing: this is a PLANNING tick, not a ship tick. Below SHIP-SIZE
+minimums (1 commit / 0 LOC non-test code / no end-to-end capability) but
+acceptable because (a) writing-plans skill was explicitly invoked, (b)
+v3.12.0 finalize is blocked on Windows bundle CI, (c) disk too low to
+risk a feature build mid-release. Next tick will be MODE B then start
+Task 1 of the Streamline plan.
+
+### RELEASE_PENDING: v3.12.0 — merge SHA 4fb11e0, tag v3.12.0, CI runs 26349407913 (build, Win bundle pending) + 26349407898 (Docker ✓)
+
+### Next tick — MODE B FINALIZE v3.12.0, then start Streamline Task 1
+1. `gh run view 26349407913` — confirm Windows bundle finished.
+2. `gh run download 26349407913 --dir /tmp/slab-release-3.12.0`.
+3. `gh release create v3.12.0 --title "v3.12.0 — Atelier" --notes-file .cron-state/release-notes-v3.12.0.md` + 6 artifacts.
+4. Verify ghcr.io/sanjays2402/slab-server:v3.12.0 live (already pushed).
+5. Clear RELEASE_PENDING. Then `git checkout -b feature/v3.13.0-streamline`
+   and execute Task 1 of the plan (ADR + module scaffold + dep-graph walker).
+
+### LAST_WOW_TICK_AT: 2026-05-24T01:42Z (live progress matrix — still within 24h)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: merged + tagged 2026-05-23, finalize pending Win bundle CI.
+
+---
+
+## PRIOR STATUS: v3.12.0 Atelier MERGED + TAGGED — CI in flight, finalize next tick.
 
 **TICK 2026-05-23 19:1x PT (Saturday off-hours)** — MODE A RELEASE executed.
 Merged `feature/v3.12.0-atelier` into `main` (merge SHA `4fb11e0`). 19 files,
