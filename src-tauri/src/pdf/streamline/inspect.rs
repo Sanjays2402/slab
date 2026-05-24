@@ -79,29 +79,55 @@ fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
+/// Find `key` in `hay` where the next byte after the key is NOT a PDF
+/// name-continuation character (alphanumeric, `_`, `.`). This prevents
+/// `/L` from matching inside `/Linearized`, etc. Returns the offset of
+/// the byte JUST PAST the key.
+fn find_key(hay: &[u8], key: &[u8]) -> Option<usize> {
+    let mut start = 0;
+    while let Some(off) = find_subslice(&hay[start..], key) {
+        let end = start + off + key.len();
+        let next = hay.get(end).copied();
+        let boundary = match next {
+            None => true,
+            Some(b) => !(b.is_ascii_alphanumeric() || b == b'_' || b == b'.'),
+        };
+        if boundary {
+            return Some(end);
+        }
+        start += off + 1;
+    }
+    None
+}
+
 /// Parse a non-negative integer literal that appears immediately (after
 /// optional ASCII whitespace) following `key` within `buf`.
 fn parse_num_after(buf: &[u8], key: &[u8]) -> Option<u64> {
-    let i = find_subslice(buf, key)?;
-    let rest = &buf[i + key.len()..];
-    let s = std::str::from_utf8(rest).ok()?;
-    let s = s.trim_start();
-    let num: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if num.is_empty() {
+    let pos = find_key(buf, key)?;
+    let rest = &buf[pos..];
+    let mut j = 0;
+    while j < rest.len() && matches!(rest[j], b' ' | b'\t' | b'\n' | b'\r') {
+        j += 1;
+    }
+    let start = j;
+    while j < rest.len() && rest[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j == start {
         return None;
     }
-    num.parse().ok()
+    std::str::from_utf8(&rest[start..j]).ok()?.parse().ok()
 }
 
 /// Parse a `[ n m ... ]` array of non-negative integers that follows `key`.
 fn parse_array_after(buf: &[u8], key: &[u8]) -> Option<Vec<u64>> {
-    let i = find_subslice(buf, key)?;
-    let rest = &buf[i + key.len()..];
-    let s = std::str::from_utf8(rest).ok()?;
-    let open = s.find('[')?;
-    let close_rel = s[open..].find(']')?;
-    let inner = &s[open + 1..open + close_rel];
-    let out: Vec<u64> = inner
+    let pos = find_key(buf, key)?;
+    let rest = &buf[pos..];
+    let open = rest.iter().position(|&b| b == b'[')?;
+    let close_rel = rest[open..].iter().position(|&b| b == b']')?;
+    let inner = &rest[open + 1..open + close_rel];
+    let s = std::str::from_utf8(inner).ok()?;
+    let out: Vec<u64> = s
         .split_ascii_whitespace()
         .filter_map(|t| t.parse().ok())
         .collect();
