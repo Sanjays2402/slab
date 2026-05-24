@@ -4,7 +4,62 @@
 
 ---
 
-## STATUS: 🔧 v3.24.0 'Stack Pro' — branch ready to merge (2026-05-24 15:54 PT)
+## STATUS: ✅ v3.24.0 'Stack Pro' SHIPPED to main + tag pushed (2026-05-24 16:26 PT)
+
+**TICK 2026-05-24 16:26 PT (Sunday off-hours)** — MODE A RELEASE.
+Finished Task 6 (shareable redline PDF export) + Task 7 (merge + tag + push).
+
+### Tick stats
+
+- 2 commits on `feature/v3.24.0-stack-pro-three-way`:
+  - `70917f8` feat(diff3): bake three-way redline into shareable PDF
+  - `6b2e5f7` chore(release): v3.24.0 — version bumps + release notes
+- Merged into `main` as `c651cd8` (merge commit, --no-ff).
+- Tag `v3.24.0` created and pushed.
+- Gates: cargo fmt clean, clippy --lib clean, 6/6 new stack_diff3_export
+  tests green, pnpm check 0 errors / 72 a11y warnings (pre-existing).
+- CI status: 3 workflows queued on `main` push + tag-triggered Docker
+  build queued on `v3.24.0`. Release page not yet populated (CI runs
+  ~5min). **Next tick: poll CI, verify v3.24.0 release artifacts land
+  on https://github.com/Sanjays2402/slab/releases/tag/v3.24.0.**
+
+### What shipped (v3.24.0 capstone)
+
+- Three-way PDF compare (base/mine/theirs) with conflict resolution
+- Materialized merged PDF (preview + bake)
+- **Shareable redline PDF export** — landscape 3-column color-coded
+  PDF using standard-14 fonts. Recipient does NOT need Slab installed.
+- "Export redline PDF" button in Diff3Panel merge-actions toolbar.
+- New Tauri command: `slab_diff3_export_pdf`.
+- CHANGELOG + docs/release-notes/v3.24.0.md.
+
+### Buy-Button verdict
+
+✅ PASS — Litera Compare ($400/seat/yr) shipped free + offline,
+plus the export PDF feature makes this _shareable_ with non-Slab users.
+Acrobat doesn't ship 3-way at all.
+
+### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z
+
+Wow = shareable redline PDF that opens in any viewer without Slab.
+
+### Next tick recommendation
+
+1. Poll CI for v3.24.0 (`gh run list --limit 8`). If green and release
+   draft auto-published, write `gh release edit v3.24.0 --notes-file
+   docs/release-notes/v3.24.0.md`.
+2. If CI failed → triage. Tag workflows don't re-run on main pushes,
+   so a CI failure on `v3.24.0` tag = re-cut as v3.24.1.
+3. After v3.24.0 is fully released, start v3.25.0 planning. Candidates:
+   - Beacon AI / Ollama selection-actions polish
+   - Visual diff (image-level pixel compare, complements text 3-way)
+   - Plugin marketplace UI (Foundry Slice 9)
+
+---
+
+## (previous status, kept for history)
+
+### STATUS: 🔧 v3.24.0 'Stack Pro' — branch ready to merge (2026-05-24 15:54 PT)
 
 **TICK 2026-05-24 15:54 PT (Sunday off-hours)** — MODE C DEVELOP, second
 tick on the v3.24.0 plan. Disk was full at start (213 MiB free, 11 GiB
