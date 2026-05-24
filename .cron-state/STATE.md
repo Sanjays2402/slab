@@ -4,7 +4,42 @@
 
 ---
 
-## STATUS: 🪣 v3.20.0 'Hopper' MERGED + TAGGED — CI in progress (2026-05-24 08:38 PT)
+## STATUS: 🪣 v3.20.0 'Hopper' PUBLISHED — release live with 6 artifacts (2026-05-24 09:11 PT)
+
+**TICK 2026-05-24 09:05 PT (Sunday off-hours)** — MODE B FINALIZE.
+v3.20.0 'Hopper' is now a public GitHub release at
+https://github.com/Sanjays2402/slab/releases/tag/v3.20.0 with all 6 bundles:
+mac arm64 dmg, mac x64 dmg, linux deb + AppImage, win msi + nsis.
+
+### How the finalize unblocked
+
+- Previous tick's CI run `26365479885` failed only on `bundle (macos-x64)`
+  with `bundle_dmg.sh` exit code 1 (flaky DMG tooling on GH macos-13 runners).
+  The very next push (`a16fde7`, STATE update commit, run `26365497621`) on
+  the same v3.20.0 manifests rebuilt cleanly across all 6 platforms.
+- This tick: downloaded artifacts from 26365497621, published release.
+- Mac mini disk was at 100% (386 MiB free) → `cargo clean` on
+  `/Users/sanjay/code/slab/src-tauri/target` freed 4.4 GiB before the
+  multi-GiB artifact download could proceed. Disk now at 5.3 GiB free.
+
+### Release verification
+
+- `gh release view v3.20.0`: `isDraft: false`, 6 assets present.
+- Tag v3.20.0 → commit `fbd7e03` (the `--no-ff` merge commit).
+- Docker (slab-server) image for v3.20.0 also green (run `26365479787`).
+
+### RELEASE_PENDING: (none — v3.20.0 finalized)
+
+### Next tick
+
+Top priority issues (#23–#27) override is open-ended; re-poll `gh issue list`.
+If nothing override-priority, fall through to v3.21.0 'Hopper Conditions'
+(plan filed at `docs/plans/2026-05-24-v3.21.0-hopper-conditions.md`,
+build CI for that plan commit `b365ec9` currently in progress on main).
+
+---
+
+## ARCHIVED: 🪣 v3.20.0 'Hopper' MERGED + TAGGED — CI in progress (2026-05-24 08:38 PT)
 
 **TICK 2026-05-24 08:34 PT (Sunday off-hours)** — MODE C → MODE A.
 Tasks 7 + 8 of the Hopper plan shipped in one tick, then merged to main,
