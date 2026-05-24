@@ -4,7 +4,31 @@
 
 ---
 
-## STATUS: 🚀 v3.16.0 "Slide" — version-bump hotfix + tag re-cut (2026-05-24 02:18 PT)
+## STATUS: ✅ v3.16.0 "Slide" SHIPPED PUBLICLY (2026-05-24 02:55 PT)
+
+**TICK 2026-05-24 02:29 PT (Sunday off-hours)** — MODE B FINALIZE complete.
+
+- Polled fresh CI: build run `26357382160` ✅ all 4 platforms green, Docker run `26357382121` ✅.
+- Cleared `src-tauri/target/debug` (4.1 GB) to free disk before artifact download.
+- Downloaded all 6 artifacts (correct `3.16.0` version strings this time).
+- Published GitHub release `v3.16.0 — Slide` at https://github.com/Sanjays2402/slab/releases/tag/v3.16.0 — 6 assets, not Draft.
+- RELEASE_PENDING cleared.
+
+### Next tick — MODE C DEVELOP
+
+Roadmap fall-through. Issue tracker empty. Candidates:
+- v0.10.0 "Beacon" AI (chat with PDF, summarize, PII highlight) — buyer-magnet per original roadmap.
+- Cmd+K command palette (cross-cutting wow).
+- Pick whichever scopes to ≥600 LOC + 4 commits + Buy-Button pass.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.16.0 Slide: **SHIPPED 2026-05-24 02:55 PT** — release published with 6 artifacts.
+- v3.15.0 Tabulate: released 2026-05-24.
+- v3.14.0 Reflow: released 2026-05-24.
+
+### LAST_WOW_TICK_AT: 2026-05-24 02:02 PT (PDF → PowerPoint offline)
+
+### Previous status (archived) — v3.16.0 version-bump hotfix
 
 **TICK 2026-05-24 02:13 PT (Sunday off-hours)** — MODE B + hotfix.
 
