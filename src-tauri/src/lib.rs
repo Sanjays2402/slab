@@ -1581,6 +1581,20 @@ fn slab_streamline_audit(
 }
 
 #[tauri::command]
+fn slab_reflow_to_docx(
+    input: PathBuf,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::reflow::ReflowReport> {
+    use crate::pdf::reflow::{convert_to_docx, ReflowOptions};
+    match convert_to_docx(&input, &output, &ReflowOptions::default()) {
+        Ok(r) => CmdResult::Ok { value: r },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
 fn slab_encrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
     do_encrypt(&input, &output, &password).into()
 }
@@ -4441,6 +4455,7 @@ pub fn run() {
             slab_streamline_inspect,
             slab_streamline_linearize,
             slab_streamline_audit,
+            slab_reflow_to_docx,
             slab_encrypt,
             slab_decrypt,
             slab_watermark,
