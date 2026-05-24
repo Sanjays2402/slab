@@ -29,11 +29,26 @@ use lopdf::{dictionary, Document, Object, ObjectId};
 
 use super::cms_blob::{build_pkcs7_detached, sha256};
 use super::identity::{SignetError, SigningIdentity};
+use crate::pdf::signet_pro::appearance::{build_appearance, AppearanceSpec};
 
-/// Hex-window size for `/Contents`. 16 384 hex chars = 8192 binary bytes —
-/// generous headroom over a typical RSA-2048 PKCS#7 blob (~2 KiB) plus
-/// embedded cert + chain (~2-3 KiB).
+/// Hex-window size for `/Contents` in the CAdES-BES (no-TSA) case.
+/// 16 384 hex chars = 8192 binary bytes — generous headroom over a typical
+/// RSA-2048 PKCS#7 blob (~2 KiB) plus embedded cert + chain (~2-3 KiB).
 pub const SIGNATURE_HEX_PLACEHOLDER_BYTES: usize = 16_384;
+
+/// Hex-window size for `/Contents` in the CAdES-T (with-TSA) case.
+/// 32 768 hex chars = 16 384 binary bytes — adds ~8 KiB headroom for the
+/// embedded RFC 3161 timestamp token (typical TST ~4-6 KiB including TSA
+/// cert chain).
+pub const SIGNATURE_HEX_PLACEHOLDER_BYTES_T: usize = 32_768;
+
+fn placeholder_hex_bytes(opts: &SignOptions) -> usize {
+    if opts.tsa_url.as_deref().filter(|s| !s.is_empty()).is_some() {
+        SIGNATURE_HEX_PLACEHOLDER_BYTES_T
+    } else {
+        SIGNATURE_HEX_PLACEHOLDER_BYTES
+    }
+}
 
 /// Width of each ByteRange integer in the placeholder. 10 digits accommodates
 /// PDFs up to ~10 GiB. The four numbers are space-padded to this width so
@@ -51,6 +66,16 @@ pub struct SignOptions {
     pub contact_info: Option<String>,
     /// Field name. Defaults to `Signature1` (or `Signature{N}` if taken).
     pub field_name: Option<String>,
+    /// Optional visible signature appearance. When set, the widget gets a
+    /// non-zero `/Rect` and an `/AP << /N <form-xobject> >>` so viewers
+    /// render a visible stamp. When `None`, the signature is invisible
+    /// (the v3.10.0 default).
+    pub appearance: Option<AppearanceSpec>,
+    /// Optional RFC 3161 TSA URL. When set, the signature is upgraded
+    /// from CAdES-BES to CAdES-T: after building the PKCS#7 blob, Slab
+    /// fetches a timestamp token from the TSA and embeds it as the
+    /// `id-aa-timeStampToken` unsigned attribute. Requires network.
+    pub tsa_url: Option<String>,
 }
 
 /// Outcome of a successful sign operation.
@@ -90,13 +115,14 @@ pub fn sign_pdf(
         Document::load(input).map_err(|e| SignetError::InvalidCert(format!("lopdf load: {e}")))?;
 
     let field_name = pick_field_name(&doc, opts.field_name.as_deref());
+    let hex_window_bytes = placeholder_hex_bytes(opts);
 
     // 2. Build the placeholder signature dict + widget.
     // `Object::String(_, Hexadecimal)` is encoded by lopdf as <hex>, with each
-    // input byte expanding to two hex chars. So a 8192-byte zero buffer
-    // serializes as 16 384 ASCII '0' chars between angle brackets — exactly
-    // SIGNATURE_HEX_PLACEHOLDER_BYTES.
-    let placeholder_hex = vec![0u8; SIGNATURE_HEX_PLACEHOLDER_BYTES / 2];
+    // input byte expanding to two hex chars. So an N/2-byte zero buffer
+    // serializes as N ASCII '0' chars between angle brackets — exactly
+    // `hex_window_bytes`.
+    let placeholder_hex = vec![0u8; hex_window_bytes / 2];
     let byte_range_placeholder = Object::Array(vec![
         Object::Integer(0),
         // Three literal-string placeholders, each 20 ASCII spaces wide.
@@ -135,20 +161,75 @@ pub fn sign_pdf(
     }
     let sig_obj_id: ObjectId = doc.add_object(Object::Dictionary(sig_dict));
 
-    // 3. Build a (invisible) widget annotation on page 0 with a 0×0 rect.
-    //    Acrobat renders a default appearance; v3.10.1 will offer a visible
-    //    wax-seal /AP stream.
-    let page_id = first_page_id(&doc)?;
-    let widget_id = doc.add_object(Object::Dictionary(dictionary! {
+    // 3. Build a widget annotation. If `opts.appearance` is set we attach
+    //    a Form XObject as `/AP /N` and use the spec's rect + page.
+    //    Otherwise the widget is invisible (0×0 rect on the first page,
+    //    `F = 132` = Print | NoView), matching the v3.10.0 default.
+    let (page_id, rect_array, ap_ref, widget_flags) = match opts.appearance.as_ref() {
+        Some(spec) => {
+            let page_id = nth_page_id(&doc, spec.page.max(1) as usize)?;
+            let app = build_appearance(identity, spec);
+            // Wrap the content stream in a Form XObject. Resources reference
+            // Helvetica via /F1 — a standard 14 PDF font, no embedding needed.
+            let fonts_dict = {
+                let mut d = lopdf::Dictionary::new();
+                for (name, base) in &app.fonts {
+                    let font_id = doc.add_object(Object::Dictionary(dictionary! {
+                        "Type" => "Font",
+                        "Subtype" => "Type1",
+                        "BaseFont" => base.to_string().as_str(),
+                        "Encoding" => "WinAnsiEncoding",
+                    }));
+                    d.set(name.as_str(), Object::Reference(font_id));
+                }
+                d
+            };
+            let resources = dictionary! { "Font" => Object::Dictionary(fonts_dict) };
+            let xobject_dict = dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "FormType" => 1i64,
+                "BBox" => Object::Array(vec![
+                    Object::Real(app.bbox[0]),
+                    Object::Real(app.bbox[1]),
+                    Object::Real(app.bbox[2]),
+                    Object::Real(app.bbox[3]),
+                ]),
+                "Resources" => Object::Dictionary(resources),
+            };
+            let xobj = lopdf::Stream::new(xobject_dict, app.content_stream);
+            let xobj_id = doc.add_object(Object::Stream(xobj));
+            let ap_dict = dictionary! { "N" => Object::Reference(xobj_id) };
+            let ap_id = doc.add_object(Object::Dictionary(ap_dict));
+            let rect = Object::Array(vec![
+                Object::Real(spec.rect[0]),
+                Object::Real(spec.rect[1]),
+                Object::Real(spec.rect[2]),
+                Object::Real(spec.rect[3]),
+            ]);
+            // F = 4 (Print) — visible, printable, no NoView.
+            (page_id, rect, Some(ap_id), 4i64)
+        }
+        None => {
+            let page_id = first_page_id(&doc)?;
+            let rect = Object::Array(vec![0.into(), 0.into(), 0.into(), 0.into()]);
+            (page_id, rect, None, 132i64)
+        }
+    };
+    let mut widget_dict = dictionary! {
         "Type" => "Annot",
         "Subtype" => "Widget",
         "FT" => "Sig",
         "T" => Object::string_literal(field_name.clone()),
-        "F" => 132i64, // Print | NoView (Acrobat treats invisible-sig fields this way)
-        "Rect" => Object::Array(vec![0.into(), 0.into(), 0.into(), 0.into()]),
+        "F" => widget_flags,
+        "Rect" => rect_array,
         "P" => Object::Reference(page_id),
         "V" => Object::Reference(sig_obj_id),
-    }));
+    };
+    if let Some(ap_id) = ap_ref {
+        widget_dict.set("AP", Object::Reference(ap_id));
+    }
+    let widget_id = doc.add_object(Object::Dictionary(widget_dict));
 
     // 4. Wire AcroForm + page Annots.
     attach_widget_to_page(&mut doc, page_id, widget_id)?;
@@ -164,11 +245,11 @@ pub fn sign_pdf(
 
     // 7. Locate the hex window — the first `/Contents <…>` whose body is all
     //    ASCII '0's of our placeholder length.
-    let (contents_open, contents_close) = find_contents_window(&serialized)?;
+    let (contents_open, contents_close) = find_contents_window(&serialized, hex_window_bytes)?;
     let hex_window_len = contents_close.saturating_sub(contents_open + 1);
-    if hex_window_len != SIGNATURE_HEX_PLACEHOLDER_BYTES {
+    if hex_window_len != hex_window_bytes {
         return Err(SignetError::InvalidCert(format!(
-            "hex window length mismatch: expected {SIGNATURE_HEX_PLACEHOLDER_BYTES}, got {hex_window_len}"
+            "hex window length mismatch: expected {hex_window_bytes}, got {hex_window_len}"
         )));
     }
 
@@ -190,14 +271,47 @@ pub fn sign_pdf(
     to_hash.extend_from_slice(&serialized[tail_start..]);
     let digest = sha256(&to_hash);
 
-    // 11. Build PKCS#7 blob.
-    let blob = build_pkcs7_detached(&digest, identity, started)?;
+    // 11. Build PKCS#7 blob — CAdES-BES by default, CAdES-T when tsa_url set.
+    let mut blob = build_pkcs7_detached(&digest, identity, started)?;
+    if let Some(url) = opts.tsa_url.as_deref().filter(|s| !s.is_empty()) {
+        use crate::pdf::signet_pro::tsa::{
+            build_timestamp_req, embed_timestamp_token, fetch_timestamp, signer_signature_digest,
+            TsaFetchOptions,
+        };
+        // Timestamp the SignerInfo's signature value (RFC 5126 §6.3.2 / CAdES-T).
+        let imprint = signer_signature_digest(&blob)?;
+        // Non-repeating nonce — system-time nanos XOR'd with a pointer
+        // address. RFC 3161 §2.4.1 only requires "as random as possible"
+        // for replay detection; cryptographic randomness isn't mandated.
+        let nonce: i64 = {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+            let stack_addr = (&nanos as *const i64) as i64;
+            nanos ^ stack_addr
+        };
+        let req = build_timestamp_req(&imprint, Some(nonce))?;
+        let resp = fetch_timestamp(url, &req, &TsaFetchOptions::default())?;
+        if !resp.status_granted() {
+            return Err(SignetError::InvalidCert(format!(
+                "TSA rejected timestamp request (PKIStatus {})",
+                resp.status
+            )));
+        }
+        if resp.token.is_empty() {
+            return Err(SignetError::InvalidCert(
+                "TSA granted but returned no token".into(),
+            ));
+        }
+        blob = embed_timestamp_token(&blob, &resp.token)?;
+    }
     let blob_hex = hex_upper(&blob);
-    if blob_hex.len() > SIGNATURE_HEX_PLACEHOLDER_BYTES {
+    if blob_hex.len() > hex_window_bytes {
         return Err(SignetError::InvalidCert(format!(
             "PKCS#7 blob too large for hex window: {} > {}",
             blob_hex.len(),
-            SIGNATURE_HEX_PLACEHOLDER_BYTES
+            hex_window_bytes
         )));
     }
 
@@ -350,6 +464,22 @@ fn first_page_id(doc: &Document) -> Result<ObjectId, SignetError> {
         .ok_or_else(|| SignetError::InvalidCert("PDF has no pages".into()))
 }
 
+/// 1-indexed page lookup. Falls back to the first page if `n` exceeds the
+/// page count (e.g. caller asked for page 7 of a 3-page document).
+fn nth_page_id(doc: &Document, n: usize) -> Result<ObjectId, SignetError> {
+    let pages = doc.get_pages();
+    let total = pages.len();
+    if total == 0 {
+        return Err(SignetError::InvalidCert("PDF has no pages".into()));
+    }
+    let target = n.max(1).min(total);
+    pages
+        .into_iter()
+        .nth(target - 1)
+        .map(|(_, id)| id)
+        .ok_or_else(|| SignetError::InvalidCert("PDF has no pages".into()))
+}
+
 fn attach_widget_to_page(
     doc: &mut Document,
     page_id: ObjectId,
@@ -431,7 +561,7 @@ fn attach_field_to_acroform(doc: &mut Document, widget_id: ObjectId) -> Result<(
 
 /// Find the byte offsets of the first `/Contents <00…00>` window matching
 /// our placeholder. Returns (open_lt, close_gt) — the indices of `<` and `>`.
-fn find_contents_window(bytes: &[u8]) -> Result<(usize, usize), SignetError> {
+fn find_contents_window(bytes: &[u8], expected_len: usize) -> Result<(usize, usize), SignetError> {
     let needle = b"/Contents";
     let mut pos = 0;
     while let Some(rel) = memmem(&bytes[pos..], needle) {
@@ -450,9 +580,7 @@ fn find_contents_window(bytes: &[u8]) -> Result<(usize, usize), SignetError> {
             };
             // Verify body is all hex.
             let body = &bytes[open + 1..close];
-            if body.iter().all(|b| b.is_ascii_hexdigit())
-                && body.len() == SIGNATURE_HEX_PLACEHOLDER_BYTES
-            {
+            if body.iter().all(|b| b.is_ascii_hexdigit()) && body.len() == expected_len {
                 return Ok((open, close));
             }
         }

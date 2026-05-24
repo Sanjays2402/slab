@@ -664,6 +664,72 @@ mod tests {
     }
 
     #[test]
+    fn visible_appearance_renders_widget_with_ap_n_xobject() {
+        use crate::pdf::signet_pro::appearance::AppearanceSpec;
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("in.pdf");
+        let output = tmp.path().join("out.pdf");
+        write_minimal_pdf(&input);
+        let id = fixture_rsa_identity("Visible Signer");
+        let opts = SignOptions {
+            reason: Some("Approval".into()),
+            location: Some("Seattle, WA".into()),
+            contact_info: None,
+            field_name: None,
+            appearance: Some(AppearanceSpec {
+                page: 1,
+                rect: [50.0, 50.0, 280.0, 130.0],
+                font_size: 9.0,
+                show_name: true,
+                show_date: true,
+                show_reason: true,
+                show_location: true,
+                image: None,
+                reason: Some("Approval".into()),
+                location: Some("Seattle, WA".into()),
+                signing_time: Some("2026-05-23 22:00 UTC".into()),
+            }),
+            tsa_url: None,
+        };
+        sign_pdf(&input, &output, &id, &opts).unwrap();
+
+        // 1. Verification still passes — visible appearance must NOT break the
+        //    PKCS#7 byte-range protection.
+        let store = TrustStore::new();
+        let results = verify(&output, &store).expect("verify");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].digest_status, DigestStatus::Match);
+        assert_eq!(results[0].crypto_status, CryptoStatus::Valid);
+
+        // 2. Reload the signed PDF and assert structural properties via the
+        //    PDF object graph (avoids coupling to serializer whitespace and
+        //    flate-encoding of streams).
+        let signed = lopdf::Document::load(&output).unwrap();
+        let mut found_form_xobject = false;
+        let mut found_widget_with_ap = false;
+        for (_, obj) in signed.objects.iter() {
+            match obj {
+                lopdf::Object::Stream(s) => {
+                    if matches!(s.dict.get(b"Subtype"), Ok(lopdf::Object::Name(n)) if n == b"Form")
+                    {
+                        found_form_xobject = true;
+                    }
+                }
+                lopdf::Object::Dictionary(d) => {
+                    let is_widget =
+                        matches!(d.get(b"Subtype"), Ok(lopdf::Object::Name(n)) if n == b"Widget");
+                    if is_widget && d.get(b"AP").is_ok() {
+                        found_widget_with_ap = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(found_form_xobject, "no /Subtype /Form XObject in output");
+        assert!(found_widget_with_ap, "no Widget with /AP entry in output");
+    }
+
+    #[test]
     fn sign_then_verify_same_file_passes_all_checks() {
         let tmp = tempfile::tempdir().unwrap();
         let input = tmp.path().join("in.pdf");

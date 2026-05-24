@@ -70,7 +70,7 @@ dirs = "6"
 # Beacon (v0.10.0 AI features) — HTTP client for talking to local
 # Ollama and remote OpenAI-compatible servers, async-trait for the
 # AiProvider trait, futures for streaming response handling.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "blocking"] }
 async-trait = "0.1"
 futures-util = "0.3"
 bytes = "1"
@@ -93,6 +93,7 @@ sha2 = "0.11"
 # library scanner. Skips broken symlinks gracefully and gives us a
 # stable iteration order. Single-file no-features-by-default crate.
 walkdir = "2"
+rayon = "1.10"
 
 # Lens (v0.13.0 Slice 5 Vision Q&A) — PNG decode + post-render rect crop.
 # `default-features = false` keeps the dep tree small: we only need PNG,

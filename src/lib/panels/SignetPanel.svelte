@@ -62,6 +62,14 @@
   let outputPath = $state<string | null>(null);
   let reason = $state("");
   let location = $state("");
+  let tsaUrl = $state("");
+  // Visible signature appearance (v3.11.0).
+  let visibleSignature = $state(false);
+  let appearancePage = $state(1);
+  let appearanceX = $state(50);
+  let appearanceY = $state(50);
+  let appearanceW = $state(220);
+  let appearanceH = $state(80);
   let contactInfo = $state("");
   let fieldName = $state("");
   let signResult = $state<SignResult | null>(null);
@@ -145,6 +153,23 @@
           location: location || null,
           contact_info: contactInfo || null,
           field_name: fieldName || null,
+          tsa_url: tsaUrl || null,
+          appearance: visibleSignature
+            ? {
+                page: Math.max(1, Math.floor(appearancePage || 1)),
+                rect: [
+                  Number(appearanceX),
+                  Number(appearanceY),
+                  Number(appearanceX) + Number(appearanceW),
+                  Number(appearanceY) + Number(appearanceH),
+                ],
+                show_name: true,
+                show_date: true,
+                show_reason: Boolean(reason),
+                show_location: Boolean(location),
+                font_size: 9.0,
+              }
+            : null,
         },
       });
       signResult = result;
@@ -287,6 +312,36 @@
       <label>Field name</label>
       <input type="text" bind:value={fieldName} placeholder="Signature1" />
     </div>
+    <div class="row">
+      <label>TSA URL</label>
+      <input
+        type="text"
+        bind:value={tsaUrl}
+        placeholder="optional — RFC 3161 (e.g. http://timestamp.digicert.com)"
+      />
+    </div>
+    <fieldset class="appearance">
+      <legend>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={visibleSignature} />
+          <span>Visible signature stamp</span>
+        </label>
+      </legend>
+      {#if visibleSignature}
+        <p class="hint">
+          Renders a Form XObject on the page so Acrobat / Preview / Foxit show
+          the signature inline. Coordinates are in PDF user-space points
+          (72&nbsp;pt&nbsp;=&nbsp;1&nbsp;inch, origin bottom-left).
+        </p>
+        <div class="grid">
+          <label>Page<input type="number" min="1" bind:value={appearancePage} /></label>
+          <label>X<input type="number" bind:value={appearanceX} /></label>
+          <label>Y<input type="number" bind:value={appearanceY} /></label>
+          <label>Width<input type="number" min="40" bind:value={appearanceW} /></label>
+          <label>Height<input type="number" min="20" bind:value={appearanceH} /></label>
+        </div>
+      {/if}
+    </fieldset>
     <div class="actions">
       <button class="primary" disabled={!canSign} onclick={signNow}>Sign PDF</button>
       {#if signStatus.kind !== "idle"}
@@ -551,5 +606,47 @@
     gap: 4px 8px;
     margin: 6px 0 0;
     font-size: 11.5px;
+  }
+  fieldset.appearance {
+    margin: 8px 0 4px;
+    padding: 8px 12px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--panel-bg);
+  }
+  fieldset.appearance legend {
+    padding: 0 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  fieldset.appearance .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  fieldset.appearance .hint {
+    margin: 6px 0 8px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  fieldset.appearance .grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px 10px;
+  }
+  fieldset.appearance .grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  fieldset.appearance .grid input {
+    padding: 4px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: var(--input-bg, transparent);
+    color: inherit;
   }
 </style>

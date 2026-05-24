@@ -4,7 +4,156 @@
 
 ---
 
-## STATUS: v3.10.0 Signet RELEASED — 6 artifacts uploaded, Docker image live, all CI green.
+## STATUS: v3.11.0 Signet Pro — CAdES-T shipped end-to-end (Task 7 complete).
+
+**TICK 2026-05-23 16:5x PT (Saturday off-hours)** — RFC 3161 timestamp tokens
+now embed into the CMS unsigned attributes, end-to-end from Svelte input to
+re-encoded SignerInfo. CAdES-BES → CAdES-T toggle.
+
+Branch: `fix/svelte-reactive-refs` (descendant of `feature/v3.11.0-signet-pro`).
+4 commits this tick:
+- e04d2f0 signet_pro/tsa: `signer_signature_digest` + `embed_timestamp_token` + 4 tests
+- 063c8f2 signet/sign: optional CAdES-T path, 16 KiB hex window when TSA set
+- 46defd4 tauri DTOs: `tsa_url` on `SignetSignArgs` + `SignetProBatchArgs`
+- 9ed1c2a UI: TSA URL input on `SignetPanel` and `SignetBatchPanel`
+
+Signet test suite: **69/69 PASS** (4 new TSA-embed tests). Clippy `-D warnings`
+clean. `pnpm check`: 0 errors.
+
+**LAST_WOW_TICK_AT: 2026-05-23 16:08 PT** (still inside the 24h window from
+visible-signature stamps; this tick's CAdES-T is mostly under-the-hood
+compliance plumbing — wow already banked for today).
+
+Buy-Button: CAdES-T is what every law firm + audit-trail compliance buyer
+asks for first. Acrobat Pro exposes it; PDF Expert doesn't. Pay-for-it ✓,
+Pick-us ✓.
+
+Next tick:
+- Merge `fix/svelte-reactive-refs` → `feature/v3.11.0-signet-pro` (or fast-
+  forward if straight-line), then `feature/v3.11.0-signet-pro` → `main`,
+  tag `v3.11.0`, kick CI, finalize release.
+- Verify a live TSA round-trip (digicert/freetsa) via a one-shot manual
+  script before tagging — the embed code path has only been exercised
+  against a hand-rolled fake TST so far.
+- Add release-notes copy that leads with "legally-binding timestamps,
+  completely offline-cert / online-TSA, never your file".
+
+---
+
+**TICK 2026-05-23 16:08 PT (Saturday off-hours)** — appearance Form XObject
+splicing wired into `sign_pdf`, single-file UI gets a visible-stamp toggle.
+
+Branch: `feature/v3.11.0-signet-pro` (1111bd6). 4 commits this tick:
+- 8996752 TSA HTTP fetch (mockito-tested, 12 tests)
+- 2e410e0 batch-sign Tauri command + dedicated Svelte panel (Buy-Button)
+- 1d39e42 visible-signature wire-in (Form XObject /AP /N) + verify-still-green test
+- 1111bd6 SignetPanel visible-stamp toggle (page + rect inputs)
+
+Full lib suite: **1394/1394 PASS**. Clippy `-D warnings` clean.
+**LAST_WOW_TICK_AT: 2026-05-23 16:08 PT** (visible signatures end-to-end —
+"look at my PDF, it has a real signature stamp" screenshot-worthy moment).
+
+Next tick:
+- CAdES-T upgrade: call `fetch_timestamp` after signing, splice TST as
+  `id-aa-timeStampToken` unsigned attr on SignerInfo (cms_blob.rs).
+- Add TSA URL field to SignOptions + UI panels (single + batch).
+- Then merge branch -> main, tag v3.11.0, finalize release.
+
+---
+
+<details><summary>Earlier history</summary>
+
+
+
+**TICK 2026-05-23 15:32 PT (Saturday off-hours)** — writing-plans skill: plan
+already saved last tick, this tick *executes* it.
+
+Branch: `feature/v3.11.0-signet-pro` — 3 new commits (`552a859`, `41a88f3`,
+`8c85371`) on top of last tick's scaffold + plan, total 4 commits / ~950 LOC
+this tick (953 insertions across 4 files). Plus rayon dep added.
+
+Shipped this tick:
+- **Task 2 + 3 (parse half):** RFC 3161 `TimeStampReq` DER encoder +
+  `TimeStampResp` parser in `signet_pro/tsa.rs`. Canonical-integer nonce
+  normalisation (so `der::asn1::Int` accepts the full i64 range);
+  `ID_AA_TIMESTAMP_TOKEN` OID exported for CMS unsigned-attr embedding.
+  7 unit tests.
+- **Task 4:** `build_appearance` + `build_appearance_from_name` Form
+  XObject builder in `signet_pro/appearance.rs`. 0.5pt grey border +
+  Helvetica BT/ET text, PDF-literal-string escaping, font-size clamp,
+  optional date/reason/location lines. 9 unit tests.
+- **Task 5:** Batch driver in `signet_pro/batch.rs` — `plan_batch` walks
+  for *.pdf (recursive opt-in), `run_batch` executes via rayon with
+  atomic-counter progress, `BatchReport` with `success_rate`,
+  `fully_succeeded`, `failures()`. 10 unit tests including a full
+  `sign_folder` end-to-end smoke test (pretend-sign 3 PDFs).
+
+**signet_pro now has 25 passing tests** (was 0 last tick). Full signet+pro
+suite: 59/59 green.
+
+Quality gates this tick:
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --all-targets -- -D warnings` ✓ (fixed bool_assert_comparison,
+  derive Default, and ok().expect() lints raised by the new code)
+- `cargo test --lib pdf::signet` → 59/59 PASS
+- `pnpm check` → 0 errors, 63 warnings (all pre-existing a11y nits)
+
+**Disk: 5.4 GiB free** after `cargo clean` (was at 124 MiB before — full
+clean ran mid-tick to unblock the link step).
+
+Buy-Button test: TSA encoding + batch parallel sign are Acrobat Pro $239/yr
+exclusives, both now implemented offline in Slab. Pay-for-it ✓, Pick-us ✓.
+
+### Next tick — finish Task 3 (HTTP fetch) + Task 4 wiring into sign_pdf
+1. `fetch_timestamp(url, req)` — reqwest blocking POST with
+   `application/timestamp-query` content-type. Mock via mockito in tests.
+2. Embed returned TST as `id-aa-timeStampToken` unsigned attr in
+   `signet::sign::sign_pdf` SignerInfo (CAdES-T upgrade).
+3. Wire `SignOptions::appearance` → swap invisible Widget for AP/N form-
+   XObject Widget at the spec.rect on spec.page.
+4. Frontend BatchSignPanel.svelte (Task 6) — can land alongside in same tick
+   if scope allows.
+
+### LAST_WOW_TICK_AT: 2026-05-23T22:32Z (batch parallel sign with progress
+events — the demo screenshot Sanjay will tweet)
+
+### RECENTLY_CLOSED_ISSUES:
+- (none open)
+
+---
+
+## PRIOR STATUS: v3.11.0 Signet Pro kickoff — plan + ADR 0012 + module scaffolding on feature/v3.11.0-signet-pro.
+
+**TICK 2026-05-23 15:14 PT (Saturday off-hours)** — writing-plans skill invocation.
+
+Branch: `feature/v3.11.0-signet-pro` (pushed, CI run 26345068650 queued).
+
+Shipped:
+- `docs/plans/2026-05-23-v3.11.0-signet-pro.md` — 8-task TDD breakdown
+  (RFC 3161 TSA + visible appearances + batch sign).
+- `docs/adr/0012-signet-pro-tsa-batch.md` — design rationale.
+- `src-tauri/src/pdf/signet_pro/{mod,tsa,appearance,batch}.rs` — public
+  type stubs + module wiring (compiles, clippy-clean, fmt-clean).
+- 2 commits: `d7df6af` (plan) + scaffold commit.
+
+Quality gates all green: cargo check, fmt, clippy -D warnings, pnpm check.
+
+### Next tick — Task 2 of the plan: RFC 3161 TimeStampReq encoder
+- Implement `build_timestamp_req` in `signet_pro/tsa.rs` with `der`+`spki`.
+- TDD: failing test asserts SHA-256 OID + digest bytes appear in DER output.
+- Verify `cms` crate already in deps tree (it is — used by v3.10.0).
+
+### Disk: 1.4Gi free at tick end. Pre-existing pressure; will need
+`cargo clean -p slab-app` before next bundle build.
+
+### LAST_WOW_TICK_AT: 2026-05-23T21:20Z (Signet end-to-end sign+verify; <24h)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.10.0 Signet — published prior tick.
+
+---
+
+## PRIOR STATUS: v3.10.0 Signet RELEASED — 6 artifacts uploaded, Docker image live, all CI green.
 
 **TICK 2026-05-23 15:02 PT (Saturday off-hours)** — MODE B FINALIZE executed.
 - CI run 26344139015 (build + 4-platform bundle) — **all success** ✅
@@ -518,3 +667,4 @@ stale Chrome code-signing scratch clone at
 Removed it during this tick; APFS recovered ~1.4GB usable plus the rest
 as purgeable space. If this happens again, the same path is a safe first
 target — macOS regenerates as needed.
+</details>

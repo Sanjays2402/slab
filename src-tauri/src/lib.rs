@@ -3893,6 +3893,27 @@ pub struct SignetSignArgs {
     pub location: Option<String>,
     pub contact_info: Option<String>,
     pub field_name: Option<String>,
+    /// Optional visible signature appearance. When `None`, the signature is
+    /// invisible (legacy v3.10.0 behaviour). When `Some`, a Form XObject
+    /// stamp is rendered on the specified page + rect.
+    pub appearance: Option<SignetAppearanceArgs>,
+    /// Optional RFC 3161 timestamp authority URL. When set, the signature
+    /// is upgraded to CAdES-T (BES + embedded timestamp token). Network
+    /// call. Default: `None` (offline / CAdES-BES).
+    pub tsa_url: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SignetAppearanceArgs {
+    /// 1-indexed page number.
+    pub page: u32,
+    /// `[llx, lly, urx, ury]` in PDF user-space units.
+    pub rect: [f32; 4],
+    pub show_name: Option<bool>,
+    pub show_date: Option<bool>,
+    pub show_reason: Option<bool>,
+    pub show_location: Option<bool>,
+    pub font_size: Option<f32>,
 }
 
 #[derive(serde::Serialize)]
@@ -3941,6 +3962,54 @@ async fn signet_load_identity(
     })
 }
 
+/// Format a Unix timestamp (seconds since epoch) as "YYYY-MM-DD HH:MM UTC".
+/// Used to seed the visible-signature appearance date line. No chrono dep.
+fn format_utc_human(secs: i64) -> String {
+    const SECS_PER_DAY: i64 = 86_400;
+    let mut days = secs.div_euclid(SECS_PER_DAY);
+    let t = secs.rem_euclid(SECS_PER_DAY) as u32;
+    let h = t / 3600;
+    let mi = (t % 3600) / 60;
+    let mut y: i64 = 1970;
+    loop {
+        let dy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if days < dy {
+            break;
+        }
+        days -= dy;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let dim = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut mo = 1u32;
+    let mut d = days as u32;
+    for (i, &dm) in dim.iter().enumerate() {
+        if d < dm {
+            mo = i as u32 + 1;
+            break;
+        }
+        d -= dm;
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", y, mo, d + 1, h, mi)
+}
+
 #[tauri::command]
 async fn signet_sign(args: SignetSignArgs) -> Result<SignetSignResultDto, String> {
     let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
@@ -3950,10 +4019,35 @@ async fn signet_sign(args: SignetSignArgs) -> Result<SignetSignResultDto, String
     )
     .map_err(|e| e.to_string())?;
     let opts = crate::pdf::signet::SignOptions {
-        reason: args.reason,
-        location: args.location,
+        reason: args.reason.clone(),
+        location: args.location.clone(),
         contact_info: args.contact_info,
         field_name: args.field_name,
+        appearance: args.appearance.map(|a| {
+            use crate::pdf::signet_pro::appearance::AppearanceSpec;
+            // Best-effort human signing-time string (UTC). Format: "YYYY-MM-DD HH:MM UTC".
+            let when = {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                format_utc_human(secs)
+            };
+            AppearanceSpec {
+                page: a.page.max(1),
+                rect: a.rect,
+                font_size: a.font_size.unwrap_or(9.0),
+                show_name: a.show_name.unwrap_or(true),
+                show_date: a.show_date.unwrap_or(true),
+                show_reason: a.show_reason.unwrap_or(args.reason.is_some()),
+                show_location: a.show_location.unwrap_or(args.location.is_some()),
+                image: None,
+                reason: args.reason.clone(),
+                location: args.location.clone(),
+                signing_time: Some(when),
+            }
+        }),
+        tsa_url: args.tsa_url.filter(|s| !s.is_empty()),
     };
     let report = crate::pdf::signet::sign_pdf(
         std::path::Path::new(&args.input_path),
@@ -3997,6 +4091,203 @@ async fn signet_verify(input_path: String) -> Result<Vec<SignetVerifiedDto>, Str
             cert_not_after: v.cert_not_after,
         })
         .collect())
+}
+
+#[derive(serde::Deserialize)]
+pub struct SignetProBatchArgs {
+    pub input_dir: String,
+    pub output_dir: String,
+    pub cert_pem_path: String,
+    pub key_pem_path: String,
+    pub key_password: Option<String>,
+    /// Recurse into subdirectories. Default false.
+    pub recursive: Option<bool>,
+    /// "suffix" (default — appends -signed) or "mirror" (preserves filename).
+    pub naming: Option<String>,
+    /// Skip files whose output already exists. Default false.
+    pub skip_existing: Option<bool>,
+    /// Optional human-readable reason embedded in every signature.
+    pub reason: Option<String>,
+    /// Optional location embedded in every signature.
+    pub location: Option<String>,
+    /// Optional RFC 3161 TSA URL — when set, every signed PDF is upgraded
+    /// to CAdES-T with an embedded timestamp token.
+    pub tsa_url: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetProBatchEntryDto {
+    pub input: String,
+    pub output: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetProBatchReportDto {
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub elapsed_ms: u64,
+    pub success_rate: f64,
+    pub entries: Vec<SignetProBatchEntryDto>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct SignetProBatchProgressDto {
+    pub done: usize,
+    pub total: usize,
+    /// 0.0..=1.0
+    pub fraction: f64,
+}
+
+#[derive(serde::Serialize)]
+pub struct SignetProBatchPlannedDto {
+    pub jobs: Vec<SignetProBatchEntryDto>,
+}
+
+/// Marketing-grade copy: this is the command every law firm + IT admin
+/// will call. Drop a folder of contracts in, get signed PDFs out.
+///
+/// Emits `signet-pro/batch-progress` events of [`SignetProBatchProgressDto`]
+/// after every file completes. Frontend wires these to a progress bar.
+#[tauri::command]
+async fn signet_pro_batch_sign(
+    app: tauri::AppHandle,
+    args: SignetProBatchArgs,
+) -> Result<SignetProBatchReportDto, String> {
+    use crate::pdf::signet_pro::batch::{sign_folder, BatchOptions, NameStrategy};
+    let id = crate::pdf::signet::SigningIdentity::load_pem_pair(
+        std::path::Path::new(&args.cert_pem_path),
+        std::path::Path::new(&args.key_pem_path),
+        args.key_password.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    let id = std::sync::Arc::new(id);
+
+    let naming = match args.naming.as_deref() {
+        Some("mirror") => NameStrategy::Mirror,
+        _ => NameStrategy::SuffixSigned,
+    };
+    let opts = BatchOptions {
+        recursive: args.recursive.unwrap_or(false),
+        naming,
+        skip_if_output_exists: args.skip_existing.unwrap_or(false),
+    };
+
+    let reason = args.reason.clone();
+    let location = args.location.clone();
+    let tsa_url = args.tsa_url.clone().filter(|s| !s.is_empty());
+    let id_for_signer = std::sync::Arc::clone(&id);
+
+    let app_for_progress = app.clone();
+    let in_dir = std::path::PathBuf::from(&args.input_dir);
+    let out_dir = std::path::PathBuf::from(&args.output_dir);
+
+    // Run the rayon-parallel batch in a blocking-task slot so we don't
+    // hog the tauri async runtime. The signer closure is Send+Sync (Arc).
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        sign_folder(
+            &in_dir,
+            &out_dir,
+            &opts,
+            move |job| {
+                let sign_opts = crate::pdf::signet::SignOptions {
+                    reason: reason.clone(),
+                    location: location.clone(),
+                    contact_info: None,
+                    field_name: None,
+                    appearance: None,
+                    tsa_url: tsa_url.clone(),
+                };
+                // Ensure output dir exists for each parent — cheap, idempotent.
+                if let Some(p) = job.output.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                crate::pdf::signet::sign_pdf(&job.input, &job.output, &id_for_signer, &sign_opts)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            },
+            move |done, total| {
+                use tauri::Emitter;
+                let fraction = if total == 0 {
+                    0.0
+                } else {
+                    done as f64 / total as f64
+                };
+                let _ = app_for_progress.emit(
+                    "signet-pro/batch-progress",
+                    SignetProBatchProgressDto {
+                        done,
+                        total,
+                        fraction,
+                    },
+                );
+            },
+        )
+    })
+    .await
+    .map_err(|e| format!("batch task join: {e}"))?
+    .map_err(|e| format!("batch IO: {e}"))?;
+
+    Ok(SignetProBatchReportDto {
+        total: report.total,
+        succeeded: report.succeeded,
+        failed: report.failed,
+        elapsed_ms: report.elapsed.as_millis() as u64,
+        success_rate: report.success_rate(),
+        entries: report
+            .entries
+            .into_iter()
+            .map(|e| SignetProBatchEntryDto {
+                input: e.input.display().to_string(),
+                output: e.output.display().to_string(),
+                ok: e.ok,
+                error: e.error,
+                elapsed_ms: e.elapsed.as_millis() as u64,
+            })
+            .collect(),
+    })
+}
+
+/// Dry-run: walk the input folder, return the planned (input → output) pairs
+/// without signing anything. Powers the panel's "preview before sign" row.
+#[tauri::command]
+async fn signet_pro_batch_plan(
+    input_dir: String,
+    output_dir: String,
+    recursive: Option<bool>,
+    naming: Option<String>,
+    skip_existing: Option<bool>,
+) -> Result<SignetProBatchPlannedDto, String> {
+    use crate::pdf::signet_pro::batch::{plan_batch, BatchOptions, NameStrategy};
+    let opts = BatchOptions {
+        recursive: recursive.unwrap_or(false),
+        naming: match naming.as_deref() {
+            Some("mirror") => NameStrategy::Mirror,
+            _ => NameStrategy::SuffixSigned,
+        },
+        skip_if_output_exists: skip_existing.unwrap_or(false),
+    };
+    let jobs = plan_batch(
+        std::path::Path::new(&input_dir),
+        std::path::Path::new(&output_dir),
+        &opts,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SignetProBatchPlannedDto {
+        jobs: jobs
+            .into_iter()
+            .map(|j| SignetProBatchEntryDto {
+                input: j.input.display().to_string(),
+                output: j.output.display().to_string(),
+                ok: true,
+                error: None,
+                elapsed_ms: 0,
+            })
+            .collect(),
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -4229,6 +4520,8 @@ pub fn run() {
             signet_load_identity,
             signet_sign,
             signet_verify,
+            signet_pro_batch_sign,
+            signet_pro_batch_plan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
