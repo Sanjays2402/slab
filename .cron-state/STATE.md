@@ -4,7 +4,43 @@
 
 ---
 
-## STATUS: 📋 v3.17.0 "Markdown" PLAN FILED (2026-05-24 02:55 PT)
+## STATUS: 🚀 v3.17.0 "Markdown" MERGED + TAGGED — CI RUNNING (2026-05-24 03:28 PT)
+
+**TICK 2026-05-24 03:21 PT (Sunday off-hours)** — MODE A RELEASE complete,
+RELEASE_PENDING set for next tick.
+
+- Finished Tasks 5/6/7/8/9 of the v3.17.0 plan in one tick.
+- Task 7: added `Step::ConvertToMarkdown` + `Step::ConvertToHtml` to Atelier
+  recipe + run.rs dispatch — batch a folder of PDFs to .md/.html.
+- Task 8: bumped 3.16.0 → 3.17.0 in Cargo.toml/package.json/tauri.conf.json,
+  wrote marketing-grade release notes at `.cron-state/release-notes-v3.17.0.md`.
+- Task 9: merged `feature/v3.17.0-markdown` → main (no-ff), tagged `v3.17.0`,
+  pushed with --follow-tags.
+- All 4 quality gates GREEN on main: fmt, clippy (-D warnings), 1567 tests,
+  pnpm check (0 errors, 62 pre-existing warns).
+- Had to clean `/Users/sanjay/mac-command-center/src-tauri/target` (914M)
+  + slab target/debug/incremental (817M) mid-tick — disk was at 100%.
+  Now at 95% (1.2Gi free).
+
+RELEASE_PENDING: v3.17.0 — merge SHA 4a9d366, tag v3.17.0,
+build run 26358777398, Docker run 26358777407. Next tick (MODE B) polls
++ downloads artifacts + publishes the release.
+
+LAST_WOW_TICK_AT: 2026-05-24T10:28Z (v3.17.0 Markdown — first mainstream
+offline PDF → Markdown converter, AI-era wedge)
+
+### Next tick — MODE B FINALIZE
+
+1. `gh run view 26358777398` + `gh run view 26358777407` — confirm green.
+2. `gh run download 26358777398 --dir /tmp/slab-release-v3.17.0`.
+3. Curate 6 artifacts, `gh release create v3.17.0 --title 'v3.17.0 — Markdown'
+   --notes-file .cron-state/release-notes-v3.17.0.md` + upload.
+4. Verify Docker at `ghcr.io/sanjays2402/slab-server:v3.17.0`.
+5. Clear RELEASE_PENDING.
+
+---
+
+## PRIOR STATUS: 📋 v3.17.0 "Markdown" PLAN FILED (2026-05-24 02:55 PT)
 
 **TICK 2026-05-24 02:55 PT (Sunday off-hours)** — PLANNING tick (Sanjay
 invoked the `writing-plans` skill explicitly).
