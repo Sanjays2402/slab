@@ -1279,6 +1279,23 @@ fn slab_diff3_pdfs(
     crate::pdf::diff3::three_way_diff(&base, &mine, &theirs).into()
 }
 
+/// v3.24.0 "Stack Pro" — materialise the merged text per page given a fresh
+/// three-way diff (re-run on the backend to avoid shipping the whole DTO
+/// back over IPC) plus the user's conflict-resolution choices. Returns the
+/// per-page line vec the frontend can preview and the Task 5 PDF exporter
+/// will turn into a PDF.
+#[tauri::command]
+fn slab_diff3_materialize(
+    base: PathBuf,
+    mine: PathBuf,
+    theirs: PathBuf,
+    resolutions: Vec<crate::pdf::diff3::ResolutionEntry>,
+) -> CmdResult<crate::pdf::diff3::MergedText> {
+    crate::pdf::diff3::three_way_diff(&base, &mine, &theirs)
+        .map(|d| crate::pdf::diff3::materialize_merged_text(&d, &resolutions))
+        .into()
+}
+
 /// v2.4.0 "Stack" — visual (pixel-level) PDF diff. Renders both sides at
 /// `dpi` via Poppler, masks per-pixel luma delta, and returns axis-aligned
 /// change boxes alongside the existing line-level diff. Defaults are tuned
@@ -4623,6 +4640,7 @@ pub fn run() {
             slab_diff_pdfs,
             slab_diff_export_report,
             slab_diff3_pdfs,
+            slab_diff3_materialize,
             slab_visual_diff_pdfs,
             slab_stack_export_redline,
             slab_slides_analyze,

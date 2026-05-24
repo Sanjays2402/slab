@@ -73,6 +73,99 @@ pub struct ThreeWayDiff {
     pub total: ThreeWaySummary,
 }
 
+/// Which side the user chose to keep for a given conflict row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Resolution {
+    Mine,
+    Theirs,
+}
+
+/// One resolution entry: page index (0-based) + line index (0-based within
+/// the page's `lines` vec) + which side wins. Matches the
+/// `resolutions["pageIdx:lineIdx"]` shape the Svelte panel keeps in memory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolutionEntry {
+    pub page_idx: u32,
+    pub line_idx: u32,
+    pub choice: Resolution,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedPage {
+    pub page: u32,
+    pub lines: Vec<String>,
+    pub unresolved_conflicts: u32,
+}
+
+/// Result of merging a `ThreeWayDiff` down to plain text using a set of
+/// user-supplied conflict resolutions. Unresolved conflicts fall back to the
+/// base line and are counted in `unresolved_conflicts` so the UI can warn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedText {
+    pub pages: Vec<MergedPage>,
+    pub total_unresolved: u32,
+}
+
+/// Materialise the merged text body for each page given the user's conflict
+/// resolutions. The merge rule per line:
+///
+/// - `Unchanged` / `BothAgree` → take the agreed text (mine_text or base).
+/// - `MineOnly` → take `mine_text` (or skip if mine deleted the line).
+/// - `TheirsOnly` → take `theirs_text` (or skip if theirs deleted the line).
+/// - `Conflict` → look up the user's `Resolution`. If absent, fall back to
+///   the base text and bump `unresolved_conflicts`.
+///
+/// Pure function — does not touch disk. This is the building block for the
+/// Task 5 PDF exporter in the v3.24.0 plan.
+pub fn materialize_merged_text(diff: &ThreeWayDiff, resolutions: &[ResolutionEntry]) -> MergedText {
+    use std::collections::HashMap;
+    let mut by_cell: HashMap<(u32, u32), Resolution> = HashMap::new();
+    for r in resolutions {
+        by_cell.insert((r.page_idx, r.line_idx), r.choice);
+    }
+
+    let mut out_pages = Vec::with_capacity(diff.pages.len());
+    let mut total_unresolved: u32 = 0;
+    for (pi, page) in diff.pages.iter().enumerate() {
+        let mut lines: Vec<String> = Vec::new();
+        let mut unresolved: u32 = 0;
+        for (li, line) in page.lines.iter().enumerate() {
+            let text: Option<String> = match line.kind {
+                ThreeWayKind::Unchanged | ThreeWayKind::BothAgree => line
+                    .mine_text
+                    .clone()
+                    .or_else(|| line.theirs_text.clone())
+                    .or_else(|| Some(line.base_text.clone())),
+                ThreeWayKind::MineOnly => line.mine_text.clone(),
+                ThreeWayKind::TheirsOnly => line.theirs_text.clone(),
+                ThreeWayKind::Conflict => match by_cell.get(&(pi as u32, li as u32)) {
+                    Some(Resolution::Mine) => line.mine_text.clone(),
+                    Some(Resolution::Theirs) => line.theirs_text.clone(),
+                    None => {
+                        unresolved = unresolved.saturating_add(1);
+                        Some(line.base_text.clone())
+                    }
+                },
+            };
+            if let Some(t) = text {
+                lines.push(t);
+            }
+        }
+        total_unresolved = total_unresolved.saturating_add(unresolved);
+        out_pages.push(MergedPage {
+            page: page.page,
+            lines,
+            unresolved_conflicts: unresolved,
+        });
+    }
+
+    MergedText {
+        pages: out_pages,
+        total_unresolved,
+    }
+}
+
 /// Three-way diff entry point. Reads three PDFs from disk, runs two 2-way
 /// diffs against the common ancestor, and merges.
 pub fn three_way_diff(base: &Path, mine: &Path, theirs: &Path) -> Result<ThreeWayDiff, PdfError> {
@@ -449,5 +542,84 @@ mod tests {
         let j = serde_json::to_string(&t).unwrap();
         let back: ThreeWayDiff = serde_json::from_str(&j).unwrap();
         assert_eq!(t, back);
+    }
+
+    #[test]
+    fn materialize_picks_mine_for_resolved_conflict() {
+        let bm = one_page_diff(vec![
+            line(DiffOp::Equal, Some(1), Some(1), "alpha"),
+            line(DiffOp::Delete, Some(2), None, "beta"),
+            line(DiffOp::Insert, None, Some(2), "BETA-MINE"),
+            line(DiffOp::Equal, Some(3), Some(3), "gamma"),
+        ]);
+        let bt = one_page_diff(vec![
+            line(DiffOp::Equal, Some(1), Some(1), "alpha"),
+            line(DiffOp::Delete, Some(2), None, "beta"),
+            line(DiffOp::Insert, None, Some(2), "BETA-THEIRS"),
+            line(DiffOp::Equal, Some(3), Some(3), "gamma"),
+        ]);
+        let t = three_way_from_diffs(&bm, &bt, "/b".into(), "/m".into(), "/h".into());
+        // Find the conflict line index on page 0.
+        let li = t.pages[0]
+            .lines
+            .iter()
+            .position(|l| l.kind == ThreeWayKind::Conflict)
+            .unwrap() as u32;
+        let merged = materialize_merged_text(
+            &t,
+            &[ResolutionEntry {
+                page_idx: 0,
+                line_idx: li,
+                choice: Resolution::Mine,
+            }],
+        );
+        assert_eq!(merged.total_unresolved, 0);
+        let text = merged.pages[0].lines.join("\n");
+        assert!(text.contains("BETA-MINE"), "got {text:?}");
+        assert!(!text.contains("BETA-THEIRS"), "got {text:?}");
+        assert!(text.contains("alpha"));
+        assert!(text.contains("gamma"));
+    }
+
+    #[test]
+    fn materialize_unresolved_conflicts_fall_back_to_base() {
+        let bm = one_page_diff(vec![
+            line(DiffOp::Delete, Some(1), None, "beta"),
+            line(DiffOp::Insert, None, Some(1), "BETA-MINE"),
+        ]);
+        let bt = one_page_diff(vec![
+            line(DiffOp::Delete, Some(1), None, "beta"),
+            line(DiffOp::Insert, None, Some(1), "BETA-THEIRS"),
+        ]);
+        let t = three_way_from_diffs(&bm, &bt, "/b".into(), "/m".into(), "/h".into());
+        let merged = materialize_merged_text(&t, &[]);
+        assert_eq!(merged.total_unresolved, 1);
+        assert_eq!(merged.pages[0].lines, vec!["beta".to_string()]);
+        assert_eq!(merged.pages[0].unresolved_conflicts, 1);
+    }
+
+    #[test]
+    fn materialize_one_sided_changes_take_that_side() {
+        // Mine changes line 2; theirs leaves it alone.
+        let bm = one_page_diff(vec![
+            line(DiffOp::Equal, Some(1), Some(1), "alpha"),
+            line(DiffOp::Delete, Some(2), None, "beta"),
+            line(DiffOp::Insert, None, Some(2), "BETA-MINE"),
+            line(DiffOp::Equal, Some(3), Some(3), "gamma"),
+        ]);
+        let bt = one_page_diff(vec![
+            line(DiffOp::Equal, Some(1), Some(1), "alpha"),
+            line(DiffOp::Equal, Some(2), Some(2), "beta"),
+            line(DiffOp::Equal, Some(3), Some(3), "gamma"),
+        ]);
+        let t = three_way_from_diffs(&bm, &bt, "/b".into(), "/m".into(), "/h".into());
+        let merged = materialize_merged_text(&t, &[]);
+        assert_eq!(merged.total_unresolved, 0);
+        let body = merged.pages[0].lines.join("\n");
+        assert!(body.contains("BETA-MINE"), "got {body:?}");
+        assert!(
+            !body.contains("beta\n") && body.contains("alpha"),
+            "got {body:?}"
+        );
     }
 }
