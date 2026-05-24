@@ -4,7 +4,45 @@
 
 ---
 
-## STATUS: v3.13.0 "Streamline" MERGED + TAGGED — Fast Web View shipped, CI running, FINALIZE next tick.
+## STATUS: v3.13.0 "Streamline" SHIPPED PUBLICLY — release live with all 6 installers, Docker image on GHCR.
+
+**TICK 2026-05-23 22:18 PT (Saturday off-hours)** — MODE B FINALIZE complete.
+
+This tick:
+- Watched CI run `26352543700` (build/main) to green (success, all 4 platforms bundled).
+- Docker tag workflow `26352543680` already green from previous tick.
+- Downloaded 6 installer artifacts (macOS arm64 + x64 DMG, Linux deb + AppImage,
+  Windows MSI + NSIS) from CI.
+- Published GitHub Release `v3.13.0 — Streamline` with marketing-grade notes
+  and all 6 binaries attached: https://github.com/Sanjays2402/slab/releases/tag/v3.13.0
+- RELEASE_PENDING cleared.
+
+**Buy-Button verdict — PASS**: Customers can now download Slab v3.13.0 today
+and produce Fast Web View PDFs offline. Adobe charges $239/yr for that step.
+
+### Next tick — MODE C DEVELOP
+
+Roadmap fall-through. Recommended next: **Cmd+K Command Palette** — single
+biggest cross-cutting "wow + pick-us" feature still missing. Reachable from
+anywhere, every action 2 keystrokes away, ships at Linear/Raycast quality.
+Alternative: v0.11.0 "Lathe" full edit mode per the original roadmap, but
+the product is now at v3.13.0 — the roadmap codenames are ahead of the
+official version numbers, so it's a naming question, not a feature question.
+
+Operational notes for next tick:
+- Disk was tight; `src-tauri/target/debug` cleared last tick. Re-monitor.
+- `~/Library/Application Support/adspower_global` (9.6 GB) + `~/Downloads`
+  (9.6 GB) are still candidates for Sanjay to clear when he has a moment.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.13.0 Streamline: **SHIPPED 2026-05-24** — release published with 6 artifacts.
+- v3.12.0 Atelier: released 2026-05-23.
+
+### LAST_WOW_TICK_AT: 2026-05-24T04:08Z (Linearizer — held from previous tick.)
+
+---
+
+## PRIOR STATUS: v3.13.0 "Streamline" MERGED + TAGGED — Fast Web View shipped, CI running, FINALIZE next tick.
 
 **TICK 2026-05-23 21:56 PT (Saturday off-hours)** — MODE C → MODE A RELEASE.
 
