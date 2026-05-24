@@ -21,7 +21,8 @@ export type StepKind =
   | "bates"
   | "watermark"
   | "flatten"
-  | "compactor";
+  | "compactor"
+  | "linearize";
 
 export type Step =
   | { kind: "ocr"; language: string }
@@ -29,7 +30,8 @@ export type Step =
   | { kind: "bates"; prefix: string; start: number; digits: number }
   | { kind: "watermark"; text: string; opacity: number }
   | { kind: "flatten"; dpi: number }
-  | { kind: "compactor" };
+  | { kind: "compactor" }
+  | { kind: "linearize" };
 
 export interface Recipe {
   name: string;
@@ -70,6 +72,8 @@ export function defaultStep(kind: StepKind): Step {
       return { kind: "flatten", dpi: 150 };
     case "compactor":
       return { kind: "compactor" };
+    case "linearize":
+      return { kind: "linearize" };
   }
 }
 
@@ -90,6 +94,8 @@ export function stepLabel(s: Step): string {
       return `Flatten ${s.dpi}dpi`;
     case "compactor":
       return "Compact";
+    case "linearize":
+      return "Fast Web View";
   }
 }
 
@@ -108,6 +114,8 @@ export function stepGlyph(s: Step): string {
       return "▤";
     case "compactor":
       return "▣";
+    case "linearize":
+      return "⚡";
   }
 }
 

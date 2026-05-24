@@ -52,6 +52,7 @@
     { kind: "watermark", label: "Watermark", sub: "Diagonal text overlay" },
     { kind: "flatten", label: "Flatten", sub: "Raster + immutable" },
     { kind: "compactor", label: "Compact", sub: "Strip unused objects" },
+    { kind: "linearize", label: "Fast Web View", sub: "Stream page 1 instantly" },
   ];
 
   let recipe = $state<Recipe>({ name: "Untitled", version: 1, steps: [] });
@@ -519,6 +520,8 @@
                 </label>
               {:else if s.kind === "compactor"}
                 <p class="muted">No parameters.</p>
+              {:else if s.kind === "linearize"}
+                <p class="muted">No parameters. Output streams page 1 to readers before the rest downloads.</p>
               {/if}
             </div>
           </li>

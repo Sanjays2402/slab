@@ -1542,6 +1542,45 @@ fn slab_compactor_compact(
 }
 
 #[tauri::command]
+fn slab_streamline_inspect(
+    input: PathBuf,
+) -> CmdResult<crate::pdf::streamline::dto::LinearizeReport> {
+    use crate::pdf::streamline::{dto::LinearizeReport, is_linearized};
+    match is_linearized(&input) {
+        Ok((status, stats)) => CmdResult::Ok {
+            value: LinearizeReport {
+                input_path: input.to_string_lossy().into_owned(),
+                output_path: None,
+                before: stats.clone(),
+                after: None,
+                status,
+                warnings: Vec::new(),
+            },
+        },
+        Err(e) => CmdResult::Err {
+            message: format!("{e}"),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_streamline_linearize(
+    input: PathBuf,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::streamline::dto::LinearizeReport> {
+    crate::pdf::streamline::linearize_pdf(&input, &output).into()
+}
+
+#[tauri::command]
+fn slab_streamline_audit(
+    folder: PathBuf,
+    recursive: bool,
+    max_files: Option<usize>,
+) -> CmdResult<crate::pdf::streamline::AuditReport> {
+    crate::pdf::streamline::audit_folder(&folder, recursive, max_files).into()
+}
+
+#[tauri::command]
 fn slab_encrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
     do_encrypt(&input, &output, &password).into()
 }
@@ -4399,6 +4438,9 @@ pub fn run() {
             slab_compress,
             slab_compactor_estimate,
             slab_compactor_compact,
+            slab_streamline_inspect,
+            slab_streamline_linearize,
+            slab_streamline_audit,
             slab_encrypt,
             slab_decrypt,
             slab_watermark,

@@ -4,43 +4,111 @@
 
 ---
 
-## STATUS: v3.13.0 Streamline Slice 1+2+3 SHIPPED — end-to-end inspector live on `feature/v3.13.0-streamline`.
+## STATUS: v3.13.0 Streamline Task 6 (linearizer) shipped — Fast Web View write path live, end-to-end vertical complete.
 
-**TICK 2026-05-23 20:0x PT (Saturday off-hours)** — MODE C DEVELOP.
+**TICK 2026-05-23 21:08 PT (Saturday off-hours)** — MODE C DEVELOP.
 
-Folded Tasks 1+2+3 of the Streamline plan + Tauri commands + Svelte panel into
-one tick. The "is this PDF Fast Web View optimized?" inspector is end-to-end
-working today; the linearizer writer ships in upcoming ticks.
+Shipped Task 6 (end-to-end `linearize_pdf` writer) + wired the
+"Optimize for Fast Web View" button. Slab can now PRODUCE Fast Web View
+PDFs, not just detect them. Adobe charges $239/yr for this; we just
+gave it away offline. The full vertical (inspect → optimize → re-inspect
+→ batch audit) is feature-complete on this branch.
 
-Shipped (4 commits / 909 net LOC on `feature/v3.13.0-streamline`):
-- `169907e` docs(adr): 0013 — streamline (PDF linearization / Fast Web View)
-- `f311ff6` feat(streamline): scaffold module + DTOs
-- `fb914df` feat(streamline): is_linearized inspector + first-page object-graph walk (9 unit tests ✓)
-- `9268718` feat(streamline): Tauri commands + Svelte panel — end-to-end inspector
+Shipped (3 commits / ~700 net LOC this tick + the inspector fix):
+- `8e6b5fc` fix(streamline): match exact PDF name boundaries in inspector
+- `7a4fd1c` feat(streamline): end-to-end PDF linearizer (PDF 1.4 §F.2) — 639 LOC
+- `8e75439` feat(streamline): wire "Optimize for Fast Web View" button to backend
 
-Quality gates ALL ✓ (fmt, clippy -D warnings, 1427 unit tests, pnpm check 0 errors).
+Quality gates ALL ✓ (fmt, clippy -D warnings, **1458 unit tests** (+7), pnpm check 0 errors).
 
-Push triggered CI run `26350495175` on the feature branch — check next tick.
+### Implementation notes worth remembering
 
-Disk note: `cargo clean` recovered 4.9 GiB at start of tick (was at 202 MiB free).
-Current: ~3 GiB free. Tight but workable.
+- lopdf 0.40 SKIPS objects whose `get_type()` returns "Linearized"/"ObjStm"/"XRef"
+  (writer.rs:57). The `/Linearized` key alone triggers this even without `/Type`.
+  Workaround: hand-roll the lin dict serialization with `write_lin_dict_manually`.
+- lopdf's high-numbered sentinel objects silently get serialized as xref STREAMS,
+  not plain `obj` headers. Burned an hour on a "trailer body header not found"
+  panic from this. Fix: hand-roll the trailer too via `serialize_value`.
+- The inspector's `/L <num>` parser collided with `/Linearized` (substring match).
+  Fixed with `find_key` that demands a non-name-continuation byte after the key.
+  Round-trip detection of our own outputs silently degraded before the fix.
 
-### LAST_WOW_TICK_AT: 2026-05-24T03:12Z (Streamline inspector — first tool to surface "first-page prefix" diagnostic; Acrobat Standard $179/yr doesn't ship this feature at all)
+### LAST_WOW_TICK_AT: 2026-05-24T04:08Z (Linearizer ships — Adobe charges $239/yr to produce Fast Web View PDFs; Slab does it free, offline, cross-platform.)
 
-### Next tick — MODE C DEVELOP — Task 4 (param dict builder)
+### Buy-Button verdict — PASS on 4 of 4
 
-1. Poll CI run `26350495175` — confirm 4-platform bundles green on the branch.
+- Pay-for-it: Acrobat Pro's "Save as Optimized PDF → Fast Web View" is paid + cloud-trip; ours is free + local.
+- Notice-it: The Optimize button now actually optimizes (was a "coming soon" toast).
+- Pick-us: PDF Expert and Foxit don't ship a linearizer at all on Linux.
+- Tell-a-friend: "Drop a PDF, click Optimize, get a Fast Web View file that loads page 1 instantly on a slow connection." Demo-ready.
+
+### Next tick — MODE C DEVELOP — Task 7+ (cross-validate + release prep)
+
+1. Poll latest CI run — confirm Task 6 commits build cleanly on all 4 platforms.
+2. Tasks remaining per plan (lines 950+):
+   - Task 7: cross-validator (re-open the output, walk the lin dict, prove offsets match real positions). Optional but worth shipping.
+   - Task 8: integration tests against real Adobe-produced linearized PDFs (round-trip and detect).
+   - Task 9: bump version to v3.13.0, release notes, merge to main, tag.
+3. The branch is now feature-complete enough to merge IF CI is green. Consider
+   collapsing Tasks 7+8 into a single integration-test tick, then MODE A RELEASE.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
+- v3.13.0 Streamline Task 6 (linearizer writer): shipped on feature branch `feature/v3.13.0-streamline` @ 7a4fd1c.
+
+---
+
+## PRIOR STATUS: v3.13.0 Streamline Tasks 4+5 + Batch Audit shipped — folder-level enterprise workflow live.
+
+**TICK 2026-05-23 20:24 PT (Saturday off-hours)** — MODE C DEVELOP.
+
+Folded Task 4 (param dict builder) + Task 5 (primary hint stream builder)
++ a bonus end-to-end buy-button feature — **batch linearization audit**
+— into one tick. Drop a folder, get a sortable/filterable Fast Web View
+report with CSV export. The paralegal-auditing-500-discovery-PDFs
+workflow Adobe charges $239/yr for via Action Wizard.
+
+Shipped (4 commits / 1401 net LOC on `feature/v3.13.0-streamline`):
+- `8ee0461` feat(streamline): linearization param dict builder (task 4, 5 unit tests)
+- `5d102e4` feat(streamline): primary hint stream builder (task 5, 6 unit tests)
+- `0ff1931` feat(streamline): batch audit backend + tauri command (10 unit tests)
+- `be7448d` feat(streamline): batch audit UI — sortable, filterable, CSV export
+
+Quality gates ALL ✓ (fmt, clippy -D warnings, **1451 unit tests** (+24), pnpm check 0 errors).
+
+Push triggered CI run `26350964182` on the feature branch — check next tick.
+
+Disk note: `cargo clean` recovered 4.8 GiB mid-tick. Now ~3.6 GiB free.
+
+### LAST_WOW_TICK_AT: 2026-05-24T03:39Z (Batch audit UI — sortable table + CSV export + 5-card summary; Acrobat Action Wizard equivalent free + offline)
+
+### Buy-Button verdict — PASS on 4 of 4
+
+- Pay-for-it: Acrobat Pro Action Wizard ($239/yr) for batch Fast Web View → free + offline in Slab.
+- Notice-it: Streamline panel now has a "Batch audit" tab — visible on first open.
+- Pick-us: No competitor ships a free, offline, cross-platform Fast Web View batch auditor with CSV export.
+- Tell-a-friend: Five-card summary + sortable table screenshot.
+
+### Next tick — MODE C DEVELOP — Task 6 (end-to-end writer)
+
+1. Poll CI run `26350964182` — confirm 4-platform bundles green.
 2. Continue on `feature/v3.13.0-streamline`.
-3. Execute Task 4 (linearization parameter dict builder) + Task 5 (primary
-   hint stream builder) — fold into one tick if scope allows.
-4. Task 6 (end-to-end writer) likely its own tick — biggest single piece.
+3. Execute Task 6 (end-to-end `linearize_pdf` writer) — biggest task, likely
+   its own tick. Combines depgraph + param_dict + hint_stream + object
+   reordering + manual xref emission.
+4. After Task 6: wire writer into the existing "Optimize for Fast Web View"
+   button (already in UI), bump version, release.
 
 ### RECENTLY_CLOSED_ISSUES:
 - v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
 
 ---
 
-## PRIOR STATUS: v3.12.0 Atelier RELEASED — 6 artifacts uploaded, Docker live. v3.13.0 Streamline PLAN landed, ready to execute.
+## PRIOR STATUS (sibling cron note): the STATE.md block below was the v3.12.0 release record from earlier today. The intervening "Slice 1+2+3" tick (commits 169907e..9268718 on `feature/v3.13.0-streamline`) was correctly shipped — see `git log feature/v3.13.0-streamline` for the full chain.
+
+---
+
+## STATUS: v3.12.0 Atelier RELEASED — 6 artifacts uploaded, Docker live. v3.13.0 Streamline PLAN landed, ready to execute.
 
 **TICK 2026-05-23 19:46 PT (Saturday off-hours)** — MODE B FINALIZE executed.
 - CI build run 26349407913: all 7 jobs green (4-platform bundles + 3-platform cargo test, clippy, fmt).

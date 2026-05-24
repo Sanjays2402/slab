@@ -50,6 +50,13 @@ pub enum Step {
         dpi: u32,
     },
     Compactor,
+    /// Optimize the PDF for Fast Web View (PDF 1.4 §F linearization).
+    ///
+    /// Rewrites the file so the first page + cross-reference hints come
+    /// at the front, letting a browser stream-render page 1 before the
+    /// rest of the document has finished downloading. Adobe Acrobat Pro
+    /// charges $239/yr for this; Slab does it free + offline.
+    Linearize,
 }
 
 fn default_lang() -> String {
@@ -140,6 +147,7 @@ mod tests {
             },
             Step::Flatten { dpi: 300 },
             Step::Compactor,
+            Step::Linearize,
         ];
         for s in steps {
             let j = serde_json::to_string(&s).unwrap();
