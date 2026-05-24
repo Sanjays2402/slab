@@ -28,6 +28,7 @@ pub mod invert;
 pub mod legal_stamp;
 pub mod library;
 pub mod loom;
+pub mod markdown;
 pub mod md2pdf;
 pub mod merge;
 pub mod metadata;
