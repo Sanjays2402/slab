@@ -4,6 +4,53 @@
 
 ---
 
+## STATUS: 🚧 v3.22.0 'Hopper Loop' — UI complete, ready for release prep (2026-05-24 12:50 PT)
+
+**TICK 2026-05-24 12:50 PT (Sunday off-hours)** — MODE C DEVELOP.
+
+### What happened this tick
+
+Shipped Tasks 5+6+7+8 of the v3.22.0 Hopper Loop plan end-to-end. The
+backfill feature is now fully reachable from real UI:
+
+- **Task 5** (c49ab33): Tauri command surface — `slab_hopper_plan_backfill`,
+  `execute_backfill`, `list_backfill_runs` registered.
+- **Tasks 6+7** (6cc1525): TS API client + `HopperBackfillPanel.svelte` —
+  Liquid Glass overlay with dry-run preview table, action bar, recent-runs
+  disclosure. Wired "Test on this folder…" button into Rules Editor.
+- **Task 8** (1c27b84): Command palette entry "Hopper: Backfill folder
+  with rules" + Cmd/Ctrl+Shift+H global shortcut + ShortcutsOverlay entry.
+
+All 4 commits on `feature/v3.22.0-hopper-loop`. Quality gates all green:
+cargo fmt + clippy + cargo test (73 hopper tests pass) + pnpm check 0
+errors.
+
+### LAST_WOW_TICK_AT: 2026-05-24T19:50:00Z (Backfill dry-run preview table)
+
+The dry-run table is the wow: zero competitors (Hazel, Adobe AutoActions,
+Foxit, Acrobat) show what's about to happen before they commit. Slab does.
+
+### Next tick (Tasks 9-10 — RELEASE)
+
+1. Bump versions to 3.22.0 in `Cargo.toml`, `tauri.conf.json`, `package.json`.
+2. Write `docs/releases/v3.22.0.md` marketing-tone notes.
+3. MODE A: merge branch → main, quality gates, tag v3.22.0, push.
+4. MODE B: watch CI, download artifacts, create GitHub release.
+
+### Sanjay TODO (carried over)
+
+- Complete `docs/ops/try-slab-deploy.md` steps 1-6 (Cloudflare Pages).
+- Optional: record 5-second demo video for landing (issue #27 closed).
+- Disk on the mini at ~5 GiB free — `cargo clean` before heavy builds.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 / v3.19.0 / v3.20.0 / v3.21.0 published.
+
+Session log: `.cron-state/sessions/2026-05-24-1250.md`.
+
+---
+
 ## STATUS: ✅ v3.21.0 'Hopper Conditions' PUBLISHED (2026-05-24 10:20 PT)
 
 **TICK 2026-05-24 10:20 PT (Sunday off-hours)** — MODE B FINALIZE complete.

@@ -69,8 +69,36 @@
    *  editor expanded. `null` = all collapsed. */
   let expandedRulesWatchId = $state<number | null>(null);
 
+  /** Bound `bind:this` on the currently-expanded HopperRulesEditor.
+   *  Used to call `openBackfill()` from the `slab:open-hopper-backfill`
+   *  event (Cmd+Shift+H / palette). Only one editor is expanded at a
+   *  time, so a single ref is sufficient. */
+  let expandedRulesEditorRef = $state<
+    { openBackfill: () => void } | undefined
+  >(undefined);
+
   function toggleRules(watchId: number) {
     expandedRulesWatchId = expandedRulesWatchId === watchId ? null : watchId;
+  }
+
+  /** Deep-link from the command palette or Cmd+Shift+H — open the
+   *  Rules Editor on the first watch and pop the Backfill panel. If
+   *  the user has multiple watches we pick the first enabled one;
+   *  they can switch by collapsing this watch + expanding another. */
+  function openBackfillForFirstWatch(): void {
+    if (watches.length === 0) return;
+    const target = watches.find((w) => w.enabled) ?? watches[0];
+    if (expandedRulesWatchId !== target.id) {
+      expandedRulesWatchId = target.id;
+    }
+    // Wait for the RulesEditor to mount + register its ref. Two
+    // microtasks: one for the {#if} block to render, one for bind:this
+    // to assign. queueMicrotask twice is more reliable than a setTimeout.
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        expandedRulesEditorRef?.openBackfill();
+      });
+    });
   }
 
   // -------------------------------------------------------------------
@@ -100,11 +128,22 @@
           .catch(() => {});
       }, 5000);
     }
+    // v3.22.0 Hopper Loop — deep-link entry from Cmd+Shift+H and the
+    // command palette. Fires once when the panel mounts (the palette
+    // dispatches after `queueMicrotask`, so the listener is up first).
+    window.addEventListener(
+      "slab:open-hopper-backfill",
+      openBackfillForFirstWatch,
+    );
   });
 
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
     if (unlisten) unlisten();
+    window.removeEventListener(
+      "slab:open-hopper-backfill",
+      openBackfillForFirstWatch,
+    );
   });
 
   async function refresh() {
@@ -348,6 +387,7 @@
             {#if expandedRulesWatchId === w.id}
               <li class="rules-host">
                 <HopperRulesEditor
+                  bind:this={expandedRulesEditorRef}
                   watchId={w.id}
                   watchSource={w.source_dir}
                   watchOutput={w.output_dir}

@@ -539,6 +539,28 @@
         return;
       }
     }
+    // Hopper Loop (v3.22.0): Cmd/Ctrl+Shift+H opens the Hopper panel
+    // and immediately dispatches `slab:open-hopper-backfill` so the
+    // backfill overlay pops up on the watch the user was viewing.
+    // Same hardcoded pattern as Bates/Stamp/Loupe above.
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      (e.key === "H" || e.key === "h")
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "hopper";
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-hopper-backfill"));
+        });
+        return;
+      }
+    }
     // Loupe (v3.0.1): focus the PDF/A inspector. Mod+Shift+I (hardcoded — joins
     // the keymap registry in a future tick, kept simple for ship velocity).
     if (
