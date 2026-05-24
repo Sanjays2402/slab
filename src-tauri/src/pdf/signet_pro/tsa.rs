@@ -8,10 +8,14 @@
 //!
 //! See ADR 0012 for the offline-default rationale.
 
-use der::asn1::{Int, OctetString};
+use cms::content_info::ContentInfo;
+use cms::signed_data::SignedData;
+use const_oid::db::rfc5911::ID_SIGNED_DATA;
+use der::asn1::{Int, OctetString, SetOfVec};
 use der::oid::ObjectIdentifier;
-use der::{Decode, Encode, Sequence};
+use der::{Any, Decode, Encode, Sequence};
 use spki::AlgorithmIdentifierOwned;
+use x509_cert::attr::Attribute;
 
 use crate::pdf::signet::SignetError;
 
@@ -191,6 +195,131 @@ pub fn parse_timestamp_resp(bytes: &[u8]) -> Result<TimestampResp, SignetError> 
     };
 
     Ok(TimestampResp { status, token })
+}
+
+// ---------------------------------------------------------------------------
+// CAdES-T embedding — splice a TST into an existing detached CMS blob as
+// the `id-aa-timeStampToken` unsigned attribute on the SignerInfo.
+// ---------------------------------------------------------------------------
+
+/// Embed an RFC 3161 timestamp token into a previously-built detached CMS
+/// `ContentInfo` (the DER bytes that go into the PDF `/Contents` window),
+/// upgrading the signature from CAdES-BES to CAdES-T.
+///
+/// `cms_der` is the output of `signet::cms_blob::build_pkcs7_detached`.
+/// `tst_der` is the raw `TimeStampToken` bytes from `TimestampResp::token`
+/// (itself a CMS ContentInfo of type id-signedData — we wrap it as a single
+/// AttributeValue `Any` and attach it).
+///
+/// Returns a fresh DER-encoded ContentInfo with the unsigned-attr added to
+/// the single SignerInfo. If the input has more than one SignerInfo we
+/// attach the timestamp to all of them (Slab only emits one, but defending
+/// against future fan-out keeps the helper general).
+pub fn embed_timestamp_token(cms_der: &[u8], tst_der: &[u8]) -> Result<Vec<u8>, SignetError> {
+    if tst_der.is_empty() {
+        return Err(SignetError::InvalidCert(
+            "embed_timestamp_token: empty TST bytes".into(),
+        ));
+    }
+    // Parse the outer ContentInfo and assert SignedData.
+    let ci = ContentInfo::from_der(cms_der)
+        .map_err(|e| SignetError::InvalidCert(format!("CMS ContentInfo parse: {e}")))?;
+    if ci.content_type != ID_SIGNED_DATA {
+        return Err(SignetError::InvalidCert(format!(
+            "expected signedData OID, got {}",
+            ci.content_type
+        )));
+    }
+    let content_der = ci
+        .content
+        .to_der()
+        .map_err(|e| SignetError::InvalidCert(format!("re-DER inner: {e}")))?;
+    let mut sd = SignedData::from_der(&content_der)
+        .map_err(|e| SignetError::InvalidCert(format!("SignedData parse: {e}")))?;
+
+    // Parse the TST as a `der::Any` so we attach it without re-encoding —
+    // verifiers (Acrobat, the cms crate) expect the unsigned-attr value to
+    // be the literal ContentInfo bytes.
+    let tst_any = Any::from_der(tst_der)
+        .map_err(|e| SignetError::InvalidCert(format!("TST parse as Any: {e}")))?;
+
+    // Build the unsigned `Attribute { oid = id-aa-timeStampToken, values = { tst } }`.
+    let mut values_set: SetOfVec<Any> = SetOfVec::new();
+    values_set
+        .insert(tst_any)
+        .map_err(|e| SignetError::InvalidCert(format!("attr value set: {e}")))?;
+    let ts_attr = Attribute {
+        oid: ID_AA_TIMESTAMP_TOKEN,
+        values: values_set,
+    };
+
+    // Attach to every SignerInfo. SignerInfos wraps a SetOfVec; we collect,
+    // mutate each one, then rebuild the set.
+    let signers: Vec<cms::signed_data::SignerInfo> = sd
+        .signer_infos
+        .0
+        .iter()
+        .map(|si| {
+            let mut new_si = si.clone();
+            let mut attrs_vec: Vec<Attribute> = new_si
+                .unsigned_attrs
+                .as_ref()
+                .map(|set| set.iter().cloned().collect())
+                .unwrap_or_default();
+            // Replace any pre-existing timestamp-token attr (idempotent).
+            attrs_vec.retain(|a| a.oid != ID_AA_TIMESTAMP_TOKEN);
+            attrs_vec.push(ts_attr.clone());
+            let attrs_set: SetOfVec<Attribute> = SetOfVec::try_from(attrs_vec)
+                .map_err(|e| SignetError::InvalidCert(format!("unsigned attrs SetOfVec: {e}")))?;
+            new_si.unsigned_attrs = Some(attrs_set);
+            Ok::<_, SignetError>(new_si)
+        })
+        .collect::<Result<_, _>>()?;
+
+    sd.signer_infos = cms::signed_data::SignerInfos::try_from(signers)
+        .map_err(|e| SignetError::InvalidCert(format!("SignerInfos rebuild: {e}")))?;
+
+    // Re-wrap as ContentInfo.
+    let inner_der = sd
+        .to_der()
+        .map_err(|e| SignetError::InvalidCert(format!("SignedData re-DER: {e}")))?;
+    let inner_any =
+        Any::from_der(&inner_der).map_err(|e| SignetError::InvalidCert(format!("any: {e}")))?;
+    let new_ci = ContentInfo {
+        content_type: ID_SIGNED_DATA,
+        content: inner_any,
+    };
+    new_ci
+        .to_der()
+        .map_err(|e| SignetError::InvalidCert(format!("ContentInfo re-DER: {e}")))
+}
+
+/// Compute the SHA-256 of the SignerInfo's `signature` field — this is what
+/// the TSA timestamps in a CAdES-T workflow (RFC 5126 §6.3.2). The caller
+/// gives this digest as the imprint in [`build_timestamp_req`].
+pub fn signer_signature_digest(cms_der: &[u8]) -> Result<[u8; 32], SignetError> {
+    use sha2::Digest;
+    let ci = ContentInfo::from_der(cms_der)
+        .map_err(|e| SignetError::InvalidCert(format!("CMS parse: {e}")))?;
+    let inner_der = ci
+        .content
+        .to_der()
+        .map_err(|e| SignetError::InvalidCert(format!("inner re-DER: {e}")))?;
+    let sd = SignedData::from_der(&inner_der)
+        .map_err(|e| SignetError::InvalidCert(format!("SignedData parse: {e}")))?;
+    let si = sd
+        .signer_infos
+        .0
+        .iter()
+        .next()
+        .ok_or_else(|| SignetError::InvalidCert("no SignerInfo to timestamp".into()))?;
+    let sig_bytes = si.signature.as_bytes();
+    let mut h = sha2::Sha256::new();
+    h.update(sig_bytes);
+    let out = h.finalize();
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&out);
+    Ok(digest)
 }
 
 // ---------------------------------------------------------------------------
@@ -462,5 +591,156 @@ mod tests {
             .expect_err("empty body should fail fast");
         let msg = format!("{err}");
         assert!(msg.contains("empty request body"), "msg: {msg}");
+    }
+
+    // -------------------------------------------------------------------
+    // CAdES-T embedding tests — build a real CMS blob via the signet
+    // crypto core, then splice a synthetic TST and verify the resulting
+    // CMS still parses with an unsigned-attrs set containing our OID.
+    // -------------------------------------------------------------------
+
+    use crate::pdf::signet::cms_blob::{build_pkcs7_detached, parse_signed_data};
+    use crate::pdf::signet::identity::SigningIdentity;
+    use rsa::pkcs1v15::SigningKey as RsaSigningKey;
+    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+    use rsa::sha2::Sha256 as RsaSha256;
+    use std::str::FromStr;
+    use x509_cert::builder::{Builder as _, CertificateBuilder, Profile};
+    use x509_cert::name::Name;
+    use x509_cert::serial_number::SerialNumber;
+    use x509_cert::time::Validity;
+
+    fn fixture_rsa_identity_local() -> SigningIdentity {
+        let mut rng = rand::thread_rng();
+        let key = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let key_pem = key
+            .to_pkcs8_pem(LineEnding::LF)
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let serial = SerialNumber::from(13u32);
+        let validity = Validity::from_now(std::time::Duration::from_secs(365 * 24 * 3600)).unwrap();
+        let subject = Name::from_str("CN=Embed Test").unwrap();
+        let pub_key = key.to_public_key();
+        let signing_key = RsaSigningKey::<RsaSha256>::new(key.clone());
+        let spki = rsa::pkcs8::EncodePublicKey::to_public_key_der(&pub_key).unwrap();
+        let spki_info = spki::SubjectPublicKeyInfoOwned::try_from(spki.as_bytes()).unwrap();
+        let builder = CertificateBuilder::new(
+            Profile::Root,
+            serial,
+            validity,
+            subject,
+            spki_info,
+            &signing_key,
+        )
+        .unwrap();
+        let cert = builder.build::<rsa::pkcs1v15::Signature>().unwrap();
+        let cert_der = Encode::to_der(&cert).unwrap();
+        let cert_pem = pem::encode(&pem::Pem::new("CERTIFICATE", cert_der));
+        SigningIdentity::from_pem_bytes(cert_pem.as_bytes(), &key_pem, None).unwrap()
+    }
+
+    /// Hand-crafted minimal SignedData ContentInfo to serve as a fake TST —
+    /// any well-formed `ContentInfo`(`id-signedData`) parses as Any.
+    fn fake_tst_der() -> Vec<u8> {
+        // ContentInfo SEQUENCE {
+        //   contentType OID 1.2.840.113549.1.7.2 (signedData),
+        //   content [0] EXPLICIT { SEQUENCE { version=3, digestAlgs=empty,
+        //                                     encapContent SEQUENCE { OID 1.2.840.113549.1.7.1 },
+        //                                     signerInfos=empty } }
+        // }
+        // We hand-roll it minimally — just enough that Any::from_der succeeds.
+        // The actual CMS validity of the TST is not under test here; only the
+        // splicing/re-encoding pipeline is.
+        // Outer:   30 LL ...
+        //   OID:   06 09 2A 86 48 86 F7 0D 01 07 02
+        //   [0]:   A0 LL ...
+        //     SD:  30 LL ...
+        //       ver: 02 01 03
+        //       digs: 31 00
+        //       eci:  30 0B 06 09 2A 86 48 86 F7 0D 01 07 01
+        //       sis:  31 00
+        // Length math (innermost-out):
+        // SD inner: 02 01 03 (3) + 31 00 (2) + 30 0B...(13) + 31 00 (2) = 20 bytes -> 30 14 ...
+        // [0] inner = 30 14 ... = 22 bytes -> A0 16 ...
+        // outer = OID (11 bytes total: 06 09 + 9) + [0] 24 = 35 -> 30 23 ...
+        let mut out = Vec::new();
+        out.extend_from_slice(&[0x30, 0x23]);
+        out.extend_from_slice(&[
+            0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02,
+        ]);
+        out.extend_from_slice(&[0xA0, 0x16]);
+        out.extend_from_slice(&[0x30, 0x14]);
+        out.extend_from_slice(&[0x02, 0x01, 0x03]);
+        out.extend_from_slice(&[0x31, 0x00]);
+        out.extend_from_slice(&[
+            0x30, 0x0B, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x01,
+        ]);
+        out.extend_from_slice(&[0x31, 0x00]);
+        out
+    }
+
+    #[test]
+    fn embed_timestamp_token_adds_unsigned_attr() {
+        let id = fixture_rsa_identity_local();
+        let cms = build_pkcs7_detached(&[0xAAu8; 32], &id, std::time::SystemTime::now()).unwrap();
+        let tst = fake_tst_der();
+
+        let cms_with_t = embed_timestamp_token(&cms, &tst).expect("embed");
+        assert!(
+            cms_with_t.len() > cms.len(),
+            "CAdES-T blob should be larger than BES"
+        );
+
+        let sd = parse_signed_data(&cms_with_t).expect("parse with-T");
+        let si = sd.signer_infos.0.iter().next().expect("one signer");
+        let attrs = si
+            .unsigned_attrs
+            .as_ref()
+            .expect("unsigned attrs present after embed");
+        assert!(
+            attrs.iter().any(|a| a.oid == ID_AA_TIMESTAMP_TOKEN),
+            "id-aa-timeStampToken missing from unsigned attrs"
+        );
+    }
+
+    #[test]
+    fn embed_timestamp_token_is_idempotent() {
+        let id = fixture_rsa_identity_local();
+        let cms = build_pkcs7_detached(&[0xBBu8; 32], &id, std::time::SystemTime::now()).unwrap();
+        let tst = fake_tst_der();
+        let once = embed_timestamp_token(&cms, &tst).unwrap();
+        let twice = embed_timestamp_token(&once, &tst).unwrap();
+        // Idempotent: second embed replaces rather than duplicates the attr.
+        let sd = parse_signed_data(&twice).unwrap();
+        let si = sd.signer_infos.0.iter().next().unwrap();
+        let attrs = si.unsigned_attrs.as_ref().unwrap();
+        let count = attrs
+            .iter()
+            .filter(|a| a.oid == ID_AA_TIMESTAMP_TOKEN)
+            .count();
+        assert_eq!(count, 1, "duplicate timestamp-token attrs after re-embed");
+    }
+
+    #[test]
+    fn embed_rejects_empty_tst() {
+        let id = fixture_rsa_identity_local();
+        let cms = build_pkcs7_detached(&[0u8; 32], &id, std::time::SystemTime::now()).unwrap();
+        let err = embed_timestamp_token(&cms, &[]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("empty TST"), "msg: {msg}");
+    }
+
+    #[test]
+    fn signer_signature_digest_is_stable_per_blob() {
+        let id = fixture_rsa_identity_local();
+        let cms = build_pkcs7_detached(&[0xCCu8; 32], &id, std::time::SystemTime::now()).unwrap();
+        let d1 = signer_signature_digest(&cms).unwrap();
+        let d2 = signer_signature_digest(&cms).unwrap();
+        assert_eq!(d1, d2);
+        // And a digest of an unrelated blob differs.
+        let cms2 = build_pkcs7_detached(&[0xDDu8; 32], &id, std::time::SystemTime::now()).unwrap();
+        let d3 = signer_signature_digest(&cms2).unwrap();
+        assert_ne!(d1, d3);
     }
 }
