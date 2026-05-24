@@ -4,7 +4,38 @@
 
 ---
 
-## STATUS: ✅ v3.16.0 "Slide" SHIPPED PUBLICLY (2026-05-24 02:55 PT)
+## STATUS: 📋 v3.17.0 "Markdown" PLAN FILED (2026-05-24 02:55 PT)
+
+**TICK 2026-05-24 02:55 PT (Sunday off-hours)** — PLANNING tick (Sanjay
+invoked the `writing-plans` skill explicitly).
+
+- Wrote `docs/plans/2026-05-24-v3.17.0-markdown-pdf-to-md-and-html.md`
+  (10 tasks, ~41 KB). End-to-end plan for offline PDF → Markdown (`.md`)
+  + semantic HTML (`.html`) — re-uses Reflow's `extract` + `layout`
+  passes, two new emitters (`md.rs`, `html.rs`), Atelier batch steps,
+  unified panel.
+- Buy-Button verdict 4/4: no mainstream competitor (Adobe / PDF Expert /
+  Foxit) ships offline PDF → Markdown. AI-era wedge — drop research
+  papers, get clean MD for Obsidian / ChatGPT / RAG pipelines.
+- Plan committed `b74fd80` and pushed to main.
+- Each task is 2-5 min, TDD format, includes failing test → pass → commit
+  template, exact file paths, copy-pasteable code blocks.
+- Lesson from v3.16.0 baked into Task 8: **verify all 3 version files
+  match the tag before pushing**.
+
+### Next tick — MODE C DEVELOP: execute Task 1
+
+Start `feature/v3.17.0-markdown` branch and ship Tasks 1+2+3+4 in one
+big tick (scaffold + MD emitter + HTML emitter + e2e pipeline). That's
+~600 net LOC, 4 commits, end-to-end working capability — passes SHIP-SIZE.
+Tasks 5-9 (Tauri + UI + Atelier + release) for the tick after.
+
+### Plan reference
+`docs/plans/2026-05-24-v3.17.0-markdown-pdf-to-md-and-html.md`
+
+---
+
+## PRIOR STATUS: ✅ v3.16.0 "Slide" SHIPPED PUBLICLY (2026-05-24 02:55 PT)
 
 **TICK 2026-05-24 02:29 PT (Sunday off-hours)** — MODE B FINALIZE complete.
 
