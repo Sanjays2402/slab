@@ -4,7 +4,75 @@
 
 ---
 
-## STATUS: 🎉 v3.19.0 'Marquee' MERGED + TAGGED — CI running (2026-05-24 06:46 PT)
+## STATUS: ✅ v3.19.0 'Marquee' PUBLISHED — GitHub release live (2026-05-24 07:?? PT)
+
+**TICK 2026-05-24 06:57 PT (Sunday off-hours)** — MODE B FINALIZE complete.
+
+### What shipped this tick
+
+- Polled CI: build run `26362972057` finished GREEN (mac arm64+x64, linux,
+  windows bundles all built; cargo test all three OSes green).
+- Docker `slab-server` run `26362971977` — success.
+- deploy-try run `26362972083` — success in graceful-degradation mode
+  (artifact-only, Cloudflare secrets not yet configured — expected).
+- Downloaded artifacts to `/tmp/slab-release-v3.19.0` (after `cargo clean`
+  to free 5+ GiB on the volume — disk was at 100%, blocking the download).
+- Published `gh release create v3.19.0` with 6 curated assets:
+  - `Slab_3.19.0_aarch64.dmg`
+  - `Slab_3.19.0_x64.dmg`
+  - `Slab_3.19.0_amd64.deb`
+  - `Slab_3.19.0_amd64.AppImage`
+  - `Slab_3.19.0_x64_en-US.msi`
+  - `Slab_3.19.0_x64-setup.exe`
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.19.0
+- isDraft: false ✅
+- Removed RELEASE_PENDING.
+
+### Disk-space note
+
+`/System/Volumes/Data` was at 100% (404 MiB free) when this tick started,
+which caused the first `gh run download` to fail mid-zip. Ran
+`cargo clean` in `src-tauri/` (freed 5.2 GiB) and retry succeeded. Worth
+flagging: the Mac mini hosting the cron is running tight on disk
+(228 GiB volume, 171 GiB used after cleanup, only ~5.4 GiB free). Sanjay
+may want to prune old caches / Xcode derived data / old node_modules.
+
+### LAST_WOW_TICK_AT: 2026-05-24T13:46Z (v3.19.0 Marquee — browser playground live)
+
+### Next tick (MODE C develop)
+
+Roadmap drift: STATE.md historically pointed to "v0.10.0 Beacon next"
+but the real version pipeline has run far past that into the v3.x line.
+Re-grounding: with no open issues, no RELEASE_PENDING, no failing CI,
+and a fresh release just published, the next BIG feature to ship is
+**Beacon (local-first AI / chat-with-PDF)** — still the buyer-magnet
+per SOUL/SLAB doctrine. Spec lives at
+`.cron-state/proposals/v0.10.0-beacon-ai.md` and needs a version-number
+refresh (probably v3.20.0 "Beacon" given the real numbering line).
+
+Plan for the next off-hours tick:
+1. Re-read the Beacon proposal, retag it as v3.20.0 'Beacon'.
+2. Create branch `feature/v3.20.0-beacon`.
+3. Ship Slice 1 end-to-end: Ollama detection + Beacon settings panel
+   + model picker UI + "Ask anything" floating input scaffolded.
+4. Honor SHIP-SIZE: ≥4 commits, ≥600 LOC, e2e capability.
+
+### Sanjay TODO (carried over)
+
+- Complete `docs/ops/try-slab-deploy.md` steps 1-6 to wire up Cloudflare
+  Pages and make try.slab.app actually serve from the workflow.
+- Optional: record 5-second demo video for landing (issue #27, all
+  override issues closed).
+- Free disk on the mini — only 5.4 GiB free even after `cargo clean`.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.18.0
+- v3.19.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.19.0
+
+---
+
+## PRIOR STATUS: v3.19.0 'Marquee' MERGED + TAGGED — CI running (2026-05-24 06:46 PT)
 
 **TICK 2026-05-24 06:39 PT (Sunday off-hours)** — MODE C → MODE A → RELEASE_PENDING.
 
