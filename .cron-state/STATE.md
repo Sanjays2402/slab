@@ -4,7 +4,34 @@
 
 ---
 
-## STATUS: 🚀 v3.14.0 "Reflow" MERGED + TAGGED — RELEASE_PENDING (Tasks 8+9 + MODE A in one tick)
+## STATUS: ✅ v3.14.0 "Reflow" SHIPPED — GitHub release published with 6 artifacts (MODE B done 2026-05-24 00:42 PT)
+
+**TICK 2026-05-24 00:35 PT (Sunday off-hours)** — MODE B FINALIZE.
+
+- Polled CI: build run `26354714534` ✅ success, Docker run `26354714523` ✅ success.
+- Reclaimed disk first: `cargo clean` freed 5.0 GiB (was 301 MiB free → 4.5 GiB free).
+- `gh run download 26354714534 --dir /tmp/slab-release-v3.14.0` → all 6 artifacts retrieved.
+- `gh release create v3.14.0 --title 'v3.14.0 — Reflow' --notes-file .cron-state/release-notes-v3.14.0.md` + uploaded:
+  - `Slab_3.14.0_aarch64.dmg` (macOS Apple Silicon)
+  - `Slab_3.14.0_x64.dmg` (macOS Intel)
+  - `Slab_3.14.0_amd64.deb` (Linux Debian/Ubuntu)
+  - `Slab_3.14.0_amd64.AppImage` (Linux portable)
+  - `Slab_3.14.0_x64_en-US.msi` (Windows MSI)
+  - `Slab_3.14.0_x64-setup.exe` (Windows NSIS)
+- Release verified published (not Draft), 6 assets, tag `v3.14.0`.
+- URL: https://github.com/Sanjays2402/slab/releases/tag/v3.14.0
+- **RELEASE_PENDING cleared.**
+
+### Next tick — MODE C: v3.15.0 "Tabulate" (PDF → Excel)
+
+Plan already filed in `c617c67 docs(plan): v3.15.0 Tabulate — PDF to Excel
+proposal (offline, free, batchable)`. Spec at `docs/plans/` for that SHA.
+Create `feature/v3.15.0-tabulate` branch and ship Slice 1 (table detection
+backend + tests) next tick. PDF-to-Excel is another Acrobat-flagship feature
+gated behind subscription — strong Buy-Button candidate to follow Reflow's
+"convert PDF to anything, offline, free" wedge.
+
+### Previous status (archived) — v3.14.0 MERGED + TAGGED — RELEASE_PENDING
 
 **TICK 2026-05-23 23:52 PT (Saturday off-hours)** — MODE C+A combined.
 
