@@ -4,7 +4,34 @@
 
 ---
 
-## STATUS: v3.12.0 Atelier — bundles 3/4 green, Win still building. v3.13.0 Streamline PLAN landed.
+## STATUS: v3.12.0 Atelier RELEASED — 6 artifacts uploaded, Docker live. v3.13.0 Streamline PLAN landed, ready to execute.
+
+**TICK 2026-05-23 19:46 PT (Saturday off-hours)** — MODE B FINALIZE executed.
+- CI build run 26349407913: all 7 jobs green (4-platform bundles + 3-platform cargo test, clippy, fmt).
+- Docker run 26349407898: ✓ → `ghcr.io/sanjays2402/slab-server:v3.12.0` live.
+- `cargo clean` recovered 4.3 GiB (disk had 765 MiB → 4.5 GiB after).
+- Downloaded 6 artifacts to /tmp/slab-release-3.12.0, then:
+  `gh release create v3.12.0 --title "v3.12.0 — Atelier" --notes-file .cron-state/release-notes-v3.12.0.md` + 6 installers.
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.12.0
+  isDraft=false, assetCount=6 (mac arm/x64 dmg, linux deb+AppImage, win nsis+msi).
+- RELEASE_PENDING cleared.
+
+### LAST_WOW_TICK_AT: 2026-05-24T02:46Z (v3.12.0 Atelier public release — Action Wizard equivalent free + offline)
+
+### Next tick — MODE C DEVELOP — start v3.13.0 Streamline Task 1
+1. Re-poll `gh issue list` (was 0 at start of this tick).
+2. `git checkout -b feature/v3.13.0-streamline`.
+3. Execute Task 1 of plan (ADR 0013 + streamline module scaffold + DTOs).
+   Plan: `docs/plans/2026-05-23-v3.13.0-streamline-fast-web-view.md`.
+4. Fold Tasks 1+2 into a single tick if scope allows (scaffold + linearize
+   driver skeleton with first 3-4 unit tests).
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
+
+---
+
+## PRIOR STATUS: v3.12.0 Atelier — bundles 3/4 green, Win still building. v3.13.0 Streamline PLAN landed.
 
 **TICK 2026-05-23 19:25 PT (Saturday off-hours)** — writing-plans skill invocation.
 v3.12.0 build run 26349407913: tests 3/3 ✓, bundles macOS-arm/x64 + linux ✓,
