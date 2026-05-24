@@ -53,6 +53,7 @@
     { kind: "flatten", label: "Flatten", sub: "Raster + immutable" },
     { kind: "compactor", label: "Compact", sub: "Strip unused objects" },
     { kind: "linearize", label: "Fast Web View", sub: "Stream page 1 instantly" },
+    { kind: "convert-to-docx", label: "Convert to Word", sub: "PDF → .docx, offline" },
   ];
 
   let recipe = $state<Recipe>({ name: "Untitled", version: 1, steps: [] });
@@ -522,6 +523,58 @@
                 <p class="muted">No parameters.</p>
               {:else if s.kind === "linearize"}
                 <p class="muted">No parameters. Output streams page 1 to readers before the rest downloads.</p>
+              {:else if s.kind === "convert-to-docx"}
+                <p class="muted small">
+                  Terminal step. Output files are written as <code>.docx</code>
+                  (not <code>.pdf</code>) — paralegals open them straight in Word.
+                  Acrobat $239/yr; Slab free + offline.
+                </p>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.detect_tables}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-docx";
+                        detect_tables: boolean;
+                        detect_lists: boolean;
+                        heading_size_ratio: number;
+                      }).detect_tables = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Detect tables (column clustering)
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.detect_lists}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-docx";
+                        detect_tables: boolean;
+                        detect_lists: boolean;
+                        heading_size_ratio: number;
+                      }).detect_lists = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Detect bullets &amp; numbered lists
+                </label>
+                <label>
+                  Heading size ratio
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="1"
+                    max="3"
+                    value={s.heading_size_ratio}
+                    oninput={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-docx";
+                        detect_tables: boolean;
+                        detect_lists: boolean;
+                        heading_size_ratio: number;
+                      }).heading_size_ratio =
+                        Number((e.currentTarget as HTMLInputElement).value) || 1.25)}
+                  />
+                </label>
               {/if}
             </div>
           </li>
