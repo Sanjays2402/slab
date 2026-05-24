@@ -107,6 +107,8 @@ fn step_kind(s: &Step) -> String {
         Step::ConvertToDocx { .. } => "convert-to-docx",
         Step::ConvertToXlsx { .. } => "convert-to-xlsx",
         Step::ConvertToPptx { .. } => "convert-to-pptx",
+        Step::ConvertToMarkdown { .. } => "convert-to-markdown",
+        Step::ConvertToHtml { .. } => "convert-to-html",
     }
     .into()
 }
@@ -211,6 +213,42 @@ fn apply_step(input: &Path, output: &Path, step: &Step) -> Result<(), PdfError> 
             };
             crate::pdf::slide::convert_to_pptx(input, output, &opts)
                 .map_err(|e| PdfError::Other(format!("slide: {e}")))?;
+            Ok(())
+        }
+        Step::ConvertToMarkdown {
+            detect_tables,
+            detect_lists,
+            flavour_gfm,
+        } => {
+            let opts = crate::pdf::markdown::MarkdownOptions {
+                detect_tables: *detect_tables,
+                detect_lists: *detect_lists,
+                flavour: if *flavour_gfm {
+                    crate::pdf::markdown::MarkdownFlavour::Gfm
+                } else {
+                    crate::pdf::markdown::MarkdownFlavour::CommonMark
+                },
+                ..Default::default()
+            };
+            crate::pdf::markdown::convert_to_markdown(input, output, &opts)
+                .map_err(|e| PdfError::Other(format!("markdown: {e}")))?;
+            Ok(())
+        }
+        Step::ConvertToHtml {
+            detect_tables,
+            detect_lists,
+            semantic_tags,
+            embed_css,
+        } => {
+            let opts = crate::pdf::markdown::HtmlOptions {
+                detect_tables: *detect_tables,
+                detect_lists: *detect_lists,
+                semantic_tags: *semantic_tags,
+                embed_css: *embed_css,
+                ..Default::default()
+            };
+            crate::pdf::markdown::convert_to_html(input, output, &opts)
+                .map_err(|e| PdfError::Other(format!("html: {e}")))?;
             Ok(())
         }
     }

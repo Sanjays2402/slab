@@ -100,6 +100,33 @@ pub enum Step {
         #[serde(default = "default_detect_titles")]
         detect_titles: bool,
     },
+    /// Convert this PDF to a Markdown `.md` file (terminal step — must be
+    /// the last step in a recipe). The AI-era file workflow: drop a folder
+    /// of research papers, walk away with clean Markdown for Obsidian,
+    /// ChatGPT, RAG pipelines, or static-site generators. Adobe Acrobat
+    /// has no native Markdown export.
+    ConvertToMarkdown {
+        #[serde(default = "default_detect_tables")]
+        detect_tables: bool,
+        #[serde(default = "default_detect_lists")]
+        detect_lists: bool,
+        #[serde(default = "default_flavour_gfm")]
+        flavour_gfm: bool,
+    },
+    /// Convert this PDF to a semantic HTML `.html` file (terminal step —
+    /// must be the last step in a recipe). Produces real `<article>` /
+    /// `<h1>` / `<table>` markup with an embedded stylesheet — not the
+    /// `<font>`-tag soup Acrobat emits.
+    ConvertToHtml {
+        #[serde(default = "default_detect_tables")]
+        detect_tables: bool,
+        #[serde(default = "default_detect_lists")]
+        detect_lists: bool,
+        #[serde(default = "default_semantic_tags")]
+        semantic_tags: bool,
+        #[serde(default = "default_embed_css")]
+        embed_css: bool,
+    },
 }
 
 impl Step {
@@ -108,7 +135,11 @@ impl Step {
     pub fn changes_extension(&self) -> bool {
         matches!(
             self,
-            Step::ConvertToDocx { .. } | Step::ConvertToXlsx { .. } | Step::ConvertToPptx { .. }
+            Step::ConvertToDocx { .. }
+                | Step::ConvertToXlsx { .. }
+                | Step::ConvertToPptx { .. }
+                | Step::ConvertToMarkdown { .. }
+                | Step::ConvertToHtml { .. }
         )
     }
 
@@ -119,6 +150,8 @@ impl Step {
             Step::ConvertToDocx { .. } => "docx",
             Step::ConvertToXlsx { .. } => "xlsx",
             Step::ConvertToPptx { .. } => "pptx",
+            Step::ConvertToMarkdown { .. } => "md",
+            Step::ConvertToHtml { .. } => "html",
             _ => "pdf",
         }
     }
@@ -173,6 +206,15 @@ fn default_include_speaker_notes() -> bool {
     true
 }
 fn default_detect_titles() -> bool {
+    true
+}
+fn default_flavour_gfm() -> bool {
+    true
+}
+fn default_semantic_tags() -> bool {
+    true
+}
+fn default_embed_css() -> bool {
     true
 }
 
