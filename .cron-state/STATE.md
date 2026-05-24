@@ -4,7 +4,38 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro MERGED + TAGGED — CI in flight, finalize next tick.
+## STATUS: v3.11.0 Signet Pro SHIPPED — release published, Docker live, all artifacts uploaded.
+
+**TICK 2026-05-23 17:3x PT (Saturday off-hours)** — MODE B FINALIZE executed.
+- CI build (26347285490): all 7 jobs green (4 platforms × test+bundle on linux+mac arm/x64+win).
+- Downloaded 6 artifacts to /tmp/slab-release-3.11.0.
+- `gh release create v3.11.0 --title "v3.11.0 — Signet Pro"` published, NOT draft.
+  https://github.com/Sanjays2402/slab/releases/tag/v3.11.0
+- Docker (run 26347285501) green → `ghcr.io/sanjays2402/slab-server:v3.11.0` live.
+- Release notes lead with the wedge: "Legally-binding timestamps. Batch sign 200 PDFs.
+  Visible signature stamps. Adobe charges $239/yr; we ship it free, offline."
+- All 6 installers attached (mac arm/x64 dmg, linux deb+AppImage, win nsis+msi).
+- RELEASE_PENDING cleared.
+
+### Disk recovery: `cargo clean` on src-tauri freed 6.0 GiB (from 454 Mi free to 5.7 Gi).
+
+### Next tick — MODE C DEVELOP
+Pipeline catches up: re-poll `gh issue list` (#23-#27 status from May-22 override),
+then next version. Candidates (per roadmap):
+- **v0.11.0 Lathe** — full edit mode (text reflow, annotations, signatures hub).
+- Or a strategic command-palette / settings-hub polish tick if the issue
+  backlog is empty.
+Re-read top of cron prompt for current override status before picking.
+
+### LAST_WOW_TICK_AT: 2026-05-23 16:08 PT (visible sig stamps banked the wow.
+ v3.11.0 GA itself is the wow ship — public release of CAdES-T + batch + stamps.)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.11.0 Signet Pro: merged 2026-05-23, tag v3.11.0, release published 17:3x PT.
+
+---
+
+## PRIOR STATUS: v3.11.0 Signet Pro MERGED + TAGGED — CI in flight, finalize next tick.
 
 **TICK 2026-05-23 17:1x PT (Saturday off-hours)** — MODE A RELEASE executed.
 Merged `fix/svelte-reactive-refs` (the descendant of `feature/v3.11.0-signet-pro`)
