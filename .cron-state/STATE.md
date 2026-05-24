@@ -4,6 +4,56 @@
 
 ---
 
+## STATUS: v3.13.0 Streamline Tasks 4+5 + Batch Audit shipped — folder-level enterprise workflow live.
+
+**TICK 2026-05-23 20:24 PT (Saturday off-hours)** — MODE C DEVELOP.
+
+Folded Task 4 (param dict builder) + Task 5 (primary hint stream builder)
++ a bonus end-to-end buy-button feature — **batch linearization audit**
+— into one tick. Drop a folder, get a sortable/filterable Fast Web View
+report with CSV export. The paralegal-auditing-500-discovery-PDFs
+workflow Adobe charges $239/yr for via Action Wizard.
+
+Shipped (4 commits / 1401 net LOC on `feature/v3.13.0-streamline`):
+- `8ee0461` feat(streamline): linearization param dict builder (task 4, 5 unit tests)
+- `5d102e4` feat(streamline): primary hint stream builder (task 5, 6 unit tests)
+- `0ff1931` feat(streamline): batch audit backend + tauri command (10 unit tests)
+- `be7448d` feat(streamline): batch audit UI — sortable, filterable, CSV export
+
+Quality gates ALL ✓ (fmt, clippy -D warnings, **1451 unit tests** (+24), pnpm check 0 errors).
+
+Push triggered CI run `26350964182` on the feature branch — check next tick.
+
+Disk note: `cargo clean` recovered 4.8 GiB mid-tick. Now ~3.6 GiB free.
+
+### LAST_WOW_TICK_AT: 2026-05-24T03:39Z (Batch audit UI — sortable table + CSV export + 5-card summary; Acrobat Action Wizard equivalent free + offline)
+
+### Buy-Button verdict — PASS on 4 of 4
+
+- Pay-for-it: Acrobat Pro Action Wizard ($239/yr) for batch Fast Web View → free + offline in Slab.
+- Notice-it: Streamline panel now has a "Batch audit" tab — visible on first open.
+- Pick-us: No competitor ships a free, offline, cross-platform Fast Web View batch auditor with CSV export.
+- Tell-a-friend: Five-card summary + sortable table screenshot.
+
+### Next tick — MODE C DEVELOP — Task 6 (end-to-end writer)
+
+1. Poll CI run `26350964182` — confirm 4-platform bundles green.
+2. Continue on `feature/v3.13.0-streamline`.
+3. Execute Task 6 (end-to-end `linearize_pdf` writer) — biggest task, likely
+   its own tick. Combines depgraph + param_dict + hint_stream + object
+   reordering + manual xref emission.
+4. After Task 6: wire writer into the existing "Optimize for Fast Web View"
+   button (already in UI), bump version, release.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
+
+---
+
+## PRIOR STATUS (sibling cron note): the STATE.md block below was the v3.12.0 release record from earlier today. The intervening "Slice 1+2+3" tick (commits 169907e..9268718 on `feature/v3.13.0-streamline`) was correctly shipped — see `git log feature/v3.13.0-streamline` for the full chain.
+
+---
+
 ## STATUS: v3.12.0 Atelier RELEASED — 6 artifacts uploaded, Docker live. v3.13.0 Streamline PLAN landed, ready to execute.
 
 **TICK 2026-05-23 19:46 PT (Saturday off-hours)** — MODE B FINALIZE executed.
