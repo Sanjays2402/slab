@@ -4,7 +4,49 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro SHIPPED — release published, Docker live, all artifacts uploaded.
+## STATUS: v3.12.0 Atelier — Tasks 1-4 SHIPPED on feature branch (backend complete).
+
+**TICK 2026-05-23 18:1x PT (Saturday off-hours)** — MODE C DEVELOP executed.
+Cut `feature/v3.12.0-atelier` from main; shipped Tasks 1-4 of the Atelier
+plan end-to-end in this tick.
+
+### Shipped (4 commits, 951 net LOC, pushed):
+- `def83f3` — Recipe + Step data model (serde JSON round-trip, kebab tags, version forward-compat).
+- `1aabd8f` — run_recipe driver: pipes one PDF through ordered steps, emits Started/Completed/Failed progress events. Bridges to real pdf::* primitives (watermark, flatten, compactor, ocr, auto_redact, bates) with their actual opts shapes.
+- `e3b72a3` — run_recipe_batch parallel folder driver (rayon). Per-file × per-step progress matrix. Failures recorded, never abort the batch. Non-PDF files skipped. Deterministic sort.
+- `173b4aa` — Tauri commands: atelier_run_batch (Channel<BatchProgress>), atelier_save_recipe, atelier_load_recipes (auto-seeds "Nightly Discovery" preset on empty), atelier_delete_recipe. Filename sanitization prevents path escape.
+
+### Quality gates ALL GREEN this tick:
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --lib --all-targets -- -D warnings` ✓
+- `cargo test --lib` → **1418 passed, 0 failed** (+20 atelier tests since v3.11.0)
+- `pnpm check` → 0 errors, 61 warnings (pre-existing a11y nits)
+
+### Disk: started 99% full → freed 4.2 GiB via `cargo clean` mid-tick (and cleared /tmp/slab-release-*). Now 4.6 GiB free, 98% used. Will need another clean before MODE A merge.
+
+### Buy-Button check (this tick):
+- Pay-for-it: ✓ — Adobe Action Wizard ($239/yr) equivalent backend.
+- Pick-us: ✓ — closes a major enterprise gap.
+- Tell-a-friend: deferred to Task 5 (the live progress grid IS the screenshot).
+
+### CI: build run `26348435216` queued on feature branch (feature branches build same as main).
+
+### Next tick — finish v3.12.0:
+**Task 5** — Svelte AtelierPanel.svelte (drag-build palette → builder → run panel with live grid). Wire nav + Cmd+Shift+A shortcut + command palette entries. THIS is the wow-tick — the live progress grid lighting up over 200 files = the screenshot.
+**Task 6** — version bump 3.11.0 → 3.12.0 + release notes draft.
+**Task 7** — MODE A RELEASE: merge → tag → CI → MODE B finalize.
+
+Plan: `docs/plans/2026-05-23-v3.12.0-atelier-workflow-automation.md`
+
+### LAST_WOW_TICK_AT: 2026-05-23 16:08 PT (within 24h — visible sig stamps banked the wow. Next wow is the Task 5 live progress grid.)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.11.0 Signet Pro: merged 2026-05-23, tag v3.11.0, release published 17:3x PT.
+- v3.12.0 Atelier (in progress): backend done, UI + release in next tick.
+
+---
+
+## PRIOR STATUS: v3.11.0 Signet Pro SHIPPED — release published, Docker live, all artifacts uploaded.
 
 **TICK 2026-05-23 17:3x PT (Saturday off-hours)** — MODE B FINALIZE executed.
 - CI build (26347285490): all 7 jobs green (4 platforms × test+bundle on linux+mac arm/x64+win).
