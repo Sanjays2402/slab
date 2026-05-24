@@ -4,7 +4,60 @@
 
 ---
 
-## STATUS: ✅ v3.14.0 "Reflow" SHIPPED — GitHub release published with 6 artifacts (MODE B done 2026-05-24 00:42 PT)
+## STATUS: 🚀 v3.15.0 "Tabulate" SHIPPED — merged + tagged, CI in flight (MODE A done 2026-05-24 01:03 PT)
+
+**TICK 2026-05-24 01:00 PT (Sunday off-hours)** — MODE C + MODE A combined.
+
+Resumed from compaction. Finished Atelier UI wiring (`src/lib/atelier.ts`
+ConvertToXlsx StepKind + defaults/label/icon, `AtelierPanel.svelte`
+palette entry + 3-checkbox editor block). Bumped version to 3.15.0 in
+Cargo.toml, package.json, tauri.conf.json. Quality gates batched:
+
+- `cargo fmt --all --check` ✅
+- `cargo clippy --lib --all-targets -D warnings` ✅ (fixed vec_init_then_push in xlsx.rs)
+- `cargo test --lib` ✅ **1528 passed, 0 failed**
+- `pnpm check` ✅ **0 errors, 62 pre-existing warnings**
+
+Commits this tick:
+- `157e5a7 feat(tabulate): PDF to Excel backend — cell typing, table extract, XLSX writer` (Tasks 1-5, 21 unit tests)
+- `6a16370 feat(tabulate): Tauri command, UI panel, and Atelier integration (v3.15.0)` (Tasks 6-7, 13 files, +695 / -49)
+- `316de82 Merge v3.15.0 'Tabulate' — offline PDF to Excel (.xlsx) conversion` (merge to main)
+- Tag `v3.15.0` pushed → triggered build + Docker workflows.
+
+Net code this tick: **~1485 LOC** (backend module 374-line XLSX writer +
+extract + cells + types + errors; UI panel 443 lines; Atelier wiring).
+End-to-end working capability: open Tabulate panel → drop PDF → get
+typed .xlsx with one sheet per page. Atelier batch recipe slot lets
+users chain Tabulate after OCR / redact.
+
+**RELEASE_PENDING: v3.15.0** — merge SHA `316de82`, tag `v3.15.0`,
+build run `26355860314`, Docker run `26355860277`. Both queued at push
+time; next tick (MODE B) polls + finalizes GitHub release with 6
+artifacts.
+
+### Buy-Button positioning
+
+Adobe Acrobat Pro: PDF → Excel is cloud-only, $239/yr, ships file to
+their servers. PDF Expert: no PDF → XLSX on macOS. Foxit: Linux not
+supported. Slab: free, offline, batch-driven via Atelier. Paralegal
+drops folder of invoices → folder of typed .xlsx. **BIG feature, pays
+the Buy-Button test on its own.**
+
+### LAST_WOW_TICK_AT: 2026-05-24 01:03 PT (this tick — PDF → Excel offline)
+
+### Next tick — MODE B: finalize v3.15.0 release
+
+1. `gh run view 26355860314` — wait for green.
+2. `gh run download 26355860314 --dir /tmp/slab-release-v3.15.0`.
+3. `gh release create v3.15.0 --title 'v3.15.0 — Tabulate' --notes-file .cron-state/release-notes-v3.15.0.md` (need to write notes).
+4. Upload the 6 artifacts (mac arm64+x64 dmg, linux deb+AppImage, win msi+nsis).
+5. Verify Docker image at `ghcr.io/sanjays2402/slab-server:v3.15.0`.
+
+After that → v0.10.0 Beacon pipeline (per roadmap) or next backlog issue.
+
+### Previous status (archived) — v3.14.0 "Reflow" SHIPPED
+
+
 
 **TICK 2026-05-24 00:35 PT (Sunday off-hours)** — MODE B FINALIZE.
 
