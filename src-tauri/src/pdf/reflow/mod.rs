@@ -8,6 +8,8 @@
 
 pub mod errors;
 pub mod extract;
+pub mod layout;
+pub mod tables;
 pub mod types;
 
 pub use errors::ReflowError;
