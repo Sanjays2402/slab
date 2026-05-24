@@ -4,6 +4,28 @@
 
 ---
 
+## STATUS: 📋 v3.24.0 'Stack Pro' plan written (2026-05-24 15:27 PT)
+
+**TICK 2026-05-24 15:27 PT (Sunday off-hours)** — Sanjay invoked the
+`writing-plans` skill explicitly, so this tick is plan-authoring, not
+shipping. Wrote `docs/plans/2026-05-24-v3.24.0-stack-pro-three-way.md`
+(984 lines, 7 tasks, end-to-end Stack Pro three-way compare).
+
+- Commit `e47d835` on `main`, pushed.
+- Plan extends v3.23.0 diff stack: `pdf::diff3` module + merge engine,
+  Tauri command, 3-column Svelte panel, `Cmd+Shift+3`, shareable PDF
+  exporter, release wiring.
+- Buy-Button: Litera Compare = $400/seat/yr for this exact feature.
+  Acrobat/PDF Expert/Foxit ship 2-way only. PASS on all four tests.
+
+### Next tick
+
+MODE C DEVELOP — start executing the plan (Task 1: `ThreeWayDiff` types).
+Cut branch `feature/v3.24.0-stack-pro-three-way`. Target ≥4 tasks/600 LOC
+in one tick by bundling Tasks 1+2+3 (data model + engine + Tauri command).
+
+---
+
 ## STATUS: ✅ v3.23.0 'Stack' PUBLISHED (2026-05-24 15:15 PT)
 
 **TICK 2026-05-24 15:15 PT (Sunday off-hours)** — MODE B FINALIZE.
