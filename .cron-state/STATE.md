@@ -4,7 +4,48 @@
 
 ---
 
-## STATUS: v3.12.0 Atelier — Tasks 1-4 SHIPPED on feature branch (backend complete).
+## STATUS: v3.12.0 Atelier — Task 5 SHIPPED (UI live end-to-end), ready for release on next tick.
+
+**TICK 2026-05-23 18:3x PT (Saturday off-hours)** — MODE C DEVELOP, Task 5.
+
+### Shipped this tick (4 commits, 1169 net LOC added, pushed to feature/v3.12.0-atelier):
+- `afda26b` — keymap: atelier.open action (Mod+Shift+R), no collisions.
+- `f970dea` — `src/lib/atelier.ts` typed client (144 LOC): Step / Recipe / BatchProgress mirroring serde kebab-case, Channel-wrapping runBatch().
+- `481f36a` — `src/lib/panels/AtelierPanel.svelte` (1000 LOC): three-column Liquid Glass — palette + recipe builder w/ drag-reorder + folder pickers + Run + LIVE per-file × per-step matrix (cells: pending grey · running blue · done green · fail red). Cmd/Ctrl+Enter runs batch.
+- `0cacd42` — wire into +page.svelte: sidebar entry, panel switch, global Mod+Shift+R handler.
+
+### Quality gates ALL GREEN:
+- `cargo fmt --all -- --check` ✓
+- `cargo clippy --lib --all-targets -- -D warnings` ✓
+- `cargo test --lib keymap::` → 41/41 PASS
+- `cargo test --lib atelier` → 20/20 PASS (no regressions)
+- `pnpm check` → **0 errors**, 62 warnings (one new pre-existing-pattern a11y nit)
+
+### Buy-Button: PASSES on 3 of 4
+- Pay-for-it ✓ — Adobe Action Wizard ($239/yr) equivalent, free + offline.
+- Pick-us ✓ — no free cross-platform tool does parallel folder-recipe runs with live UI.
+- Tell-a-friend ✓ — the live matrix lighting up over a folder of PDFs IS the screenshot.
+
+### LAST_WOW_TICK_AT: 2026-05-24T01:42Z (live progress matrix end-to-end — this IS the wow tick.)
+
+### CI: build run 26348824398 queued on feature/v3.12.0-atelier.
+
+### Disk: 4.2 GiB free after mid-tick `cargo clean` (3.5 GiB recovered). Will need another clean before MODE A bundle build.
+
+### Next tick — Task 6 + 7 (release v3.12.0):
+1. **Task 6** — version bump 3.11.0 → 3.12.0 across Cargo.toml + Cargo.lock + package.json + tauri.conf.json. Draft release notes leading with "Adobe Action Wizard, free + offline."
+2. **Task 7** — MODE A RELEASE: merge `feature/v3.12.0-atelier` → main with `--no-ff`, tag `v3.12.0`, push tags, MODE B finalize next tick when CI green.
+3. Poll CI 26348824398 first — if red, fix before merging.
+
+Plan: `docs/plans/2026-05-23-v3.12.0-atelier-workflow-automation.md`
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.11.0 Signet Pro: released 2026-05-23.
+- v3.12.0 Atelier (in progress): backend + UI done; release pending.
+
+---
+
+## PRIOR STATUS: v3.12.0 Atelier — Tasks 1-4 SHIPPED on feature branch (backend complete).
 
 **TICK 2026-05-23 18:1x PT (Saturday off-hours)** — MODE C DEVELOP executed.
 Cut `feature/v3.12.0-atelier` from main; shipped Tasks 1-4 of the Atelier
