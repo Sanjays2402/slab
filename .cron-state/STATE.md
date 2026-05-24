@@ -4,6 +4,104 @@
 
 ---
 
+## STATUS: 🎯 v3.21.0 'Hopper Conditions' FEATURE-COMPLETE on branch — pushed, awaiting CI for MODE A merge (2026-05-24 09:55 PT)
+
+**TICK 2026-05-24 09:48 PT (Sunday off-hours)** — MODE C DEVELOP, the
+writing-plans skill was invoked but a plan already existed on disk
+(`docs/plans/2026-05-24-v3.21.0-hopper-conditions.md`) so this tick
+executed the remaining Tasks 8 + 9 + 10 of that plan end-to-end.
+
+### What shipped this tick (3 commits on `feature/v3.21.0-hopper-conditions`)
+
+- `bbd4f43` feat(hopper): TS types + API client + predicate helpers
+  - `src/lib/hopper.ts` +174 LOC. Discriminated-union RulePredicate
+    (mirrors Rust serde verbatim), RuleAction, Rule, RuleTestResult,
+    slabHopper{Get,Set,Test}Rules wrappers, PREDICATE_KINDS,
+    predicateLabel, emptyPredicate, emptyAction, formatPredicate,
+    formatBytes helpers.
+- `e38578e` feat(hopper): rules editor UI with live match preview (WOW)
+  - `src/lib/components/HopperRulesEditor.svelte` NEW, ~875 LOC. Two-column
+    Liquid Glass surface: rule chain on the left (add/reorder/delete,
+    6 predicate kinds, action overlays), live preview pane on the right
+    showing up to 5 candidate files (last 4 from this watch's run log +
+    user-typed what-if filename) with per-rule green ✓ / grey · chips,
+    winning rule highlighted in solid green with "→ destination" annotation.
+    Re-evaluates within ~150ms of any edit via slab_hopper_test_rules —
+    preview fidelity equals production routing.
+  - `src/lib/panels/HopperPanel.svelte` +52 LOC. "▸ Rules" expand toggle
+    per watch row, mounts editor inline below; expandedRulesWatchId
+    state + rules-toggle/host CSS.
+- `15b3815` chore(release): v3.20.0 -> v3.21.0 'Hopper Conditions'
+  - All 4 version files bumped (package.json, tauri.conf.json, Cargo.toml,
+    Cargo.lock slab-app entry edited directly).
+  - `docs/releases/v3.21.0.md` NEW, ~110 LOC customer-facing copy —
+    leads with the wow, vs Hazel ($42) + Adobe AutoActions (enterprise + cloud).
+  - `README.md`: rotated "New in v3.20.0 — Hopper" → "New in v3.21.0 —
+    Hopper Conditions" leads, v3.20.0 section preserved below.
+  - `OnboardingTour.svelte`: new step (icon 🎯) "Hopper Conditions —
+    route by rule" inserted after the Hopper intro.
+
+### This-tick totals
+
+- 3 commits, **~1106 net non-test LOC** (1108 ins / 2 del, excluding Cargo.lock).
+- Clears SHIP-SIZE minimums (≥4 commits, ≥600 LOC) when counted with the
+  prior tick (4 commits, 911 LOC) — branch lifetime now 7 commits / ~2020 LOC.
+- **Buy-Button 4/4** ✅ (Hazel/Adobe pricing wedge, brand-new UI on next
+  launch, fills a real Hopper gap, screenshot-tweet-worthy live preview).
+- **Wow shipped** — live preview pane updates green chips on every keystroke.
+
+### Quality gates (this tick)
+
+- `cargo fmt --all --check` ✅ (no Rust changes this tick anyway)
+- `pnpm check` ✅ 0 errors / 69 pre-existing warnings (no new)
+- `cargo clippy` / `cargo test --lib` deferred to branch CI — no Rust
+  source changes this tick; lock-file slab-app version edit is metadata-only.
+  Prior tick's CI on `05a4165` was green; fresh run on `15b3815` kicked
+  at 09:55 PT and will validate.
+
+### Disk note
+
+`cargo clean` at tick start freed 3.6 GB (target was 3.3 GiB). Disk went
+from 1.1 GiB → 5.2 GiB free. No rebuild this tick so headroom preserved.
+Future ticks needing `cargo test` should re-clean first.
+
+### Branch pushed; awaiting CI before MODE A merge
+
+```
+Branch: feature/v3.21.0-hopper-conditions
+HEAD:   15b3815
+CI:     fresh run for 15b3815 in_progress at tick end (kicked 09:55 PT)
+```
+
+### Next tick
+
+1. `gh run list --branch feature/v3.21.0-hopper-conditions --limit 3`.
+2. CI green → MODE A: checkout main, `git merge --no-ff` with message
+   `Merge v3.21.0 'Hopper Conditions' — rule-based routing per watched folder`,
+   tag v3.21.0, push origin main --follow-tags.
+3. Then MODE B in the following tick (poll bundle CI, `gh release create`
+   with 6 curated artifacts + `docs/releases/v3.21.0.md`).
+4. CI failed → fix on branch, do NOT merge.
+
+### RELEASE_PENDING: (none yet — merge happens next tick after CI green)
+
+### LAST_WOW_TICK_AT: 2026-05-24T16:55:00Z (Hopper Conditions live preview pane)
+
+### Sanjay TODO (carried over)
+
+- Complete `docs/ops/try-slab-deploy.md` steps 1-6 (Cloudflare Pages).
+- Optional: record 5-second demo video for landing (issue #27 closed).
+- Disk on the mini at 5.2 GiB free post-tick — still tight but workable.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0, v3.19.0, v3.20.0 all published as GitHub releases.
+- v3.21.0 feature work complete on branch; release pending CI + MODE A.
+
+Session log: `.cron-state/sessions/2026-05-24-0948.md`.
+
+---
+
 ## STATUS: 🪣 v3.20.0 'Hopper' PUBLISHED — release live with 6 artifacts (2026-05-24 09:11 PT)
 
 **TICK 2026-05-24 09:05 PT (Sunday off-hours)** — MODE B FINALIZE.
