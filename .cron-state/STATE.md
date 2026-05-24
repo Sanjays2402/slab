@@ -4,7 +4,60 @@
 
 ---
 
-## STATUS: v3.13.0 Streamline Task 6 (linearizer) shipped — Fast Web View write path live, end-to-end vertical complete.
+## STATUS: v3.13.0 "Streamline" MERGED + TAGGED — Fast Web View shipped, CI running, FINALIZE next tick.
+
+**TICK 2026-05-23 21:56 PT (Saturday off-hours)** — MODE C → MODE A RELEASE.
+
+Shipped Task 8 (Atelier `Linearize` step), bumped 3.12 → 3.13, wrote
+marketing release notes, merged to main, tagged v3.13.0, pushed with
+tag. CI run `26352543700` (build/main) + `26352543680` (Docker/tag)
+both queued. FINALIZE in MODE B next tick.
+
+This tick (4 commits on feature branch + 1 merge commit on main):
+- `ed88bad` feat(atelier): add Linearize step — Fast Web View in any recipe
+- `64150d5` feat(ui): expose Linearize step in Atelier recipe palette
+- `e97064a` chore(release): bump v3.12.0 → v3.13.0 "Streamline"
+- `cb61464` docs(release): v3.13.0 Streamline marketing-grade release notes
+- `2b7f821` Merge v3.13.0 'Streamline' — Fast Web View, free + offline
+
+Quality gates on main ALL ✓ (fmt, clippy -D warnings, **1459 unit tests**, pnpm check 0 errors).
+
+**Operations note:** disk was at 100% (132 Mi free) when this tick
+started — `cargo test --lib` refused to write fingerprints. Cleared
+`src-tauri/target/debug` (5.6 GB), now 4.8 GB free. Sanjay should
+look at `~/Library/Application Support/adspower_global` (9.6 GB) and
+`~/Downloads` (9.6 GB) when he has a minute.
+
+RELEASE_PENDING: v3.13.0 — merge SHA `2b7f821`, tag `v3.13.0`, CI runs `26352543700` (main build) + `26352543680` (Docker tag).
+
+### LAST_WOW_TICK_AT: 2026-05-24T04:08Z (Linearizer ships — Adobe charges $239/yr to produce Fast Web View PDFs; Slab does it free, offline, cross-platform.)
+
+### Buy-Button verdict — PASS on 4 of 4
+
+- Pay-for-it: ✅ Acrobat Pro $239/yr feature now free + as an Atelier batch step.
+- Notice-it: ✅ "Fast Web View" card appears in the Atelier recipe palette.
+- Pick-us: ✅ No competitor has this as a folder-batch automation step.
+- Tell-a-friend: ✅ "Chain OCR → Redact → Bates → Fast-Web-View on 500 PDFs, free, offline." Demo-ready.
+
+### Next tick — MODE B FINALIZE
+
+1. `gh run view 26352543700` and `gh run view 26352543680` — confirm both green.
+2. If green:
+   - `gh run download 26352543700 --dir /tmp/slab-release-v3.13.0`
+   - `gh release create v3.13.0 --title 'v3.13.0 — Streamline' --notes-file .cron-state/release-notes-v3.13.0.md` + upload 6 installers.
+   - Clear `RELEASE_PENDING` from STATE.md.
+3. If failed: `gh run view <id> --log-failed`, hotfix, do NOT guess.
+4. After release: roadmap fall-through — next milestone is v0.11.0 "Lathe"
+   (full edit mode) per roadmap, or pick a higher-value cross-cutting feature
+   (Cmd+K command palette is the standout).
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
+- v3.13.0 Streamline: merged + tagged 2026-05-24 @ `2b7f821`, CI running.
+
+---
+
+## PRIOR STATUS: v3.13.0 Streamline Task 6 (linearizer) shipped — Fast Web View write path live, end-to-end vertical complete.
 
 **TICK 2026-05-23 21:08 PT (Saturday off-hours)** — MODE C DEVELOP.
 
