@@ -4,7 +4,42 @@
 
 ---
 
-## STATUS: 🪣 v3.20.0 'Hopper' Tasks 1-3 SHIPPED — sqlite registry + log + end-to-end pipeline (2026-05-24 07:41 PT)
+## STATUS: 🪣 v3.20.0 'Hopper' Tasks 1-6 SHIPPED — end-to-end automation + UI live (2026-05-24 08:25 PT)
+
+**TICK 2026-05-24 08:25 PT (Sunday off-hours)** — MODE C, 4 commits on
+`feature/v3.20.0-hopper`, ~1900 net LOC across Rust + Svelte + TS,
+33/33 hopper:: tests green, frontend svelte-check 0 errors.
+
+- `21070ba` feat(hopper): notify watcher + debounce + parallel pipeline dispatch (Task 4, +538/-20, 6 new tests)
+- `2d3567a` feat(hopper): 7 Tauri commands + Ollama title provider + setup() bootstrap (Task 5, +418/-8, 8 new tests)
+- `b22aa46` feat(hopper): HopperPanel.svelte + sidebar entry — end-to-end Hopper UI (Task 6, +942)
+- `8c6723c` feat(keymap): bind hopper.open to Mod+Shift+H (cross-cutting wow polish)
+
+**Reachable end-to-end now**: Mod+Shift+H → Hopper panel → add watched
+folder + Atelier recipe → drop a PDF → watcher debounces 1s → pipeline
+runs in parallel → Ollama suggests a 4-6 word title → file is renamed
++ moved to output dir → `hopper://run-completed` Tauri event fires →
+live run log updates instantly. Plus 5s polling fallback.
+
+**Wow moment (counts as today's)**: drag a folder of scanned PDFs into
+a Hopper-watched directory and Slab silently OCRs, auto-titles, and
+files them while you sip coffee. The competitor (Hazel + Acrobat
+AutoActions + manual rename) costs $129/yr combined and isn't offline.
+
+**Gates**: cargo fmt + clippy clean on every commit; cargo check
+clean post-Task 6; svelte-check 0 errors / 66 pre-existing warnings.
+Full `cargo test --lib` deferred to CI due to disk pressure.
+
+**Branch state**: `feature/v3.20.0-hopper` pushed through `8c6723c`.
+CI build 26365080908 in_progress for b22aa46; prior 26364498803 green.
+Tasks remaining in plan: 7 (rate limiting / retry / dead-letter) and
+8 (docs + telemetry + release prep). Next tick: Task 7.
+
+`LAST_WOW_TICK_AT: 2026-05-24T15:25:00Z`
+
+---
+
+## (PREVIOUS) STATUS: 🪣 v3.20.0 'Hopper' Tasks 1-3 SHIPPED — sqlite registry + log + end-to-end pipeline (2026-05-24 07:41 PT)
 
 **TICK 2026-05-24 07:41 PT (Sunday off-hours)** — MODE C, 3 commits on
 `feature/v3.20.0-hopper`, 1207 net LOC (excluding Cargo.lock), 19 new
