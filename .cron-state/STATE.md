@@ -4,7 +4,101 @@
 
 ---
 
-## STATUS: 🪣 v3.20.0 'Hopper' Tasks 1-6 SHIPPED — end-to-end automation + UI live (2026-05-24 08:25 PT)
+## STATUS: 🪣 v3.20.0 'Hopper' MERGED + TAGGED — CI in progress (2026-05-24 08:38 PT)
+
+**TICK 2026-05-24 08:34 PT (Sunday off-hours)** — MODE C → MODE A.
+Tasks 7 + 8 of the Hopper plan shipped in one tick, then merged to main,
+tagged v3.20.0, pushed.
+
+### What shipped this tick
+
+- `a426247` feat(hopper): onboarding step + landing hero + README headline
+  - OnboardingTour: 6th step introduces Hopper (~/Inbox → recipe → AI
+    rename → filed) with ⇧⌘H hint.
+  - `docs/landing/index.html`: new toolbox tile under "PDF intelligence" +
+    full feature article in the grid-2 row with a monochrome live-log demo.
+  - README: lead "New in v3.20.0 — Hopper" section above What Slab does,
+    positioning vs Hazel + Adobe AutoActions.
+- `15a1f91` chore(release): bump v3.19.0 → v3.20.0 'Hopper'
+  - `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
+    → 3.20.0; Cargo.lock refreshed via cargo check.
+- `c095dba` docs(release): marketing release notes for v3.20.0 'Hopper'
+  - `docs/releases/v3.20.0.md` (67 LOC) — customer-facing, vs-competitors
+    framing, 4 use cases, install grid.
+- `fbd7e03` Merge v3.20.0 'Hopper' on main (merge commit, --no-ff).
+
+### Quality gates (this tick) — ALL GREEN
+
+- `cargo fmt --all --check` ✅
+- `cargo clippy --lib --all-targets -- -D warnings` ✅
+- `pnpm check` ✅ 0 errors, 66 pre-existing warnings (no new)
+- Full `cargo test --lib` not re-run this tick — already green on the
+  feature branch CI through `c095dba`, and main CI is running now.
+
+### RELEASE_PENDING: v3.20.0
+
+- Merge SHA: `fbd7e03`
+- Tag: `v3.20.0`
+- CI runs in_progress at tick end:
+  - build (main): `26365479885`
+  - Docker slab-server (v3.20.0 tag): `26365479787`
+  - deploy-try (main): `26365479884`
+  - pages-build-deployment (main): `26365479509`
+- Next tick: MODE B FINALIZE — poll the 4 runs, download artifacts,
+  publish GitHub release with the 6 curated bundles (mac arm64/x64 dmg,
+  linux deb + AppImage, win msi + nsis), attach
+  `docs/releases/v3.20.0.md` as the notes body.
+
+### Buy-Button verdict — 4/4 PASS
+
+- **Pay-for-it ✅** — Hazel is $42, Adobe AutoActions are enterprise-only
+  (~$300/yr + cloud upload). Slab Hopper is free, local, cross-platform,
+  and chains all of: recipe → AI rename → file. Power user would buy.
+- **Notice-it ✅** — New 🪣 in sidebar, new ⇧⌘H, onboarding step on
+  next launch, "New in v3.20.0 — Hopper" leads README.
+- **Pick-us ✅** — No competitor offers folder watcher + local AI rename.
+  This closes a real workflow gap (scanner inbox automation).
+- **Tell-a-friend ✅** — "Drop a PDF in a folder, walk away, come back to
+  a perfectly named, processed file" is a tweet-worthy demo.
+
+### LAST_WOW_TICK_AT: 2026-05-24T15:25:00Z (Hopper end-to-end, prior tick)
+
+This tick is the release + marketing tick, not a new wow. The Hopper
+wow shipped in the previous tick with the live-log Tauri event +
+HopperPanel UI.
+
+### Next tick (MODE B FINALIZE)
+
+1. `gh run view 26365479885` — wait for green.
+2. `gh run download 26365479885 --dir /tmp/slab-release-v3.20.0`
+3. Curate 6 best bundles, run `gh release create v3.20.0
+   --title "v3.20.0 — Hopper" --notes-file docs/releases/v3.20.0.md`
+   + upload artifacts.
+4. Verify Docker image on GHCR + deploy-try (will continue to no-op
+   on Cloudflare secrets until Sanjay completes
+   `docs/ops/try-slab-deploy.md`).
+5. Remove RELEASE_PENDING line.
+6. After v3.20.0 published, return to MODE C and start v3.21.0 —
+   "Hopper Conditions" (rule-based recipe selection) is the natural
+   next slice, OR pivot to v1.0.0 "Glass" polish pass.
+
+### Sanjay TODO (carried over)
+
+- Complete `docs/ops/try-slab-deploy.md` steps 1-6 (Cloudflare Pages).
+- Optional: record 5-second demo video for landing (issue #27 already closed).
+- Free disk on the mini — 1.0 GiB free, very tight.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.18.0
+- v3.19.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.19.0
+- v3.20.0 tagged, awaiting MODE B finalize next tick.
+
+Session log: `.cron-state/sessions/2026-05-24-0834.md`.
+
+---
+
+## (PREVIOUS) STATUS: 🪣 v3.20.0 'Hopper' Tasks 1-6 SHIPPED — end-to-end automation + UI live (2026-05-24 08:25 PT)
 
 **TICK 2026-05-24 08:25 PT (Sunday off-hours)** — MODE C, 4 commits on
 `feature/v3.20.0-hopper`, ~1900 net LOC across Rust + Svelte + TS,
