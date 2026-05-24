@@ -31,37 +31,32 @@ pub fn write_xlsx(
         tables.to_vec()
     };
 
-    let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
-
-    // [Content_Types].xml — declares MIME types for every part.
-    parts.push((
-        "[Content_Types].xml".to_string(),
-        content_types_xml(effective.len()).into_bytes(),
-    ));
-
-    // _rels/.rels — top-level relationships.
-    parts.push(("_rels/.rels".to_string(), top_level_rels().into_bytes()));
-
-    // xl/_rels/workbook.xml.rels — workbook → sheets, styles, sharedStrings.
-    parts.push((
-        "xl/_rels/workbook.xml.rels".to_string(),
-        workbook_rels(effective.len()).into_bytes(),
-    ));
-
-    // xl/workbook.xml.
-    parts.push((
-        "xl/workbook.xml".to_string(),
-        workbook_xml(&effective, opts).into_bytes(),
-    ));
-
-    // xl/styles.xml — declare one cellXfs entry for date formatting.
-    parts.push(("xl/styles.xml".to_string(), styles_xml().into_bytes()));
-
-    // xl/sharedStrings.xml — minimal (we use inline strings everywhere).
-    parts.push((
-        "xl/sharedStrings.xml".to_string(),
-        shared_strings_xml().into_bytes(),
-    ));
+    let mut parts: Vec<(String, Vec<u8>)> = vec![
+        // [Content_Types].xml — declares MIME types for every part.
+        (
+            "[Content_Types].xml".to_string(),
+            content_types_xml(effective.len()).into_bytes(),
+        ),
+        // _rels/.rels — top-level relationships.
+        ("_rels/.rels".to_string(), top_level_rels().into_bytes()),
+        // xl/_rels/workbook.xml.rels — workbook → sheets, styles, sharedStrings.
+        (
+            "xl/_rels/workbook.xml.rels".to_string(),
+            workbook_rels(effective.len()).into_bytes(),
+        ),
+        // xl/workbook.xml.
+        (
+            "xl/workbook.xml".to_string(),
+            workbook_xml(&effective, opts).into_bytes(),
+        ),
+        // xl/styles.xml — declare one cellXfs entry for date formatting.
+        ("xl/styles.xml".to_string(), styles_xml().into_bytes()),
+        // xl/sharedStrings.xml — minimal (we use inline strings everywhere).
+        (
+            "xl/sharedStrings.xml".to_string(),
+            shared_strings_xml().into_bytes(),
+        ),
+    ];
 
     // One xl/worksheets/sheet{n}.xml per table.
     for (idx, t) in effective.iter().enumerate() {
@@ -105,7 +100,9 @@ fn content_types_xml(sheet_count: usize) -> String {
 fn top_level_rels() -> String {
     let mut s = String::new();
     s.push_str(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#);
-    s.push_str(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+    s.push_str(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    );
     s.push_str(r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>"#);
     s.push_str("</Relationships>");
     s
@@ -114,7 +111,9 @@ fn top_level_rels() -> String {
 fn workbook_rels(sheet_count: usize) -> String {
     let mut s = String::new();
     s.push_str(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#);
-    s.push_str(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+    s.push_str(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    );
     for i in 1..=sheet_count {
         s.push_str(&format!(
             r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>"#
@@ -161,9 +160,13 @@ fn styles_xml() -> String {
     s.push_str(r#"<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>"#);
     s.push_str(r#"<cellXfs count="2">"#);
     s.push_str(r#"<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>"#);
-    s.push_str(r#"<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>"#);
+    s.push_str(
+        r#"<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>"#,
+    );
     s.push_str("</cellXfs>");
-    s.push_str(r#"<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>"#);
+    s.push_str(
+        r#"<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>"#,
+    );
     s.push_str("</styleSheet>");
     s
 }
@@ -186,10 +189,7 @@ fn sheet_xml(t: &TableExtract, opts: &TabulateOptions) -> Result<String, Tabulat
             match cells::classify(raw) {
                 Cell::Blank => {}
                 Cell::Number(n) if opts.type_numbers => {
-                    s.push_str(&format!(
-                        r#"<c r="{r}" t="n"><v>{}</v></c>"#,
-                        format_f64(n)
-                    ));
+                    s.push_str(&format!(r#"<c r="{r}" t="n"><v>{}</v></c>"#, format_f64(n)));
                 }
                 Cell::Date(serial) if opts.type_dates => {
                     s.push_str(&format!(

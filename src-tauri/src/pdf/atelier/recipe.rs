@@ -71,14 +71,30 @@ pub enum Step {
         #[serde(default = "default_heading_size_ratio")]
         heading_size_ratio: f32,
     },
+    /// Convert this PDF to an Excel `.xlsx` workbook (terminal step — must
+    /// be the last step in a recipe). Detects aligned-column tables, types
+    /// numbers and dates, emits one worksheet per page. Adobe Acrobat Pro
+    /// charges $239/yr for "Export PDF to Excel" and ships your file to
+    /// their cloud; PDF Expert doesn't offer it at all; Foxit charges
+    /// $129/yr Pro. Slab ships it free, offline, batchable.
+    ConvertToXlsx {
+        #[serde(default = "default_type_numbers")]
+        type_numbers: bool,
+        #[serde(default = "default_type_dates")]
+        type_dates: bool,
+        #[serde(default = "default_include_non_table_text")]
+        include_non_table_text: bool,
+    },
 }
 
 impl Step {
-    /// True when this step changes the output container format (PDF → DOCX).
-    /// Currently only `ConvertToDocx` returns true. Used by the runner to
-    /// rewrite the user-supplied output filename extension.
+    /// True when this step changes the output container format (PDF → DOCX/XLSX).
+    /// Used by the runner to rewrite the user-supplied output filename extension.
     pub fn changes_extension(&self) -> bool {
-        matches!(self, Step::ConvertToDocx { .. })
+        matches!(
+            self,
+            Step::ConvertToDocx { .. } | Step::ConvertToXlsx { .. }
+        )
     }
 
     /// The output filename extension this step produces. Steps that
@@ -86,6 +102,7 @@ impl Step {
     pub fn output_extension(&self) -> &'static str {
         match self {
             Step::ConvertToDocx { .. } => "docx",
+            Step::ConvertToXlsx { .. } => "xlsx",
             _ => "pdf",
         }
     }
@@ -126,6 +143,15 @@ fn default_detect_lists() -> bool {
 }
 fn default_heading_size_ratio() -> f32 {
     1.25
+}
+fn default_type_numbers() -> bool {
+    true
+}
+fn default_type_dates() -> bool {
+    true
+}
+fn default_include_non_table_text() -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -206,6 +232,11 @@ mod tests {
                 detect_lists: true,
                 heading_size_ratio: 1.25,
             },
+            Step::ConvertToXlsx {
+                type_numbers: true,
+                type_dates: true,
+                include_non_table_text: false,
+            },
         ];
         for s in steps {
             let j = serde_json::to_string(&s).unwrap();
@@ -270,5 +301,64 @@ mod tests {
         );
         assert_eq!(Step::Compactor.output_extension(), "pdf");
         assert_eq!(Step::Linearize.output_extension(), "pdf");
+    }
+
+    #[test]
+    fn convert_to_xlsx_kebab_kind_in_json() {
+        let s = Step::ConvertToXlsx {
+            type_numbers: true,
+            type_dates: true,
+            include_non_table_text: false,
+        };
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["kind"], "convert-to-xlsx");
+    }
+
+    #[test]
+    fn convert_to_xlsx_defaults_round_trip() {
+        let json = r#"{"kind":"convert-to-xlsx"}"#;
+        let s: Step = serde_json::from_str(json).unwrap();
+        match s {
+            Step::ConvertToXlsx {
+                type_numbers,
+                type_dates,
+                include_non_table_text,
+            } => {
+                assert!(type_numbers);
+                assert!(type_dates);
+                assert!(!include_non_table_text);
+            }
+            _ => panic!("expected ConvertToXlsx"),
+        }
+    }
+
+    #[test]
+    fn convert_to_xlsx_changes_extension_and_outputs_xlsx() {
+        let s = Step::ConvertToXlsx {
+            type_numbers: true,
+            type_dates: true,
+            include_non_table_text: false,
+        };
+        assert!(s.changes_extension());
+        assert_eq!(s.output_extension(), "xlsx");
+    }
+
+    #[test]
+    fn recipe_ending_in_convert_to_xlsx_yields_xlsx_output() {
+        let r = Recipe {
+            name: "Tabulate".into(),
+            version: 1,
+            steps: vec![
+                Step::Ocr {
+                    language: "eng".into(),
+                },
+                Step::ConvertToXlsx {
+                    type_numbers: true,
+                    type_dates: true,
+                    include_non_table_text: false,
+                },
+            ],
+        };
+        assert_eq!(r.output_extension(), "xlsx");
     }
 }

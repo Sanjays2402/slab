@@ -1595,6 +1595,31 @@ fn slab_reflow_to_docx(
 }
 
 #[tauri::command]
+fn slab_tabulate_to_xlsx(
+    input: PathBuf,
+    output: PathBuf,
+    type_numbers: Option<bool>,
+    type_dates: Option<bool>,
+    include_non_table_text: Option<bool>,
+    sheet_name_pattern: Option<String>,
+) -> CmdResult<crate::pdf::tabulate::TabulateReport> {
+    use crate::pdf::tabulate::{convert_to_xlsx, TabulateOptions};
+    let defaults = TabulateOptions::default();
+    let opts = TabulateOptions {
+        type_numbers: type_numbers.unwrap_or(defaults.type_numbers),
+        type_dates: type_dates.unwrap_or(defaults.type_dates),
+        include_non_table_text: include_non_table_text.unwrap_or(defaults.include_non_table_text),
+        sheet_name_pattern: sheet_name_pattern.unwrap_or(defaults.sheet_name_pattern),
+    };
+    match convert_to_xlsx(&input, &output, &opts) {
+        Ok(r) => CmdResult::Ok { value: r },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
 fn slab_encrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
     do_encrypt(&input, &output, &password).into()
 }
@@ -4456,6 +4481,7 @@ pub fn run() {
             slab_streamline_linearize,
             slab_streamline_audit,
             slab_reflow_to_docx,
+            slab_tabulate_to_xlsx,
             slab_encrypt,
             slab_decrypt,
             slab_watermark,

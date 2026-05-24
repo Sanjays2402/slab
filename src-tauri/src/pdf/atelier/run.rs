@@ -105,6 +105,7 @@ fn step_kind(s: &Step) -> String {
         Step::Compactor => "compactor",
         Step::Linearize => "linearize",
         Step::ConvertToDocx { .. } => "convert-to-docx",
+        Step::ConvertToXlsx { .. } => "convert-to-xlsx",
     }
     .into()
 }
@@ -181,6 +182,21 @@ fn apply_step(input: &Path, output: &Path, step: &Step) -> Result<(), PdfError> 
             };
             crate::pdf::reflow::convert_to_docx(input, output, &opts)
                 .map_err(|e| PdfError::Other(format!("reflow: {e}")))?;
+            Ok(())
+        }
+        Step::ConvertToXlsx {
+            type_numbers,
+            type_dates,
+            include_non_table_text,
+        } => {
+            let opts = crate::pdf::tabulate::TabulateOptions {
+                type_numbers: *type_numbers,
+                type_dates: *type_dates,
+                include_non_table_text: *include_non_table_text,
+                ..Default::default()
+            };
+            crate::pdf::tabulate::convert_to_xlsx(input, output, &opts)
+                .map_err(|e| PdfError::Other(format!("tabulate: {e}")))?;
             Ok(())
         }
     }
