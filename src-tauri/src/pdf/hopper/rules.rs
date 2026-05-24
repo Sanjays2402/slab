@@ -51,7 +51,7 @@ pub struct RuleContext<'a> {
 }
 
 /// The discriminator for when a [`Rule`] applies.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RulePredicate {
     /// Filename matches a glob (e.g. `tax_*.pdf`, `*receipt*`).
@@ -65,13 +65,8 @@ pub enum RulePredicate {
     /// File size strictly larger than N bytes.
     SizeOver { bytes: u64 },
     /// Always matches — use as the catch-all fallback rule.
+    #[default]
     Always,
-}
-
-impl Default for RulePredicate {
-    fn default() -> Self {
-        Self::Always
-    }
 }
 
 impl RulePredicate {

@@ -4746,6 +4746,9 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_list_runs,
             crate::pdf::hopper::cmds::slab_hopper_run_now,
             crate::pdf::hopper::cmds::slab_hopper_describe,
+            crate::pdf::hopper::cmds::slab_hopper_get_rules,
+            crate::pdf::hopper::cmds::slab_hopper_set_rules,
+            crate::pdf::hopper::cmds::slab_hopper_test_rules,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
