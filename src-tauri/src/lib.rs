@@ -1595,6 +1595,64 @@ fn slab_reflow_to_docx(
 }
 
 #[tauri::command]
+fn slab_markdown_to_md(
+    input: PathBuf,
+    output: PathBuf,
+    detect_tables: Option<bool>,
+    detect_lists: Option<bool>,
+    flavour_gfm: Option<bool>,
+) -> CmdResult<crate::pdf::markdown::MarkdownReport> {
+    use crate::pdf::markdown::{convert_to_markdown, MarkdownFlavour, MarkdownOptions};
+    let mut opts = MarkdownOptions::default();
+    if let Some(v) = detect_tables {
+        opts.detect_tables = v;
+    }
+    if let Some(v) = detect_lists {
+        opts.detect_lists = v;
+    }
+    if let Some(false) = flavour_gfm {
+        opts.flavour = MarkdownFlavour::CommonMark;
+    }
+    match convert_to_markdown(&input, &output, &opts) {
+        Ok(r) => CmdResult::Ok { value: r },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
+fn slab_markdown_to_html(
+    input: PathBuf,
+    output: PathBuf,
+    detect_tables: Option<bool>,
+    detect_lists: Option<bool>,
+    semantic_tags: Option<bool>,
+    embed_css: Option<bool>,
+) -> CmdResult<crate::pdf::markdown::HtmlReport> {
+    use crate::pdf::markdown::{convert_to_html, HtmlOptions};
+    let mut opts = HtmlOptions::default();
+    if let Some(v) = detect_tables {
+        opts.detect_tables = v;
+    }
+    if let Some(v) = detect_lists {
+        opts.detect_lists = v;
+    }
+    if let Some(v) = semantic_tags {
+        opts.semantic_tags = v;
+    }
+    if let Some(v) = embed_css {
+        opts.embed_css = v;
+    }
+    match convert_to_html(&input, &output, &opts) {
+        Ok(r) => CmdResult::Ok { value: r },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
 fn slab_tabulate_to_xlsx(
     input: PathBuf,
     output: PathBuf,
@@ -4503,6 +4561,8 @@ pub fn run() {
             slab_streamline_linearize,
             slab_streamline_audit,
             slab_reflow_to_docx,
+            slab_markdown_to_md,
+            slab_markdown_to_html,
             slab_tabulate_to_xlsx,
             slab_slide_to_pptx,
             slab_encrypt,
