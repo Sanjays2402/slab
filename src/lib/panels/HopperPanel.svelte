@@ -25,6 +25,7 @@
   import { onMount, onDestroy } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { isInTauri } from "$lib/tauri";
+  import HopperRulesEditor from "$lib/components/HopperRulesEditor.svelte";
   import {
     slabHopperListWatches,
     slabHopperAddWatch,
@@ -63,6 +64,14 @@
   let draftAiRename = $state(true);
   let draftRecipeId = $state("");
   let draftSubmitting = $state(false);
+
+  /** Which watch row (if any) currently has its Routing Rules
+   *  editor expanded. `null` = all collapsed. */
+  let expandedRulesWatchId = $state<number | null>(null);
+
+  function toggleRules(watchId: number) {
+    expandedRulesWatchId = expandedRulesWatchId === watchId ? null : watchId;
+  }
 
   // -------------------------------------------------------------------
   // Lifecycle — load, subscribe, cleanup.
@@ -321,6 +330,14 @@
                 {/if}
               </div>
               <button
+                class="rules-toggle"
+                class:open={expandedRulesWatchId === w.id}
+                onclick={() => toggleRules(w.id)}
+                title="Configure routing rules for this watch"
+              >
+                {expandedRulesWatchId === w.id ? "▾" : "▸"} Rules
+              </button>
+              <button
                 class="del"
                 onclick={() => removeWatch(w)}
                 title="Remove this watch"
@@ -328,6 +345,16 @@
                 ×
               </button>
             </li>
+            {#if expandedRulesWatchId === w.id}
+              <li class="rules-host">
+                <HopperRulesEditor
+                  watchId={w.id}
+                  watchSource={w.source_dir}
+                  watchOutput={w.output_dir}
+                  watchRecipeId={w.recipe_id}
+                />
+              </li>
+            {/if}
           {/each}
         </ul>
       {/if}
@@ -692,6 +719,31 @@
   .del:hover {
     color: #ff7a7a;
     background: transparent;
+  }
+  .rules-toggle {
+    background: rgba(110, 165, 255, 0.12);
+    border: 1px solid rgba(110, 165, 255, 0.25);
+    color: #b8d1ff;
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .rules-toggle:hover {
+    background: rgba(110, 165, 255, 0.22);
+    color: #d5e4ff;
+  }
+  .rules-toggle.open {
+    background: rgba(110, 165, 255, 0.28);
+    color: #fff;
+    border-color: rgba(110, 165, 255, 0.55);
+  }
+  .rules-host {
+    list-style: none;
+    padding: 0;
+    margin: 0;
   }
 
   .live-dot {

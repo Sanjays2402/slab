@@ -271,12 +271,20 @@ impl HopperService {
         let recipe_loader = self.recipe_loader.clone();
         let log = self.log.clone();
         let emitter = self.emitter.clone();
+        // Snapshot rules once per dispatch — short-lock the registry,
+        // copy, release. Rules are cheap (handful of structs); reloading
+        // every file lets users edit rules without restarting Hopper.
+        let rules = {
+            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.get_rules(watch.id).unwrap_or_default()
+        };
         tokio::spawn(async move {
             // `process_one` is CPU/IO-bound and uses blocking sqlite,
             // so we move it onto a blocking-task thread.
             let outcome = tokio::task::spawn_blocking(move || {
                 pipeline::process_one(
                     &watch,
+                    &rules,
                     &path,
                     provider.as_ref(),
                     |rid| (recipe_loader)(rid),

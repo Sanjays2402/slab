@@ -39,6 +39,7 @@ pub mod log;
 pub mod pipeline;
 pub mod registry;
 pub mod rename;
+pub mod rules;
 pub mod watcher;
 
 pub use log::{HopperLog, RunRecord, RunStatus};

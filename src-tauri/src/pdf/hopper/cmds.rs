@@ -39,6 +39,7 @@ use tauri::Manager;
 use super::log::RunRecord;
 use super::pipeline::TitleProvider;
 use super::registry::{Watch, WatchInput};
+use super::rules::{evaluate_rules, ResolvedRouting, Rule, RuleContext};
 use super::watcher::HopperService;
 use crate::ai::{AiProvider, ChatMessage, ChatOpts, ChatRole};
 
@@ -154,6 +155,116 @@ pub struct HopperStatus {
     pub watch_count: i64,
     pub run_count: i64,
     pub version: String,
+}
+
+// ---------------------------------------------------------------------
+// v3.21.0 — rule CRUD + live test
+// ---------------------------------------------------------------------
+
+/// `slab_hopper_get_rules` — return the ordered list of routing rules
+/// for a given watch. Empty `[]` means "no conditional routing; use the
+/// watch defaults" (v3.20.0 behaviour).
+#[tauri::command]
+pub fn slab_hopper_get_rules(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+) -> CmdResult<Vec<Rule>> {
+    let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+    reg.get_rules(watch_id)
+        .map_err(|e| format!("registry get_rules: {e}"))
+}
+
+/// `slab_hopper_set_rules` — atomically replace the rule list for a
+/// watch. Order is significant (first-match-wins). The new rules take
+/// effect on the next file the watcher dispatches; no restart needed.
+#[tauri::command]
+pub fn slab_hopper_set_rules(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    rules: Vec<Rule>,
+) -> CmdResult<()> {
+    let mut reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+    reg.set_rules(watch_id, &rules)
+        .map_err(|e| format!("registry set_rules: {e}"))
+}
+
+/// Payload returned by `slab_hopper_test_rules` — what would happen
+/// if this `filename` arrived under this watch with these rules.
+#[derive(Debug, Clone, Serialize)]
+pub struct RuleTestResult {
+    /// Index of the matching rule in the input array, or `None` for
+    /// the watch defaults.
+    pub matched_index: Option<usize>,
+    /// Name of the matching rule, or `None` for watch defaults.
+    pub matched_rule: Option<String>,
+    /// The recipe that would run.
+    pub recipe_id: Option<String>,
+    /// The output directory the file would land in.
+    pub output_dir: String,
+    /// The rename pattern that would apply (may be `None`).
+    pub rename_pattern: Option<String>,
+}
+
+impl RuleTestResult {
+    fn from_resolution(rules: &[Rule], r: &ResolvedRouting) -> Self {
+        let matched_index = r
+            .matched_rule
+            .as_deref()
+            .and_then(|name| rules.iter().position(|x| x.name == name));
+        Self {
+            matched_index,
+            matched_rule: r.matched_rule.clone(),
+            recipe_id: r.recipe_id.clone(),
+            output_dir: r.output_dir.clone(),
+            rename_pattern: r.rename_pattern.clone(),
+        }
+    }
+}
+
+/// `slab_hopper_test_rules` — given a watch id, a candidate filename,
+/// and an optional in-flight rule list, return which rule would match
+/// and where the file would file. Used by the rule editor's "Test
+/// against last 5 files" live preview — users see green/red ticks per
+/// rule before saving.
+///
+/// `size_bytes` and `page_count` are optional hints from the caller
+/// (e.g. for files already known to the run-log); when absent the
+/// predicate context uses zero / `None`. `text_sample` is currently
+/// passed as `None` — text-aware predicates require a server-side
+/// extraction pass which lands in a later slice.
+#[tauri::command]
+pub fn slab_hopper_test_rules(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    filename: String,
+    size_bytes: Option<u64>,
+    page_count: Option<u32>,
+    candidate_rules: Option<Vec<Rule>>,
+) -> CmdResult<RuleTestResult> {
+    let watch = {
+        let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.get(watch_id)
+            .map_err(|e| format!("registry get: {e}"))?
+            .ok_or_else(|| format!("watch id {watch_id} not found"))?
+    };
+    let rules = match candidate_rules {
+        Some(rs) => rs,
+        None => {
+            let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.get_rules(watch_id)
+                .map_err(|e| format!("registry get_rules: {e}"))?
+        }
+    };
+    let parent = String::new();
+    let ctx = RuleContext {
+        filename: filename.as_str(),
+        parent_dir: parent.as_str(),
+        size_bytes: size_bytes.unwrap_or(0),
+        page_count,
+        text_sample: None,
+    };
+    let resolved = evaluate_rules(&rules, &watch, &ctx);
+    Ok(RuleTestResult::from_resolution(&rules, &resolved))
 }
 
 // ---------------------------------------------------------------------

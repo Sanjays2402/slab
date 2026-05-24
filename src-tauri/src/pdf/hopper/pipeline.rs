@@ -23,6 +23,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use super::log::{HopperLog, RunRecord, RunStatus};
 use super::registry::Watch;
 use super::rename::{apply_pattern, slugify};
+use super::rules::{evaluate_rules, Rule, RuleContext};
 
 /// Pluggable AI title provider. Returns a 4-6 word document title or
 /// `None` if the provider is offline / unavailable (caller treats that
@@ -56,6 +57,7 @@ pub struct ProcessOutcome {
 /// recipe value. Production wiring loads from `$APP_CONFIG/atelier/recipes`.
 pub fn process_one<F>(
     watch: &Watch,
+    rules: &[Rule],
     input_path: &Path,
     provider: &dyn TitleProvider,
     recipe_loader: F,
@@ -79,8 +81,33 @@ where
         .unwrap_or("pdf")
         .to_lowercase();
 
+    // ── v3.21.0: evaluate rules → ResolvedRouting overrides watch defaults.
+    //
+    // The pipeline reads `recipe_id` / `output_dir` / `rename_pattern`
+    // from the resolved routing instead of the watch directly. If no
+    // rule matches, `evaluate_rules` returns the watch defaults verbatim
+    // (with `matched_rule = None`), so v3.20.0 single-recipe behaviour
+    // is preserved when the rule list is empty.
+    let filename = input_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let parent_dir = input_path.parent().and_then(|p| p.to_str()).unwrap_or("");
+    let size_bytes = fs::metadata(input_path).map(|m| m.len()).unwrap_or(0);
+    let ctx = RuleContext {
+        filename,
+        parent_dir,
+        size_bytes,
+        // v1: page_count + text_sample stay `None` — text extraction is
+        // expensive and most users start with filename/size rules. The
+        // editor UI in Task 9 will let users opt-in per rule.
+        page_count: None,
+        text_sample: None,
+    };
+    let resolved = evaluate_rules(rules, watch, &ctx);
+
     // Resolve recipe (if any) — failure here = skip recipe, copy as-is.
-    let recipe = match watch.recipe_id.as_deref() {
+    let recipe = match resolved.recipe_id.as_deref() {
         Some(rid) => recipe_loader(rid),
         None => None,
     };
@@ -141,7 +168,7 @@ where
     };
 
     // Stage 3: filename.
-    let final_name = match watch.rename_pattern.as_deref() {
+    let final_name = match resolved.rename_pattern.as_deref() {
         Some(pattern) => {
             let date = today_iso8601();
             apply_pattern(pattern, &date, ai_title.as_deref(), &stem, &ext)
@@ -150,7 +177,7 @@ where
     };
 
     // Stage 4: move into place.
-    let out_dir = PathBuf::from(&watch.output_dir);
+    let out_dir = PathBuf::from(&resolved.output_dir);
     if let Err(e) = fs::create_dir_all(&out_dir) {
         return finish(
             watch,
@@ -342,7 +369,7 @@ mod tests {
         let log_db = dir.path().join("hopper.db");
         let log = Mutex::new(HopperLog::open(&log_db).unwrap());
 
-        let outcome = process_one(&watch, &inp, &NullProvider, |_| None, &log);
+        let outcome = process_one(&watch, &[], &inp, &NullProvider, |_| None, &log);
         assert_eq!(outcome.record.status, RunStatus::Success);
         let out = outcome.record.output_path.expect("output_path set");
         assert!(Path::new(&out).exists(), "output file {out} missing");
@@ -370,6 +397,7 @@ mod tests {
         let log = Mutex::new(HopperLog::open(dir.path().join("h.db")).unwrap());
         let outcome = process_one(
             &watch,
+            &[],
             &inp,
             &CannedProvider("NDA Acme Corp"),
             |_| None,
@@ -405,7 +433,7 @@ mod tests {
             created_at: "0".into(),
         };
         let log = Mutex::new(HopperLog::open(dir.path().join("h.db")).unwrap());
-        let outcome = process_one(&watch, &inp, &NullProvider, |_| None, &log);
+        let outcome = process_one(&watch, &[], &inp, &NullProvider, |_| None, &log);
         let out = outcome.record.output_path.unwrap();
         assert!(out.ends_with("Acme_NDA (1).pdf"), "got {out}");
         // Original file with same name still untouched.
@@ -430,6 +458,7 @@ mod tests {
         // doesn't exist on disk → copy step fails (no recipe to run).
         let outcome = process_one(
             &watch,
+            &[],
             &dir.path().join("does-not-exist.pdf"),
             &NullProvider,
             |_| {
@@ -455,5 +484,112 @@ mod tests {
         assert_eq!(ymd_from_unix(951782400), (2000, 2, 29));
         // 2024-01-01 = 1704067200
         assert_eq!(ymd_from_unix(1704067200), (2024, 1, 1));
+    }
+
+    // ─── v3.21.0: rule-driven routing end-to-end ──────────────────────
+
+    #[test]
+    fn rule_overrides_watch_output_dir() {
+        use super::super::rules::{Rule, RuleAction, RulePredicate};
+
+        let dir = tempfile::tempdir().unwrap();
+        let inp = dir.path().join("tax_2026.pdf");
+        write_dummy_pdf(&inp);
+
+        let default_out = dir.path().join("misc");
+        let tax_out = dir.path().join("taxes");
+        fs::create_dir_all(&default_out).unwrap();
+        fs::create_dir_all(&tax_out).unwrap();
+
+        let watch = Watch {
+            id: 7,
+            source_dir: dir.path().display().to_string(),
+            output_dir: default_out.display().to_string(),
+            recipe_id: None,
+            rename_pattern: None,
+            ai_rename: false,
+            enabled: true,
+            created_at: "0".into(),
+        };
+        let rules = vec![Rule {
+            name: "taxes".into(),
+            predicate: RulePredicate::FilenameGlob {
+                pattern: "tax_*.pdf".into(),
+            },
+            action: RuleAction {
+                recipe_id: None,
+                output_dir: Some(tax_out.display().to_string()),
+                rename_pattern: None,
+            },
+        }];
+        let log = Mutex::new(HopperLog::open(dir.path().join("h.db")).unwrap());
+
+        let outcome = process_one(&watch, &rules, &inp, &NullProvider, |_| None, &log);
+        assert_eq!(outcome.record.status, RunStatus::Success);
+        let out = outcome.record.output_path.unwrap();
+        assert!(
+            out.starts_with(tax_out.to_string_lossy().as_ref()),
+            "expected tax dir routing, got {out}"
+        );
+    }
+
+    #[test]
+    fn empty_rules_preserves_v3_20_behaviour() {
+        // Smoke test: passing `&[]` for rules must behave identically to
+        // the v3.20.0 pipeline — the watch defaults are used.
+        let dir = tempfile::tempdir().unwrap();
+        let inp = dir.path().join("doc.pdf");
+        let out_dir = dir.path().join("out");
+        write_dummy_pdf(&inp);
+        let watch = Watch {
+            id: 8,
+            source_dir: dir.path().display().to_string(),
+            output_dir: out_dir.display().to_string(),
+            recipe_id: None,
+            rename_pattern: None,
+            ai_rename: false,
+            enabled: true,
+            created_at: "0".into(),
+        };
+        let log = Mutex::new(HopperLog::open(dir.path().join("h.db")).unwrap());
+        let outcome = process_one(&watch, &[], &inp, &NullProvider, |_| None, &log);
+        assert_eq!(outcome.record.status, RunStatus::Success);
+        let out = outcome.record.output_path.unwrap();
+        assert!(out.starts_with(out_dir.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn non_matching_rule_falls_through_to_watch_defaults() {
+        use super::super::rules::{Rule, RuleAction, RulePredicate};
+        let dir = tempfile::tempdir().unwrap();
+        let inp = dir.path().join("invoice.pdf");
+        let out_dir = dir.path().join("default-out");
+        write_dummy_pdf(&inp);
+        let watch = Watch {
+            id: 9,
+            source_dir: dir.path().display().to_string(),
+            output_dir: out_dir.display().to_string(),
+            recipe_id: None,
+            rename_pattern: None,
+            ai_rename: false,
+            enabled: true,
+            created_at: "0".into(),
+        };
+        let rules = vec![Rule {
+            name: "taxes-only".into(),
+            predicate: RulePredicate::FilenameGlob {
+                pattern: "tax_*.pdf".into(),
+            },
+            action: RuleAction {
+                recipe_id: None,
+                output_dir: Some("/should/not/be/used".into()),
+                rename_pattern: None,
+            },
+        }];
+        let log = Mutex::new(HopperLog::open(dir.path().join("h.db")).unwrap());
+        let outcome = process_one(&watch, &rules, &inp, &NullProvider, |_| None, &log);
+        assert_eq!(outcome.record.status, RunStatus::Success);
+        let out = outcome.record.output_path.unwrap();
+        assert!(out.starts_with(out_dir.to_string_lossy().as_ref()));
     }
 }

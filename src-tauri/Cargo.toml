@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "3.20.0"
+version = "3.21.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -58,6 +58,7 @@ pulldown-cmark = { version = "0.12", default-features = false }
 
 # Regex engine for auto-redact
 regex = "1"
+globset = "0.4"
 
 # Async runtime for long-running ops (compress, OCR later)
 tokio = { version = "1", features = ["full"] }

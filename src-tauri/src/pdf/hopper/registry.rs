@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::rules::Rule;
+
 /// A persisted watched-folder configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Watch {
@@ -84,6 +86,27 @@ impl HopperRegistry {
             CREATE INDEX IF NOT EXISTS watches_enabled_idx ON watches(enabled);
             "#,
         )?;
+
+        // ── v3.21.0 migration: add `rules_json` (idempotent column-add).
+        //
+        // Sqlite has no `ADD COLUMN IF NOT EXISTS`, so probe `pragma_table_info`.
+        // A NULL/empty value means "no rules" (== `[]`); the typed API in
+        // [`set_rules`] / [`get_rules`] normalises both.
+        let has_rules: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('watches') WHERE name = 'rules_json'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !has_rules {
+            conn.execute(
+                "ALTER TABLE watches ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
+        }
+
         Ok(Self { conn })
     }
 
@@ -146,6 +169,47 @@ impl HopperRegistry {
             params![enabled as i32, id],
         )?;
         Ok(())
+    }
+
+    /// Replace this watch's rule list. Pass `&[]` to clear all rules.
+    ///
+    /// Rules are stored as a JSON array in the `rules_json` column. The
+    /// JSON shape is stable across versions (kebab-case `kind` tag) — see
+    /// [`crate::pdf::hopper::rules`] for the schema.
+    pub fn set_rules(&mut self, id: i64, rules: &[Rule]) -> rusqlite::Result<()> {
+        let json = serde_json::to_string(rules).map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e.to_string())))
+        })?;
+        self.conn.execute(
+            "UPDATE watches SET rules_json = ?1 WHERE id = ?2",
+            params![json, id],
+        )?;
+        Ok(())
+    }
+
+    /// Read this watch's rule list. Returns `Ok(vec![])` for unknown ids
+    /// or empty/`[]` storage; only invalid JSON surfaces as an error.
+    pub fn get_rules(&self, id: i64) -> rusqlite::Result<Vec<Rule>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT rules_json FROM watches WHERE id = ?1",
+                params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        let json = json.unwrap_or_else(|| "[]".into());
+        if json.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        serde_json::from_str(&json).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::other(e.to_string())),
+            )
+        })
     }
 }
 
@@ -295,5 +359,151 @@ mod tests {
         let all = reg.list().unwrap();
         let listed: Vec<_> = all.iter().map(|w| w.id).collect();
         assert_eq!(listed, ids);
+    }
+
+    // ─── v3.21.0 rules_json migration + typed API ─────────────────────
+
+    #[test]
+    fn migration_adds_rules_json_column_idempotently() {
+        let (_g, path) = tmp_db();
+        // First open creates column.
+        {
+            let _ = HopperRegistry::open(&path).unwrap();
+        }
+        // Second open must be a no-op (would error if it re-added the col).
+        {
+            let _ = HopperRegistry::open(&path).unwrap();
+        }
+        // Verify column exists.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('watches') WHERE name = 'rules_json'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn new_watch_starts_with_empty_rules() {
+        let (_g, path) = tmp_db();
+        let mut reg = HopperRegistry::open(&path).unwrap();
+        let id = reg
+            .add(WatchInput {
+                source_dir: "/in".into(),
+                output_dir: "/out".into(),
+                recipe_id: None,
+                rename_pattern: None,
+                ai_rename: false,
+            })
+            .unwrap();
+        assert!(reg.get_rules(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_and_get_rules_round_trips() {
+        use crate::pdf::hopper::rules::{Rule, RuleAction, RulePredicate};
+        let (_g, path) = tmp_db();
+        let mut reg = HopperRegistry::open(&path).unwrap();
+        let id = reg
+            .add(WatchInput {
+                source_dir: "/in".into(),
+                output_dir: "/out".into(),
+                recipe_id: None,
+                rename_pattern: None,
+                ai_rename: false,
+            })
+            .unwrap();
+
+        let rules = vec![
+            Rule {
+                name: "taxes".into(),
+                predicate: RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+                action: RuleAction {
+                    recipe_id: Some("flatten".into()),
+                    output_dir: Some("/taxes".into()),
+                    rename_pattern: None,
+                },
+            },
+            Rule {
+                name: "catch-all".into(),
+                predicate: RulePredicate::Always,
+                action: RuleAction::default(),
+            },
+        ];
+        reg.set_rules(id, &rules).unwrap();
+        let got = reg.get_rules(id).unwrap();
+        assert_eq!(got, rules);
+    }
+
+    #[test]
+    fn set_rules_empty_clears() {
+        use crate::pdf::hopper::rules::{Rule, RulePredicate};
+        let (_g, path) = tmp_db();
+        let mut reg = HopperRegistry::open(&path).unwrap();
+        let id = reg
+            .add(WatchInput {
+                source_dir: "/in".into(),
+                output_dir: "/out".into(),
+                recipe_id: None,
+                rename_pattern: None,
+                ai_rename: false,
+            })
+            .unwrap();
+        reg.set_rules(
+            id,
+            &[Rule {
+                name: "x".into(),
+                predicate: RulePredicate::Always,
+                action: Default::default(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(reg.get_rules(id).unwrap().len(), 1);
+        reg.set_rules(id, &[]).unwrap();
+        assert!(reg.get_rules(id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn get_rules_survives_reopen() {
+        use crate::pdf::hopper::rules::{Rule, RulePredicate};
+        let (_g, path) = tmp_db();
+        let id = {
+            let mut reg = HopperRegistry::open(&path).unwrap();
+            let id = reg
+                .add(WatchInput {
+                    source_dir: "/in".into(),
+                    output_dir: "/out".into(),
+                    recipe_id: None,
+                    rename_pattern: None,
+                    ai_rename: false,
+                })
+                .unwrap();
+            reg.set_rules(
+                id,
+                &[Rule {
+                    name: "persist-me".into(),
+                    predicate: RulePredicate::Always,
+                    action: Default::default(),
+                }],
+            )
+            .unwrap();
+            id
+        };
+        let reg = HopperRegistry::open(&path).unwrap();
+        let got = reg.get_rules(id).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "persist-me");
+    }
+
+    #[test]
+    fn get_rules_unknown_id_returns_empty() {
+        let (_g, path) = tmp_db();
+        let reg = HopperRegistry::open(&path).unwrap();
+        assert!(reg.get_rules(9999).unwrap().is_empty());
     }
 }

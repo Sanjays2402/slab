@@ -25,6 +25,25 @@ Slab is a desktop PDF app that runs **entirely on your machine.** No accounts. N
 
 `docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest` — open http://localhost:8080, drop a PDF on the page. Same Rust core as the desktop app, headless and scriptable. Full HTTP API + Compose example: [docs/server.md](docs/server.md).
 
+## New in v3.21.0 — Hopper Conditions
+
+**One inbox. Many destinations. Zero clicks.** Hopper now routes each
+arriving PDF through a chain of conditional rules you write once and
+forget. Tax forms go through flatten+OCR and file into `~/Documents/Taxes`;
+receipts get renamed by vendor and file into `~/Documents/Receipts`;
+contracts get bates-numbered and file into `~/Documents/Legal`. Six
+predicate kinds (filename glob, regex, text contents, page count, file
+size, catch-all). First match wins; everything else falls through.
+
+The headline UI is a **live preview pane**: as you edit any predicate,
+green ✓ chips light up next to your *actual* recent files showing which
+rule will catch them. No more deploy-test-squint loops.
+
+Hazel charges $42 for this and can't see inside PDFs. Adobe AutoActions
+require an enterprise license and round-trip to the cloud. Slab does it
+free, locally, with offline AI. <kbd>⇧⌘H</kbd> → click **▸ Rules** on any
+watch.
+
 ## New in v3.20.0 — Hopper
 
 **Watched-folder automations with local AI.** Point Hopper at a folder

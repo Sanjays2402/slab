@@ -70,6 +70,13 @@
       hint: "⇧⌘H opens Hopper. Watch one folder; thousands of files later you'll wonder how you lived without it.",
     },
     {
+      icon: "🎯",
+      title: "Hopper Conditions — route by rule",
+      body:
+        "New in v3.21.0. Drop everything into one inbox; Hopper routes by rules you write once. Tax PDFs → ~/Documents/Taxes with the flatten+OCR recipe. Receipts → ~/Documents/Receipts renamed by vendor. Contracts → ~/Documents/Legal with bates numbering. Everything else falls through to the watch defaults.",
+      hint: "Open Hopper → click ▸ Rules on any watch. The live preview pane shows green ticks against your actual files as you edit — Hazel charges $42 for this; Slab gives it away.",
+    },
+    {
       icon: "🔎",
       title: "Search every PDF at once",
       body:
