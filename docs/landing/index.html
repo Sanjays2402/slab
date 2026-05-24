@@ -25,7 +25,7 @@
     "applicationSubCategory": "PDF editor",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
     "downloadUrl": "https://github.com/Sanjays2402/slab/releases/latest",
-    "softwareVersion": "3.8.0",
+    "softwareVersion": "3.11.0",
     "license": "https://www.gnu.org/licenses/agpl-3.0.html",
     "description": "Enterprise-grade PDF workstation with PDF/A archival, Preflight audit, local AI, OCR, redaction, signing, and visual diff. Free, offline, cross-platform.",
     "aggregateRating": null,
@@ -449,12 +449,27 @@
         <h3>PDF/X-4 print export <span class="badge">v3.8 Press</span></h3>
         <p>FOGRA51 + GRACoL2013 ICC profiles bundled. Embed the OutputIntent, set the trapping key, validate conformance — no rejection at prepress. <kbd>⌘⇧X</kbd>.</p>
       </article>
+      <article class="new">
+        <div class="demo demo-card"><img src="demos/edit.svg" alt="" /></div>
+        <h3>AcroForm fill &amp; flatten <span class="badge">v3.9 Quill</span></h3>
+        <p>Open any government, tax, or contract form. Text · checkbox · radio · choice · signature fields detected, edited inline, flattened in one click. CSV round-trip ready. <kbd>⌘⇧F</kbd>.</p>
+      </article>
+      <article class="new">
+        <div class="demo demo-card"><img src="demos/sign.svg" alt="" /></div>
+        <h3>Digital signatures <span class="badge">v3.10 Signet</span></h3>
+        <p>PKCS#7 detached, same <code>adbe.pkcs7.detached</code> profile Acrobat reads. RSA + ECDSA (P-256/P-384). Sign &amp; verify on-device in under 50&nbsp;ms. Private key never leaves.</p>
+      </article>
+      <article class="new">
+        <div class="demo demo-card"><img src="demos/sign.svg" alt="" /></div>
+        <h3>Timestamps + batch sign <span class="badge">v3.11 Signet Pro</span></h3>
+        <p>RFC 3161 CAdES-T tokens from any TSA (DigiCert, FreeTSA, your CA). Batch-sign 200 contracts in parallel with one key. Visible signature stamps on any page.</p>
+      </article>
     </div>
   </section>
 
   <section id="compliance" class="compliance">
     <h2>The v3 Enterprise Suite.</h2>
-    <p class="lede">Nine releases. One promise: every paid Acrobat Pro workflow — archival, accessibility, redaction, discovery, compression, and print production — done locally, for free. No subscription. No cloud round-trip. No file ever leaves your machine.</p>
+    <p class="lede">Twelve releases. One promise: every paid Acrobat Pro workflow — archival, accessibility, redaction, discovery, compression, print production, form filling, and digital signatures — done locally, for free. No subscription. No cloud round-trip. No file ever leaves your machine.</p>
     <div class="suite">
       <article>
         <header>
@@ -560,8 +575,47 @@
           <li>Confirm conformance before sending to the printer — no rejection at prepress</li>
         </ul>
       </article>
+      <article>
+        <header>
+          <span class="ver">v3.9.0</span>
+          <h3>Quill</h3>
+          <span class="tag">AcroForm fill &amp; flatten</span>
+        </header>
+        <p>Forms are where Acrobat still wins — until now. Open any AcroForm PDF and the new Forms sidebar lists every field with name, type, value, and required flag. Edit inline, hit Apply, the PDF is rewritten with your data baked in. Tax season, HR onboarding, government applications — all offline, free, on every desktop.</p>
+        <ul>
+          <li>Text · checkbox · radio · choice · signature field detection across multi-page forms</li>
+          <li>JSON template export — fill 200 contracts from a CSV (v3.9.x)</li>
+          <li>Forms sidebar + <kbd>⌘⇧F</kbd> shortcut + command-palette entry</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.10.0</span>
+          <h3>Signet</h3>
+          <span class="tag">Digital signatures</span>
+        </header>
+        <p>Adobe charges $239/yr for digital signatures. DocuSign charges $15/seat/month and ships your contracts through their servers. Signet writes the exact same <code>adbe.pkcs7.detached</code> profile the Acrobat signature panel reads — on your machine, with your key, under 50 ms per document.</p>
+        <ul>
+          <li>RSA + ECDSA (P-256, P-384) via pure-Rust RustCrypto — no OpenSSL bindings</li>
+          <li>Verify any signed PDF: digest · crypto · byte-range · chain status</li>
+          <li>Compatible with Acrobat, Foxit, Preview, DocuSign output</li>
+        </ul>
+      </article>
+      <article>
+        <header>
+          <span class="ver">v3.11.0</span>
+          <h3>Signet Pro</h3>
+          <span class="tag">Timestamps · batch · visible stamps</span>
+        </header>
+        <p>The three features law firms and audit teams ask for first: notary-grade RFC 3161 timestamp tokens (CAdES-T, LTV-enabled in Acrobat), batch signing for 200 contracts in parallel with one key, and drawn signature appearances baked into the page — not a separate annotation layer downstream verifiers ignore.</p>
+        <ul>
+          <li>RFC 3161 CAdES-T: any TSA (DigiCert, FreeTSA, Sectigo, enterprise)</li>
+          <li>Parallel batch sign with progress + cancel — paralegal pipeline ready</li>
+          <li>Visible stamp: name · date · reason on any page rectangle</li>
+        </ul>
+      </article>
     </div>
-    <p class="more">All nine v3 releases ship today in <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.8.0"><strong>Slab&nbsp;v3.8.0</strong></a> — 1,318 tests passing, Clippy-clean, six platform bundles (macOS arm64/x64, Linux deb/AppImage, Windows msi/nsis), and a Docker image on GHCR. Zero telemetry, zero cloud calls, AGPL forever.</p>
+    <p class="more">All twelve v3 releases ship today in <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.11.0"><strong>Slab&nbsp;v3.11.0</strong></a> — 1,408 tests passing, Clippy-clean, six platform bundles (macOS arm64/x64, Linux deb/AppImage, Windows msi/nsis), and a Docker image on GHCR. Zero telemetry, zero cloud calls, AGPL forever.</p>
   </section>
 
   <section id="faq" class="faq">
@@ -642,33 +696,33 @@
     </div>
     <div class="rel-grid">
       <article class="rel-card">
-        <div class="rel-tag" data-tone="press">PRESS</div>
-        <h3>v3.8.0 — Press</h3>
-        <p class="rel-date">May 23, 2026</p>
-        <p class="rel-body">PDF/X-4 prepress export. FOGRA51 &amp; GRACoL2013 ICC profiles bundled, OutputIntent stamped, trapping key honoured. Press-ready in one click.</p>
+        <div class="rel-tag" data-tone="press">SIGNET PRO</div>
+        <h3>v3.11.0 — Signet Pro</h3>
+        <p class="rel-date">May 24, 2026</p>
+        <p class="rel-body">RFC 3161 CAdES-T timestamps from any TSA, parallel batch sign 200 PDFs with one key, and visible signature stamps baked into the page. LTV-enabled in Acrobat.</p>
         <div class="rel-actions">
-          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.8.0">Release notes →</a>
-          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.8.0">GitHub</a>
+          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.11.0">Release notes →</a>
+          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.11.0">GitHub</a>
         </div>
       </article>
       <article class="rel-card">
-        <div class="rel-tag" data-tone="loom">PDF/UA-1</div>
-        <h3>v3.7.0 — Loom</h3>
+        <div class="rel-tag" data-tone="loom">SIGNET</div>
+        <h3>v3.10.0 — Signet</h3>
         <p class="rel-date">May 23, 2026</p>
-        <p class="rel-body">Auto-tag StructTree for accessibility — H1–H6, P, lists, figures, plus Beacon-powered alt-text. Section 508 ready out of the box.</p>
+        <p class="rel-body">PKCS#7 detached signatures — the same <code>adbe.pkcs7.detached</code> Acrobat reads. RSA + ECDSA. Sign &amp; verify in &lt;50&nbsp;ms. Your private key never leaves the machine.</p>
         <div class="rel-actions">
-          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.7.0">Release notes →</a>
-          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.7.0">GitHub</a>
+          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.10.0">Release notes →</a>
+          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.10.0">GitHub</a>
         </div>
       </article>
       <article class="rel-card">
-        <div class="rel-tag" data-tone="compact">OPTIMIZE</div>
-        <h3>v3.6.0 — Compactor</h3>
+        <div class="rel-tag" data-tone="compact">QUILL</div>
+        <h3>v3.9.0 — Quill</h3>
         <p class="rel-date">May 23, 2026</p>
-        <p class="rel-body">Deduplicate streams, prune unused objects, rewrite the xref. Typical 30–60% size drop on legal productions and scanned archives.</p>
+        <p class="rel-body">Fill PDF forms without paying Adobe $239/yr. AcroForm inspector, one-click flatten, JSON template round-trip. Forms sidebar + <kbd>⌘⇧F</kbd>.</p>
         <div class="rel-actions">
-          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.6.0">Release notes →</a>
-          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.6.0">GitHub</a>
+          <a href="https://github.com/Sanjays2402/slab/releases/tag/v3.9.0">Release notes →</a>
+          <a class="muted" href="https://github.com/Sanjays2402/slab/releases/tag/v3.9.0">GitHub</a>
         </div>
       </article>
     </div>
@@ -722,7 +776,7 @@
       <a href="accessibility.html">Accessibility</a>
       <a href="enterprise.html">Enterprise</a>
     </div>
-    <div class="foot-r">v3.8.0 · AGPL-3.0</div>
+    <div class="foot-r">v3.11.0 · AGPL-3.0</div>
   </footer>
 
   <script>
