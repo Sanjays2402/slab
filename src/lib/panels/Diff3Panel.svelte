@@ -76,6 +76,7 @@
       basePath = p;
       diff = null;
       resolutions = {};
+      merged = null;
       status = idle;
     }
   }
@@ -85,6 +86,7 @@
       minePath = p;
       diff = null;
       resolutions = {};
+      merged = null;
       status = idle;
     }
   }
@@ -94,6 +96,7 @@
       theirsPath = p;
       diff = null;
       resolutions = {};
+      merged = null;
       status = idle;
     }
   }
@@ -189,6 +192,69 @@
 
   let conflictCount = $derived(diff ? diff.total.conflicts : 0);
   let resolvedCount = $derived(Object.keys(resolutions).length);
+
+  // v3.24.0 "Stack Pro" — Task 5 down-payment. The backend already exposes
+  // slab_diff3_materialize which returns the merged text per page given the
+  // three PDFs + the user's resolution picks. We let the user preview that
+  // merged text in-app before the final PDF exporter lands.
+  type MergedTextLine = {
+    page: number;
+    line_idx: number;
+    text: string;
+    source: "base" | "mine" | "theirs" | "agreed";
+    was_conflict: boolean;
+  };
+  type MergedTextPage = { page: number; lines: MergedTextLine[] };
+  type MergedText = {
+    pages: MergedTextPage[];
+    unresolved_conflicts: number;
+    total_lines: number;
+  };
+  let merged = $state<MergedText | null>(null);
+  let materializing = $state(false);
+
+  async function materializeMerged() {
+    if (!basePath || !minePath || !theirsPath) return;
+    materializing = true;
+    try {
+      const entries = Object.entries(resolutions).map(([key, choice]) => {
+        const [pageIdx, lineIdx] = key.split(":").map((n) => Number.parseInt(n, 10));
+        return { page_idx: pageIdx, line_idx: lineIdx, choice };
+      });
+      const res = await invoke<CmdResult<MergedText>>("slab_diff3_materialize", {
+        base: basePath,
+        mine: minePath,
+        theirs: theirsPath,
+        resolutions: entries,
+      });
+      if (res.kind === "ok") {
+        merged = res.value;
+        status = {
+          kind: "ok",
+          msg: `Merged preview ready — ${res.value.total_lines} lines, ${res.value.unresolved_conflicts} unresolved.`,
+        };
+      } else {
+        status = { kind: "err", msg: res.message };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+    } finally {
+      materializing = false;
+    }
+  }
+
+  async function copyMergedToClipboard() {
+    if (!merged) return;
+    const flat = merged.pages
+      .map((p) => `--- Page ${p.page} ---\n` + p.lines.map((l) => l.text).join("\n"))
+      .join("\n\n");
+    try {
+      await navigator.clipboard.writeText(flat);
+      status = { kind: "ok", msg: `Copied ${merged.total_lines} merged lines to clipboard.` };
+    } catch (e) {
+      status = { kind: "err", msg: `Copy failed: ${String(e)}` };
+    }
+  }
 </script>
 
 <section class="diff3-panel">
@@ -273,8 +339,41 @@
     {#if conflictCount > 0}
       <p class="resolve-bar">
         <strong>{resolvedCount}</strong> of <strong>{conflictCount}</strong> conflict{conflictCount === 1 ? "" : "s"}
-        resolved. (Choose Mine or Theirs per row; export will land in a follow-up.)
+        resolved.
       </p>
+    {/if}
+
+    <div class="merge-actions">
+      <button class="primary" onclick={materializeMerged} disabled={materializing}>
+        {materializing ? "Building merged preview…" : "Build merged preview"}
+      </button>
+      {#if merged}
+        <button class="ghost" onclick={copyMergedToClipboard}>
+          Copy merged text
+        </button>
+        <span class="merge-stats">
+          {merged.total_lines} lines · {merged.unresolved_conflicts} unresolved
+        </span>
+      {/if}
+    </div>
+
+    {#if merged}
+      <details open class="merged-preview">
+        <summary>Merged document preview</summary>
+        {#each merged.pages as mp (mp.page)}
+          <div class="merged-page">
+            <h4>Page {mp.page}</h4>
+            <ol class="merged-lines">
+              {#each mp.lines as ml (ml.line_idx)}
+                <li class="merged-line src-{ml.source}" class:was-conflict={ml.was_conflict}>
+                  <span class="src-tag">{ml.source}</span>
+                  <span class="line-text">{ml.text || "·"}</span>
+                </li>
+              {/each}
+            </ol>
+          </div>
+        {/each}
+      </details>
     {/if}
 
     {#each visiblePages(diff) as page, pageIdx (page.page)}
@@ -528,5 +627,78 @@
     background: var(--accent);
     color: white;
     border-color: var(--accent);
+  }
+
+  /* v3.24.0 Task 5 — merged preview block */
+  .merge-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0 8px;
+    flex-wrap: wrap;
+  }
+  .merge-stats {
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .merged-preview {
+    margin: 12px 0 24px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 10px 14px;
+  }
+  .merged-preview > summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 4px 0;
+  }
+  .merged-page {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .merged-page h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .merged-lines {
+    margin: 0;
+    padding: 0 0 0 4px;
+    list-style: none;
+  }
+  .merged-line {
+    display: grid;
+    grid-template-columns: 60px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .merged-line .src-tag {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-2);
+    text-align: right;
+  }
+  .merged-line.src-mine .src-tag { color: #6eb4ff; }
+  .merged-line.src-theirs .src-tag { color: #b482ff; }
+  .merged-line.src-agreed .src-tag { color: #78dc8c; }
+  .merged-line.src-base .src-tag { color: var(--text-2); }
+  .merged-line.was-conflict {
+    background: rgba(255, 200, 80, 0.06);
+    border-left: 2px solid rgba(255, 200, 80, 0.55);
+  }
+  .line-text {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 </style>
