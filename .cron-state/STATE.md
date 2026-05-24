@@ -19,13 +19,19 @@
 
 ### Disk recovery: `cargo clean` on src-tauri freed 6.0 GiB (from 454 Mi free to 5.7 Gi).
 
-### Next tick — MODE C DEVELOP
-Pipeline catches up: re-poll `gh issue list` (#23-#27 status from May-22 override),
-then next version. Candidates (per roadmap):
-- **v0.11.0 Lathe** — full edit mode (text reflow, annotations, signatures hub).
-- Or a strategic command-palette / settings-hub polish tick if the issue
-  backlog is empty.
-Re-read top of cron prompt for current override status before picking.
+### Next tick — MODE C DEVELOP — EXECUTE v3.12.0 ATELIER PLAN
+Issue backlog is EMPTY (re-polled 2026-05-23 17:55 PT). Sanjay invoked
+writing-plans skill — plan saved at:
+  `docs/plans/2026-05-23-v3.12.0-atelier-workflow-automation.md` (commit eb197ca)
+
+**v3.12.0 Atelier** — workflow automation engine. Chain OCR + auto-redact +
+Bates + flatten + sign into named recipes, run over folders unattended.
+Adobe Action Wizard equivalent, free + offline. THE next enterprise moat.
+
+7 TDD tasks: data model → run_recipe → batch driver → Tauri cmds → Svelte
+panel w/ live progress grid → preset+version bump → MODE A release.
+
+Next tick: `git checkout -b feature/v3.12.0-atelier` then start Task 1.
 
 ### LAST_WOW_TICK_AT: 2026-05-23 16:08 PT (visible sig stamps banked the wow.
  v3.11.0 GA itself is the wow ship — public release of CAdES-T + batch + stamps.)
