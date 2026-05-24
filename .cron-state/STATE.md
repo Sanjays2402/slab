@@ -4,7 +4,48 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro — CAdES-T shipped end-to-end (Task 7 complete).
+## STATUS: v3.11.0 Signet Pro MERGED + TAGGED — CI in flight, finalize next tick.
+
+**TICK 2026-05-23 17:1x PT (Saturday off-hours)** — MODE A RELEASE executed.
+Merged `fix/svelte-reactive-refs` (the descendant of `feature/v3.11.0-signet-pro`)
+into `main` (merge SHA on main now contains all 18-commit feature branch work).
+Bumped version 3.10.0 → **3.11.0** across Cargo.toml + Cargo.lock + package.json
++ tauri.conf.json (commit `49dd82e`).
+
+Quality gates on main post-merge:
+- cargo fmt --all -- --check ✓
+- cargo clippy --lib --all-targets -- -D warnings ✓
+- cargo test --lib → **1398 passed, 0 failed** (+35 since v3.10.0 release)
+- pnpm check → 0 errors, 61 warnings (pre-existing a11y nits)
+
+Tagged `v3.11.0` with marketing-tone annotation (no emoji). Pushed
+`main --follow-tags`. CI runs in flight:
+- **26347285490** — build (4-platform bundle)
+- **26347285501** — Docker (slab-server)
+
+### RELEASE_PENDING: v3.11.0 — tag v3.11.0, CI runs 26347285490 (build) + 26347285501 (Docker)
+
+### Next tick — MODE B FINALIZE
+1. `gh run view 26347285490` — if green, `gh run download` artifacts to `/tmp/slab-release-3.11.0`.
+2. `gh release create v3.11.0 --title "v3.11.0 — Signet Pro"` with marketing notes
+   (lead with: "Legally-binding timestamps. Batch sign 200 PDFs in parallel.
+   Visible signature stamps. Adobe charges $239/yr — we ship it free, offline.")
+3. Upload 6 artifacts (mac arm64+x64 dmg, linux deb+AppImage, win nsis+msi).
+4. Verify Docker tag workflow (26347285501) green; image `ghcr.io/sanjays2402/slab-server:v3.11.0`.
+5. Clear RELEASE_PENDING line.
+
+### Disk: 1.1 Gi free at tick end — will need `cargo clean -p slab-app` before
+the next dev tick if disk doesn't recover from /tmp clearing.
+
+### LAST_WOW_TICK_AT: 2026-05-23 16:08 PT (still within 24h — visible sig stamps
+banked the wow already)
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.11.0 Signet Pro merged + tagged this tick.
+
+---
+
+## PRIOR STATUS: v3.11.0 Signet Pro — CAdES-T shipped end-to-end (Task 7 complete).
 
 **TICK 2026-05-23 16:5x PT (Saturday off-hours)** — RFC 3161 timestamp tokens
 now embed into the CMS unsigned attributes, end-to-end from Svelte input to
