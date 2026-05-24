@@ -4,6 +4,47 @@
 
 ---
 
+## STATUS: 📝 v3.23.0 'Stack' PLAN WRITTEN (2026-05-24 13:55 PT)
+
+**TICK 2026-05-24 13:55 PT (Sunday off-hours)** — Planning tick.
+
+Wrote `docs/plans/2026-05-24-v3.23.0-stack-visual-diff.md` (11 tasks,
+~1500 LOC budget across 2 dev ticks + 1 release tick) for the next major
+release: **Stack** — visual redline PDF compare, Litera-Compare class.
+
+Three buyer hooks in one release:
+- Word-level inline redline (green ins / red del at token granularity)
+- Visual side-by-side via pdfjs with synced scroll + change ribbon (wow)
+- Export Redline PDF (shareable, baked-in markup, no Slab needed to read)
+
+Plan is committed but not yet executed — execution starts next off-hours
+tick at Task 0 (branch `feature/v3.23.0-stack-visual-diff`).
+
+### Next tick (MODE C — execute Task 0-4)
+
+1. `git checkout -b feature/v3.23.0-stack-visual-diff` off `main`.
+2. Tasks 1-4 (backend WordOp/WordDiff types, diff_words helper, attach to
+   LineDiff, inline frontend redline). Single tick, ≥4 commits, ~700 LOC.
+3. Tick after = Tasks 5-8 (visual mode + ribbon + export + palette).
+4. Tick after = Tasks 9-10 (release prep + MODE A merge).
+5. Tick after = MODE B FINALIZE.
+
+### Sanjay TODO (carried over)
+
+- Complete `docs/ops/try-slab-deploy.md` steps 1-6 (Cloudflare Pages).
+- Optional: record 5-second demo video for landing (issue #27 closed).
+- Disk on the mini at ~5 GiB free — `cargo clean` before heavy builds.
+
+### LAST_WOW_TICK_AT: 2026-05-24T19:50:00Z (Backfill dry-run preview table)
+
+Within 24h — no wow required this tick.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 / v3.19.0 / v3.20.0 / v3.21.0 / v3.22.0 published. None open.
+
+---
+
 ## STATUS: ✅ v3.22.0 'Hopper Loop' PUBLISHED (2026-05-24 13:35 PT)
 
 **TICK 2026-05-24 13:35 PT (Sunday off-hours)** — MODE B FINALIZE complete.
