@@ -34,6 +34,7 @@
 //!                                              └─► move + log::record
 //! ```
 
+pub mod backfill;
 pub mod cmds;
 pub mod log;
 pub mod pipeline;
@@ -42,5 +43,9 @@ pub mod rename;
 pub mod rules;
 pub mod watcher;
 
+pub use backfill::{
+    execute_backfill, plan_backfill, ActionKind, BackfillOutcome, BackfillReport, BackfillRun,
+    OutcomeStatus, PlannedAction,
+};
 pub use log::{HopperLog, RunRecord, RunStatus};
 pub use registry::{HopperRegistry, Watch, WatchInput};
