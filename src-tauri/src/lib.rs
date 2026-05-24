@@ -1296,6 +1296,25 @@ fn slab_diff3_materialize(
         .into()
 }
 
+/// v3.24.0 "Stack Pro" — bake the three-way diff into a shareable PDF.
+///
+/// The output PDF is a self-contained colour-coded three-column redline
+/// (Base / Mine / Theirs) that any PDF viewer can open — no Slab required
+/// on the recipient's machine. This is the Litera Compare killer feature
+/// ($400/seat/yr) given away free + offline.
+#[tauri::command]
+fn slab_diff3_export_pdf(
+    base: PathBuf,
+    mine: PathBuf,
+    theirs: PathBuf,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::stack_diff3_export::Diff3ExportResult> {
+    match crate::pdf::diff3::three_way_diff(&base, &mine, &theirs) {
+        Ok(d) => crate::pdf::stack_diff3_export::export_diff3_pdf(&d, &output).into(),
+        Err(e) => Err(e).into(),
+    }
+}
+
 /// v2.4.0 "Stack" — visual (pixel-level) PDF diff. Renders both sides at
 /// `dpi` via Poppler, masks per-pixel luma delta, and returns axis-aligned
 /// change boxes alongside the existing line-level diff. Defaults are tuned
@@ -4641,6 +4660,7 @@ pub fn run() {
             slab_diff_export_report,
             slab_diff3_pdfs,
             slab_diff3_materialize,
+            slab_diff3_export_pdf,
             slab_visual_diff_pdfs,
             slab_stack_export_redline,
             slab_slides_analyze,

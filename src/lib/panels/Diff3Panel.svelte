@@ -10,7 +10,7 @@
   // Acrobat doesn't ship 3-way at all. We do, free + offline.
 
   import { invoke } from "@tauri-apps/api/core";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open, save } from "@tauri-apps/plugin-dialog";
   import { idle, basename, type CmdResult, type Status } from "$lib/types";
 
   // --- Backend DTOs (mirror src-tauri/src/pdf/diff3.rs) ---
@@ -255,6 +255,51 @@
       status = { kind: "err", msg: `Copy failed: ${String(e)}` };
     }
   }
+
+  // v3.24.0 "Stack Pro" — Task 6: shareable three-way redline PDF.
+  // Bakes the full ThreeWayDiff into a colour-coded 3-column PDF so the
+  // recipient doesn't need Slab installed to read it. Litera Compare
+  // charges $400/seat/yr for this; we ship it free + offline.
+  type Diff3ExportResult = {
+    pages: number;
+    conflicts: number;
+    mine_only: number;
+    theirs_only: number;
+    both_agree: number;
+  };
+  let exporting = $state(false);
+
+  async function exportRedlinePdf() {
+    if (!basePath || !minePath || !theirsPath) return;
+    const out = await save({
+      defaultPath: "three-way-redline.pdf",
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!out) return;
+    exporting = true;
+    status = { kind: "working", msg: "Exporting three-way redline PDF…" };
+    try {
+      const res = await invoke<CmdResult<Diff3ExportResult>>("slab_diff3_export_pdf", {
+        base: basePath,
+        mine: minePath,
+        theirs: theirsPath,
+        output: out,
+      });
+      if (res.kind === "ok") {
+        status = {
+          kind: "ok",
+          msg: `Exported ${res.value.pages}-page redline · ${res.value.conflicts} conflicts highlighted.`,
+        };
+      } else {
+        status = { kind: "err", msg: res.message };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+    } finally {
+      exporting = false;
+    }
+  }
+
 </script>
 
 <section class="diff3-panel">
@@ -346,6 +391,14 @@
     <div class="merge-actions">
       <button class="primary" onclick={materializeMerged} disabled={materializing}>
         {materializing ? "Building merged preview…" : "Build merged preview"}
+      </button>
+      <button
+        class="primary export-pdf"
+        onclick={exportRedlinePdf}
+        disabled={exporting || !basePath || !minePath || !theirsPath}
+        title="Bake the three-way redline into a shareable PDF (no Slab required to read)"
+      >
+        {exporting ? "Exporting…" : "Export redline PDF"}
       </button>
       {#if merged}
         <button class="ghost" onclick={copyMergedToClipboard}>
