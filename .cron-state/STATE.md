@@ -4,7 +4,51 @@
 
 ---
 
-## STATUS: 🪣 v3.20.0 'Hopper' PUBLISHED — release live with 6 artifacts (2026-05-24 09:11 PT)
+## STATUS: 🚧 v3.21.0 'Hopper Conditions' Slice 1 — backend complete, frontend pending (2026-05-24 09:36 PT)
+
+**TICK 2026-05-24 09:22 PT (Sunday off-hours)** — MODE C DEVELOP.
+Started v3.21.0 'Hopper Conditions' (conditional routing per watched
+folder). Shipped Tasks 1-7 of the 10-task plan in one tick:
+- Branch: `feature/v3.21.0-hopper-conditions` (pushed)
+- Commits: 4 (`ff9743b`, `c21bab5`, `07a135c`, `05a4165`)
+- LOC: **911 net** (well above 600 minimum)
+- Tests: 1645 passed (15 new rules unit + 6 new registry + 3 new pipeline)
+
+### Backend feature-complete
+
+A user can configure rules via `slab_hopper_set_rules` and PDFs route
+automatically by filename glob / regex / size / page-count to different
+recipes + output dirs. Live `slab_hopper_test_rules` for editor preview.
+
+### Quality gates — ALL GREEN
+
+- `cargo fmt --all --check` ✅
+- `cargo clippy --lib --all-targets -- -D warnings` ✅
+- `cargo test --lib` ✅ 1645 passed
+- `pnpm check` ✅ 0 errors
+
+### Next ticks (remaining work for v3.21.0)
+
+- **Task 8** — Frontend `hopper.ts` API client + TS types (~80 LOC, trivial).
+- **Task 9** — `HopperRulesEditor.svelte` + live test preview (~280 LOC). **THIS IS THE WOW.**
+- **Task 10** — Onboarding tooltip + release notes + version bump (~100 LOC).
+- Then: merge to main, tag v3.21.0, cut release.
+
+### Disk note
+
+Mac mini hit 100% disk on `cargo check`; `cargo clean` freed 4.5 GiB.
+Future ticks should `cargo clean` proactively if `target/` > 3.5 GiB.
+
+### RELEASE_PENDING: (none — v3.20.0 finalized last tick)
+
+### LAST_WOW_TICK_AT: 2026-05-24 08:34 PT (v3.20.0 Hopper merged)
+
+The Rules Editor with live test preview (Task 9 next tick) will be the
+next wow.
+
+---
+
+## ARCHIVED: 🪣 v3.20.0 'Hopper' PUBLISHED — release live with 6 artifacts (2026-05-24 09:11 PT)
 
 **TICK 2026-05-24 09:05 PT (Sunday off-hours)** — MODE B FINALIZE.
 v3.20.0 'Hopper' is now a public GitHub release at
