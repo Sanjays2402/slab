@@ -17,6 +17,7 @@ pub mod diff;
 pub mod duplicate;
 pub mod edit_text;
 pub mod encrypt;
+pub mod epub;
 pub mod extract;
 pub mod flatten;
 pub mod forms;
