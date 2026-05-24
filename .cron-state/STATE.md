@@ -4,7 +4,87 @@
 
 ---
 
-## STATUS: v3.14.0 "Reflow" END-TO-END WORKING — Tasks 5+6+7 shipped, PDF→Word pipeline complete on feature branch.
+## STATUS: 🚀 v3.14.0 "Reflow" MERGED + TAGGED — RELEASE_PENDING (Tasks 8+9 + MODE A in one tick)
+
+**TICK 2026-05-23 23:52 PT (Saturday off-hours)** — MODE C+A combined.
+
+Combined this tick (4 feature commits on `feature/v3.14.0-reflow` + 1
+merge commit on main, ~302 net non-test LOC + 7 new green tests +
+the entire v3.14.0 release pipeline):
+
+- `1a90263` feat(atelier): ConvertToDocx step — chain reflow into recipes
+  (Task 8 backend — Step::ConvertToDocx { detect_tables, detect_lists,
+   heading_size_ratio }, Step::changes_extension /
+   Step::output_extension / Recipe::output_extension helpers, run.rs
+   dispatch, batch.rs .docx-rewriting output filenames, 7 new tests)
+- `0820f54` feat(atelier): Convert-to-Word palette card + config UI
+  (Task 8 UI — atelier.ts type union, defaultStep/stepLabel/stepGlyph
+   branches, AtelierPanel palette card + 3-knob config card)
+- `d8947fb` chore(release): bump v3.13.0 -> v3.14.0 "Reflow"
+  (Task 9a — package.json + tauri.conf.json + Cargo.toml + Cargo.lock)
+- `c3e9d9c` docs(release): v3.14.0 Reflow marketing-grade release notes
+  (Task 9b — customer-facing notes leading with the wedge:
+   "Convert any PDF to Word — offline, free, forever." +
+   Adobe/PDF Expert/Foxit comparison table)
+- Merge commit `b9ff90c` on main: "Merge v3.14.0 'Reflow' — PDF to
+  Word, free + offline"
+- Tag `v3.14.0` cut from release notes file, pushed `main --follow-tags`.
+
+Quality gates on main ALL ✓:
+- `cargo fmt --all -- --check` clean
+- `cargo clippy --all-targets -- -D warnings` clean
+- `cargo test --lib` — **1503 passed** (was 1496, +7 atelier tests)
+- `pnpm check` — 0 errors
+
+**RELEASE_PENDING: v3.14.0** — merge SHA `b9ff90c`, tag `v3.14.0`,
+build CI run `26354714534` (in_progress on macOS), Docker CI run
+`26354714523` (in_progress on v3.14.0 tag).
+
+**Buy-Button verdict — PASS 4/4.**
+- **Pay-for-it ✅** — Acrobat Pro $239/yr's "Export PDF to Word" is one
+  of its flagship features, gated behind a cloud upload + subscription.
+  Slab ships the same capability free, offline, batchable, cross-OS.
+- **Notice-it ✅** — Atelier palette gains a 📝 Convert-to-Word card,
+  output filenames flip from .pdf to .docx for chained recipes.
+- **Pick-us ✅** — Adobe ships your files to their servers; PDF Expert
+  doesn't even offer the feature; Foxit charges $129/yr Pro for it.
+  Slab is the only free + offline + cross-platform option that supports
+  batch conversion via Atelier.
+- **Tell-a-friend ✅** — "Drop a folder of 200 PDFs, walk away with 200
+  Word docs — offline." 5-second demo bait.
+
+### LAST_WOW_TICK_AT: 2026-05-24T07:05Z (Atelier 📝 Convert-to-Word card
++ chained "Compactor → ConvertToDocx" batch flow, end-to-end via MODE A
+release to main + tag v3.14.0)
+
+### Next tick — MODE B FINALIZE v3.14.0
+
+1. Poll `gh run view 26354714534` (build) + `gh run view 26354714523`
+   (Docker). If still in_progress, skip MODE B this tick.
+2. When green:
+   - `gh run download 26354714534 --dir /tmp/slab-release-v3.14.0`
+   - Curate 6 artifacts (mac arm64/x64 dmg, linux deb/AppImage,
+     win msi/nsis). Filenames should now be `Slab_3.14.0_*`.
+   - `gh release create v3.14.0 --title 'v3.14.0 — Reflow' \
+       --notes-file .cron-state/release-notes-v3.14.0.md` + upload.
+   - Clear RELEASE_PENDING, append to RECENTLY_CLOSED.
+3. If red: `gh run view <id> --log-failed`, fix on `fix/v3.14.0-*`
+   branch, cut `v3.14.1` patch.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.14.0 Reflow: MERGED + TAGGED 2026-05-24, awaiting MODE B.
+- v3.13.0 Streamline: SHIPPED 2026-05-24.
+- v3.12.0 Atelier: released 2026-05-23.
+
+### Operational notes
+- Disk: 2.1 GiB free after this tick (was 884 MiB at start). Cleared
+  `src-tauri/target/debug/incremental` + /tmp/slab-* between gates.
+  `~/Library/Application Support/adspower_global` (9.6 GB) +
+  `~/Downloads` (9.6 GB) still candidates for Sanjay to triage.
+
+---
+
+## PRIOR STATUS: v3.14.0 "Reflow" END-TO-END WORKING — Tasks 5+6+7 shipped, PDF→Word pipeline complete on feature branch.
 
 **TICK 2026-05-23 23:22 PT (Saturday off-hours)** — MODE C DEVELOP.
 
