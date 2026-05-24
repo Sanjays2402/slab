@@ -268,6 +268,81 @@ pub fn slab_hopper_test_rules(
 }
 
 // ---------------------------------------------------------------------
+// v3.22.0 — Hopper Loop: batch backfill commands
+// ---------------------------------------------------------------------
+//
+// Three thin commands wrap [`backfill::plan_backfill`],
+// [`backfill::execute_backfill`], and the new
+// `HopperLog::list_backfill_runs` history reader. Plan is pure and
+// cheap; execute persists the run after the moves complete so the
+// "Recent backfills" disclosure populates immediately.
+
+/// `slab_hopper_plan_backfill` — dry-run the rule chain against an
+/// existing folder. Resolves the watch by id, loads its current rules,
+/// walks the folder (non-recursive), returns a [`BackfillReport`]. The
+/// frontend renders this report as a table; nothing is moved.
+#[tauri::command]
+pub fn slab_hopper_plan_backfill(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    folder: Option<String>,
+) -> CmdResult<super::backfill::BackfillReport> {
+    let (watch, rules) = {
+        let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+        let watch = reg
+            .get(watch_id)
+            .map_err(|e| format!("registry get: {e}"))?
+            .ok_or_else(|| format!("watch {watch_id} not found"))?;
+        let rules = reg
+            .get_rules(watch_id)
+            .map_err(|e| format!("registry get_rules: {e}"))?;
+        (watch, rules)
+    };
+    // Default to the watch's configured source_dir — the most common
+    // call pattern. The UI also accepts an arbitrary folder picker for
+    // "test against a sample folder" workflows.
+    let target = folder.unwrap_or_else(|| watch.source_dir.clone());
+    let report = super::backfill::plan_backfill(std::path::Path::new(&target), &watch, &rules);
+    Ok(report)
+}
+
+/// `slab_hopper_execute_backfill` — commit a previously-approved
+/// [`BackfillReport`]. Performs the moves idempotently and writes a
+/// [`BackfillRun`] row to the history table before returning.
+#[tauri::command]
+pub fn slab_hopper_execute_backfill(
+    svc: tauri::State<'_, HopperService>,
+    report: super::backfill::BackfillReport,
+) -> CmdResult<super::backfill::BackfillRun> {
+    let run = super::backfill::execute_backfill(&report);
+    // Best-effort persist — surfacing an error here would discard the
+    // (already-completed) moves info, which is hostile to the user. We
+    // log and return the run regardless.
+    {
+        let mut log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
+        if let Err(e) = log.record_backfill_run(&run) {
+            eprintln!("hopper: failed to persist backfill run: {e}");
+        }
+    }
+    Ok(run)
+}
+
+/// `slab_hopper_list_backfill_runs` — tail of historical backfills,
+/// newest first. Pass `folder = Some(p)` to filter to a single watched
+/// directory (Rules Editor's "Recent backfills" strip), `None` for the
+/// global Hopper panel's history.
+#[tauri::command]
+pub fn slab_hopper_list_backfill_runs(
+    svc: tauri::State<'_, HopperService>,
+    folder: Option<String>,
+    limit: Option<i64>,
+) -> CmdResult<Vec<super::backfill::BackfillRun>> {
+    let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
+    log.list_backfill_runs(folder.as_deref(), limit.unwrap_or(20))
+        .map_err(|e| format!("log list_backfill_runs: {e}"))
+}
+
+// ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
 
