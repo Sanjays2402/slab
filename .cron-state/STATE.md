@@ -4,7 +4,67 @@
 
 ---
 
-## STATUS: 📋 v3.20.0 'Hopper' plan written — ready to execute (2026-05-24 07:18 PT)
+## STATUS: 🪣 v3.20.0 'Hopper' Tasks 1-3 SHIPPED — sqlite registry + log + end-to-end pipeline (2026-05-24 07:41 PT)
+
+**TICK 2026-05-24 07:41 PT (Sunday off-hours)** — MODE C, 3 commits on
+`feature/v3.20.0-hopper`, 1207 net LOC (excluding Cargo.lock), 19 new
+green unit tests, all quality gates clean.
+
+- `37eb6e7` feat(hopper): module skeleton + `notify = "6.1"` dep
+- `c57f7aa` feat(hopper): sqlite registry + run log + 8 unit tests
+- `8ec5635` feat(hopper): rename template + end-to-end pipeline + 11 tests
+
+**End-to-end ready**: `pdf::hopper::pipeline::process_one()` runs the
+full Drop-PDF → Atelier recipe → AI-rename → file-into-folder loop
+against synthetic inputs today. The remaining 4 tasks (watcher, Tauri
+commands, frontend panel, onboarding) are scaffolding around this
+core orchestration. AI title comes via an injected `TitleProvider`
+trait so the production Ollama wiring lands in Task 5 without
+touching the pipeline.
+
+**Gates**: `cargo fmt --check` clean, `cargo clippy --lib -D warnings`
+clean, `cargo test --lib hopper::` → 19 passed / 0 failed. Full
+`cargo test --lib` deferred (disk pressure) — CI on the branch will
+run it.
+
+**Branch state**: `feature/v3.20.0-hopper` exists locally, NOT YET
+PUSHED at the end of this tick. Push + CI poll happens at start of
+next tick (Task 4 lead-in).
+
+### 🚨 DISK EMERGENCY ESCALATED
+
+Mac mini at 100% disk usage. Started tick at 3.3 GiB free; after
+`cargo clean -p slab-app` (freed 1.4 GiB), now 1.1 GiB. **Even
+single-package clean isn't restoring headroom.** This blocks:
+- Full `cargo test --lib` (linker OOMs at 28).
+- A second worktree at `~/Projects/slab` (still has 5+ GiB target/).
+- Any future Tauri build until at least 8 GiB is recovered.
+
+Sanjay TODO (added this tick, urgent):
+- `cargo clean` every worktree: `~/code/slab`, `~/Projects/slab`, plus
+  any other Rust repos. Likely recovers 15-20 GiB.
+- Triage `~/Downloads` (was 6 GiB of video courses).
+- After recovery, single `cargo build` to repopulate caches.
+
+### LAST_WOW_TICK_AT: 2026-05-24T13:46Z (v3.19.0 Marquee — unchanged)
+
+Hopper's wow ships in Task 6 (HopperPanel live log + morph-rename
+animation). Target tick: +2.
+
+### Next tick
+
+1. Push `feature/v3.20.0-hopper` and `gh run list` to poll CI.
+2. **Task 4** — `notify::RecommendedWatcher` per-watch tasks, 700ms
+   debounce, `tokio::spawn(pipeline::process_one)` per settled PDF,
+   `hopper://run-completed` Tauri event broadcast.
+3. **Task 5** — 6 Tauri commands + `setup()` wires Ollama-backed
+   provider. Bundle into the same tick if disk allows.
+
+Session log: `.cron-state/sessions/2026-05-24-0741.md`.
+
+---
+
+## STATUS PRIOR: 📋 v3.20.0 'Hopper' plan written — ready to execute (2026-05-24 07:18 PT)
 
 **TICK 2026-05-24 07:15 PT (Sunday off-hours, writing-plans skill invoked).**
 
