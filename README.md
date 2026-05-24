@@ -25,6 +25,19 @@ Slab is a desktop PDF app that runs **entirely on your machine.** No accounts. N
 
 `docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest` — open http://localhost:8080, drop a PDF on the page. Same Rust core as the desktop app, headless and scriptable. Full HTTP API + Compose example: [docs/server.md](docs/server.md).
 
+## New in v3.20.0 — Hopper
+
+**Watched-folder automations with local AI.** Point Hopper at a folder
+(`~/Downloads`, a scanner output, a shared inbox) and pair it with an Atelier
+recipe. Every PDF that lands triggers the pipeline: your recipe runs (flatten,
+OCR, redact PII, watermark — anything Atelier can do), Beacon suggests a 4-6
+word filename, and the result is filed in your output folder. Live run log
+streams in real time. <kbd>⇧⌘H</kbd> to open.
+
+Hazel doesn't understand PDFs. Adobe AutoActions gate this behind enterprise
+licensing and round-trip your files to their cloud. Slab does it on your
+machine, for free.
+
 ## What Slab does
 
 Eight pillars, all local:

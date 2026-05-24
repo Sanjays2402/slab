@@ -63,6 +63,13 @@
       hint: "Plugins are sandboxed and ask permission before they touch the network or your files.",
     },
     {
+      icon: "🪣",
+      title: "Hopper — drop, and it's done",
+      body:
+        "Point Hopper at a folder — ~/Downloads, a scanner output, a shared inbox — and every PDF that lands gets your Atelier recipe run on it, an AI-suggested filename, and a final resting place. Hazel + Adobe AutoAction + an AI paralegal, locally, for free.",
+      hint: "⇧⌘H opens Hopper. Watch one folder; thousands of files later you'll wonder how you lived without it.",
+    },
+    {
       icon: "🔎",
       title: "Search every PDF at once",
       body:
