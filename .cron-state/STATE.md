@@ -4,7 +4,34 @@
 
 ---
 
-## STATUS: ✅ v3.24.0 'Stack Pro' SHIPPED to main + tag pushed (2026-05-24 16:26 PT)
+## STATUS: ✅ v3.24.0 'Stack Pro' PUBLISHED (2026-05-24 16:45 PT)
+
+**TICK 2026-05-24 16:45 PT (Sunday off-hours)** — MODE B FINALIZE complete.
+
+- Polled CI `26375713797` (build on main) → ✅ success (all 4 bundles + 3 cargo tests).
+- Docker `slab-server` on v3.24.0 tag → ✅ success earlier (`26375713807`).
+- Downloaded 6 artifacts to `/tmp/slab-release-v3.24.0`.
+- `gh release create v3.24.0 --title "v3.24.0 — Stack Pro" --notes-file docs/release-notes/v3.24.0.md <6 assets>`.
+- Verified `isDraft=false`, asset_count=6.
+- Release live: https://github.com/Sanjays2402/slab/releases/tag/v3.24.0
+
+### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, prior tick)
+
+### Next tick (MODE C — start v3.25.0)
+
+Candidates: visual pixel diff (complements text 3-way Stack Pro), Beacon AI v0.10.0
+local-first chat-with-PDF (buyer magnet), or Foundry plugin marketplace UI.
+Recommend Beacon — biggest buy-button win that's still uncut.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 through **v3.24.0** all published. No open issues.
+
+---
+
+## (previous status, kept for history)
+
+### STATUS: ✅ v3.24.0 'Stack Pro' SHIPPED to main + tag pushed (2026-05-24 16:26 PT)
 
 **TICK 2026-05-24 16:26 PT (Sunday off-hours)** — MODE A RELEASE.
 Finished Task 6 (shareable redline PDF export) + Task 7 (merge + tag + push).
