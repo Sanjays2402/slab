@@ -3897,6 +3897,10 @@ pub struct SignetSignArgs {
     /// invisible (legacy v3.10.0 behaviour). When `Some`, a Form XObject
     /// stamp is rendered on the specified page + rect.
     pub appearance: Option<SignetAppearanceArgs>,
+    /// Optional RFC 3161 timestamp authority URL. When set, the signature
+    /// is upgraded to CAdES-T (BES + embedded timestamp token). Network
+    /// call. Default: `None` (offline / CAdES-BES).
+    pub tsa_url: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -4043,6 +4047,7 @@ async fn signet_sign(args: SignetSignArgs) -> Result<SignetSignResultDto, String
                 signing_time: Some(when),
             }
         }),
+        tsa_url: args.tsa_url.filter(|s| !s.is_empty()),
     };
     let report = crate::pdf::signet::sign_pdf(
         std::path::Path::new(&args.input_path),
@@ -4105,6 +4110,9 @@ pub struct SignetProBatchArgs {
     pub reason: Option<String>,
     /// Optional location embedded in every signature.
     pub location: Option<String>,
+    /// Optional RFC 3161 TSA URL — when set, every signed PDF is upgraded
+    /// to CAdES-T with an embedded timestamp token.
+    pub tsa_url: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -4170,6 +4178,7 @@ async fn signet_pro_batch_sign(
 
     let reason = args.reason.clone();
     let location = args.location.clone();
+    let tsa_url = args.tsa_url.clone().filter(|s| !s.is_empty());
     let id_for_signer = std::sync::Arc::clone(&id);
 
     let app_for_progress = app.clone();
@@ -4190,6 +4199,7 @@ async fn signet_pro_batch_sign(
                     contact_info: None,
                     field_name: None,
                     appearance: None,
+                    tsa_url: tsa_url.clone(),
                 };
                 // Ensure output dir exists for each parent — cheap, idempotent.
                 if let Some(p) = job.output.parent() {
