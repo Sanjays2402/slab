@@ -141,3 +141,177 @@ export const basename = (path: string): string => {
 /** Suggest a sensible default rename pattern. Power users can edit. */
 export const defaultRenamePattern = (aiRename: boolean): string =>
   aiRename ? "{date}_{ai_title}.pdf" : "{date}_{stem}.pdf";
+
+// ---------------------------------------------------------------------
+// v3.21.0 — Hopper Conditions: per-watch routing rules
+// ---------------------------------------------------------------------
+//
+// A `Rule` pairs a `RulePredicate` (when to apply) with a `RuleAction`
+// (what to override on the watch). Rules are evaluated in priority
+// order; the first match wins; non-matching files fall through to the
+// watch defaults. Persisted as a JSON array in `watches.rules_json`.
+//
+// The discriminated-union shapes mirror Rust serde verbatim
+// (`#[serde(tag = "kind", rename_all = "kebab-case")]`).
+
+/** Discriminated union — every variant has its own payload shape. */
+export type RulePredicate =
+  | { kind: "filename-glob"; pattern: string }
+  | { kind: "filename-regex"; pattern: string }
+  | { kind: "text-contains-all"; needles: string[] }
+  | { kind: "page-count-between"; min: number; max: number }
+  | { kind: "size-over"; bytes: number }
+  | { kind: "always" };
+
+/** Action overlay — any `null` field inherits from the watch. */
+export interface RuleAction {
+  recipe_id: string | null;
+  output_dir: string | null;
+  rename_pattern: string | null;
+}
+
+/** One routing rule. Display `name` is what shows in the run log's
+ *  `matched_rule` column when this rule wins. */
+export interface Rule {
+  name: string;
+  predicate: RulePredicate;
+  action: RuleAction;
+}
+
+/** Preview payload for `slabHopperTestRules` — what would happen if a
+ *  file with this filename arrived under this watch. */
+export interface RuleTestResult {
+  matched_index: number | null;
+  matched_rule: string | null;
+  recipe_id: string | null;
+  output_dir: string;
+  rename_pattern: string | null;
+}
+
+// ---------------------------------------------------------------------
+// Rule CRUD + preview command bindings.
+// ---------------------------------------------------------------------
+
+/** Load the persisted rule chain for a watch. Empty `[]` means
+ *  "no conditional routing; use the watch defaults". */
+export const slabHopperGetRules = (watchId: number): Promise<Rule[]> =>
+  invoke("slab_hopper_get_rules", { watchId });
+
+/** Atomically replace the rule chain for a watch. Takes effect on the
+ *  next file the watcher dispatches; no restart needed. */
+export const slabHopperSetRules = (
+  watchId: number,
+  rules: Rule[],
+): Promise<void> => invoke("slab_hopper_set_rules", { watchId, rules });
+
+/** Test how a candidate filename would be routed under a watch with
+ *  (optionally) an in-flight, unsaved rule list. Used by the live
+ *  preview pane in the rule editor. `sizeBytes` / `pageCount` are
+ *  optional hints; when absent the predicate context uses 0 / null. */
+export const slabHopperTestRules = (
+  watchId: number,
+  filename: string,
+  opts: {
+    sizeBytes?: number;
+    pageCount?: number | null;
+    candidateRules?: Rule[];
+  } = {},
+): Promise<RuleTestResult> =>
+  invoke("slab_hopper_test_rules", {
+    watchId,
+    filename,
+    sizeBytes: opts.sizeBytes ?? null,
+    pageCount: opts.pageCount ?? null,
+    candidateRules: opts.candidateRules ?? null,
+  });
+
+// ---------------------------------------------------------------------
+// Predicate helpers — small but worth their weight in keystroke-saving
+// when the editor wires up 6 different predicate kinds.
+// ---------------------------------------------------------------------
+
+/** All predicate kinds the editor offers, in display order. */
+export const PREDICATE_KINDS = [
+  "filename-glob",
+  "filename-regex",
+  "text-contains-all",
+  "page-count-between",
+  "size-over",
+  "always",
+] as const satisfies readonly RulePredicate["kind"][];
+
+/** Human label for each predicate kind, for the editor dropdown. */
+export const predicateLabel = (kind: RulePredicate["kind"]): string => {
+  switch (kind) {
+    case "filename-glob":
+      return "filename matches glob";
+    case "filename-regex":
+      return "filename matches regex";
+    case "text-contains-all":
+      return "text contains all of";
+    case "page-count-between":
+      return "page count between";
+    case "size-over":
+      return "size larger than";
+    case "always":
+      return "always (catch-all)";
+  }
+};
+
+/** A sensible empty payload for each predicate kind. The editor calls
+ *  this when the user picks a new kind from the dropdown. */
+export const emptyPredicate = (
+  kind: RulePredicate["kind"],
+): RulePredicate => {
+  switch (kind) {
+    case "filename-glob":
+      return { kind, pattern: "*.pdf" };
+    case "filename-regex":
+      return { kind, pattern: "" };
+    case "text-contains-all":
+      return { kind, needles: [] };
+    case "page-count-between":
+      return { kind, min: 1, max: 10 };
+    case "size-over":
+      return { kind, bytes: 1_000_000 };
+    case "always":
+      return { kind };
+  }
+};
+
+/** An empty action — every override inherits. */
+export const emptyAction = (): RuleAction => ({
+  recipe_id: null,
+  output_dir: null,
+  rename_pattern: null,
+});
+
+/** Render a one-line summary of a predicate for compact UI display. */
+export const formatPredicate = (p: RulePredicate): string => {
+  switch (p.kind) {
+    case "filename-glob":
+      return `glob: ${p.pattern || "(empty)"}`;
+    case "filename-regex":
+      return `regex: /${p.pattern || ".*"}/i`;
+    case "text-contains-all":
+      return p.needles.length
+        ? `text ⊇ {${p.needles.join(", ")}}`
+        : "text ⊇ {…}";
+    case "page-count-between":
+      return `pages ∈ [${p.min}, ${p.max}]`;
+    case "size-over":
+      return `size > ${formatBytes(p.bytes)}`;
+    case "always":
+      return "always";
+  }
+};
+
+/** Pretty-print byte counts as KB/MB/GB. Pure helper, used in the
+ *  size-over predicate UI and the preview pane. */
+export const formatBytes = (n: number): string => {
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+};
