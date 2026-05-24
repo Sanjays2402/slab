@@ -34,6 +34,7 @@
   import TabulatePanel from "$lib/panels/TabulatePanel.svelte";
   import NupPanel from "$lib/panels/NupPanel.svelte";
   import MarkdownPanel from "$lib/panels/MarkdownPanel.svelte";
+  import MarkdownExportPanel from "$lib/panels/MarkdownExportPanel.svelte";
   import GrayscalePanel from "$lib/panels/GrayscalePanel.svelte";
   import PageLabelsPanel from "$lib/panels/PageLabelsPanel.svelte";
   import AutoRedactPanel from "$lib/panels/AutoRedactPanel.svelte";
@@ -127,6 +128,7 @@
     { id: "streamline", label: "Streamline (Fast Web View)", icon: "⚡", ready: true },
     { id: "reflow", label: "Reflow (PDF → Word)", icon: "📝", ready: true },
     { id: "tabulate", label: "Tabulate (PDF → Excel)", icon: "📊", ready: true },
+    { id: "mdexport", label: "Markdown (PDF → MD / HTML)", icon: "🅼", ready: true },
     { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
     { id: "nup", label: "N-up", icon: "▦", ready: true },
     { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
@@ -193,6 +195,7 @@
     "slides",
     "tables",
     "markdown",
+    "mdexport",
     "plugins",
   ]);
 
@@ -763,6 +766,8 @@
       <TablesPanel />
     {:else if detachedPanel === "markdown"}
       <MarkdownPanel />
+    {:else if detachedPanel === "mdexport"}
+      <MarkdownExportPanel />
     {:else}
       <div class="detached-unsupported">
         <p>Panel <code>{detachedPanel}</code> doesn't support detached mode yet.</p>
@@ -1007,6 +1012,8 @@
     <ReflowPanel />
   {:else if active === "tabulate"}
     <TabulatePanel />
+  {:else if active === "mdexport"}
+    <MarkdownExportPanel />
   {:else if active === "autoredact"}
     <AutoRedactPanel />
   {:else if active === "nup"}
