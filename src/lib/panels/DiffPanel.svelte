@@ -209,6 +209,24 @@
     if (out.length === 0) out.push({ label: "no change", cls: "eq" });
     return out;
   }
+
+  // Stack v3.23.0 — command palette deep links. The palette dispatches a
+  // CustomEvent on `window` after switching to this panel; we listen here
+  // so the action runs in the correct component context.
+  $effect(() => {
+    function onExport() {
+      void exportReport();
+    }
+    function onRerun() {
+      void runCompare();
+    }
+    window.addEventListener("slab:stack-export-report", onExport);
+    window.addEventListener("slab:stack-rerun", onRerun);
+    return () => {
+      window.removeEventListener("slab:stack-export-report", onExport);
+      window.removeEventListener("slab:stack-rerun", onRerun);
+    };
+  });
 </script>
 
 <header class="content-header">

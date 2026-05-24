@@ -278,6 +278,48 @@
       keywords:
         "hopper backfill folder retroactive existing files apply rules batch bulk paralegal legal discovery sort route move",
     });
+    // Stack v3.23.0 — visual redline diff of two PDFs. Three palette
+    // entries because each one corresponds to a distinct user intent
+    // (compare, run again, export).
+    out.push({
+      id: "stack:compare",
+      title: "Stack: Compare two PDFs",
+      subtitle: "Word-level redline + side-by-side visual diff (⇧⌘D)",
+      icon: "≢",
+      group: "Stack",
+      run: () => onSelectPanel("diff"),
+      keywords:
+        "stack diff compare redline litera changes contracts legal markup additions deletions revisions",
+    });
+    out.push({
+      id: "stack:export",
+      title: "Stack: Export diff report (PDF)",
+      subtitle: "Save the current diff as a shareable PDF report",
+      icon: "📄",
+      group: "Stack",
+      run: () => {
+        onSelectPanel("diff");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:stack-export-report"));
+        });
+      },
+      keywords:
+        "stack diff export report pdf save share redline markup paralegal legal",
+    });
+    out.push({
+      id: "stack:rerun",
+      title: "Stack: Re-run last comparison",
+      subtitle: "Diff the two PDFs you compared most recently",
+      icon: "🔁",
+      group: "Stack",
+      run: () => {
+        onSelectPanel("diff");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:stack-rerun"));
+        });
+      },
+      keywords: "stack diff redo again same previous compare",
+    });
     // Bind v3.18.0 — PDF → EPUB 3. The screenshot-bait wedge: Calibre is
     // the only mainstream PDF→EPUB tool and it's a 2008 GUI; Acrobat
     // doesn't ship EPUB at all.
