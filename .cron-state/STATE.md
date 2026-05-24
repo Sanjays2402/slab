@@ -4,6 +4,77 @@
 
 ---
 
+## STATUS: 🚀 v3.19.0 Marquee Slice 6 (Markdown→PDF) SHIPPED (2026-05-24 06:25 PT)
+
+**TICK 2026-05-24 06:17 PT (Sunday off-hours)** — MODE C, finished Slice 6 of v3.19.0.
+
+### What shipped this tick
+Branch `feature/v3.19.0-marquee-try`, 3 commits, ~1243 LOC:
+
+- `05055b7` feat(try): mdToPdf — pure-function markdown to PDF (StandardFonts, no deps)
+  - 440 LOC `src/lib/try/mdToPdf.ts` — block + inline lexer + pdf-lib layout
+  - 130 LOC `scripts/test-mdtopdf.mjs` — 17 assertions, all green
+  - Zero new dependencies (uses existing `pdf-lib`)
+- `900c2a5` feat(try): /try/markdown — split-pane live md→pdf preview with Cmd-S download
+  - 472 LOC `src/routes/try/markdown/+page.svelte`
+  - Live pdfjs preview, 400ms debounce, Cmd-S download, Cmd-B/I shortcuts
+  - Responsive (stacks below 880px)
+- `fb82738` feat(try): surface /try/markdown on the playground landing + md-extras wall
+  - New "Or jump straight into a tool" section on /try with 3 cards
+  - New `md-extras` wallCopy key (images / fonts / footnotes / math → desktop)
+
+### Buy-Button verdict — 4/4 PASS
+- **Pay-for-it ✅** — Smallpdf and iLovePDF charge $7-$12/mo for browser
+  Markdown→PDF *and they upload your file*. Slab does it free, zero upload.
+- **Notice-it ✅** — Returning /try visitor sees 3 tool cards that didn't
+  exist before, plus a Markdown editor with live preview.
+- **Pick-us ✅** — Smallpdf/iLovePDF require account + upload. No competitor
+  ships in-browser md→PDF that respects privacy.
+- **Tell-a-friend ✅** — "Type markdown, watch a PDF render live, hit Cmd-S,
+  it never leaves your tab." Screenshot bait.
+
+### Plan also committed (in this tick)
+- `docs/plans/2026-05-24-v3.19.0-marquee-finish.md` — finish-Marquee plan
+  (Slice 6 = this tick; Slice 9 = next tick: deploy pipeline + tag release).
+
+### Quality gates
+- `pnpm check` ✅ 0 errors, 62 warnings (baseline preserved)
+- `node --experimental-strip-types scripts/test-mdtopdf.mjs` ✅ all green (17 assertions)
+- `node --experimental-strip-types scripts/test-pdfops.mjs` ✅ 17/17 green
+- Rust gates skipped (no Rust changes)
+
+### Marquee progress
+Slices done: 0, 1, 2, 4, 5, 6, 7, 8.
+Slices remaining: 3 (in-browser Reader — nice-to-have), 9 (deploy pipeline + tag release — MUST do next).
+
+### LAST_WOW_TICK_AT: 2026-05-24T13:08Z (set previous tick — Marquee privacy banner)
+This tick is a buyer-magnet ship (md→PDF live), but not strictly a new
+wow surface vs the privacy banner. Counter stays as-is.
+
+### Active branch: feature/v3.19.0-marquee-try
+- Pushed in previous tick + this tick will push.
+- Next tick: Slice 9 — write `.github/workflows/deploy-try.yml`,
+  `docs/ops/try-slab-deploy.md`, release notes, then merge to main +
+  tag v3.19.0 + MODE B finalize.
+
+### RECENTLY_CLOSED_ISSUES
+- v3.18.0 published: https://github.com/Sanjays2402/slab/releases/tag/v3.18.0
+- v3.19.0 in progress on feature/v3.19.0-marquee-try
+
+---
+
+## PRIOR STATUS: v3.18.0 Bind PUBLISHED + v3.19.0 Marquee Slices 0-5,8 shipped (2026-05-24 06:08 PT)
+
+(See prior tick log + git history for v3.18.0 Bind details — Tauri
+slab_bind_to_epub command + BindPanel + Atelier ConvertToEpub step,
+all green, 1588 tests passing. Marquee Slices 0-5 + 7-8 shipped in
+the 05:51 PT tick, see `.cron-state/sessions/2026-05-24-0551.md`.)
+
+
+> **You are Cake.** This file is your memory across runs. Read me FIRST every cycle.
+
+---
+
 ## STATUS: 🎉 v3.18.0 "Bind" SHIPPED — merged + tagged, CI running (2026-05-24 05:38 PT)
 
 **TICK 2026-05-24 05:25 PT (Sunday off-hours)** — MODE C → MODE A → RELEASE_PENDING.
