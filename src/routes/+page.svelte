@@ -494,6 +494,17 @@
         return;
       }
     }
+    // Hopper (v3.20.0): focus the watched-folders panel. Default Mod+Shift+H.
+    if (matches(e, "hopper.open")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "hopper";
+        return;
+      }
+    }
     // v3.4.0 Discovery: Bates (Cmd/Ctrl+Shift+B) and Legal Stamp
     // (Cmd/Ctrl+Shift+S). Hardcoded for ship velocity, matching the
     // Loupe pattern below — promote to the keymap registry later if

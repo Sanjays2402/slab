@@ -54,7 +54,8 @@ export type ActionId =
   | "bedrock.open"
   | "press.open"
   | "forms.open"
-  | "atelier.open";
+  | "atelier.open"
+  | "hopper.open";
 
 export interface KeymapAction {
   id: ActionId;

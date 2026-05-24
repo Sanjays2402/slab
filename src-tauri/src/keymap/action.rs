@@ -42,6 +42,7 @@ pub enum ActionId {
     PressOpen,
     FormsOpen,
     AtelierOpen,
+    HopperOpen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +269,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Atelier — recipe runner",
         group: "Atelier",
         default_binding: "Mod+Shift+R",
+    },
+    ActionInfo {
+        id: ActionId::HopperOpen,
+        key: "hopper.open",
+        label: "Hopper — watched folders",
+        group: "Hopper",
+        default_binding: "Mod+Shift+H",
     },
 ];
 
