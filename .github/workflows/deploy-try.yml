@@ -1,0 +1,133 @@
+name: deploy-try
+
+# Build the SvelteKit static SPA and deploy it to Cloudflare Pages as
+# `try.slab.app` — the in-browser playground for Slab's PDF tools.
+#
+# This is the SAME bundle that ships inside the Tauri desktop app. Routes
+# that depend on `@tauri-apps/api` will gracefully no-op in the browser;
+# the playground routes under `/try/**` are fully self-contained and work
+# without any backend.
+#
+# Triggers:
+#   - pushes to main that touch front-end / playground sources
+#   - manual dispatch (use this for the initial deploy after Cloudflare
+#     Pages project + DNS are wired up by Sanjay)
+#
+# Secrets required in repo settings (Sanjay configures these once):
+#   - CLOUDFLARE_API_TOKEN  (Pages:Edit, Account:Read)
+#   - CLOUDFLARE_ACCOUNT_ID
+# See docs/ops/try-slab-deploy.md for the one-time setup.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "static/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "vite.config.js"
+      - "svelte.config.js"
+      - "tsconfig.json"
+      - ".github/workflows/deploy-try.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-try-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Build SPA + deploy to Cloudflare Pages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: svelte-check (typecheck)
+        run: pnpm check
+
+      - name: Build SvelteKit static SPA
+        env:
+          # Hint to client code that this is the public web build, not the
+          # bundled Tauri desktop. Components can branch on this if needed.
+          PUBLIC_SLAB_TARGET: "try-web"
+        run: pnpm build
+
+      - name: Write _redirects for Cloudflare Pages
+        run: |
+          set -euo pipefail
+          OUT_DIR="build"
+          if [ ! -d "$OUT_DIR" ]; then
+            echo "::error::Build output directory '$OUT_DIR' missing"
+            exit 1
+          fi
+          cat > "$OUT_DIR/_redirects" <<'EOF'
+          # Cloudflare Pages redirect/rewrite rules for try.slab.app.
+          # The root URL of the playground is /try — redirect bare visits to it.
+          /              /try/                    301
+          /index.html    /try/                    301
+          # SPA fallback (adapter-static already emits index.html; this is the
+          # belt-and-suspenders rewrite for direct deep-links under /try/**).
+          /try/*         /try/:splat              200
+          EOF
+          cat > "$OUT_DIR/_headers" <<'EOF'
+          # Cache static assets aggressively; HTML stays fresh.
+          /_app/immutable/*
+            Cache-Control: public, max-age=31536000, immutable
+          /try/*
+            X-Frame-Options: DENY
+            Referrer-Policy: strict-origin-when-cross-origin
+            X-Content-Type-Options: nosniff
+            Permissions-Policy: clipboard-write=(self)
+          EOF
+          ls -lah "$OUT_DIR" | head -20
+          echo "---"
+          echo "Total build size:"
+          du -sh "$OUT_DIR"
+
+      - name: Deploy to Cloudflare Pages
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Project name is hard-coded; Sanjay creates it once in CF dashboard
+          # per docs/ops/try-slab-deploy.md.
+          command: pages deploy build --project-name=slab-try --branch=main --commit-dirty=true
+
+      - name: Skip deploy (no Cloudflare credentials configured)
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "::notice::Cloudflare Pages credentials not configured — build verified, deploy skipped."
+          echo "See docs/ops/try-slab-deploy.md to enable deployment."
+
+      - name: Upload build artifact (for inspection)
+        uses: actions/upload-artifact@v7
+        with:
+          name: try-slab-app-build
+          path: build/
+          if-no-files-found: error
+          retention-days: 14
