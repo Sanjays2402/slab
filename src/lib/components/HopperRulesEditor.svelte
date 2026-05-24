@@ -35,6 +35,7 @@
     type RulePredicate,
     type RuleTestResult,
   } from "$lib/hopper";
+  import HopperBackfillPanel from "./HopperBackfillPanel.svelte";
 
   // -------------------------------------------------------------------
   // Props
@@ -77,6 +78,17 @@
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** v3.22.0 Hopper Loop — when true, the BackfillPanel overlay is
+   *  mounted. Driven by the "Test on this folder" button below and by
+   *  the public `openBackfill()` API used by the command palette. */
+  let backfillOpen = $state(false);
+
+  /** Public-ish entry point — used by the command palette /
+   *  Cmd+Shift+B to open the backfill panel from anywhere. */
+  export function openBackfill(): void {
+    backfillOpen = true;
+  }
 
   // -------------------------------------------------------------------
   // Load
@@ -262,6 +274,13 @@
       {#if savedLabel()}
         <span class="saved" class:err={errorMsg}>{savedLabel()}</span>
       {/if}
+      <button
+        class="ghost"
+        onclick={() => (backfillOpen = true)}
+        title="Apply these rules to PDFs already in this folder (Cmd+Shift+B)"
+      >
+        Test on this folder…
+      </button>
       <button class="primary" onclick={addRule}>+ Add rule</button>
     </div>
   </header>
@@ -481,6 +500,14 @@
     </aside>
   </div>
 </section>
+
+{#if backfillOpen}
+  <HopperBackfillPanel
+    {watchId}
+    watchSource={watchSource}
+    onClose={() => (backfillOpen = false)}
+  />
+{/if}
 
 <style>
   .rules-editor {

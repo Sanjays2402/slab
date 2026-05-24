@@ -315,3 +315,95 @@ export const formatBytes = (n: number): string => {
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 };
+
+// ---------------------------------------------------------------------
+// v3.22.0 "Hopper Loop" — batch backfill API
+// ---------------------------------------------------------------------
+//
+// Backfill = "apply my current rule chain to every PDF already sitting
+// in this watched folder." Two-step contract:
+//
+//   1. plan  — returns a `BackfillReport` (dry run, no FS mutations).
+//   2. apply — pass that report back to commit the moves; returns a
+//              `BackfillRun` summary that the UI shows in a toast and
+//              that the backend persists to sqlite.
+//
+// The split mirrors Tauri's `confirm dialog → action` pattern and lets
+// the user deselect rows before applying. The plan is cheap (single
+// `read_dir` + rule eval per file) and idempotent; calling `plan`
+// twice in a row returns the same plan modulo `generated_at`.
+
+/** Discriminator for `PlannedAction.action`. Matches the Rust
+ *  `ActionKind` enum with `kebab-case` serde. */
+export type BackfillActionKind = "move" | "copy" | "skip" | "no-match";
+
+/** One row in the dry-run preview table. */
+export interface PlannedAction {
+  source_path: string;
+  size_bytes: number;
+  matched_rule: string | null;
+  destination: string | null;
+  action: BackfillActionKind;
+  reason: string;
+}
+
+/** Full dry-run report — one row per `*.pdf` in the scanned folder. */
+export interface BackfillReport {
+  folder: string;
+  scanned: number;
+  planned: PlannedAction[];
+  /** Unix-seconds UTC. */
+  generated_at: number;
+}
+
+/** Per-file outcome after `executeBackfill` has run. */
+export type BackfillOutcomeStatus = "moved" | "skipped" | "failed";
+export interface BackfillOutcome {
+  source_path: string;
+  destination: string | null;
+  status: BackfillOutcomeStatus;
+  error: string | null;
+}
+
+/** Aggregate run summary — persisted to sqlite + shown in history. */
+export interface BackfillRun {
+  folder: string;
+  scanned: number;
+  applied: number;
+  skipped: number;
+  errored: number;
+  started_at: number;
+  finished_at: number;
+  per_file: BackfillOutcome[];
+}
+
+/** Dry-run: plan the moves the current rule chain would perform on
+ *  every PDF in `folder` (defaults to the watch's `source_dir`).
+ *  Pure — never touches the filesystem outside `folder`. */
+export const slabHopperPlanBackfill = (
+  watchId: number,
+  folder?: string,
+): Promise<BackfillReport> =>
+  invoke("slab_hopper_plan_backfill", {
+    watchId,
+    folder: folder ?? null,
+  });
+
+/** Commit a previously-approved `BackfillReport`. Idempotent — if a
+ *  file no longer exists (e.g. user deleted it between plan + apply),
+ *  the row is marked `skipped` and the rest still apply. */
+export const slabHopperExecuteBackfill = (
+  report: BackfillReport,
+): Promise<BackfillRun> =>
+  invoke("slab_hopper_execute_backfill", { report });
+
+/** History tail of past backfills, newest first. Pass `folder` to
+ *  filter to one watched directory. */
+export const slabHopperListBackfillRuns = (
+  folder?: string,
+  limit?: number,
+): Promise<BackfillRun[]> =>
+  invoke("slab_hopper_list_backfill_runs", {
+    folder: folder ?? null,
+    limit: limit ?? null,
+  });
