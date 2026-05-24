@@ -24,7 +24,8 @@ export type StepKind =
   | "compactor"
   | "linearize"
   | "convert-to-docx"
-  | "convert-to-xlsx";
+  | "convert-to-xlsx"
+  | "convert-to-pptx";
 
 export type Step =
   | { kind: "ocr"; language: string }
@@ -45,6 +46,11 @@ export type Step =
       type_numbers: boolean;
       type_dates: boolean;
       include_non_table_text: boolean;
+    }
+  | {
+      kind: "convert-to-pptx";
+      include_speaker_notes: boolean;
+      detect_titles: boolean;
     };
 
 export interface Recipe {
@@ -102,6 +108,12 @@ export function defaultStep(kind: StepKind): Step {
         type_dates: true,
         include_non_table_text: false,
       };
+    case "convert-to-pptx":
+      return {
+        kind: "convert-to-pptx",
+        include_speaker_notes: true,
+        detect_titles: true,
+      };
   }
 }
 
@@ -128,6 +140,8 @@ export function stepLabel(s: Step): string {
       return "Convert to Word (.docx)";
     case "convert-to-xlsx":
       return "Convert to Excel (.xlsx)";
+    case "convert-to-pptx":
+      return "Convert to PowerPoint (.pptx)";
   }
 }
 
@@ -152,6 +166,8 @@ export function stepGlyph(s: Step): string {
       return "📝";
     case "convert-to-xlsx":
       return "📊";
+    case "convert-to-pptx":
+      return "🎞";
   }
 }
 
