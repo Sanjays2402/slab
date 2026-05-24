@@ -103,6 +103,7 @@ fn step_kind(s: &Step) -> String {
         Step::Watermark { .. } => "watermark",
         Step::Flatten { .. } => "flatten",
         Step::Compactor => "compactor",
+        Step::Linearize => "linearize",
     }
     .into()
 }
@@ -129,6 +130,10 @@ fn apply_step(input: &Path, output: &Path, step: &Step) -> Result<(), PdfError> 
         Step::Compactor => {
             let opts = crate::pdf::compactor::CompactOptions::default();
             crate::pdf::compactor::compact(input, output, opts)?;
+            Ok(())
+        }
+        Step::Linearize => {
+            crate::pdf::streamline::linearize_pdf(input, output)?;
             Ok(())
         }
         Step::Ocr { language } => {
@@ -212,6 +217,36 @@ mod tests {
         assert!(matches!(e[0], Progress::Started { step_index: 0, .. }));
         // Last event must be Completed for step 1.
         assert!(matches!(e[3], Progress::Completed { step_index: 1, .. }));
+    }
+
+    #[test]
+    fn recipe_runs_linearize_step() {
+        // Atelier wiring for Step::Linearize — proves you can drop a folder
+        // of PDFs through Atelier and get Fast Web View output as a step.
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("in.pdf");
+        // Need a non-trivial document so the linearizer has real objects to walk.
+        make_n_page_pdf(&input, 3);
+        let output = dir.path().join("out.pdf");
+
+        let recipe = Recipe {
+            name: "Linearize only".into(),
+            version: 1,
+            steps: vec![Step::Linearize],
+        };
+
+        let report = run_recipe(&input, &output, &recipe, &|_| {}).expect("recipe ran");
+        assert_eq!(report.steps_completed, 1);
+        assert!(output.exists(), "linearized output written");
+
+        // Round-trip: the inspector should now classify our own output as Linearized.
+        let (status, _stats) =
+            crate::pdf::streamline::is_linearized(&output).expect("inspect output");
+        assert_eq!(
+            status,
+            crate::pdf::streamline::LinearizationStatus::Linearized,
+            "Atelier Linearize step produced a Fast Web View PDF"
+        );
     }
 
     #[test]
