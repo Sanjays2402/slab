@@ -62,6 +62,7 @@
   let outputPath = $state<string | null>(null);
   let reason = $state("");
   let location = $state("");
+  let tsaUrl = $state("");
   // Visible signature appearance (v3.11.0).
   let visibleSignature = $state(false);
   let appearancePage = $state(1);
@@ -152,6 +153,7 @@
           location: location || null,
           contact_info: contactInfo || null,
           field_name: fieldName || null,
+          tsa_url: tsaUrl || null,
           appearance: visibleSignature
             ? {
                 page: Math.max(1, Math.floor(appearancePage || 1)),
@@ -309,6 +311,14 @@
     <div class="row">
       <label>Field name</label>
       <input type="text" bind:value={fieldName} placeholder="Signature1" />
+    </div>
+    <div class="row">
+      <label>TSA URL</label>
+      <input
+        type="text"
+        bind:value={tsaUrl}
+        placeholder="optional — RFC 3161 (e.g. http://timestamp.digicert.com)"
+      />
     </div>
     <fieldset class="appearance">
       <legend>

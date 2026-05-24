@@ -47,6 +47,7 @@
   let naming = $state<"suffix" | "mirror">("suffix");
   let reason = $state("");
   let location = $state("");
+  let tsaUrl = $state("");
 
   // ─── Progress + result state ───────────────────────────────────
   let planning = $state(false);
@@ -139,6 +140,7 @@
           skip_existing: skipExisting,
           reason: reason || null,
           location: location || null,
+          tsa_url: tsaUrl || null,
         },
       });
       report = r;
@@ -230,6 +232,15 @@
     <div class="row">
       <label for="loc-in">Location</label>
       <input id="loc-in" type="text" bind:value={location} placeholder="e.g. Seattle, WA" />
+    </div>
+    <div class="row">
+      <label for="tsa-in">TSA URL</label>
+      <input
+        id="tsa-in"
+        type="text"
+        bind:value={tsaUrl}
+        placeholder="optional — RFC 3161 (CAdES-T)"
+      />
     </div>
   </fieldset>
 
