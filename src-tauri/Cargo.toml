@@ -108,6 +108,13 @@ base64 = "0.22"
 # Used only at user-trigger time so it stays out of the hot render path.
 similar = "2.6"
 
+# Hopper (v3.20.0) — cross-platform filesystem watcher. Drives the
+# watched-folder automation pipeline. We use the `macos_fsevent` backend
+# on macOS, `inotify` on Linux, ReadDirectoryChangesW on Windows — all
+# wired automatically by the crate's `RecommendedWatcher`. Pure Rust
+# transitive deps; zero new C deps.
+notify = "6.1"
+
 # Bench (v1.4.0) — Ed25519 signature verification for marketplace
 # index entries. Pure-Rust, no openssl, no native deps; Slab's
 # maintainer key is hard-coded as a const byte array in
