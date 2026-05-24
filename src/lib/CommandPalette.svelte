@@ -258,6 +258,26 @@
       },
       keywords: "search library find query fts full text cross document indemnify clause atlas",
     });
+    // Hopper v3.22.0 — backfill ("Hopper Loop"). The palette entry
+    // opens the Hopper panel so the user can pick a watch + click
+    // "Test on this folder". The deep-link to a specific watch's
+    // backfill flow is handled by the `slab:open-hopper-backfill`
+    // event below + Cmd+Shift+B keyboard handler in App.svelte.
+    out.push({
+      id: "hopper:backfill",
+      title: "Hopper: Backfill folder with rules",
+      subtitle: "Apply your routing rules to PDFs already in a watched folder (⇧⌘H)",
+      icon: "📂",
+      group: "Hopper",
+      run: () => {
+        onSelectPanel("hopper");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-hopper-backfill"));
+        });
+      },
+      keywords:
+        "hopper backfill folder retroactive existing files apply rules batch bulk paralegal legal discovery sort route move",
+    });
     // Bind v3.18.0 — PDF → EPUB 3. The screenshot-bait wedge: Calibre is
     // the only mainstream PDF→EPUB tool and it's a 2008 GUI; Acrobat
     // doesn't ship EPUB at all.

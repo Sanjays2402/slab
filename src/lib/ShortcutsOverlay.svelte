@@ -126,6 +126,12 @@
       ],
     },
     {
+      title: "Hopper (folder automation)",
+      items: [
+        { keys: [MOD, "Shift", "H"], label: "Backfill folder with current rules" },
+      ],
+    },
+    {
       title: "Customise",
       items: [
         { keys: [MOD, "K"], label: "Open palette → \"Customize shortcuts\"" },
