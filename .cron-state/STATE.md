@@ -4,7 +4,31 @@
 
 ---
 
-## STATUS: 🚀 v3.18.0 "Bind" — backend end-to-end on feature branch (2026-05-24 04:55 PT)
+## STATUS: 🪟 v3.19.0 "Marquee" plan promoted — try.slab.app browser playground (2026-05-24 05:12 PT)
+
+**TICK 2026-05-24 05:12 PT (Sun off-hours)** — MODE C writing-plans skill (cron-invoked).
+
+- Wrote `docs/plans/2026-05-24-v3.19.0-marquee-try.md` (~21 KB, 10 slices, 12 commits, ~1610 net LOC + ~400 test LOC at execution). Committed `6fe5c00` on main and pushed.
+- Originally drafted as v3.1.0 but sibling cron advanced main to v3.18.0 Bind during my 33h window — renumbered to v3.19.0 mid-tick. Plan is orthogonal (browser surface, not backend), version slot is arbitrary.
+- Codename **"Marquee" 🪟** — converts Sanjay's 10 Sat-Sun manual `improve/*` web-preview-graceful commits into a marketing surface. `/try` route + 3 bundled sample PDFs + `<DownloadWall>` modal + pdf-lib page ops (merge/split/rotate/remove) + metadata edit + md→pdf + privacy banner with live "0 bytes uploaded" counter + Cloudflare Pages deploy at try.slab.app.
+- **WOW**: persistent banner with live bytesUploaded counter (patches window.fetch on mount). Screenshot bait, reinforces privacy wedge.
+- **Buy-Button 4/4**: Pay-for-it (only free in-browser PDF editor that doesn't upload — Smallpdf/iLovePDF both upload), Notice-it (new hero CTA "Try in your browser"), Pick-us (5-sec evaluation funnel), Tell-a-friend ("look, no upload bytes").
+- Pure frontend: pdf-lib 1.17 + existing pdfjs-dist. Zero new Rust. Zero new Tauri commands. Lazy-loaded on /try only.
+- **Sanjay-TODO** surfaced in plan: add Cloudflare Pages project, 2 GH secrets (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`), CNAME `try.slab.app`.
+
+Planning tick — 2 files / 1078 insertions of docs only. Below SHIP-SIZE for code ticks; justified by the explicit `writing-plans` skill invocation per the standing order. Note also: this picks up the thread of Sanjay's manual Sat-Sun commit stream rather than writing yet another deep-backend spec — the planning lead is already 10+ versions deep; this plan is the **executable bridge** between what Sanjay shipped this weekend and the next code tick.
+
+**Next tick**: MODE C code-ship. Two attractive targets:
+- (a) Marquee Slice 0+1+2 (ADR + `/try` scaffold + `<DownloadWall>`) on `feature/v3.19.0-marquee-try` — direct continuation of Sanjay's `improve/*` work, ships an end-to-end buy-button-positive surface in one tick (~700 LOC realistic).
+- (b) v3.0.0 Bedrock Slice 2 (font-embedding audit) on `feature/v3.0.0-bedrock-pdfa` — that branch hasn't been touched in 33h and is queued behind Bind anyway.
+
+Recommend (a) — fresh momentum, marketing-funnel impact, builds on what Sanjay was actively touching this week.
+
+Session log: `.cron-state/sessions/2026-05-24-0512.md`.
+
+---
+
+## STATUS PRIOR: 🚀 v3.18.0 "Bind" — backend end-to-end on feature branch (2026-05-24 04:55 PT)
 
 **TICK 2026-05-24 04:45 PT (Sunday off-hours)** — MODE C DEVELOP.
 
