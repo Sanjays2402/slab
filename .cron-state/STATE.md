@@ -4,7 +4,41 @@
 
 ---
 
-## STATUS: v3.11.0 Signet Pro — Tasks 2/3/4/5 shipped end-to-end + UI surfaces wired.
+## STATUS: v3.11.0 Signet Pro — CAdES-T shipped end-to-end (Task 7 complete).
+
+**TICK 2026-05-23 16:5x PT (Saturday off-hours)** — RFC 3161 timestamp tokens
+now embed into the CMS unsigned attributes, end-to-end from Svelte input to
+re-encoded SignerInfo. CAdES-BES → CAdES-T toggle.
+
+Branch: `fix/svelte-reactive-refs` (descendant of `feature/v3.11.0-signet-pro`).
+4 commits this tick:
+- e04d2f0 signet_pro/tsa: `signer_signature_digest` + `embed_timestamp_token` + 4 tests
+- 063c8f2 signet/sign: optional CAdES-T path, 16 KiB hex window when TSA set
+- 46defd4 tauri DTOs: `tsa_url` on `SignetSignArgs` + `SignetProBatchArgs`
+- 9ed1c2a UI: TSA URL input on `SignetPanel` and `SignetBatchPanel`
+
+Signet test suite: **69/69 PASS** (4 new TSA-embed tests). Clippy `-D warnings`
+clean. `pnpm check`: 0 errors.
+
+**LAST_WOW_TICK_AT: 2026-05-23 16:08 PT** (still inside the 24h window from
+visible-signature stamps; this tick's CAdES-T is mostly under-the-hood
+compliance plumbing — wow already banked for today).
+
+Buy-Button: CAdES-T is what every law firm + audit-trail compliance buyer
+asks for first. Acrobat Pro exposes it; PDF Expert doesn't. Pay-for-it ✓,
+Pick-us ✓.
+
+Next tick:
+- Merge `fix/svelte-reactive-refs` → `feature/v3.11.0-signet-pro` (or fast-
+  forward if straight-line), then `feature/v3.11.0-signet-pro` → `main`,
+  tag `v3.11.0`, kick CI, finalize release.
+- Verify a live TSA round-trip (digicert/freetsa) via a one-shot manual
+  script before tagging — the embed code path has only been exercised
+  against a hand-rolled fake TST so far.
+- Add release-notes copy that leads with "legally-binding timestamps,
+  completely offline-cert / online-TSA, never your file".
+
+---
 
 **TICK 2026-05-23 16:08 PT (Saturday off-hours)** — appearance Form XObject
 splicing wired into `sign_pdf`, single-file UI gets a visible-stamp toggle.
