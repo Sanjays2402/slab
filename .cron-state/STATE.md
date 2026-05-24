@@ -4,6 +4,67 @@
 
 ---
 
+## STATUS: 🚀 v3.23.0 'Stack' MERGED + TAGGED (2026-05-24 14:48 PT)
+
+**TICK 2026-05-24 14:48 PT (Sunday off-hours)** — MODE C → MODE A in
+one tick. Shipped Task 7 (the buyer-magnet) + 9 + 10 from the v3.23.0
+plan: shareable redline PDF export, version bump, merge to main, tag.
+
+### Tick stats
+
+- 3 commits on `feature/v3.23.0-stack-visual-diff`:
+  - `c4867e4` feat(diff): stack_redline — export shareable redline PDF
+    (new module, 4 unit tests, Tauri command)
+  - `6d1f87c` feat(ui): Export Redline button + palette entry in Diff panel
+  - `ccd369e` chore(release): v3.23.0 Stack — bump versions + release notes
+- Merge commit on main: `59e478b` "Merge v3.23.0 'Stack' — word-level
+  redline + shareable redline PDF export"
+- Tag: `v3.23.0` (annotated, professional no-emoji message)
+- LOC net: ~1100 (stack_redline.rs ~660 + lib.rs cmd + DiffPanel/Palette UI + release notes ~95)
+- Tests: 1680 passed (was 1676 → +4 new redline tests). cargo fmt
+  clean, clippy -D warnings clean, pnpm check 0 errors.
+- Buy-Button: PASS on all four:
+  1. Pay-for-it: Litera Compare charges $400/seat/yr for this exact
+     feature (export shareable redline). Acrobat Pro Compare $239.
+  2. Notice-it: New button in Diff panel + new palette entry.
+  3. Pick-us: Acrobat doesn't ship the redline as a baked PDF
+     (annotations only). We do.
+  4. Tell-a-friend: "Slab exports a redline PDF for free that Litera
+     charges $400/yr for" — screenshot-worthy.
+
+### LAST_WOW_TICK_AT: 2026-05-24T21:48:00Z (Export Redline shareable PDF)
+
+This counts as a wow — it's the kind of capability customers tell
+their paralegal friends about. >24h window reset.
+
+### RELEASE_PENDING: v3.23.0
+
+- Merge SHA: `59e478b`
+- Tag: `v3.23.0` pushed with `--follow-tags`
+- CI runs at push time (2026-05-24T21:48:30Z):
+  - `build` workflow on main (run 26373664021)
+  - `Docker (slab-server)` on tag v3.23.0 (run 26373663937)
+  - `deploy-try` on main (run 26373664012)
+  - `pages build and deployment` (run 26373663626)
+- Next tick (MODE B FINALIZE): poll those run IDs, download artifacts,
+  `gh release create v3.23.0` with the marketing notes from
+  `docs/releases/v3.23.0.md`, upload the 6 best artifacts (macos-arm64
+  dmg, macos-x64 dmg, linux x64 deb + AppImage, windows msi + nsis).
+
+### Next tick (MODE B FINALIZE — first priority)
+
+1. `gh run list --limit 8` — wait for all 4 above to succeed.
+2. `gh run download <build_run_id> --dir /tmp/slab-release-3.23.0`.
+3. `gh release create v3.23.0 --title 'v3.23.0 — Stack' --notes-file docs/releases/v3.23.0.md` + upload artifacts.
+4. Clear `RELEASE_PENDING` from this file. Begin v3.24.0 "Stack Pro"
+   (three-way compare) OR fall through to v0.10.0 "Beacon" pipeline.
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 through v3.23.0 published. None open.
+
+---
+
 ## STATUS: 🚧 v3.23.0 'Stack' — Tick 1 shipped (2026-05-24 14:10 PT)
 
 **TICK 2026-05-24 14:10 PT (Sunday off-hours)** — MODE C DEVELOP.
