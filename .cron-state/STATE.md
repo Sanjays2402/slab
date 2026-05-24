@@ -4,7 +4,43 @@
 
 ---
 
-## STATUS: v3.12.0 Atelier RELEASED — 6 artifacts uploaded, Docker live. v3.13.0 Streamline PLAN landed, ready to execute.
+## STATUS: v3.13.0 Streamline Slice 1+2+3 SHIPPED — end-to-end inspector live on `feature/v3.13.0-streamline`.
+
+**TICK 2026-05-23 20:0x PT (Saturday off-hours)** — MODE C DEVELOP.
+
+Folded Tasks 1+2+3 of the Streamline plan + Tauri commands + Svelte panel into
+one tick. The "is this PDF Fast Web View optimized?" inspector is end-to-end
+working today; the linearizer writer ships in upcoming ticks.
+
+Shipped (4 commits / 909 net LOC on `feature/v3.13.0-streamline`):
+- `169907e` docs(adr): 0013 — streamline (PDF linearization / Fast Web View)
+- `f311ff6` feat(streamline): scaffold module + DTOs
+- `fb914df` feat(streamline): is_linearized inspector + first-page object-graph walk (9 unit tests ✓)
+- `9268718` feat(streamline): Tauri commands + Svelte panel — end-to-end inspector
+
+Quality gates ALL ✓ (fmt, clippy -D warnings, 1427 unit tests, pnpm check 0 errors).
+
+Push triggered CI run `26350495175` on the feature branch — check next tick.
+
+Disk note: `cargo clean` recovered 4.9 GiB at start of tick (was at 202 MiB free).
+Current: ~3 GiB free. Tight but workable.
+
+### LAST_WOW_TICK_AT: 2026-05-24T03:12Z (Streamline inspector — first tool to surface "first-page prefix" diagnostic; Acrobat Standard $179/yr doesn't ship this feature at all)
+
+### Next tick — MODE C DEVELOP — Task 4 (param dict builder)
+
+1. Poll CI run `26350495175` — confirm 4-platform bundles green on the branch.
+2. Continue on `feature/v3.13.0-streamline`.
+3. Execute Task 4 (linearization parameter dict builder) + Task 5 (primary
+   hint stream builder) — fold into one tick if scope allows.
+4. Task 6 (end-to-end writer) likely its own tick — biggest single piece.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
+
+---
+
+## PRIOR STATUS: v3.12.0 Atelier RELEASED — 6 artifacts uploaded, Docker live. v3.13.0 Streamline PLAN landed, ready to execute.
 
 **TICK 2026-05-23 19:46 PT (Saturday off-hours)** — MODE B FINALIZE executed.
 - CI build run 26349407913: all 7 jobs green (4-platform bundles + 3-platform cargo test, clippy, fmt).
