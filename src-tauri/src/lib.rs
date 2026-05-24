@@ -1653,6 +1653,36 @@ fn slab_markdown_to_html(
 }
 
 #[tauri::command]
+fn slab_bind_to_epub(
+    input: PathBuf,
+    output: PathBuf,
+    detect_tables: Option<bool>,
+    detect_lists: Option<bool>,
+    split_on_h1: Option<bool>,
+    language: Option<String>,
+    title: Option<String>,
+    author: Option<String>,
+) -> CmdResult<crate::pdf::epub::EpubReport> {
+    use crate::pdf::epub::{convert_to_epub, EpubOptions};
+    let defaults = EpubOptions::default();
+    let opts = EpubOptions {
+        detect_tables: detect_tables.unwrap_or(defaults.detect_tables),
+        detect_lists: detect_lists.unwrap_or(defaults.detect_lists),
+        split_on_h1: split_on_h1.unwrap_or(defaults.split_on_h1),
+        language: language.unwrap_or(defaults.language),
+        title,
+        author,
+        ..defaults
+    };
+    match convert_to_epub(&input, &output, &opts) {
+        Ok(r) => CmdResult::Ok { value: r },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
 fn slab_tabulate_to_xlsx(
     input: PathBuf,
     output: PathBuf,
@@ -4563,6 +4593,7 @@ pub fn run() {
             slab_reflow_to_docx,
             slab_markdown_to_md,
             slab_markdown_to_html,
+            slab_bind_to_epub,
             slab_tabulate_to_xlsx,
             slab_slide_to_pptx,
             slab_encrypt,
