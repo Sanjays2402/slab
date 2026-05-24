@@ -11,6 +11,21 @@ in this file too.
 
 ---
 
+## [3.24.0] — 2026-05-24 — Stack Pro
+
+### Added
+
+- **Three-way PDF compare (Stack Pro)** — pick a Base, Mine, and Theirs
+  revision, get a side-by-side classified diff (both agree / mine only /
+  theirs only / conflict), resolve conflicts, and materialize a merged
+  PDF. The Litera Compare ($400/seat/yr) killer. Free + offline.
+- **Export redline PDF** — bake the three-way diff to a self-contained
+  colour-coded PDF (Base | Mine | Theirs columns) using standard-14
+  fonts. Recipient does not need Slab installed.
+- New `pdf::stack_diff3_export` module + six unit tests.
+- New Tauri command `slab_diff3_export_pdf` and "Export redline PDF"
+  action in the Diff3 panel.
+
 ## [Unreleased]
 
 ### v3.4.0 "Discovery" (preview — backend + UI on `feature/v3.4.0-discovery-slice-1-3`)

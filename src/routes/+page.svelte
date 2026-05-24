@@ -53,6 +53,7 @@
   import LibrarySearchPanel from "$lib/panels/LibrarySearchPanel.svelte";
   import TablesPanel from "$lib/panels/TablesPanel.svelte";
   import DiffPanel from "$lib/panels/DiffPanel.svelte";
+  import Diff3Panel from "$lib/panels/Diff3Panel.svelte";
   import StackPanel from "$lib/panels/StackPanel.svelte";
   import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
   import PressPanel from "$lib/panels/PressPanel.svelte";
@@ -143,6 +144,7 @@
     { id: "ocr", label: "OCR", icon: "◉", ready: true },
     { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
     { id: "diff", label: "Diff", icon: "≢", ready: true },
+    { id: "diff3", label: "Compare 3-way", icon: "⫲", ready: true },
     { id: "stack", label: "Compare", icon: "⇄", ready: true },
     { id: "bedrock", label: "Archive (PDF/A)", icon: "⌬", ready: true },
     { id: "press", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
@@ -575,6 +577,23 @@
       if (!inField) {
         e.preventDefault();
         active = "diff";
+        return;
+      }
+    }
+    // Stack Pro (v3.24.0): three-way compare. Cmd/Ctrl+Shift+3 opens the
+    // base/mine/theirs picker — the Litera-Compare killer.
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      e.key === "3"
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "diff3";
         return;
       }
     }
@@ -1093,6 +1112,8 @@
     <TablesPanel />
   {:else if active === "diff"}
     <DiffPanel />
+  {:else if active === "diff3"}
+    <Diff3Panel />
   {:else if active === "stack"}
     <StackPanel />
   {:else if active === "bedrock"}

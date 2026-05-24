@@ -4,6 +4,60 @@
 
 ---
 
+## STATUS: 🔧 v3.24.0 'Stack Pro' — branch ready to merge (2026-05-24 15:54 PT)
+
+**TICK 2026-05-24 15:54 PT (Sunday off-hours)** — MODE C DEVELOP, second
+tick on the v3.24.0 plan. Disk was full at start (213 MiB free, 11 GiB
+target/) — `cargo clean` recovered 12.9 GiB before build could run, then
+shipped the rest of Task 5's down-payment end-to-end.
+
+### Tick stats
+
+- Branch: `feature/v3.24.0-stack-pro-three-way`
+- **5 commits ahead of main** · ~1397 net LOC across 7 files
+- Commits this tick:
+  - `19b4f84` feat(diff3): materialize_merged_text + slab_diff3_materialize command
+  - `7bda39d` feat(diff3): merged-text preview + clipboard export in Diff3Panel
+- Prior tick (still on branch, not yet merged):
+  - `b21bb34` feat(diff3): ThreeWayDiff data model + three_way_diff merge engine
+  - `81b3b89` feat(diff3): slab_diff3_pdfs Tauri command
+  - `8aca250` feat(diff3): Diff3Panel + sidebar nav + Cmd+Shift+3 + palette + shortcuts
+- Gates: cargo fmt + clippy + 1691 lib tests green, pnpm check 0 errors.
+- Buy-Button: ✅ Litera Compare $400/yr feature, plus the merged-text
+  preview + clipboard export = users can produce a clean merged document
+  TODAY (paste into Word) before the PDF exporter ships.
+- Branch pushed to origin.
+
+### What's working end-to-end
+
+1. Cmd/Ctrl+Shift+3 (or command palette → "Compare 3-way") opens the
+   Diff3 panel.
+2. Pick base/mine/theirs PDFs.
+3. "Run three-way compare" classifies every base line (unchanged /
+   mine-only / theirs-only / both-agree / conflict).
+4. For each conflict, click Keep Mine or Keep Theirs.
+5. "Build merged preview" calls `slab_diff3_materialize` → renders the
+   merged document per page, source-colour-coded.
+6. "Copy merged text" → clipboard plain text with page separators.
+
+### Next tick
+
+MODE A — merge `feature/v3.24.0-stack-pro-three-way` into main.
+Quality gates green on the branch already. After merge, optionally cut
+v3.24.0 tag + release (the plan's Task 6/7 covers a true PDF exporter
+using md2pdf::render on the materialized text — that can be a v3.24.1
+follow-up if we want to ship sooner).
+
+OR: stay on the branch one more tick to finish the real PDF exporter
+(Task 5 final form: write `merged.pdf` to disk via md2pdf), then merge
++ tag v3.24.0 with the full Litera Compare killer feature set.
+
+Recommendation: ship the PDF exporter next tick, then merge as one
+solid v3.24.0 release. The clipboard export is a nice down-payment but
+the screenshot/demo will land on the "Export merged PDF" button.
+
+---
+
 ## STATUS: 📋 v3.24.0 'Stack Pro' plan written (2026-05-24 15:27 PT)
 
 **TICK 2026-05-24 15:27 PT (Sunday off-hours)** — Sanjay invoked the

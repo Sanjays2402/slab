@@ -135,6 +135,7 @@
       title: "Stack (compare two PDFs)",
       items: [
         { keys: [MOD, "Shift", "D"], label: "Open Diff panel for word-level redline" },
+        { keys: [MOD, "Shift", "3"], label: "Open Stack Pro for three-way compare (base/mine/theirs)" },
       ],
     },
     {

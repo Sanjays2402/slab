@@ -1264,6 +1264,57 @@ fn slab_stack_export_redline(
     }
 }
 
+/// v3.24.0 "Stack Pro" — three-way PDF compare. Given a common ancestor
+/// `base` plus two divergent revisions (`mine`, `theirs`), classifies every
+/// base line as unchanged / mine-only / theirs-only / both-agree / conflict.
+/// Returns a `ThreeWayDiff` the Svelte panel renders as a 3-column view
+/// with a conflict ribbon — the canonical legal/dev-team feature Litera
+/// Compare charges $400/seat/yr for. Acrobat doesn't ship it.
+#[tauri::command]
+fn slab_diff3_pdfs(
+    base: PathBuf,
+    mine: PathBuf,
+    theirs: PathBuf,
+) -> CmdResult<crate::pdf::diff3::ThreeWayDiff> {
+    crate::pdf::diff3::three_way_diff(&base, &mine, &theirs).into()
+}
+
+/// v3.24.0 "Stack Pro" — materialise the merged text per page given a fresh
+/// three-way diff (re-run on the backend to avoid shipping the whole DTO
+/// back over IPC) plus the user's conflict-resolution choices. Returns the
+/// per-page line vec the frontend can preview and the Task 5 PDF exporter
+/// will turn into a PDF.
+#[tauri::command]
+fn slab_diff3_materialize(
+    base: PathBuf,
+    mine: PathBuf,
+    theirs: PathBuf,
+    resolutions: Vec<crate::pdf::diff3::ResolutionEntry>,
+) -> CmdResult<crate::pdf::diff3::MergedText> {
+    crate::pdf::diff3::three_way_diff(&base, &mine, &theirs)
+        .map(|d| crate::pdf::diff3::materialize_merged_text(&d, &resolutions))
+        .into()
+}
+
+/// v3.24.0 "Stack Pro" — bake the three-way diff into a shareable PDF.
+///
+/// The output PDF is a self-contained colour-coded three-column redline
+/// (Base / Mine / Theirs) that any PDF viewer can open — no Slab required
+/// on the recipient's machine. This is the Litera Compare killer feature
+/// ($400/seat/yr) given away free + offline.
+#[tauri::command]
+fn slab_diff3_export_pdf(
+    base: PathBuf,
+    mine: PathBuf,
+    theirs: PathBuf,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::stack_diff3_export::Diff3ExportResult> {
+    match crate::pdf::diff3::three_way_diff(&base, &mine, &theirs) {
+        Ok(d) => crate::pdf::stack_diff3_export::export_diff3_pdf(&d, &output).into(),
+        Err(e) => Err(e).into(),
+    }
+}
+
 /// v2.4.0 "Stack" — visual (pixel-level) PDF diff. Renders both sides at
 /// `dpi` via Poppler, masks per-pixel luma delta, and returns axis-aligned
 /// change boxes alongside the existing line-level diff. Defaults are tuned
@@ -4607,6 +4658,9 @@ pub fn run() {
             slab_replace_text_span,
             slab_diff_pdfs,
             slab_diff_export_report,
+            slab_diff3_pdfs,
+            slab_diff3_materialize,
+            slab_diff3_export_pdf,
             slab_visual_diff_pdfs,
             slab_stack_export_redline,
             slab_slides_analyze,

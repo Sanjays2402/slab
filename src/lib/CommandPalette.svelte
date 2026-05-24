@@ -335,6 +335,17 @@
       },
       keywords: "stack diff redo again same previous compare",
     });
+    // Stack Pro v3.24.0 — three-way compare. The Litera-Compare killer.
+    out.push({
+      id: "stack:diff3",
+      title: "Stack Pro: Three-way compare (base / mine / theirs)",
+      subtitle: "Merge two divergent PDF revisions against a common ancestor (⇧⌘3)",
+      icon: "⫲",
+      group: "Stack",
+      run: () => onSelectPanel("diff3"),
+      keywords:
+        "stack pro three way 3-way diff3 base mine theirs merge conflict litera compare legal contracts revision branch ancestor common",
+    });
     // Bind v3.18.0 — PDF → EPUB 3. The screenshot-bait wedge: Calibre is
     // the only mainstream PDF→EPUB tool and it's a 2008 GUI; Acrobat
     // doesn't ship EPUB at all.
