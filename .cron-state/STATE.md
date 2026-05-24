@@ -4,7 +4,61 @@
 
 ---
 
-## STATUS: 🚀 v3.15.0 "Tabulate" SHIPPED — merged + tagged, CI in flight (MODE A done 2026-05-24 01:03 PT)
+## STATUS: 🚀 v3.16.0 "Slide" SHIPPED — merged + tagged, CI in flight (MODE A done 2026-05-24 02:02 PT)
+
+**TICK 2026-05-24 02:00 PT (Sunday off-hours)** — MODE C + MODE A combined.
+
+Resumed from compaction. Finished Atelier UI wiring for `convert-to-pptx`
+(defaultStep, stepLabel "Convert to PowerPoint (.pptx)", stepIcon 🎞,
+AtelierPanel palette card + 2-checkbox editor block). All Rust gates
+green; svelte-check clean.
+
+Quality gates batched:
+- `cargo fmt --all` ✅
+- `cargo clippy --lib -D warnings` ✅
+- `cargo test --lib pdf::slide::` ✅ **15 passed, 0 failed**
+- `pnpm check` ✅ **0 errors, 62 pre-existing warnings**
+
+Commits on `feature/v3.16.0-slide` (now merged to main):
+- `af20d53 feat(slide): skeleton module + error/option types`
+- `3f76597 feat(slide): per-page text-run + speaker-note + page-size extraction`
+- `b29be75 feat(slide): title + body-bullet clustering for slide content`
+- `54cd1e5 feat(slide): minimal PresentationML zip writer (.pptx)`
+- `957f6ba feat(atelier+ui): wire ConvertToPptx step end-to-end`
+- Merge `bfdca21` on main; tag `v3.16.0` pushed.
+
+Net code this tick: **~1095 LOC** across slide module (errors/types/mod/
+extract/layout/pptx) + Tauri command + Atelier step + TS + Svelte panel
+hooks. End-to-end working capability: open Atelier → add "Convert to
+PowerPoint" step → drop PDF folder → get one slide per page with title +
+bullets, optional speaker notes from /Text annots.
+
+**RELEASE_PENDING: v3.16.0** — merge SHA `bfdca21`, tag `v3.16.0`,
+build run `26357037571`, Docker run `26357037569`. Both queued; next
+tick (MODE B) polls + finalizes GitHub release with 6 artifacts.
+
+### Buy-Button positioning
+
+Adobe Acrobat Pro: no native PDF → PPTX, requires Acrobat Export PDF
+subscription (cloud-only, $24/yr add-on). PDF Expert: no PDF → PPTX.
+Foxit: PPTX export is paid-tier only. Slab: free, offline, batch via
+Atelier. Sales engineer drops folder of one-pager PDFs → folder of
+editable .pptx decks. **BIG feature, passes Buy-Button + Pick-Us tests.**
+
+### LAST_WOW_TICK_AT: 2026-05-24 02:02 PT (this tick — PDF → PowerPoint offline)
+
+### Next tick — MODE B: finalize v3.16.0 release
+
+1. `gh run view 26357037571` — wait for green.
+2. `gh run download 26357037571 --dir /tmp/slab-release-v3.16.0`.
+3. Write `.cron-state/release-notes-v3.16.0.md` (marketing-tone).
+4. `gh release create v3.16.0 --title 'v3.16.0 — Slide' --notes-file ...`
+5. Upload 6 artifacts (mac arm64+x64 dmg, linux deb+AppImage, win msi+nsis).
+6. Verify Docker image at `ghcr.io/sanjays2402/slab-server:v3.16.0`.
+
+After that → v0.10.0 Beacon (AI) pipeline per roadmap.
+
+### Previous status (archived) — v3.15.0 "Tabulate" SHIPPED
 
 **TICK 2026-05-24 01:00 PT (Sunday off-hours)** — MODE C + MODE A combined.
 
