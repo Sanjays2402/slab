@@ -7,6 +7,7 @@
 // implementation per `docs/plans/2026-05-23-v3.14.0-reflow-pdf-to-word.md`.
 
 pub mod errors;
+pub mod extract;
 pub mod types;
 
 pub use errors::ReflowError;
