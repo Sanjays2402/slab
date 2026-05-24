@@ -561,6 +561,23 @@
         return;
       }
     }
+    // Stack (v3.23.0): focus the Diff panel for visual redline compare.
+    // Cmd/Ctrl+Shift+D — same hardcoded pattern as Bates/Stamp/Hopper.
+    if (
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      (e.key === "D" || e.key === "d")
+    ) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "diff";
+        return;
+      }
+    }
     // Loupe (v3.0.1): focus the PDF/A inspector. Mod+Shift+I (hardcoded — joins
     // the keymap registry in a future tick, kept simple for ship velocity).
     if (

@@ -5,11 +5,14 @@
 
   // --- Backend DTOs (mirror src-tauri/src/pdf/diff.rs) ---
   type DiffOp = "equal" | "insert" | "delete";
+  type WordOp = "equal" | "insert" | "delete";
+  type WordDiff = { op: WordOp; text: string };
   type LineDiff = {
     op: DiffOp;
     old_line: number | null;
     new_line: number | null;
     text: string;
+    words?: WordDiff[] | null;
   };
   type DiffSummary = { added: number; removed: number; changed: number };
   type PageDiff = {
@@ -44,6 +47,10 @@
   let aiSummary = $state<BeaconDiffSummary | null>(null);
   let aiBusy = $state(false);
   let aiError = $state<string | null>(null);
+
+  // v3.23.0 — shareable redline PDF export.
+  type StackRedlineSummary = { pages: number; inserts: number; deletes: number };
+  let redlineBusy = $state(false);
 
   async function pickOld() {
     const picked = await open({
@@ -175,6 +182,44 @@
     }
   }
 
+  async function exportRedline() {
+    if (!oldPath || !newPath || redlineBusy) return;
+    const base = `${stripExt(basename(oldPath))}-vs-${stripExt(basename(newPath))}-redline`;
+    const output = await save({
+      defaultPath: `${base}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (typeof output !== "string") return;
+    redlineBusy = true;
+    const prev = status;
+    status = { kind: "working", msg: "Building shareable redline…" };
+    try {
+      const res = await invoke<CmdResult<StackRedlineSummary>>("slab_stack_export_redline", {
+        old: oldPath,
+        new: newPath,
+        output,
+      });
+      if (res.kind === "ok") {
+        const r = res.value;
+        const parts: string[] = [];
+        if (r.inserts > 0) parts.push(`+${r.inserts}`);
+        if (r.deletes > 0) parts.push(`−${r.deletes}`);
+        const detail = parts.length ? ` · ${parts.join(" ")}` : "";
+        status = {
+          kind: "ok",
+          msg: `Wrote ${basename(output)} (${r.pages} page${r.pages === 1 ? "" : "s"})${detail}`,
+        };
+      } else {
+        status = { kind: "err", msg: res.message };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+      void prev;
+    } finally {
+      redlineBusy = false;
+    }
+  }
+
   async function explainChanges() {
     if (!oldPath || !newPath || aiBusy) return;
     aiBusy = true;
@@ -206,6 +251,29 @@
     if (out.length === 0) out.push({ label: "no change", cls: "eq" });
     return out;
   }
+
+  // Stack v3.23.0 — command palette deep links. The palette dispatches a
+  // CustomEvent on `window` after switching to this panel; we listen here
+  // so the action runs in the correct component context.
+  $effect(() => {
+    function onExport() {
+      void exportReport();
+    }
+    function onRedline() {
+      void exportRedline();
+    }
+    function onRerun() {
+      void runCompare();
+    }
+    window.addEventListener("slab:stack-export-report", onExport);
+    window.addEventListener("slab:stack-export-redline", onRedline);
+    window.addEventListener("slab:stack-rerun", onRerun);
+    return () => {
+      window.removeEventListener("slab:stack-export-report", onExport);
+      window.removeEventListener("slab:stack-export-redline", onRedline);
+      window.removeEventListener("slab:stack-rerun", onRerun);
+    };
+  });
 </script>
 
 <header class="content-header">
@@ -272,6 +340,13 @@
     {#if diff}
       <button onclick={exportReport} disabled={status.kind === "working"}>
         Export Report (.pdf)
+      </button>
+      <button
+        onclick={exportRedline}
+        disabled={redlineBusy || status.kind === "working"}
+        title="Share a single PDF with the redline baked in — recipients don't need Slab."
+      >
+        {redlineBusy ? "Building redline…" : "Export Redline (.pdf)"}
       </button>
       <button onclick={explainChanges} disabled={aiBusy || status.kind === "working"}>
         {aiBusy ? "Asking Beacon…" : "Explain Changes (AI)"}
@@ -348,7 +423,17 @@
                 <span class="marker"
                   >{line.op === "insert" ? "+" : line.op === "delete" ? "−" : " "}</span
                 >
-                <span class="text">{line.text || " "}</span>
+                {#if line.words && line.words.length}
+                  <span class="text redline">
+                    {#each line.words as w, wi (wi)}
+                      {#if w.op === "insert"}<ins class="word-ins">{w.text}</ins
+                        >{:else if w.op === "delete"}<del class="word-del">{w.text}</del
+                        >{:else}<span class="word-eq">{w.text}</span>{/if}
+                    {/each}
+                  </span>
+                {:else}
+                  <span class="text">{line.text || " "}</span>
+                {/if}
               </div>
             {/each}
             {#if visibleLines(page).length === 0}
@@ -598,5 +683,30 @@
     font-size: 12px;
     color: var(--text-2);
     white-space: pre-wrap;
+  }
+  /* --- Stack word-level inline redline (v3.23.0) --- */
+  .line .text.redline {
+    /* Reset inherited line tint so per-token coloring reads cleanly. */
+    background: transparent;
+  }
+  .redline ins.word-ins {
+    background: color-mix(in oklab, var(--ok, #2ec27e) 24%, transparent);
+    color: var(--text-1);
+    text-decoration: underline solid 1px;
+    text-underline-offset: 2px;
+    border-radius: 2px;
+    padding: 0 2px;
+    margin: 0 0.5px;
+  }
+  .redline del.word-del {
+    background: color-mix(in oklab, var(--err, #e25c5c) 24%, transparent);
+    color: var(--text-1);
+    text-decoration: line-through 1.5px;
+    border-radius: 2px;
+    padding: 0 2px;
+    margin: 0 0.5px;
+  }
+  .redline .word-eq {
+    opacity: 0.78;
   }
 </style>

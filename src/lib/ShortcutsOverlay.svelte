@@ -132,6 +132,12 @@
       ],
     },
     {
+      title: "Stack (compare two PDFs)",
+      items: [
+        { keys: [MOD, "Shift", "D"], label: "Open Diff panel for word-level redline" },
+      ],
+    },
+    {
       title: "Customise",
       items: [
         { keys: [MOD, "K"], label: "Open palette → \"Customize shortcuts\"" },
