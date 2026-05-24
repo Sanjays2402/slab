@@ -24,7 +24,10 @@
 {#if open}
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <!-- svelte-ignore a11y-interactive-supports-focus -->
   <div class="scrim" on:click={close}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="wall" role="dialog" aria-modal="true"
          aria-labelledby="dw-title"
          on:click|stopPropagation>
