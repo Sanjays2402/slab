@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "3.19.0"
+version = "3.20.0"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"
@@ -107,6 +107,13 @@ base64 = "0.22"
 # diffing for PDF compare. Pure-Rust, single crate, no transitive bloat.
 # Used only at user-trigger time so it stays out of the hot render path.
 similar = "2.6"
+
+# Hopper (v3.20.0) — cross-platform filesystem watcher. Drives the
+# watched-folder automation pipeline. We use the `macos_fsevent` backend
+# on macOS, `inotify` on Linux, ReadDirectoryChangesW on Windows — all
+# wired automatically by the crate's `RecommendedWatcher`. Pure Rust
+# transitive deps; zero new C deps.
+notify = "6.1"
 
 # Bench (v1.4.0) — Ed25519 signature verification for marketplace
 # index entries. Pure-Rust, no openssl, no native deps; Slab's

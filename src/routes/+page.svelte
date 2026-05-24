@@ -58,6 +58,7 @@
   import PressPanel from "$lib/panels/PressPanel.svelte";
   import FormsPanel from "$lib/panels/FormsPanel.svelte";
   import AtelierPanel from "$lib/panels/AtelierPanel.svelte";
+  import HopperPanel from "$lib/panels/HopperPanel.svelte";
   import LoupePanel from "$lib/panels/LoupePanel.svelte";
   import SlidesPanel from "$lib/panels/SlidesPanel.svelte";
   import TheaterPanel from "$lib/panels/TheaterPanel.svelte";
@@ -147,6 +148,7 @@
     { id: "press", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
     { id: "forms", label: "Forms", icon: "✎", ready: true },
     { id: "atelier", label: "Atelier (Recipes)", icon: "⚙", ready: true },
+    { id: "hopper", label: "Hopper (Watched Folders)", icon: "🪣", ready: true },
     { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
     { id: "slides", label: "Slides", icon: "▷", ready: true },
     { id: "theater", label: "Theater", icon: "❖", ready: true },
@@ -489,6 +491,17 @@
       if (!inField) {
         e.preventDefault();
         active = "atelier";
+        return;
+      }
+    }
+    // Hopper (v3.20.0): focus the watched-folders panel. Default Mod+Shift+H.
+    if (matches(e, "hopper.open")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "hopper";
         return;
       }
     }
@@ -1051,6 +1064,8 @@
     <FormsPanel />
   {:else if active === "atelier"}
     <AtelierPanel />
+  {:else if active === "hopper"}
+    <HopperPanel />
   {:else if active === "loupe"}
     <LoupePanel />
   {:else if active === "slides"}
