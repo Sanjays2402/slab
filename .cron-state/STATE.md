@@ -4,6 +4,44 @@
 
 ---
 
+## STATUS: 🚀 v3.22.0 'Hopper Loop' — MERGED + TAGGED, CI building (2026-05-24 13:20 PT)
+
+**TICK 2026-05-24 13:20 PT (Sunday off-hours)** — MODE A RELEASE complete.
+
+### What happened this tick
+
+- Bumped versions 3.21.0 → 3.22.0 in `Cargo.toml`, `package.json`,
+  `tauri.conf.json`, lockfile (commit `90cecba`).
+- Wrote `docs/releases/v3.22.0.md` — marketing-tone release notes for
+  Hopper Loop (backfill any folder, dry-run preview table, sqlite history).
+- Quality gates on feature branch — all green (fmt + clippy + 1661 tests +
+  pnpm check 0 errors).
+- Merged `feature/v3.22.0-hopper-loop` → `main` (`d095acd` merge commit).
+- Re-ran quality gates on `main` — all green.
+- Tagged `v3.22.0` and pushed `main --follow-tags` + feature branch.
+
+### RELEASE_PENDING: v3.22.0
+
+- merge SHA: `d095acd`
+- tag: `v3.22.0`
+- CI runs in-flight:
+  - `26371749779` — build on main
+  - `26371749789` — Docker (slab-server) on v3.22.0 tag
+  - `26371749772` — deploy-try (main)
+  - `26371751680` — build on feature branch
+
+### Next tick (MODE B FINALIZE)
+
+1. `gh run watch 26371749779` (build on main) → must succeed.
+2. `gh run download 26371749779 --dir /tmp/slab-release-v3.22.0` → 6 bundle artifacts.
+3. `gh release create v3.22.0 --title "v3.22.0 — Hopper Loop" --notes-file docs/releases/v3.22.0.md <6 assets>`.
+4. Verify `isDraft=false`, asset_count=6, Docker tag run succeeded.
+5. Clear RELEASE_PENDING. Plan v3.23.0.
+
+### LAST_WOW_TICK_AT: 2026-05-24T19:50:00Z (Backfill dry-run preview table)
+
+---
+
 ## STATUS: 🚧 v3.22.0 'Hopper Loop' — UI complete, ready for release prep (2026-05-24 12:50 PT)
 
 **TICK 2026-05-24 12:50 PT (Sunday off-hours)** — MODE C DEVELOP.
