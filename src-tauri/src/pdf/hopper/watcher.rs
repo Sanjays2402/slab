@@ -78,6 +78,16 @@ impl RunEmitter for tauri::AppHandle {
     }
 }
 
+// During unit tests we still need a RunEmitter impl for AppHandle so
+// cmds.rs's `Arc::new(app.clone())` compiles. `build_default_service`
+// isn't invoked from tests, so this branch is compile-only.
+#[cfg(test)]
+impl RunEmitter for tauri::AppHandle {
+    fn emit_run_completed(&self, _record: &super::log::RunRecord) {
+        unreachable!("AppHandle RunEmitter must not be used in tests");
+    }
+}
+
 /// Pluggable recipe loader. Production wires a closure that reads from
 /// `$APP_CONFIG/atelier/recipes`; tests inject a literal recipe map.
 pub type RecipeLoader =

@@ -4525,6 +4525,21 @@ pub fn run() {
                     reg.discover(&root, &enabled);
                 }
             }
+
+            // Hopper (v3.20.0): boot the watched-folder PDF automation
+            // service. Reads watches + run-log from sqlite, starts the
+            // notify-backed watcher, wires an Ollama-backed AI title
+            // provider. Best-effort: if any sub-init fails, Slab still
+            // launches without Hopper rather than panicking.
+            match crate::pdf::hopper::cmds::build_default_service(&handle) {
+                Ok(svc) => {
+                    use tauri::Manager as _;
+                    app.manage(svc);
+                }
+                Err(e) => {
+                    eprintln!("hopper: bootstrap failed, panel will be empty: {e}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4724,6 +4739,13 @@ pub fn run() {
             crate::pdf::atelier::cmds::atelier_load_recipes,
             crate::pdf::atelier::cmds::atelier_delete_recipe,
             crate::pdf::atelier::cmds::atelier_run_batch,
+            crate::pdf::hopper::cmds::slab_hopper_list_watches,
+            crate::pdf::hopper::cmds::slab_hopper_add_watch,
+            crate::pdf::hopper::cmds::slab_hopper_remove_watch,
+            crate::pdf::hopper::cmds::slab_hopper_set_enabled,
+            crate::pdf::hopper::cmds::slab_hopper_list_runs,
+            crate::pdf::hopper::cmds::slab_hopper_run_now,
+            crate::pdf::hopper::cmds::slab_hopper_describe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
