@@ -470,7 +470,7 @@ mod tests {
         let block = classify_paragraph(&paragraphs[0], 12.0, &opts);
         match block {
             Block::Heading { level, text } => {
-                assert!(level >= 1 && level <= 3, "level={}", level);
+                assert!((1..=3).contains(&level), "level={}", level);
                 assert_eq!(text, "Chapter 1: Introduction");
             }
             other => panic!("expected Heading, got {:?}", other),

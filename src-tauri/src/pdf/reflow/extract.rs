@@ -335,11 +335,7 @@ pub fn resolve_page_fonts(doc: &Document, page_id: ObjectId) -> HashMap<String, 
                 .and_then(|x| x.as_dict().ok().cloned()),
             _ => None,
         })
-        .or_else(|| {
-            doc.get_dict_in_dict(page, b"Resources")
-                .ok()
-                .map(|d| d.clone())
-        });
+        .or_else(|| doc.get_dict_in_dict(page, b"Resources").ok().cloned());
     let Some(resources) = resources else {
         return out;
     };
