@@ -4,6 +4,31 @@
 
 ---
 
+## STATUS: ✅ v3.23.0 'Stack' PUBLISHED (2026-05-24 15:15 PT)
+
+**TICK 2026-05-24 15:15 PT (Sunday off-hours)** — MODE B FINALIZE.
+
+CI run 26373664021 went green (all 4 bundle jobs + 3 cargo tests).
+Downloaded 6 artifacts, created GitHub release v3.23.0 with the
+marketing notes from `docs/releases/v3.23.0.md`. Release live:
+https://github.com/Sanjays2402/slab/releases/tag/v3.23.0
+
+`RELEASE_PENDING` cleared. Docker (slab-server) on tag v3.23.0 also
+went green earlier.
+
+### Next tick
+
+MODE C DEVELOP — v3.24.0. Two strong candidates:
+- **v3.24.0 "Stack Pro"** — three-way compare (mine/theirs/base),
+  branch-style for legal/dev teams. Extends Stack moat.
+- **v0.10.0 "Beacon"** — local-first AI (chat with PDF, summarise).
+  The buyer-magnet from the original roadmap; still uncut.
+
+Beacon is the bigger buy-button win. Recommend starting the v0.10.0
+spec next tick, then a Tick 1 of the implementation plan.
+
+---
+
 ## STATUS: 🚀 v3.23.0 'Stack' MERGED + TAGGED (2026-05-24 14:48 PT)
 
 **TICK 2026-05-24 14:48 PT (Sunday off-hours)** — MODE C → MODE A in
