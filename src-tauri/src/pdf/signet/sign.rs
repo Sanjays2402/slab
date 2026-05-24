@@ -31,10 +31,24 @@ use super::cms_blob::{build_pkcs7_detached, sha256};
 use super::identity::{SignetError, SigningIdentity};
 use crate::pdf::signet_pro::appearance::{build_appearance, AppearanceSpec};
 
-/// Hex-window size for `/Contents`. 16 384 hex chars = 8192 binary bytes —
-/// generous headroom over a typical RSA-2048 PKCS#7 blob (~2 KiB) plus
-/// embedded cert + chain (~2-3 KiB).
+/// Hex-window size for `/Contents` in the CAdES-BES (no-TSA) case.
+/// 16 384 hex chars = 8192 binary bytes — generous headroom over a typical
+/// RSA-2048 PKCS#7 blob (~2 KiB) plus embedded cert + chain (~2-3 KiB).
 pub const SIGNATURE_HEX_PLACEHOLDER_BYTES: usize = 16_384;
+
+/// Hex-window size for `/Contents` in the CAdES-T (with-TSA) case.
+/// 32 768 hex chars = 16 384 binary bytes — adds ~8 KiB headroom for the
+/// embedded RFC 3161 timestamp token (typical TST ~4-6 KiB including TSA
+/// cert chain).
+pub const SIGNATURE_HEX_PLACEHOLDER_BYTES_T: usize = 32_768;
+
+fn placeholder_hex_bytes(opts: &SignOptions) -> usize {
+    if opts.tsa_url.as_deref().filter(|s| !s.is_empty()).is_some() {
+        SIGNATURE_HEX_PLACEHOLDER_BYTES_T
+    } else {
+        SIGNATURE_HEX_PLACEHOLDER_BYTES
+    }
+}
 
 /// Width of each ByteRange integer in the placeholder. 10 digits accommodates
 /// PDFs up to ~10 GiB. The four numbers are space-padded to this width so
@@ -57,6 +71,11 @@ pub struct SignOptions {
     /// render a visible stamp. When `None`, the signature is invisible
     /// (the v3.10.0 default).
     pub appearance: Option<AppearanceSpec>,
+    /// Optional RFC 3161 TSA URL. When set, the signature is upgraded
+    /// from CAdES-BES to CAdES-T: after building the PKCS#7 blob, Slab
+    /// fetches a timestamp token from the TSA and embeds it as the
+    /// `id-aa-timeStampToken` unsigned attribute. Requires network.
+    pub tsa_url: Option<String>,
 }
 
 /// Outcome of a successful sign operation.
@@ -96,13 +115,14 @@ pub fn sign_pdf(
         Document::load(input).map_err(|e| SignetError::InvalidCert(format!("lopdf load: {e}")))?;
 
     let field_name = pick_field_name(&doc, opts.field_name.as_deref());
+    let hex_window_bytes = placeholder_hex_bytes(opts);
 
     // 2. Build the placeholder signature dict + widget.
     // `Object::String(_, Hexadecimal)` is encoded by lopdf as <hex>, with each
-    // input byte expanding to two hex chars. So a 8192-byte zero buffer
-    // serializes as 16 384 ASCII '0' chars between angle brackets — exactly
-    // SIGNATURE_HEX_PLACEHOLDER_BYTES.
-    let placeholder_hex = vec![0u8; SIGNATURE_HEX_PLACEHOLDER_BYTES / 2];
+    // input byte expanding to two hex chars. So an N/2-byte zero buffer
+    // serializes as N ASCII '0' chars between angle brackets — exactly
+    // `hex_window_bytes`.
+    let placeholder_hex = vec![0u8; hex_window_bytes / 2];
     let byte_range_placeholder = Object::Array(vec![
         Object::Integer(0),
         // Three literal-string placeholders, each 20 ASCII spaces wide.
@@ -225,11 +245,11 @@ pub fn sign_pdf(
 
     // 7. Locate the hex window — the first `/Contents <…>` whose body is all
     //    ASCII '0's of our placeholder length.
-    let (contents_open, contents_close) = find_contents_window(&serialized)?;
+    let (contents_open, contents_close) = find_contents_window(&serialized, hex_window_bytes)?;
     let hex_window_len = contents_close.saturating_sub(contents_open + 1);
-    if hex_window_len != SIGNATURE_HEX_PLACEHOLDER_BYTES {
+    if hex_window_len != hex_window_bytes {
         return Err(SignetError::InvalidCert(format!(
-            "hex window length mismatch: expected {SIGNATURE_HEX_PLACEHOLDER_BYTES}, got {hex_window_len}"
+            "hex window length mismatch: expected {hex_window_bytes}, got {hex_window_len}"
         )));
     }
 
@@ -251,14 +271,47 @@ pub fn sign_pdf(
     to_hash.extend_from_slice(&serialized[tail_start..]);
     let digest = sha256(&to_hash);
 
-    // 11. Build PKCS#7 blob.
-    let blob = build_pkcs7_detached(&digest, identity, started)?;
+    // 11. Build PKCS#7 blob — CAdES-BES by default, CAdES-T when tsa_url set.
+    let mut blob = build_pkcs7_detached(&digest, identity, started)?;
+    if let Some(url) = opts.tsa_url.as_deref().filter(|s| !s.is_empty()) {
+        use crate::pdf::signet_pro::tsa::{
+            build_timestamp_req, embed_timestamp_token, fetch_timestamp, signer_signature_digest,
+            TsaFetchOptions,
+        };
+        // Timestamp the SignerInfo's signature value (RFC 5126 §6.3.2 / CAdES-T).
+        let imprint = signer_signature_digest(&blob)?;
+        // Non-repeating nonce — system-time nanos XOR'd with a pointer
+        // address. RFC 3161 §2.4.1 only requires "as random as possible"
+        // for replay detection; cryptographic randomness isn't mandated.
+        let nonce: i64 = {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+            let stack_addr = (&nanos as *const i64) as i64;
+            nanos ^ stack_addr
+        };
+        let req = build_timestamp_req(&imprint, Some(nonce))?;
+        let resp = fetch_timestamp(url, &req, &TsaFetchOptions::default())?;
+        if !resp.status_granted() {
+            return Err(SignetError::InvalidCert(format!(
+                "TSA rejected timestamp request (PKIStatus {})",
+                resp.status
+            )));
+        }
+        if resp.token.is_empty() {
+            return Err(SignetError::InvalidCert(
+                "TSA granted but returned no token".into(),
+            ));
+        }
+        blob = embed_timestamp_token(&blob, &resp.token)?;
+    }
     let blob_hex = hex_upper(&blob);
-    if blob_hex.len() > SIGNATURE_HEX_PLACEHOLDER_BYTES {
+    if blob_hex.len() > hex_window_bytes {
         return Err(SignetError::InvalidCert(format!(
             "PKCS#7 blob too large for hex window: {} > {}",
             blob_hex.len(),
-            SIGNATURE_HEX_PLACEHOLDER_BYTES
+            hex_window_bytes
         )));
     }
 
@@ -508,7 +561,7 @@ fn attach_field_to_acroform(doc: &mut Document, widget_id: ObjectId) -> Result<(
 
 /// Find the byte offsets of the first `/Contents <00…00>` window matching
 /// our placeholder. Returns (open_lt, close_gt) — the indices of `<` and `>`.
-fn find_contents_window(bytes: &[u8]) -> Result<(usize, usize), SignetError> {
+fn find_contents_window(bytes: &[u8], expected_len: usize) -> Result<(usize, usize), SignetError> {
     let needle = b"/Contents";
     let mut pos = 0;
     while let Some(rel) = memmem(&bytes[pos..], needle) {
@@ -527,9 +580,7 @@ fn find_contents_window(bytes: &[u8]) -> Result<(usize, usize), SignetError> {
             };
             // Verify body is all hex.
             let body = &bytes[open + 1..close];
-            if body.iter().all(|b| b.is_ascii_hexdigit())
-                && body.len() == SIGNATURE_HEX_PLACEHOLDER_BYTES
-            {
+            if body.iter().all(|b| b.is_ascii_hexdigit()) && body.len() == expected_len {
                 return Ok((open, close));
             }
         }

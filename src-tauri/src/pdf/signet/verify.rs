@@ -689,6 +689,7 @@ mod tests {
                 location: Some("Seattle, WA".into()),
                 signing_time: Some("2026-05-23 22:00 UTC".into()),
             }),
+            tsa_url: None,
         };
         sign_pdf(&input, &output, &id, &opts).unwrap();
 
