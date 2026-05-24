@@ -4,7 +4,61 @@
 
 ---
 
-## STATUS: v3.13.0 Streamline Tasks 4+5 + Batch Audit shipped — folder-level enterprise workflow live.
+## STATUS: v3.13.0 Streamline Task 6 (linearizer) shipped — Fast Web View write path live, end-to-end vertical complete.
+
+**TICK 2026-05-23 21:08 PT (Saturday off-hours)** — MODE C DEVELOP.
+
+Shipped Task 6 (end-to-end `linearize_pdf` writer) + wired the
+"Optimize for Fast Web View" button. Slab can now PRODUCE Fast Web View
+PDFs, not just detect them. Adobe charges $239/yr for this; we just
+gave it away offline. The full vertical (inspect → optimize → re-inspect
+→ batch audit) is feature-complete on this branch.
+
+Shipped (3 commits / ~700 net LOC this tick + the inspector fix):
+- `8e6b5fc` fix(streamline): match exact PDF name boundaries in inspector
+- `7a4fd1c` feat(streamline): end-to-end PDF linearizer (PDF 1.4 §F.2) — 639 LOC
+- `8e75439` feat(streamline): wire "Optimize for Fast Web View" button to backend
+
+Quality gates ALL ✓ (fmt, clippy -D warnings, **1458 unit tests** (+7), pnpm check 0 errors).
+
+### Implementation notes worth remembering
+
+- lopdf 0.40 SKIPS objects whose `get_type()` returns "Linearized"/"ObjStm"/"XRef"
+  (writer.rs:57). The `/Linearized` key alone triggers this even without `/Type`.
+  Workaround: hand-roll the lin dict serialization with `write_lin_dict_manually`.
+- lopdf's high-numbered sentinel objects silently get serialized as xref STREAMS,
+  not plain `obj` headers. Burned an hour on a "trailer body header not found"
+  panic from this. Fix: hand-roll the trailer too via `serialize_value`.
+- The inspector's `/L <num>` parser collided with `/Linearized` (substring match).
+  Fixed with `find_key` that demands a non-name-continuation byte after the key.
+  Round-trip detection of our own outputs silently degraded before the fix.
+
+### LAST_WOW_TICK_AT: 2026-05-24T04:08Z (Linearizer ships — Adobe charges $239/yr to produce Fast Web View PDFs; Slab does it free, offline, cross-platform.)
+
+### Buy-Button verdict — PASS on 4 of 4
+
+- Pay-for-it: Acrobat Pro's "Save as Optimized PDF → Fast Web View" is paid + cloud-trip; ours is free + local.
+- Notice-it: The Optimize button now actually optimizes (was a "coming soon" toast).
+- Pick-us: PDF Expert and Foxit don't ship a linearizer at all on Linux.
+- Tell-a-friend: "Drop a PDF, click Optimize, get a Fast Web View file that loads page 1 instantly on a slow connection." Demo-ready.
+
+### Next tick — MODE C DEVELOP — Task 7+ (cross-validate + release prep)
+
+1. Poll latest CI run — confirm Task 6 commits build cleanly on all 4 platforms.
+2. Tasks remaining per plan (lines 950+):
+   - Task 7: cross-validator (re-open the output, walk the lin dict, prove offsets match real positions). Optional but worth shipping.
+   - Task 8: integration tests against real Adobe-produced linearized PDFs (round-trip and detect).
+   - Task 9: bump version to v3.13.0, release notes, merge to main, tag.
+3. The branch is now feature-complete enough to merge IF CI is green. Consider
+   collapsing Tasks 7+8 into a single integration-test tick, then MODE A RELEASE.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.12.0 Atelier: released 2026-05-23 (CI 26349407913 + 26349407898).
+- v3.13.0 Streamline Task 6 (linearizer writer): shipped on feature branch `feature/v3.13.0-streamline` @ 7a4fd1c.
+
+---
+
+## PRIOR STATUS: v3.13.0 Streamline Tasks 4+5 + Batch Audit shipped — folder-level enterprise workflow live.
 
 **TICK 2026-05-23 20:24 PT (Saturday off-hours)** — MODE C DEVELOP.
 
