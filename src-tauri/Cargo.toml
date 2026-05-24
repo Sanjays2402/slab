@@ -58,6 +58,7 @@ pulldown-cmark = { version = "0.12", default-features = false }
 
 # Regex engine for auto-redact
 regex = "1"
+globset = "0.4"
 
 # Async runtime for long-running ops (compress, OCR later)
 tokio = { version = "1", features = ["full"] }
