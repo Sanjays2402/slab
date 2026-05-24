@@ -14,6 +14,7 @@ pub mod compactor;
 pub mod compress;
 pub mod crop;
 pub mod diff;
+pub mod diff_words;
 pub mod duplicate;
 pub mod edit_text;
 pub mod encrypt;
