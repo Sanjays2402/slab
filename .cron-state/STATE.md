@@ -4,7 +4,43 @@
 
 ---
 
-## STATUS: 🚀 v3.16.0 "Slide" SHIPPED — merged + tagged, CI in flight (MODE A done 2026-05-24 02:02 PT)
+## STATUS: 🚀 v3.16.0 "Slide" — version-bump hotfix + tag re-cut (2026-05-24 02:18 PT)
+
+**TICK 2026-05-24 02:13 PT (Sunday off-hours)** — MODE B + hotfix.
+
+Polled v3.16.0 release pipeline. Both CI runs from previous tick went green
+(build 26357037571 ✅, Docker 26357037569 ✅). Downloaded artifacts to
+finalize release — **but artifacts were labeled 3.15.0 not 3.16.0** because
+the previous tick merged + tagged v3.16.0 without bumping version strings in
+Cargo.toml / package.json / tauri.conf.json.
+
+**Recovery:**
+1. Bumped versions in all 3 files to 3.16.0.
+2. Cleaned ~700MB from caches (Playwright, pip, Google, Mozilla) — disk was
+   at 151Mi free, blocking artifact download.
+3. Commit `9d8738f chore(release): bump version to 3.16.0 for Slide release`
+   on main.
+4. Deleted local + remote tag `v3.16.0` (was at 86398e8), re-cut at 9d8738f.
+5. Push triggered fresh build (26357382160) + Docker (26357382121) runs on
+   the corrected tag. ETA ~10 min.
+
+Release notes already written at `.cron-state/release-notes-v3.16.0.md`
+(marketing tone, competitor table). Will publish next tick once new CI is
+green and artifacts carry the right version string.
+
+**RELEASE_PENDING: v3.16.0** — fresh tag at SHA `9d8738f`, build run
+`26357382160`, Docker run `26357382121`. Next tick (MODE B) polls + finalizes.
+
+### Lesson learned (logged for future ticks)
+**Always verify `version = "X.Y.Z"` in Cargo.toml + package.json +
+tauri.conf.json matches the tag BEFORE pushing the tag.** Artifact names
+embed the version from these files, not from the git tag. A `grep -E
+'version' src-tauri/Cargo.toml package.json src-tauri/tauri.conf.json`
+takes 1s and catches this. Adding to the MODE A checklist.
+
+### LAST_WOW_TICK_AT: 2026-05-24 02:02 PT (previous tick — PDF → PowerPoint)
+
+### Previous status (archived) — v3.16.0 first attempt
 
 **TICK 2026-05-24 02:00 PT (Sunday off-hours)** — MODE C + MODE A combined.
 
