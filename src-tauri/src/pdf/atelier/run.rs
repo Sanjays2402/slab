@@ -106,6 +106,7 @@ fn step_kind(s: &Step) -> String {
         Step::Linearize => "linearize",
         Step::ConvertToDocx { .. } => "convert-to-docx",
         Step::ConvertToXlsx { .. } => "convert-to-xlsx",
+        Step::ConvertToPptx { .. } => "convert-to-pptx",
     }
     .into()
 }
@@ -197,6 +198,19 @@ fn apply_step(input: &Path, output: &Path, step: &Step) -> Result<(), PdfError> 
             };
             crate::pdf::tabulate::convert_to_xlsx(input, output, &opts)
                 .map_err(|e| PdfError::Other(format!("tabulate: {e}")))?;
+            Ok(())
+        }
+        Step::ConvertToPptx {
+            include_speaker_notes,
+            detect_titles,
+        } => {
+            let opts = crate::pdf::slide::SlideOptions {
+                include_speaker_notes: *include_speaker_notes,
+                detect_titles: *detect_titles,
+                embed_page_images: false,
+            };
+            crate::pdf::slide::convert_to_pptx(input, output, &opts)
+                .map_err(|e| PdfError::Other(format!("slide: {e}")))?;
             Ok(())
         }
     }

@@ -1620,6 +1620,28 @@ fn slab_tabulate_to_xlsx(
 }
 
 #[tauri::command]
+fn slab_slide_to_pptx(
+    input: PathBuf,
+    output: PathBuf,
+    include_speaker_notes: Option<bool>,
+    detect_titles: Option<bool>,
+) -> CmdResult<crate::pdf::slide::SlideReport> {
+    use crate::pdf::slide::{convert_to_pptx, SlideOptions};
+    let defaults = SlideOptions::default();
+    let opts = SlideOptions {
+        include_speaker_notes: include_speaker_notes.unwrap_or(defaults.include_speaker_notes),
+        detect_titles: detect_titles.unwrap_or(defaults.detect_titles),
+        embed_page_images: false,
+    };
+    match convert_to_pptx(&input, &output, &opts) {
+        Ok(r) => CmdResult::Ok { value: r },
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
+}
+
+#[tauri::command]
 fn slab_encrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
     do_encrypt(&input, &output, &password).into()
 }
@@ -4482,6 +4504,7 @@ pub fn run() {
             slab_streamline_audit,
             slab_reflow_to_docx,
             slab_tabulate_to_xlsx,
+            slab_slide_to_pptx,
             slab_encrypt,
             slab_decrypt,
             slab_watermark,

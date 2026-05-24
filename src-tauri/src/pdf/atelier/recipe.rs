@@ -85,6 +85,21 @@ pub enum Step {
         #[serde(default = "default_include_non_table_text")]
         include_non_table_text: bool,
     },
+    /// Convert this PDF to a PowerPoint `.pptx` deck (terminal step — must
+    /// be the last step in a recipe). One slide per page, with title +
+    /// bullets clustered from the page text and optional speaker notes
+    /// pulled from `/Text` annotations.
+    ///
+    /// Adobe Acrobat Pro charges $239/yr for "Export PDF to PowerPoint"
+    /// and ships your file to their cloud; PDF Expert doesn't offer it on
+    /// macOS; Foxit charges $129/yr Pro on Windows only. Slab ships it
+    /// free, offline, batchable on every platform.
+    ConvertToPptx {
+        #[serde(default = "default_include_speaker_notes")]
+        include_speaker_notes: bool,
+        #[serde(default = "default_detect_titles")]
+        detect_titles: bool,
+    },
 }
 
 impl Step {
@@ -93,7 +108,7 @@ impl Step {
     pub fn changes_extension(&self) -> bool {
         matches!(
             self,
-            Step::ConvertToDocx { .. } | Step::ConvertToXlsx { .. }
+            Step::ConvertToDocx { .. } | Step::ConvertToXlsx { .. } | Step::ConvertToPptx { .. }
         )
     }
 
@@ -103,6 +118,7 @@ impl Step {
         match self {
             Step::ConvertToDocx { .. } => "docx",
             Step::ConvertToXlsx { .. } => "xlsx",
+            Step::ConvertToPptx { .. } => "pptx",
             _ => "pdf",
         }
     }
@@ -152,6 +168,12 @@ fn default_type_dates() -> bool {
 }
 fn default_include_non_table_text() -> bool {
     false
+}
+fn default_include_speaker_notes() -> bool {
+    true
+}
+fn default_detect_titles() -> bool {
+    true
 }
 
 #[cfg(test)]

@@ -55,6 +55,7 @@
     { kind: "linearize", label: "Fast Web View", sub: "Stream page 1 instantly" },
     { kind: "convert-to-docx", label: "Convert to Word", sub: "PDF → .docx, offline" },
     { kind: "convert-to-xlsx", label: "Convert to Excel", sub: "PDF tables → .xlsx, offline" },
+    { kind: "convert-to-pptx", label: "Convert to PowerPoint", sub: "PDF → .pptx, one slide per page" },
   ];
 
   let recipe = $state<Recipe>({ name: "Untitled", version: 1, steps: [] });
@@ -623,6 +624,38 @@
                       }).include_non_table_text = (e.currentTarget as HTMLInputElement).checked)}
                   />
                   Include surrounding paragraphs as text rows
+                </label>
+              {:else if s.kind === "convert-to-pptx"}
+                <p class="muted small">
+                  Terminal step. One slide per PDF page with title + bullets.
+                  Output is <code>.pptx</code> — open in PowerPoint, Keynote,
+                  or Google Slides. Fully offline.
+                </p>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.detect_titles}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-pptx";
+                        include_speaker_notes: boolean;
+                        detect_titles: boolean;
+                      }).detect_titles = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Detect slide titles (largest text in top third)
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.include_speaker_notes}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-pptx";
+                        include_speaker_notes: boolean;
+                        detect_titles: boolean;
+                      }).include_speaker_notes = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Pull /Text annotations into speaker notes
                 </label>
               {/if}
             </div>
