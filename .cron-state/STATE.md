@@ -4,6 +4,59 @@
 
 ---
 
+## STATUS: 🚧 v3.23.0 'Stack' — Tick 1 shipped (2026-05-24 14:10 PT)
+
+**TICK 2026-05-24 14:10 PT (Sunday off-hours)** — MODE C DEVELOP.
+
+Started executing `docs/plans/2026-05-24-v3.23.0-stack-visual-diff.md`.
+Five commits on `feature/v3.23.0-stack-visual-diff`:
+
+- `9bb797b` Task 1: `WordOp`/`WordDiff` types on `LineDiff` + 3 tests.
+- `d5646cd` Task 2: `pdf::diff_words::{tokenize, diff_words}` via `similar`
+  crate, 10 unit tests (round-trip safe, coalesces same-op runs).
+- `3cc01ca` Task 3: `attach_word_diffs` post-processes every Delete→Insert
+  pair so `LineDiff.words` carries the redline data. +2 tests.
+- `9230a79` Task 4: `DiffPanel.svelte` renders `<ins>/<del>/<span>` tokens
+  with subtle green/red tint + underline/strikethrough — falls back to
+  whole-line tinting for isolated inserts/deletes.
+- `1183d27` Task 8 (folded in): Cmd/Ctrl+Shift+D global shortcut, 3 command
+  palette entries (`stack:compare/export/rerun`), ShortcutsOverlay entry,
+  `$effect` listeners in DiffPanel for the palette deep-link events.
+
+End-of-tick gates: cargo fmt clean, clippy -D warnings clean,
+`cargo test --lib` = **1676 passed** (was 1661 → +15 new), pnpm check
+0 errors. Branch pushed to origin.
+
+### Tick stats
+
+- 5 commits, 464 LOC net (target was 600 — under but the end-to-end
+  capability is real: Cmd+Shift+D → drop two PDFs → see word-level
+  inline redline. Buy-Button: PASS on all four criteria.)
+- Buyer hook: Adobe Acrobat Pro Compare Files is $239/yr per seat;
+  Litera Compare is $400/yr; we ship it free + offline.
+
+### LAST_WOW_TICK_AT: 2026-05-24T19:50:00Z (Backfill dry-run table — kept)
+
+Inline word-level redline counts as "Notice-it" polish; the bigger
+WOW (visual side-by-side + scroll-sync ribbon) lands in Tick 2.
+
+### Next tick (Tasks 5-7 — VISUAL MODE)
+
+1. Task 5: `mode: "inline" | "visual"` tab in DiffPanel + lazy-load
+   pdfjs-dist + paired canvas columns (model on PagesVisualPanel).
+2. Task 6: Scroll-sync + change ribbon (the actual WOW — update
+   `LAST_WOW_TICK_AT` then).
+3. Task 7: Export Redline PDF (lopdf overlays).
+
+If Tick 2 lands the ribbon, Tick 3 = Tasks 9-10 (version bump +
+release notes + MODE A merge → v3.23.0 tag).
+
+### RECENTLY_CLOSED_ISSUES
+
+- v3.18.0 through v3.22.0 published. None open.
+
+---
+
 ## STATUS: 📝 v3.23.0 'Stack' PLAN WRITTEN (2026-05-24 13:55 PT)
 
 **TICK 2026-05-24 13:55 PT (Sunday off-hours)** — Planning tick.
