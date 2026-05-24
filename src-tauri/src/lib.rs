@@ -1572,6 +1572,15 @@ fn slab_streamline_linearize(
 }
 
 #[tauri::command]
+fn slab_streamline_audit(
+    folder: PathBuf,
+    recursive: bool,
+    max_files: Option<usize>,
+) -> CmdResult<crate::pdf::streamline::AuditReport> {
+    crate::pdf::streamline::audit_folder(&folder, recursive, max_files).into()
+}
+
+#[tauri::command]
 fn slab_encrypt(input: PathBuf, output: PathBuf, password: String) -> CmdResult<()> {
     do_encrypt(&input, &output, &password).into()
 }
@@ -4431,6 +4440,7 @@ pub fn run() {
             slab_compactor_compact,
             slab_streamline_inspect,
             slab_streamline_linearize,
+            slab_streamline_audit,
             slab_encrypt,
             slab_decrypt,
             slab_watermark,
