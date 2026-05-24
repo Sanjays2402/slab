@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { open as openDialog } from '@tauri-apps/plugin-dialog';
+  import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { isInTauri } from '$lib/tauri';
 
   type Status = 'linearized' | 'not_linearized' | 'damaged';
@@ -155,9 +155,36 @@
 
   async function linearize() {
     if (!inputPath || !report) return;
-    error =
-      'Linearization writer ships in v3.13.0 — landing in subsequent ticks. ' +
-      'The inspector you just used is the first half of the feature.';
+    if (!isInTauri()) {
+      error = 'Linearize is only available in the desktop app.';
+      return;
+    }
+    // Suggest "<name>.lin.pdf" alongside the source.
+    const base = inputPath.replace(/\.pdf$/i, '');
+    const suggested = `${base}.lin.pdf`;
+    const out = await saveDialog({
+      defaultPath: suggested,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (typeof out !== 'string') return;
+
+    busy = true;
+    error = '';
+    try {
+      const res = await invoke<{ Ok?: { value: Report }; Err?: { error: string } }>(
+        'slab_streamline_linearize',
+        { input: inputPath, output: out }
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = res as any;
+      if (r.Ok) report = r.Ok.value;
+      else if (r.Err) error = r.Err.error;
+      else report = r as Report;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      busy = false;
+    }
   }
 
   function toggleSort(key: SortKey) {
@@ -288,7 +315,7 @@
         class="ghost"
         onclick={linearize}
         disabled={!report || report.status === 'linearized' || busy}
-        title="Linearize this PDF (writer lands in v3.13.0)"
+        title="Optimize this PDF for Fast Web View (linearize)"
       >
         Optimize for Fast Web View
       </button>
