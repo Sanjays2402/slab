@@ -5,11 +5,14 @@
 
   // --- Backend DTOs (mirror src-tauri/src/pdf/diff.rs) ---
   type DiffOp = "equal" | "insert" | "delete";
+  type WordOp = "equal" | "insert" | "delete";
+  type WordDiff = { op: WordOp; text: string };
   type LineDiff = {
     op: DiffOp;
     old_line: number | null;
     new_line: number | null;
     text: string;
+    words?: WordDiff[] | null;
   };
   type DiffSummary = { added: number; removed: number; changed: number };
   type PageDiff = {
@@ -348,7 +351,17 @@
                 <span class="marker"
                   >{line.op === "insert" ? "+" : line.op === "delete" ? "−" : " "}</span
                 >
-                <span class="text">{line.text || " "}</span>
+                {#if line.words && line.words.length}
+                  <span class="text redline">
+                    {#each line.words as w, wi (wi)}
+                      {#if w.op === "insert"}<ins class="word-ins">{w.text}</ins
+                        >{:else if w.op === "delete"}<del class="word-del">{w.text}</del
+                        >{:else}<span class="word-eq">{w.text}</span>{/if}
+                    {/each}
+                  </span>
+                {:else}
+                  <span class="text">{line.text || " "}</span>
+                {/if}
               </div>
             {/each}
             {#if visibleLines(page).length === 0}
@@ -598,5 +611,30 @@
     font-size: 12px;
     color: var(--text-2);
     white-space: pre-wrap;
+  }
+  /* --- Stack word-level inline redline (v3.23.0) --- */
+  .line .text.redline {
+    /* Reset inherited line tint so per-token coloring reads cleanly. */
+    background: transparent;
+  }
+  .redline ins.word-ins {
+    background: color-mix(in oklab, var(--ok, #2ec27e) 24%, transparent);
+    color: var(--text-1);
+    text-decoration: underline solid 1px;
+    text-underline-offset: 2px;
+    border-radius: 2px;
+    padding: 0 2px;
+    margin: 0 0.5px;
+  }
+  .redline del.word-del {
+    background: color-mix(in oklab, var(--err, #e25c5c) 24%, transparent);
+    color: var(--text-1);
+    text-decoration: line-through 1.5px;
+    border-radius: 2px;
+    padding: 0 2px;
+    margin: 0 0.5px;
+  }
+  .redline .word-eq {
+    opacity: 0.78;
   }
 </style>
