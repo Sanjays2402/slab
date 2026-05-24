@@ -46,7 +46,7 @@ When you want **image embedding**, **custom fonts**, **footnotes**, or **math ty
   let error = $state("");
   let pageCount = $state(0);
   let wallOpen = $state(false);
-  let wallFeature = $state<string>("markdown");
+  let wallFeature = $state<string>("md-extras");
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let editor: HTMLTextAreaElement | null = $state(null);
@@ -201,7 +201,7 @@ When you want **image embedding**, **custom fonts**, **footnotes**, or **math ty
       <button class="primary" onclick={download} disabled={!pdfBytes}>
         Download PDF <kbd>⌘S</kbd>
       </button>
-      <button class="ghost" onclick={() => openWall("markdown")}>
+      <button class="ghost" onclick={() => openWall("md-extras")}>
         Want images / fonts / footnotes?
       </button>
     </div>

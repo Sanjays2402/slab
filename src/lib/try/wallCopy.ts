@@ -97,6 +97,17 @@ export const WALL_COPY: Record<string, WallCopy> = {
     whyNot:
       "Heuristic-heavy and CPU-bound. Faster in the desktop app.",
   },
+  "md-extras": {
+    headline: "Embedded images, custom fonts, footnotes, math.",
+    body:
+      "The /try playground converts Markdown to PDF with the StandardFonts " +
+      "Helvetica family — perfect for READMEs and notes. The desktop app " +
+      "additionally embeds images, ships full Unicode font subsetting, " +
+      "renders footnotes & sidenotes, and lays out math via KaTeX.",
+    whyNot:
+      "Font subsetting and image embedding need disk + larger runtime than " +
+      "the browser tab budget should carry. The desktop app makes it instant.",
+  },
   slide: {
     headline: "PDF → PowerPoint.",
     body:

@@ -82,6 +82,37 @@
   </div>
 </section>
 
+<section class="tools">
+  <h2>Or jump straight into a tool</h2>
+  <p class="tools-lede">
+    These work on any PDF you bring — or just type, in the case of Markdown.
+    Every operation runs in this tab. Watch the privacy counter.
+  </p>
+  <div class="tool-grid">
+    <a class="tool" href="/try/pages?sample=multi-chapter-report">
+      <span class="tool-emoji">📑</span>
+      <div>
+        <h3>Page operations</h3>
+        <p>Reorder, rotate, remove. Drag the thumbnails. ⌘S to save.</p>
+      </div>
+    </a>
+    <a class="tool" href="/try/metadata?sample=employment-offer">
+      <span class="tool-emoji">🏷️</span>
+      <div>
+        <h3>Edit metadata</h3>
+        <p>Fix the title, author, subject, keywords on any PDF.</p>
+      </div>
+    </a>
+    <a class="tool" href="/try/markdown">
+      <span class="tool-emoji">✍️</span>
+      <div>
+        <h3>Markdown → PDF</h3>
+        <p>Type Markdown on the left, watch a real PDF render on the right. ⌘S to download.</p>
+      </div>
+    </a>
+  </div>
+</section>
+
 <section class="why">
   <h2>Why Slab?</h2>
   <div class="why-grid">
@@ -214,4 +245,44 @@
   .why-grid h4 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
   .why-grid p { margin: 0; font-size: 13px; line-height: 1.5; color: rgba(243, 243, 245, 0.65); }
   .why-grid code { font-family: ui-monospace, monospace; font-size: 12px; }
+
+  .tools { margin: 48px 0 32px; }
+  .tools h2 { margin: 0 0 6px; }
+  .tools-lede {
+    margin: 0 0 18px;
+    font-size: 13.5px;
+    color: rgba(243, 243, 245, 0.6);
+    max-width: 56ch;
+  }
+  .tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .tool {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+  .tool:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(144, 137, 252, 0.45);
+    transform: translateY(-1px);
+  }
+  .tool-emoji {
+    font-size: 24px;
+    background: rgba(144, 137, 252, 0.12);
+    border-radius: 10px;
+    padding: 6px 10px;
+    line-height: 1;
+  }
+  .tool h3 { margin: 0 0 4px; font-size: 14.5px; font-weight: 600; }
+  .tool p { margin: 0; font-size: 12.5px; line-height: 1.45; color: rgba(243, 243, 245, 0.62); }
 </style>
