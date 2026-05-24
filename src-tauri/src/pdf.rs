@@ -60,6 +60,7 @@ pub mod slide;
 pub mod slides;
 pub mod split;
 pub mod split_pattern;
+pub mod stack_redline;
 pub mod stamp_annotations;
 pub mod streamline;
 pub mod table_extract;

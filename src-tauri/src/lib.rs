@@ -1235,6 +1235,35 @@ fn slab_diff_export_report(old: PathBuf, new: PathBuf, output: PathBuf) -> CmdRe
     }
 }
 
+/// v3.23.0 "Stack" — export a shareable **redline PDF** that bakes the
+/// word-level diff (green inserts / red strikethrough deletes) into a
+/// single document any PDF viewer can open. The buyer-magnet feature:
+/// recipients don't need Slab to read the redline.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+struct StackRedlineSummary {
+    pages: u32,
+    inserts: u32,
+    deletes: u32,
+}
+
+#[tauri::command]
+fn slab_stack_export_redline(
+    old: PathBuf,
+    new: PathBuf,
+    output: PathBuf,
+) -> CmdResult<StackRedlineSummary> {
+    match do_diff_pdfs(&old, &new) {
+        Ok(d) => crate::pdf::stack_redline::export_redline(&d, &output)
+            .map(|r| StackRedlineSummary {
+                pages: r.pages,
+                inserts: r.inserts,
+                deletes: r.deletes,
+            })
+            .into(),
+        Err(e) => Err(e).into(),
+    }
+}
+
 /// v2.4.0 "Stack" — visual (pixel-level) PDF diff. Renders both sides at
 /// `dpi` via Poppler, masks per-pixel luma delta, and returns axis-aligned
 /// change boxes alongside the existing line-level diff. Defaults are tuned
@@ -4579,6 +4608,7 @@ pub fn run() {
             slab_diff_pdfs,
             slab_diff_export_report,
             slab_visual_diff_pdfs,
+            slab_stack_export_redline,
             slab_slides_analyze,
             slab_theater_export_annotated,
             slab_theater_start,
