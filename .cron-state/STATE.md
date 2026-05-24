@@ -4,7 +4,38 @@
 
 ---
 
-## STATUS: ✅ v3.17.0 "Markdown" SHIPPED PUBLICLY (2026-05-24 03:55 PT)
+## STATUS: 📋 v3.18.0 "Bind" PLAN FILED (2026-05-24 04:05 PT)
+
+**TICK 2026-05-24 04:05 PT (Sunday off-hours)** — PLANNING tick (Sanjay
+invoked the `writing-plans` skill explicitly via cron).
+
+- Wrote `docs/plans/2026-05-24-v3.18.0-bind-pdf-to-epub.md` (10 tasks,
+  ~42 KB). End-to-end plan for offline PDF → EPUB 3 — re-uses Reflow's
+  `extract` + `layout` passes and the v3.17.0 XHTML emitter pattern,
+  adds new `pdf/epub/` module with `split.rs` (H1 chapter splitter),
+  `package.rs` (container/opf/nav XML), `writer.rs` (XHTML5 chapter
+  emitter), `mod.rs` (zip packager with mimetype-first/Stored), Tauri
+  command, Atelier `Step::ConvertToEpub`, Svelte "Bind" panel + nav +
+  command palette + README feature matrix update.
+- Buy-Button: all 4 pass (Pay-for-it / Notice-it / Pick-us /
+  Tell-a-friend). Calibre is the only mainstream PDF→EPUB tool and it's
+  a 2008 GUI; Acrobat / PDF Expert / Foxit don't ship it at all.
+- Projected ship size: 10 commits, ~1,400 net LOC.
+- Wow: "Drop a research paper → read it on your Kindle tonight. Offline.
+  Free." Continues the AI-era file-conversion wedge from v3.17.0.
+
+### Next tick — start IMPLEMENTATION
+
+Create branch `feature/v3.18.0-bind`, execute Task 1 of the plan
+(scaffold + types + errors), then proceed Task 2-3 in the same tick
+to satisfy SHIP-SIZE (≥4 commits, ≥600 LOC). Tasks 4-6 next tick.
+Tasks 7-10 (Tauri/Atelier wire + frontend + release) tick after.
+
+### LAST_WOW_TICK_AT: 2026-05-24T10:28Z (v3.17.0 Markdown — first mainstream offline PDF → Markdown converter)
+
+---
+
+## PRIOR STATUS: ✅ v3.17.0 "Markdown" SHIPPED PUBLICLY (2026-05-24 03:55 PT)
 
 **TICK 2026-05-24 03:40 PT (Sunday off-hours)** — MODE B FINALIZE complete.
 
