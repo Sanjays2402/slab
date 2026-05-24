@@ -23,7 +23,8 @@ export type StepKind =
   | "flatten"
   | "compactor"
   | "linearize"
-  | "convert-to-docx";
+  | "convert-to-docx"
+  | "convert-to-xlsx";
 
 export type Step =
   | { kind: "ocr"; language: string }
@@ -38,6 +39,12 @@ export type Step =
       detect_tables: boolean;
       detect_lists: boolean;
       heading_size_ratio: number;
+    }
+  | {
+      kind: "convert-to-xlsx";
+      type_numbers: boolean;
+      type_dates: boolean;
+      include_non_table_text: boolean;
     };
 
 export interface Recipe {
@@ -88,6 +95,13 @@ export function defaultStep(kind: StepKind): Step {
         detect_lists: true,
         heading_size_ratio: 1.25,
       };
+    case "convert-to-xlsx":
+      return {
+        kind: "convert-to-xlsx",
+        type_numbers: true,
+        type_dates: true,
+        include_non_table_text: false,
+      };
   }
 }
 
@@ -112,6 +126,8 @@ export function stepLabel(s: Step): string {
       return "Fast Web View";
     case "convert-to-docx":
       return "Convert to Word (.docx)";
+    case "convert-to-xlsx":
+      return "Convert to Excel (.xlsx)";
   }
 }
 
@@ -134,6 +150,8 @@ export function stepGlyph(s: Step): string {
       return "⚡";
     case "convert-to-docx":
       return "📝";
+    case "convert-to-xlsx":
+      return "📊";
   }
 }
 

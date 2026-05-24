@@ -58,6 +58,7 @@ pub mod split_pattern;
 pub mod stamp_annotations;
 pub mod streamline;
 pub mod table_extract;
+pub mod tabulate;
 pub mod visual_diff;
 pub mod watermark;
 

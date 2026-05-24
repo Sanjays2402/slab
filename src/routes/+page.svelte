@@ -31,6 +31,7 @@
   import CompactPanel from "$lib/panels/CompactPanel.svelte";
   import StreamlinePanel from "$lib/panels/StreamlinePanel.svelte";
   import ReflowPanel from "$lib/panels/ReflowPanel.svelte";
+  import TabulatePanel from "$lib/panels/TabulatePanel.svelte";
   import NupPanel from "$lib/panels/NupPanel.svelte";
   import MarkdownPanel from "$lib/panels/MarkdownPanel.svelte";
   import GrayscalePanel from "$lib/panels/GrayscalePanel.svelte";
@@ -125,6 +126,7 @@
     { id: "compact", label: "Compact", icon: "📦", ready: true },
     { id: "streamline", label: "Streamline (Fast Web View)", icon: "⚡", ready: true },
     { id: "reflow", label: "Reflow (PDF → Word)", icon: "📝", ready: true },
+    { id: "tabulate", label: "Tabulate (PDF → Excel)", icon: "📊", ready: true },
     { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
     { id: "nup", label: "N-up", icon: "▦", ready: true },
     { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
@@ -1003,6 +1005,8 @@
     <StreamlinePanel />
   {:else if active === "reflow"}
     <ReflowPanel />
+  {:else if active === "tabulate"}
+    <TabulatePanel />
   {:else if active === "autoredact"}
     <AutoRedactPanel />
   {:else if active === "nup"}

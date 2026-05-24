@@ -54,6 +54,7 @@
     { kind: "compactor", label: "Compact", sub: "Strip unused objects" },
     { kind: "linearize", label: "Fast Web View", sub: "Stream page 1 instantly" },
     { kind: "convert-to-docx", label: "Convert to Word", sub: "PDF → .docx, offline" },
+    { kind: "convert-to-xlsx", label: "Convert to Excel", sub: "PDF tables → .xlsx, offline" },
   ];
 
   let recipe = $state<Recipe>({ name: "Untitled", version: 1, steps: [] });
@@ -574,6 +575,54 @@
                       }).heading_size_ratio =
                         Number((e.currentTarget as HTMLInputElement).value) || 1.25)}
                   />
+                </label>
+              {:else if s.kind === "convert-to-xlsx"}
+                <p class="muted small">
+                  Terminal step. Output files are written as <code>.xlsx</code>
+                  — open straight in Excel or Numbers. Adobe Acrobat Pro
+                  $239/yr cloud-only; Slab free + offline + batch.
+                </p>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.type_numbers}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-xlsx";
+                        type_numbers: boolean;
+                        type_dates: boolean;
+                        include_non_table_text: boolean;
+                      }).type_numbers = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Type numeric cells (US/EU formats)
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.type_dates}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-xlsx";
+                        type_numbers: boolean;
+                        type_dates: boolean;
+                        include_non_table_text: boolean;
+                      }).type_dates = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Detect dates (ISO, US, EU, long-month)
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.include_non_table_text}
+                    onchange={(e) =>
+                      ((recipe.steps[i] as {
+                        kind: "convert-to-xlsx";
+                        type_numbers: boolean;
+                        type_dates: boolean;
+                        include_non_table_text: boolean;
+                      }).include_non_table_text = (e.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Include surrounding paragraphs as text rows
                 </label>
               {/if}
             </div>
