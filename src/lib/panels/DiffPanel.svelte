@@ -48,6 +48,10 @@
   let aiBusy = $state(false);
   let aiError = $state<string | null>(null);
 
+  // v3.23.0 — shareable redline PDF export.
+  type StackRedlineSummary = { pages: number; inserts: number; deletes: number };
+  let redlineBusy = $state(false);
+
   async function pickOld() {
     const picked = await open({
       multiple: false,
@@ -178,6 +182,44 @@
     }
   }
 
+  async function exportRedline() {
+    if (!oldPath || !newPath || redlineBusy) return;
+    const base = `${stripExt(basename(oldPath))}-vs-${stripExt(basename(newPath))}-redline`;
+    const output = await save({
+      defaultPath: `${base}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (typeof output !== "string") return;
+    redlineBusy = true;
+    const prev = status;
+    status = { kind: "working", msg: "Building shareable redline…" };
+    try {
+      const res = await invoke<CmdResult<StackRedlineSummary>>("slab_stack_export_redline", {
+        old: oldPath,
+        new: newPath,
+        output,
+      });
+      if (res.kind === "ok") {
+        const r = res.value;
+        const parts: string[] = [];
+        if (r.inserts > 0) parts.push(`+${r.inserts}`);
+        if (r.deletes > 0) parts.push(`−${r.deletes}`);
+        const detail = parts.length ? ` · ${parts.join(" ")}` : "";
+        status = {
+          kind: "ok",
+          msg: `Wrote ${basename(output)} (${r.pages} page${r.pages === 1 ? "" : "s"})${detail}`,
+        };
+      } else {
+        status = { kind: "err", msg: res.message };
+      }
+    } catch (e) {
+      status = { kind: "err", msg: String(e) };
+      void prev;
+    } finally {
+      redlineBusy = false;
+    }
+  }
+
   async function explainChanges() {
     if (!oldPath || !newPath || aiBusy) return;
     aiBusy = true;
@@ -217,13 +259,18 @@
     function onExport() {
       void exportReport();
     }
+    function onRedline() {
+      void exportRedline();
+    }
     function onRerun() {
       void runCompare();
     }
     window.addEventListener("slab:stack-export-report", onExport);
+    window.addEventListener("slab:stack-export-redline", onRedline);
     window.addEventListener("slab:stack-rerun", onRerun);
     return () => {
       window.removeEventListener("slab:stack-export-report", onExport);
+      window.removeEventListener("slab:stack-export-redline", onRedline);
       window.removeEventListener("slab:stack-rerun", onRerun);
     };
   });
@@ -293,6 +340,13 @@
     {#if diff}
       <button onclick={exportReport} disabled={status.kind === "working"}>
         Export Report (.pdf)
+      </button>
+      <button
+        onclick={exportRedline}
+        disabled={redlineBusy || status.kind === "working"}
+        title="Share a single PDF with the redline baked in — recipients don't need Slab."
+      >
+        {redlineBusy ? "Building redline…" : "Export Redline (.pdf)"}
       </button>
       <button onclick={explainChanges} disabled={aiBusy || status.kind === "working"}>
         {aiBusy ? "Asking Beacon…" : "Explain Changes (AI)"}

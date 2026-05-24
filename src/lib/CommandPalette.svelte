@@ -307,6 +307,21 @@
         "stack diff export report pdf save share redline markup paralegal legal",
     });
     out.push({
+      id: "stack:redline",
+      title: "Stack: Export shareable redline (PDF)",
+      subtitle: "Bake the word-level redline into one PDF — recipients don't need Slab",
+      icon: "🟢",
+      group: "Stack",
+      run: () => {
+        onSelectPanel("diff");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:stack-export-redline"));
+        });
+      },
+      keywords:
+        "stack diff export redline pdf share legal litera compare baked markup recipients green strikethrough word level",
+    });
+    out.push({
       id: "stack:rerun",
       title: "Stack: Re-run last comparison",
       subtitle: "Diff the two PDFs you compared most recently",
