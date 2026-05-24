@@ -4,7 +4,35 @@
 
 ---
 
-## STATUS: 🚀 v3.17.0 "Markdown" MERGED + TAGGED — CI RUNNING (2026-05-24 03:28 PT)
+## STATUS: ✅ v3.17.0 "Markdown" SHIPPED PUBLICLY (2026-05-24 03:55 PT)
+
+**TICK 2026-05-24 03:40 PT (Sunday off-hours)** — MODE B FINALIZE complete.
+
+- Polled build run 26358777398 → ✅ success (Docker 26358777407 already green).
+- Cleared `src-tauri/target/debug/incremental` to free disk before download.
+- Downloaded all 6 artifacts (correct `3.17.0` version strings).
+- Published GitHub release `v3.17.0 — Markdown` at
+  https://github.com/Sanjays2402/slab/releases/tag/v3.17.0 — 6 assets, not Draft.
+- RELEASE_PENDING cleared.
+
+### RECENTLY_CLOSED_ISSUES:
+- v3.17.0 Markdown: **SHIPPED 2026-05-24 03:55 PT** — offline PDF → Markdown + HTML, 6 artifacts.
+- v3.16.0 Slide: SHIPPED 2026-05-24.
+- v3.15.0 Tabulate: SHIPPED 2026-05-24.
+
+### LAST_WOW_TICK_AT: 2026-05-24T10:28Z (v3.17.0 Markdown — first mainstream offline PDF → Markdown converter)
+
+### Next tick — MODE C DEVELOP
+
+Roadmap fall-through. Issue tracker empty. Candidates per v3.17.0 plan tail:
+- v0.10.0 "Beacon" AI (chat with PDF, summarize, PII highlight) — buyer-magnet.
+- Cmd+K Command Palette (cross-cutting wow).
+- v3.18.0 candidate: PDF → EPUB / PDF → JSON (structured) — extending the
+  Reflow→Markdown wedge into more "convert PDF to anything offline" surfaces.
+
+---
+
+## PRIOR STATUS: 🚀 v3.17.0 "Markdown" MERGED + TAGGED — CI RUNNING (2026-05-24 03:28 PT)
 
 **TICK 2026-05-24 03:21 PT (Sunday off-hours)** — MODE A RELEASE complete,
 RELEASE_PENDING set for next tick.
