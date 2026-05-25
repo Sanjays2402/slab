@@ -2350,6 +2350,54 @@ async fn slab_beacon_summary(
         .into()
 }
 
+/// CmdResult <- SmartFillError glue for the Tauri command surface.
+impl<T: Serialize> From<Result<T, crate::pdf::forms_smart_fill::SmartFillError>> for CmdResult<T> {
+    fn from(r: Result<T, crate::pdf::forms_smart_fill::SmartFillError>) -> Self {
+        match r {
+            Ok(v) => CmdResult::Ok { value: v },
+            Err(e) => CmdResult::Err {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// Quill Smart Fill — propose-only.
+///
+/// Given a target AcroForm PDF and a source document (resume, prior-year
+/// tax form, CSV row, contact-card markdown, …), runs the local AI
+/// provider configured in the Beacon settings and returns a
+/// [`SmartFillProposal`] for the UI to render line-by-line.
+///
+/// This command is **propose-only** — it never writes to the target PDF.
+/// The accepted values are passed back through the existing
+/// `slab_forms_fill` command in Slice 2 once the user clicks "Apply".
+#[tauri::command]
+async fn slab_quill_smart_fill_propose(
+    target_pdf: PathBuf,
+    source_doc: PathBuf,
+) -> CmdResult<crate::pdf::forms_smart_fill::SmartFillProposal> {
+    let cfg = match do_load_beacon_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    let provider = match ai::config::make_provider(&cfg.beacon) {
+        Ok(p) => p,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    crate::pdf::forms_smart_fill::propose_smart_fill(&target_pdf, &source_doc, provider)
+        .await
+        .into()
+}
+
 /// Beacon "Smart Outline" — propose a hierarchical TOC for an opened PDF.
 /// Returns a `ProposedOutline` whose `nodes` field is shaped exactly like
 /// what `slab_write_outline` expects, so the frontend can pipe an accepted
@@ -4792,6 +4840,7 @@ pub fn run() {
             slab_beacon_provider_kinds,
             slab_beacon_chat,
             slab_beacon_summary,
+            slab_quill_smart_fill_propose,
             slab_beacon_propose_outline,
             slab_beacon_find_citations,
             slab_beacon_build_glossary,
