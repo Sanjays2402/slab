@@ -359,3 +359,136 @@ export async function autoTagRunMany(
   );
   return unwrap(res);
 }
+
+// ---------- v3.32.0 "Atlas" — Collections & Smart Collections ----------
+
+/** Mirror of `pdf::library::collections::CollectionRecord`. */
+export interface CollectionRecord {
+  id: number;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  created_at: number;
+  sort_order: number;
+  doc_count: number;
+}
+
+/** Mirror of `pdf::library::collections::SmartCollectionRecord`. */
+export interface SmartCollectionRecord {
+  id: number;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  query_json: string;
+  created_at: number;
+  sort_order: number;
+}
+
+/** Mirror of `pdf::library::collections::NewSmartCollection`. */
+export interface NewSmartCollection {
+  name: string;
+  icon: string | null;
+  color: string | null;
+  filter: LibraryFilter;
+}
+
+export async function collectionCreate(
+  name: string,
+  icon?: string | null,
+  color?: string | null,
+): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>(
+    "slab_collection_create",
+    { name, icon: icon ?? null, color: color ?? null },
+  );
+  return unwrap(res);
+}
+
+export async function collectionList(): Promise<CollectionRecord[]> {
+  const res = await invoke<CmdResult<CollectionRecord[]>>(
+    "slab_collection_list",
+  );
+  return unwrap(res);
+}
+
+export async function collectionRename(
+  id: number,
+  name: string,
+): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_collection_rename", {
+    id,
+    name,
+  });
+  unwrap(res);
+}
+
+export async function collectionDelete(id: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_collection_delete", { id });
+  unwrap(res);
+}
+
+export async function collectionAddDocs(
+  collectionId: number,
+  docIds: number[],
+): Promise<number> {
+  const res = await invoke<CmdResult<number>>("slab_collection_add_docs", {
+    collectionId,
+    docIds,
+  });
+  return unwrap(res);
+}
+
+export async function collectionRemoveDocs(
+  collectionId: number,
+  docIds: number[],
+): Promise<number> {
+  const res = await invoke<CmdResult<number>>("slab_collection_remove_docs", {
+    collectionId,
+    docIds,
+  });
+  return unwrap(res);
+}
+
+export async function collectionListDocs(
+  collectionId: number,
+): Promise<DocumentRecord[]> {
+  const res = await invoke<CmdResult<DocumentRecord[]>>(
+    "slab_collection_list_docs",
+    { collectionId },
+  );
+  return unwrap(res);
+}
+
+export async function smartCollectionCreate(
+  spec: NewSmartCollection,
+): Promise<SmartCollectionRecord> {
+  const res = await invoke<CmdResult<SmartCollectionRecord>>(
+    "slab_smart_collection_create",
+    { spec },
+  );
+  return unwrap(res);
+}
+
+export async function smartCollectionList(): Promise<SmartCollectionRecord[]> {
+  const res = await invoke<CmdResult<SmartCollectionRecord[]>>(
+    "slab_smart_collection_list",
+  );
+  return unwrap(res);
+}
+
+export async function smartCollectionDelete(id: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_smart_collection_delete", {
+    id,
+  });
+  unwrap(res);
+}
+
+export async function smartCollectionExpand(
+  id: number,
+): Promise<DocumentRecord[]> {
+  const res = await invoke<CmdResult<DocumentRecord[]>>(
+    "slab_smart_collection_expand",
+    { id },
+  );
+  return unwrap(res);
+}
