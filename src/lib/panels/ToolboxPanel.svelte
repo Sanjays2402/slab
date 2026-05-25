@@ -63,7 +63,7 @@
     { id: "autoredact",    cat: "security", label: "Auto-redact",      blurb: "Find names, SSNs, phones, emails — and bake bars in." },
     { id: "pii",           cat: "security", label: "PII scrub",        blurb: "Detect PII across the whole document tree." },
     { id: "veil",          cat: "security", label: "Veil",             blurb: "Verify redactions actually removed the content." },
-    { id: "encrypt",       cat: "security", label: "Encrypt",          blurb: "AES-256 password protection, per-action perms." },
+    { id: "encrypt",       cat: "security", label: "Encrypt",          blurb: "Password-protect a PDF — universal-compatibility lock and unlock." },
     { id: "sanitize",      cat: "security", label: "Sanitize",         blurb: "Strip JavaScript, embedded files, hidden layers." },
     { id: "sign",          cat: "security", label: "Sign",             blurb: "Drop a signature, flatten to 150 DPI — locked." },
 
