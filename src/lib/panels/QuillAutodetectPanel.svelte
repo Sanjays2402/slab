@@ -19,6 +19,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { idle, basename, type CmdResult, type Status } from "$lib/types";
+  import { setInput as quillSetInput, recordDetection as quillRecordDetection } from "$lib/quill";
 
   // ---- Types mirror src-tauri/src/pdf/forms_detect.rs ---------------------
 
@@ -132,6 +133,7 @@
     kept = new Set();
     nameOverrides = {};
     status = idle;
+    quillSetInput(picked);
     await runDetect(picked);
   }
 
@@ -144,6 +146,17 @@
       );
       if (res.kind === "ok") {
         report = res.value;
+        // Mirror to the Quill Hub store so the cross-tab CTA can
+        // suggest jumping to the Designer to commit the detected fields.
+        quillRecordDetection({
+          candidates: res.value.candidates.map((c) => ({
+            ...c,
+            suggested_name: c.suggested_name,
+          })),
+          pages_scanned: res.value.pages_scanned,
+          already_has_acroform: res.value.already_has_acroform,
+          warnings: res.value.warnings,
+        });
         const found = res.value.candidates.length;
         status = {
           kind: "ok",

@@ -142,6 +142,57 @@
         keywords: `${p.label} panel ${p.id}`,
       });
     }
+    // v3.28.0 Quill Hub: surface each Forms sub-tab as its own
+    // palette action so users can `Cmd+K` → "fill form" → enter,
+    // even if they've never seen the sidebar entry. This is the
+    // discoverability layer for the four-tab unified workflow.
+    const FORMS_SUBTABS: { id: "detect" | "design" | "fill" | "batch"; title: string; subtitle: string; icon: string; keywords: string }[] = [
+      {
+        id: "detect",
+        title: "Forms: Auto-Detect fields",
+        subtitle: "Propose form fields on a flat PDF",
+        icon: "✨",
+        keywords: "quill autodetect detect propose form acroform",
+      },
+      {
+        id: "design",
+        title: "Forms: Designer",
+        subtitle: "Draw and edit AcroForm fields by hand",
+        icon: "✎",
+        keywords: "quill designer draw author author form acroform fields",
+      },
+      {
+        id: "fill",
+        title: "Forms: Fill a PDF",
+        subtitle: "Type values into an existing AcroForm",
+        icon: "📝",
+        keywords: "fill inspect acroform values type form",
+      },
+      {
+        id: "batch",
+        title: "Forms: Batch with CSV",
+        subtitle: "Mail-merge a CSV across many copies",
+        icon: "⋮",
+        keywords: "quill batch csv merge mail batch many copies",
+      },
+    ];
+    for (const sub of FORMS_SUBTABS) {
+      out.push({
+        id: `panel:forms:${sub.id}`,
+        title: sub.title,
+        subtitle: sub.subtitle,
+        icon: sub.icon,
+        group: "Forms",
+        run: () => {
+          // Set the sub-tab BEFORE switching the active panel so the
+          // Hub mounts on the right child first paint (no flicker).
+          import("$lib/quill").then((m) => m.setActiveTab(sub.id));
+          onSelectPanel("forms");
+        },
+        keywords: `forms ${sub.keywords}`,
+      });
+    }
+
     // Cabinet Slice 5: "Open <panel> in new window" — only inside Tauri
     // (no detached windows in vanilla browser dev), and only for panels
     // that have a real detached experience.

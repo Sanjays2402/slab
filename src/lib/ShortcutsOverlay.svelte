@@ -132,6 +132,30 @@
       ],
     },
     {
+      // v3.28.0 Quill Hub: one panel, four sub-tabs. The shortcuts each
+      // open the Forms hub on the corresponding tab — no more memorising
+      // four separate routes.
+      title: "Forms (Quill Hub)",
+      items: [
+        {
+          keys: bindingKeys(lookup("forms.open", "Mod+Shift+F")),
+          label: "Open Forms hub (last-used tab)",
+        },
+        {
+          keys: bindingKeys(lookup("quill.autodetect", "Mod+Shift+Y")),
+          label: "Forms → Auto-Detect tab",
+        },
+        {
+          keys: bindingKeys(lookup("quill.designer", "Mod+Shift+D")),
+          label: "Forms → Designer tab",
+        },
+        {
+          keys: bindingKeys(lookup("quill.batch", "Mod+Shift+B")),
+          label: "Forms → Batch (CSV) tab",
+        },
+      ],
+    },
+    {
       title: "Stack (compare two PDFs)",
       items: [
         { keys: [MOD, "Shift", "D"], label: "Open Diff panel for word-level redline" },
