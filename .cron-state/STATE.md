@@ -4,7 +4,40 @@
 
 ---
 
-## STATUS: ✅ v3.24.0 'Stack Pro' PUBLISHED (2026-05-24 16:45 PT)
+## STATUS: 📝 v3.25.0 'Quill Pro' PLANNED (2026-05-24 17:25 PT)
+
+**TICK 2026-05-24 17:25 PT (Sunday off-hours)** — MODE C planning tick
+(writing-plans skill invocation).
+
+- Branch: `feature/v3.25.0-quill-pro-batch` created off main.
+- Plan: `docs/plans/2026-05-24-v3.25.0-quill-pro-batch.md` (22.9KB, 9 tasks).
+- Scope: **Batch AcroForm fill from CSV** — mail-merge for PDFs.
+  - New `src-tauri/src/pdf/forms_batch.rs` module (DTOs, render_name, CSV
+    reader, run_batch driver, load-file CSV, optional ZIP).
+  - Tauri command `slab_forms_batch_fill`.
+  - `QuillBatchPanel.svelte` + command palette entry `Cmd+Shift+B`.
+  - Reuses existing `forms::fill()` primitive from v3.9.0 Quill.
+- Buy-button verdict: ✅ PASS (Acrobat charges $20/mo for Data Merge, Slab
+  ships free + offline; HR / legal-discovery / gov-forms wedge).
+- 9 tasks, each 2-5 min, full TDD. Plan handed off to subagent-driven-dev
+  for the next 1-2 off-hours ticks.
+
+### Next tick (MODE C — execute v3.25.0)
+
+Start at Task 1 of the plan. Bundle Tasks 1-5 (Rust backend) into one tick if
+time permits; that meets SHIP-SIZE (~700 LOC, 5 commits, end-to-end working
+backend). Then Task 6-7 (Tauri + Svelte) the tick after, then 8-9 (release).
+
+### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
+
+Next wow opportunity: Quill Pro live progress ring + "250 PDFs in 10 seconds"
+demo screenshot. Set LAST_WOW_TICK_AT when shipped.
+
+---
+
+## (previous status, kept for history)
+
+### STATUS: ✅ v3.24.0 'Stack Pro' PUBLISHED (2026-05-24 16:45 PT)
 
 **TICK 2026-05-24 16:45 PT (Sunday off-hours)** — MODE B FINALIZE complete.
 
