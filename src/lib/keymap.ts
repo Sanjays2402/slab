@@ -57,6 +57,7 @@ export type ActionId =
   | "quill.batch"
   | "quill.designer"
   | "quill.autodetect"
+  | "quill.tour"
   | "atelier.open"
   | "hopper.open";
 

@@ -44,6 +44,7 @@ pub enum ActionId {
     QuillBatchOpen,
     QuillDesignerOpen,
     QuillAutodetectOpen,
+    QuillTour,
     AtelierOpen,
     HopperOpen,
 }
@@ -286,6 +287,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Auto-detect form fields on a flat PDF",
         group: "Forms",
         default_binding: "Mod+Shift+Y",
+    },
+    ActionInfo {
+        id: ActionId::QuillTour,
+        key: "quill.tour",
+        label: "Show Forms welcome tour",
+        group: "Forms",
+        default_binding: "Mod+Shift+/",
     },
     ActionInfo {
         id: ActionId::AtelierOpen,

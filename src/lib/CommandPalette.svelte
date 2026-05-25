@@ -193,6 +193,22 @@
       });
     }
 
+    // v3.29.0: replay the Forms onboarding tour from anywhere. This is
+    // how users who skipped the auto-fire (or want a refresher) get back
+    // to the 30-second walkthrough.
+    out.push({
+      id: "forms:tour",
+      title: "Forms: Show welcome tour",
+      subtitle: "Replay the 30-second tour of the Forms workspace",
+      icon: "🍰",
+      group: "Forms",
+      run: () => {
+        import("$lib/quill-tour").then((m) => m.replayTour());
+        onSelectPanel("forms");
+      },
+      keywords: "forms tour onboarding welcome help walkthrough guide intro",
+    });
+
     // Cabinet Slice 5: "Open <panel> in new window" — only inside Tauri
     // (no detached windows in vanilla browser dev), and only for panels
     // that have a real detached experience.

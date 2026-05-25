@@ -21,6 +21,8 @@
    */
   import { onMount } from "svelte";
   import { quill, setActiveTab, resetQuill, type QuillTab } from "$lib/quill";
+  import { shouldAutoStart, startTour } from "$lib/quill-tour";
+  import QuillTour from "$lib/components/QuillTour.svelte";
   import { basename } from "$lib/types";
 
   import FormsPanel from "$lib/panels/FormsPanel.svelte";
@@ -58,6 +60,13 @@
     const params = new URLSearchParams(window.location.search);
     const q = params.get("quill") as QuillTab | null;
     if (q && TABS.some((t) => t.id === q)) setActiveTab(q);
+
+    // v3.29.0: auto-fire the 5-step onboarding tour on a user's first
+    // visit to the Forms Hub. Defer one rAF so the Hub's children have
+    // mounted and the spotlight selectors resolve to real elements.
+    if (shouldAutoStart()) {
+      requestAnimationFrame(() => startTour());
+    }
   });
 
   const NEXT_LABEL: Record<QuillTab, string> = {
@@ -132,6 +141,10 @@
     </footer>
   {/if}
 </section>
+
+<!-- v3.29.0 onboarding tour overlay. Renders nothing unless the tour
+     store has an active step, so it's free to mount unconditionally. -->
+<QuillTour />
 
 <style>
   .quill-hub {
