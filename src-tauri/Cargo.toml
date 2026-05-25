@@ -65,6 +65,10 @@ tokio = { version = "1", features = ["full"] }
 
 # Temp directories for OCR rasterization pipeline
 tempfile = "3"
+
+# CSV reader/writer for Quill Pro mail-merge batch fill (v3.25.0).
+# Pure-Rust, tiny, transitively pulled by other tools we depend on.
+csv = "1"
 # Cross-platform home/config dir lookup for first-launch self-install.
 dirs = "6"
 
