@@ -39,3 +39,13 @@ Quality gates green on main: cargo fmt, clippy (--lib -D warnings), cargo test (
 
 Re-poll `gh issue list` (issues #23-#27 were the priority override; check if still open).
 If clear, continue version pipeline — likely v3.26.0 Quill Designer or v3.27.0 Quill Auto-Detect to complete the Quill quartet replacing Acrobat Prepare Form + Data Merge.
+
+## Plans queued (in execution order)
+
+- `docs/plans/2026-05-24-v3.26.0-quill-designer.md` — drag-to-draw AcroForm fields.
+- `docs/plans/2026-05-24-v3.27.0-quill-autodetect.md` — heuristic field detector.
+- `docs/plans/2026-05-24-v3.28.0-quill-hub.md` — unified QuillHubPanel (capstone).
+- `docs/plans/2026-05-24-show-hn-launch.md` — **(NEW, 2026-05-24 19:25 PT)** 8-task launch-prep
+  plan that bridges the Quill quartet → actual customers. Includes HN post variants,
+  8s demo recording script, /launch landing page, T-24h runbook, LAUNCH_MODE cron flag.
+  Execute AFTER v3.28.0 ships. Two Sanjay action items inside: record demo, take screenshots.
