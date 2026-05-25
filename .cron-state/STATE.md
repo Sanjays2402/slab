@@ -1,47 +1,53 @@
 # Slab Cron State
 
-Last updated: 2026-05-24 22:42 PT by Cake (cron)
+Last updated: 2026-05-24 23:08 PT by Cake (cron)
 
 ## Active version
 
-**v3.29.0 "Forms Tour" — MERGED to main + TAGGED.** Build run 26385319422
-in_progress, Docker tag run 26385319416 in_progress. Finalize next tick
-(MODE B: download artifacts + `gh release create`).
+**v3.29.0 "Forms Tour" — RELEASED.** Published on GitHub with 6 artifacts
+(macOS arm64/x64 DMG, Linux deb + AppImage, Windows MSI + NSIS). Build run
+26385319422 success, Docker tag run 26385319416 success. Issue list empty.
 
-RELEASE_PENDING: v3.29.0 — merge SHA ffe9de4, tag v3.29.0, CI run 26385319422
+Next arc: **v0.10.0 "Beacon"** (Slab AI — Ollama-backed local PDF chat,
+auto-summary, semantic search, PII highlighter, selection actions). Spec at
+`.cron-state/proposals/v0.10.0-beacon-ai.md`. First slice next tick:
+provider abstraction + Ollama impl + `slab_beacon_chat` Tauri command +
+right-rail BeaconChatPanel scaffold (vertical slice 1 of 5).
 
-## This tick (2026-05-24 22:38–22:42 PT)
+## This tick (2026-05-24 22:43–23:08 PT)
 
-**MODE A — Release pipeline.** Merged `feature/v3.29.0-forms-tour` into
-main via no-ff merge, tagged v3.29.0, pushed main + tag together.
+**MODE B — Finalize release.** Polled CI for ~14 min while build/bundle
+jobs finished, then downloaded artifacts and published the release.
 
-- Pre-merge CI on feature branch (run 26384738089): SUCCESS
-- Post-merge gates on main: cargo fmt ✓, clippy ✓, 1740 lib tests ✓,
-  pnpm check 0 errors (74 pre-existing warnings, unchanged)
-- 4 commits + 1 merge commit (ffe9de4), 905 / 4 LOC carried forward
-- Tag-triggered Docker build + main build kicked off at 05:41:47Z
+- Build run 26385319422: all 4 bundle jobs + 3 cargo test jobs → success
+- Docker tag run 26385319416: success (slab-server image live on GHCR)
+- Downloaded 6 installers (~390MB), curated to release
+- `gh release create v3.29.0` — published (not draft), 6 assets attached
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.29.0
+- RELEASE_PENDING cleared
 
 ## Wow tracker
 
 LAST_WOW_TICK_AT: 2026-05-25T05:22:39Z (v3.29.0 Forms Tour — spotlight
-+ cubic-bezier coachmark)
++ cubic-bezier coachmark; reaffirmed by public release this tick)
 
 ## Recently closed issues
 
-(none — issue list still empty)
+(none — issue list still empty after re-poll)
 
 ## Next ticks
 
-- **MODE B**: poll CI 26385319422 → success → `gh run download` →
-  `gh release create v3.29.0` with 6 artifacts + release notes from
-  `docs/release-notes/v3.29.0.md`.
-- **Then**: re-poll `gh issue list`, then begin **v0.10.0 Beacon** arc
-  (Ollama-backed local PDF chat) per roadmap. Specs at
-  `.cron-state/proposals/v0.10.0-beacon-ai.md`.
+- **v0.10.0 Beacon Slice 1**: `src-tauri/src/ai/provider.rs` trait +
+  `OllamaProvider` impl + `slab_beacon_chat` streaming Tauri command +
+  right-rail `BeaconChatPanel.svelte` skeleton with streaming UI +
+  palette entry + keyboard shortcut + STATE.md update.
+- Re-poll `gh issue list` at start of every tick (override still active
+  if any of #23-#27 reappear).
 
 ## Pipeline state
 
-| Branch                        | Status            | Notes                                  |
-| ----------------------------- | ----------------- | -------------------------------------- |
-| `main`                        | v3.29.0 MERGED    | Tag pushed, CI in_progress             |
-| `feature/v3.29.0-forms-tour`  | merged            | Safe to delete after release published |
+| Branch                        | Status               | Notes                                  |
+| ----------------------------- | -------------------- | -------------------------------------- |
+| `main`                        | v3.29.0 RELEASED     | Public release live, Docker live       |
+| `feature/v3.29.0-forms-tour`  | merged + released    | Safe to delete                         |
+| (next) `feature/v0.10.0-beacon` | not started        | Spec ready; first slice = chat panel   |
