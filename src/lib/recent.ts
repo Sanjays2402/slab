@@ -23,6 +23,11 @@ export type RecentFile = {
   openedAt: number;    // unix ms — last time this file was opened
   pageCount?: number;  // optional cached page count
   pinned?: boolean;    // Glass: user-pinned, floats to top, exempt from auto-evict
+  // Atlas Lite: per-document reading progress so the reader can resume where
+  // the user left off and the RecentsHome can render progress dots.
+  lastPage?: number;     // 1-indexed last viewed page
+  totalPages?: number;   // mirror of pageCount; set whenever progress is known
+  lastReadAt?: number;   // unix ms — last time progress was saved (≠ openedAt)
 };
 
 type ThumbStore = Record<string, string>; // path -> data URL (JPEG)
@@ -40,7 +45,16 @@ function read(): RecentFile[] {
     return parsed.filter(
       (x): x is RecentFile =>
         x && typeof x.path === "string" && typeof x.name === "string" && typeof x.openedAt === "number",
-    );
+    ).map((x: RecentFile) => {
+      // Coerce optional numeric fields if present, drop them otherwise.
+      const out: RecentFile = { path: x.path, name: x.name, openedAt: x.openedAt };
+      if (typeof x.pageCount === "number") out.pageCount = x.pageCount;
+      if (typeof x.pinned === "boolean") out.pinned = x.pinned;
+      if (typeof x.lastPage === "number" && x.lastPage > 0) out.lastPage = x.lastPage;
+      if (typeof x.totalPages === "number" && x.totalPages > 0) out.totalPages = x.totalPages;
+      if (typeof x.lastReadAt === "number") out.lastReadAt = x.lastReadAt;
+      return out;
+    });
   } catch {
     return [];
   }
@@ -128,15 +142,57 @@ export function listRecent(): RecentFile[] {
 export function recordRecent(file: Omit<RecentFile, "openedAt"> & { openedAt?: number }) {
   const now = file.openedAt ?? Date.now();
   const cur = read();
-  // Preserve existing pinned state on update — don't let recordRecent silently un-pin.
+  // Preserve existing pinned state and reading-progress on update — don't let
+  // recordRecent silently un-pin or wipe lastPage.
   const existing = cur.find((r) => r.path === file.path);
   const merged: RecentFile = {
+    ...existing,
     ...file,
     openedAt: now,
     pinned: file.pinned ?? existing?.pinned ?? false,
+    lastPage: file.lastPage ?? existing?.lastPage,
+    totalPages: file.totalPages ?? existing?.totalPages,
+    lastReadAt: file.lastReadAt ?? existing?.lastReadAt,
   };
   const next = [merged, ...cur.filter((r) => r.path !== file.path)];
   write(next);
+}
+
+/**
+ * Update the reading position for a recent file. No-op if path not found
+ * (we never auto-create on progress — opens are the only entry point).
+ */
+export function recordRecentProgress(
+  path: string,
+  progress: { lastPage: number; totalPages: number },
+) {
+  if (!Number.isFinite(progress.lastPage) || progress.lastPage < 1) return;
+  if (!Number.isFinite(progress.totalPages) || progress.totalPages < 1) return;
+  const cur = read();
+  const idx = cur.findIndex((r) => r.path === path);
+  if (idx < 0) return;
+  const next = [...cur];
+  next[idx] = {
+    ...next[idx],
+    lastPage: Math.min(progress.lastPage, progress.totalPages),
+    totalPages: progress.totalPages,
+    pageCount: progress.totalPages,
+    lastReadAt: Date.now(),
+  };
+  write(next);
+}
+
+/**
+ * Read the progress for a file, or undefined if no progress saved.
+ * Returns lastPage/totalPages as a tuple-like object for callers.
+ */
+export function getRecentProgress(path: string):
+  | { lastPage: number; totalPages: number }
+  | undefined {
+  const cur = read();
+  const rec = cur.find((r) => r.path === path);
+  if (!rec || !rec.lastPage || !rec.totalPages) return undefined;
+  return { lastPage: rec.lastPage, totalPages: rec.totalPages };
 }
 
 /** Toggle (or set) the pinned state of a recent file. No-op if path not found. */
