@@ -24,6 +24,57 @@ pub struct LibraryFilter {
     pub limit: Option<u32>,
     #[serde(default)]
     pub sort: SortBy,
+    /// v3.34.0 Atlas Smart+: nested AND/OR/NOT clause tree. When
+    /// `Some`, this overrides the flat `folder_id`/`tag_ids`/
+    /// `title_substring` legacy fields. When `None`, behavior is
+    /// unchanged — so all pre-v3.34 stored `query_json` blobs keep
+    /// working byte-for-byte. Forward + backward compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clauses: Option<FilterGroup>,
+}
+
+/// Combinator for a `FilterGroup`. Default is `And` to match historical
+/// flat-filter semantics where every condition was AND'd together.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterCombinator {
+    And,
+    Or,
+}
+
+impl Default for FilterCombinator {
+    fn default() -> Self {
+        Self::And
+    }
+}
+
+/// One node in the recursive clause tree. Variants are tagged so the
+/// frontend can dispatch on `clause.type` without sniffing fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FilterClause {
+    /// Document has tag with this id.
+    Tag { id: i64 },
+    /// Document does NOT have tag with this id.
+    NotTag { id: i64 },
+    /// Document is in this folder.
+    Folder { id: i64 },
+    /// Document is NOT in this folder.
+    NotFolder { id: i64 },
+    /// Case-insensitive substring match against title OR path.
+    TitleContains { value: String },
+    /// Negation of TitleContains.
+    TitleNotContains { value: String },
+    /// Nested group — enables `(A OR B) AND NOT C` style rules.
+    Group(FilterGroup),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct FilterGroup {
+    #[serde(default)]
+    pub combinator: FilterCombinator,
+    #[serde(default)]
+    pub clauses: Vec<FilterClause>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -354,6 +405,51 @@ mod tests {
         let names: Vec<_> = alpha.tags.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"research"));
         assert!(names.contains(&"urgent"));
+    }
+
+    #[test]
+    fn filter_clauses_roundtrip_json() {
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::Or,
+                clauses: vec![
+                    FilterClause::Tag { id: 1 },
+                    FilterClause::NotTag { id: 2 },
+                    FilterClause::Group(FilterGroup {
+                        combinator: FilterCombinator::And,
+                        clauses: vec![FilterClause::Folder { id: 3 }],
+                    }),
+                ],
+            }),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert_eq!(f.clauses, back.clauses);
+        // Tagged serde: `{"type":"tag","id":1}` in the JSON.
+        assert!(s.contains("\"type\":\"tag\""));
+        assert!(s.contains("\"type\":\"not_tag\""));
+        assert!(s.contains("\"type\":\"group\""));
+        assert!(s.contains("\"combinator\":\"or\""));
+    }
+
+    #[test]
+    fn legacy_filter_json_still_deserializes() {
+        // Shape persisted by v3.32 / v3.33 — no `clauses` field.
+        let legacy = r#"{"folder_id":null,"tag_ids":[1,2],"title_substring":"tax","limit":null,"sort":"added_desc"}"#;
+        let f: LibraryFilter = serde_json::from_str(legacy).unwrap();
+        assert_eq!(f.tag_ids, vec![1, 2]);
+        assert_eq!(f.title_substring.as_deref(), Some("tax"));
+        assert!(f.clauses.is_none());
+    }
+
+    #[test]
+    fn empty_default_filter_serializes_without_clauses_field() {
+        // Ensure `clauses: None` is dropped on serialize so old Slab
+        // versions reading new query_json don't barf on unknown fields.
+        let f = LibraryFilter::default();
+        let s = serde_json::to_string(&f).unwrap();
+        assert!(!s.contains("clauses"));
     }
 
     #[test]
