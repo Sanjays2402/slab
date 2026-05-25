@@ -4,7 +4,41 @@
 
 ---
 
-## STATUS: 📝 v3.27.0 'Quill Auto-Detect' PLANNED (2026-05-24 18:15 PT)
+## STATUS: 📝 v3.28.0 'Quill Hub' PLANNED — Quill quartet capstone (2026-05-24 18:30 PT)
+
+**TICK 2026-05-24 18:30 PT (Sunday off-hours)** — Planning tick
+(`writing-plans` skill invocation by Sanjay, **third in a row**).
+
+- Plan: `docs/plans/2026-05-24-v3.28.0-quill-hub.md` (~750 lines, 8 tasks across 3 ticks).
+- Scope: **unified Forms workspace** — one panel `QuillHubPanel.svelte` with
+  4 sub-tabs (Detect · Design · Fill · Batch), shared `src/lib/quill.ts`
+  store, one shortcut `Cmd/Ctrl+Shift+Q`, designed empty-state, "Next: …"
+  CTA footer. **No new Rust** — pure UX consolidation that turns the four
+  Quill features into one product surface that demos in 3 clicks.
+- Buy-button verdict: ✅ STRONGEST PASS — without the Hub the four Quill
+  features don't *feel* like one product. With it, the Show-HN headline
+  writes itself: "Drag a flat PDF in. Watch it become a fillable form,
+  then batch-fill 200 copies — in three clicks. Acrobat charges $239/yr
+  for less." Tell-a-friend tier.
+
+### Execution order (must respect)
+
+1. **v3.25.0 Quill Pro Batch** (plan in repo, branch ready) — ship first.
+2. **v3.26.0 Quill Designer** — ship second.
+3. **v3.27.0 Quill Auto-Detect** — ship third.
+4. **v3.28.0 Quill Hub** — ship FOURTH, as the capstone that turns the
+   trio into a coherent product. Branch: `feature/v3.28.0-quill-hub`.
+5. Show-HN goes live after v3.28.0 — that's the screenshot release.
+
+### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
+
+Within 24h — no wow required for a planning tick.
+
+---
+
+## (previous status, kept for history)
+
+### STATUS: 📝 v3.27.0 'Quill Auto-Detect' PLANNED (2026-05-24 18:15 PT)
 
 **TICK 2026-05-24 18:15 PT (Sunday off-hours)** — Planning tick
 (`writing-plans` skill invocation by Sanjay, second in a row).
