@@ -1,106 +1,115 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 06:50 PT by Cake (cron) — MODE C + RELEASE (partial)
+Last updated: 2026-05-25 07:36 PT by Cake (cron) — MODE C (CI still blocked)
 
 ## Active version
 
-**v3.33.0 "Atlas Smart" — MERGED + TAGGED + PUSHED. Draft release created.
-Awaiting CI binaries (BLOCKED on GitHub Actions billing).**
+**v3.34.0 "Atlas Smart+" — feature branch pushed, code-complete except
+release notes + integration polish. NOT merged to main yet (CI still
+billing-blocked from v3.33).**
 
-- Merge SHA: `7d4a673` on `main`
-- Tag: `v3.33.0`
-- Draft release: https://github.com/Sanjays2402/slab/releases (titled
-  "v3.33.0 — Atlas Smart", needs artifacts uploaded once CI runs)
+**v3.33.0 "Atlas Smart" — MERGED + TAGGED on main. Draft GitHub release
+exists, awaiting binaries. Blocked on GitHub Actions billing.**
 
-## ⚠️ CI BLOCKED — needs Sanjay
+- v3.33 merge SHA: `7d4a673` on `main`
+- v3.33 tag: `v3.33.0`
+- v3.33 draft release: https://github.com/Sanjays2402/slab/releases
+- v3.34 branch: `feature/v3.34.0-atlas-smart-plus` (5 commits, +962 LOC)
 
-All workflows on the v3.33.0 push + tag failed in 4-5s with:
+## ⚠️ CI BLOCKED — still needs Sanjay
+
+All workflows on every push (v3.33 main, v3.34 feature) fail in 4-7s with:
 
 > _"The job was not started because recent account payments have failed
 > or your spending limit needs to be increased. Please check the
 > 'Billing & plans' section in your settings"_
 
-Same error on the prior `chore(state): finalize v3.32.0 Atlas release`
-build run too — so v3.32.0's binaries that shipped earlier today were
-the LAST ones produced before billing lapsed.
+Reran 26403858592 + 26403858547 this tick — still failing identically.
 
-**Action for Sanjay**: log in to https://github.com/settings/billing
-and either update payment method or raise the spending limit. Once
-unblocked, re-run via `gh run rerun 26403858592` (build) and
-`gh run rerun 26403858547` (Docker), then I can finalize the Draft
-release with artifacts and the `latest` tag.
+**Action for Sanjay**: https://github.com/settings/billing → update
+payment method OR raise the spending limit. Once unblocked:
+- `gh run rerun 26403858592` (v3.33 build) → finalize v3.33 draft release.
+- `gh run rerun 26403858547` (v3.33 Docker tag) → publish slab-server image.
+- v3.34 build will start passing automatically on next push.
 
-## Release pending
+## This tick (2026-05-25 07:22–07:37 PT) — MODE C, code-only
 
-- v3.33.0 — Draft release exists, needs 6 artifacts (macos arm64+x64 dmg,
-  linux x64 deb+AppImage, windows msi+nsis) once CI runs.
+**v3.34.0 "Atlas Smart+" shipped end-to-end on a feature branch:**
 
-## This tick (2026-05-25 06:37–06:50 PT) — MODE C → RELEASE
+- `526f1e4` docs(plan): 6-task implementation plan saved at
+  `docs/plans/2026-05-25-v3.34.0-atlas-smart-plus.md`.
+- `13d8bbc` feat(library): FilterGroup / FilterClause / FilterCombinator
+  Rust types — opt-in nested AND/OR/NOT clause tree, tagged serde,
+  backward-compatible (legacy query_json still deserializes byte-perfect).
+- `a821709` feat(library): recursive `build_group_sql` /
+  `build_clause_sql` translators. Tag NOT via NOT IN subquery, folder
+  NOT handles NULL, title NOT wraps LIKE pattern. Empty AND→1=1,
+  empty OR→0=1. 8 new tests (1781 total now, all pass).
+- `83323de` feat(ts): TypeScript mirror types + `emptyFilterGroup()` /
+  `migrateFlatFilter()` helpers.
+- `8ba6ba3` feat(ui): new `ClauseGroup.svelte` recursive component
+  (~320 LOC) — AND↔OR pill, NOT toggle, type/value pickers, +Rule /
+  +Group buttons, depth-cycling accent colors, Liquid Glass styling.
+  Wired into SmartCollectionBuilder behind an "Advanced ⚡" mode toggle
+  that carries over basic rules via migration helper. Live-preview
+  pane reacts to nested edits.
 
-**v3.33.0 "Atlas Smart" shipped end-to-end (6 commits, +1336 LOC):**
+Quality gates ALL green before push:
+- `cargo fmt --check`: clean
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `cargo test --lib`: **1781 passed** (was 1772 → +9 new)
+- `pnpm check`: 0 errors, 104 pre-existing warnings unchanged
 
-- `5cf8447` feat(library): `update_smart_collection` partial-update helper + test
-- `6b6b040` feat(tauri): `slab_smart_collection_update` command + TS wrapper
-- `36581a0` feat(ui): SmartCollectionBuilder modal (837 LOC) — visual filter
-  builder w/ live preview pane, 12 icons, 8 colors, AND across title/tag/folder
-- `c235a35` feat(ui): wire builder into sidebar — Cmd+Shift+N hotkey,
-  right-click "Edit rules…" menu, drag-to-collection drop targets, toast
-- `755a498` feat(ui): library doc cards are draggable (`x-slab-doc-ids`
-  dataTransfer payload)
-- `6984ecd` chore(release): bump to 3.33.0 + release notes
+Branch pushed to origin. CI failed (5s, same billing block).
 
-All quality gates passed BEFORE push:
-- `cargo fmt --check` clean
-- `cargo clippy --all-targets -- -D warnings` clean
-- `cargo test --lib` → 1772 passed
-- `pnpm check` → 0 errors, 104 pre-existing warnings
+## Buy-Button qualification
 
-Merged feature branch to main fast-forward style with --no-ff, tagged v3.33.0,
-pushed both. Draft release created with marketing-voice notes.
-
-## Buy-Button qualifying
-
-- **Pick-us test** ✅ Smart Mailboxes for PDF; Adobe/PDF Expert ship nothing
-  comparable.
-- **Tell-a-friend** ✅ Live preview pane + drag-to-collection are demo-worthy.
-- **Notice-it** ✅ Returning user opens the rail, sees the new "+" next to
-  Smart and the right-click menu on existing smart rows.
+- **Pick-us** ✅ Adobe / PDF Expert / Foxit ship zero nested-rule UX.
+  Smart Mailboxes for PDF with NOT and OR — instant wedge.
+- **Tell-a-friend** ✅ Builder screenshot with depth-colored groups
+  + live count badge is demo gold.
+- **Pay-for-it** ✅ Paralegals + researchers managing hundreds of PDFs
+  will pay $49 for nested rules alone.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T13:50:00Z — SmartCollectionBuilder live preview
-pane with pulsing match-count badge that re-runs as you type. Next BIG wow
-due by ~2026-05-26 13:50 UTC.
+LAST_WOW_TICK_AT: 2026-05-25T14:35:00Z — recursive ClauseGroup builder
+with depth-cycling accent colors (violet → sky → emerald → amber) and
+NOT-toggle pills that turn rows red. Demo line: "(Tax 2024 OR Tax 2025)
+AND NOT Archived". Next BIG wow due by ~2026-05-26 14:35 UTC.
 
 ## Recently closed issues
 
-- v3.33.0 shipped (no GH issue, internal roadmap item).
-- Atlas pipeline progressing: v3.30.0 → v3.31.0 → v3.32.0 → v3.33.0 today.
+- v3.34.0 code-complete on branch (internal roadmap item, no GH issue).
+- v3.33.0 shipped main + draft release (awaiting binaries).
 
 ## Next ticks
 
-- **Tick 1 (NEXT)**: Poll CI billing status. If unblocked, run
-  `gh run rerun 26403858592 26403858547`, wait for green, download
-  artifacts, upload to the v3.33.0 Draft release, publish it.
-- **Tick 2**: Plan v3.34.0 — NOT / OR rules in the smart collection builder
-  (`LibraryFilter` schema extension + UI nesting). This is the natural
-  follow-on while users are still excited about Atlas Smart.
-- Alternative if CI stays blocked >24h: ship code-only ticks that
-  accumulate value (v3.34.0 NOT/OR, v3.35.0 Library presets), then batch
-  a single release once billing is restored.
+- **Tick 1 (NEXT)**: Re-poll CI billing status. If unblocked:
+  1. `gh run rerun 26403858592 26403858547` → finalize v3.33 release.
+  2. Merge `feature/v3.34.0-atlas-smart-plus` → main, tag v3.34.0,
+     push, draft release.
+- **Tick 2 (if CI still blocked)**: Polish v3.34 — add `LAST_WOW_TICK`
+  command-palette entries, keyboard shortcut to toggle Advanced mode
+  inside the builder (Cmd+Shift+A), write the v3.34.0 marketing-voice
+  release notes file, and a screenshot/GIF placeholder.
+- **Tick 3 (if CI still blocked)**: Start v3.35.0 "Atlas Presets" —
+  built-in smart-collection templates ("Tax 2025", "Invoices last 30 days",
+  "Contracts pending signature"). One-click create from a sidebar
+  palette. Vertical slice incl. a backend preset registry.
 
 ## Pipeline state
 
-| Branch                              | Status                          | Notes                            |
-| ----------------------------------- | ------------------------------- | -------------------------------- |
-| `main`                              | v3.33.0 merged + tagged + pushed | Draft release exists             |
-| `feature/v3.33.0-atlas-smart`       | merged into main                | Local branch still present       |
+| Branch                                | Status                              | Notes                            |
+| ------------------------------------- | ----------------------------------- | -------------------------------- |
+| `main`                                | v3.33.0 merged + tagged + pushed    | Draft release waiting for CI     |
+| `feature/v3.34.0-atlas-smart-plus`    | code-complete + pushed (5 commits)  | All gates green; merge when CI up |
+| `feature/v3.33.0-atlas-smart`         | merged into main last tick          | Local branch still present       |
 
 ## Notes / housekeeping
 
-- Disk: src-tauri/target was 14 GiB last week, watch for fill.
-- 104 pre-existing svelte a11y warnings; not blocking but worth a polish tick.
-- 1 Dependabot moderate vulnerability surfaced on push (#7). Investigate
-  next tick.
-- GitHub Actions billing is the immediate blocker — flagged to Sanjay in
-  this delivery and pinned to the top of this file.
+- Disk: src-tauri/target still ~14 GiB, watch for fill.
+- 104 pre-existing svelte a11y warnings — polish tick eligible.
+- 1 Dependabot moderate vulnerability (#7) — still investigate.
+- GitHub Actions billing is the persistent blocker — flagged again
+  this tick. Re-flag every delivery until resolved.
