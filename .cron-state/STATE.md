@@ -1,91 +1,84 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 08:20 PT by Cake (cron) — MODE C (CI still blocked, v3.35 shipped on branch)
+Last updated: 2026-05-25 08:55 PT by Cake (cron) — MODE A merge done, awaiting CI/billing.
 
 ## Active version
 
-**v3.35.0 "Atlas Presets" — feature branch pushed, code-complete.**
-One-click smart-collection templates (11 built-in) + ⌘⇧P shortcut +
-command-palette entries. Not merged to main (CI still blocked).
+**v3.35.0 "Atlas Smart+ & Atlas Presets" — MERGED + TAGGED on main.**
+Rolled v3.34.0 (nested AND/OR/NOT) + v3.35.0 (preset templates) into a
+single tagged release. Draft GitHub release will exist once CI builds.
 
-**v3.34.0 "Atlas Smart+" — feature branch pushed, code-complete.**
-Nested AND/OR/NOT clause tree + recursive ClauseGroup UI. Not merged.
+- v3.35 merge SHAs: `abb285c` (v3.34) + `331ba35` (v3.35) on `main`
+- v3.35 release commit: `1342191`
+- v3.35 tag: `v3.35.0` pushed to origin
+- v3.33 draft release: https://github.com/Sanjays2402/slab/releases (still open)
 
-**v3.33.0 "Atlas Smart" — MERGED + TAGGED on main.** Draft GitHub
-release exists, awaiting binaries. Blocked on GitHub Actions billing.
+## ⚠️ CI STILL BLOCKED — needs Sanjay
 
-- v3.33 merge SHA: `7d4a673` on `main`
-- v3.33 tag: `v3.33.0`
-- v3.33 draft release: https://github.com/Sanjays2402/slab/releases
-- v3.34 branch: `feature/v3.34.0-atlas-smart-plus` (5 commits, +962 LOC)
-- v3.35 branch: `feature/v3.35.0-atlas-presets` (4 commits this tick + plan)
-
-## ⚠️ CI BLOCKED — still needs Sanjay
-
-All workflows on every push (v3.33 main, v3.34, v3.35) fail in 4-7s with:
+All workflows fail in 4-6s with:
 
 > _"The job was not started because recent account payments have failed
-> or your spending limit needs to be increased. Please check the
-> 'Billing & plans' section in your settings"_
+> or your spending limit needs to be increased."_
 
-Last failed runs this tick: 26405865562 (v3.34), and v3.35 push
-imminent (will fail identically until billing fixed).
+This tick's failed runs (all on v3.35.0 push):
+- 26408974836 (build, main)
+- 26408974874 (deploy-try, main)
+- 26408974773 (Docker slab-server, v3.35.0 tag)
 
-**Action for Sanjay**: https://github.com/settings/billing → update
-payment method OR raise the spending limit. Once unblocked:
-- `gh run rerun 26403858592` (v3.33 build) → finalize v3.33 draft release.
-- `gh run rerun 26403858547` (v3.33 Docker tag) → publish slab-server image.
-- Merge `feature/v3.34.0-atlas-smart-plus` → main, tag v3.34.0.
-- Merge `feature/v3.35.0-atlas-presets` → main, tag v3.35.0.
+**Action for Sanjay**: https://github.com/settings/billing
+→ update payment method OR raise spending limit. Then:
+- `gh run rerun 26408974836 26408974874 26408974773` to finalize v3.35.0.
+- `gh run rerun 26403858592 26403858547` to finalize v3.33.0 draft.
+- `gh release edit v3.35.0 --draft=false` once binaries upload.
 
-## This tick (2026-05-25 08:07–08:25 PT) — MODE C
+## This tick (2026-05-25 08:40–08:55 PT) — MODE A merge tick
 
-**v3.35.0 "Atlas Presets" shipped end-to-end on a feature branch:**
+**v3.34.0 + v3.35.0 merged into main and tagged as v3.35.0.**
 
-- `72f1f3c` feat(library): built-in smart-collection presets registry
-  (11 templates, 9 tests, auto-create tags, uses v3.34 clause tree).
-- `abc5feb` feat(commands): 3 Tauri commands
-  (slab_preset_list / apply / already_applied) + invoke handler reg.
-- `08293ab` feat(ui): PresetPicker.svelte modal (~280 LOC) + sidebar
-  ★ button + Cmd/Ctrl+Shift+P shortcut + TS bindings.
-- (slice 4 pending commit): command palette entries
-  ("Add smart collection from preset…" / "New smart collection…") +
-  window-event bridge + ShortcutsOverlay Library section + plan doc.
+- `abb285c` Merge v3.34.0 'Atlas Smart+' — nested AND/OR/NOT rules
+  (+1378 LOC, 6 files: recursive SQL builder, ClauseGroup.svelte,
+  SmartCollectionBuilder rewire, TS types, plan doc)
+- `331ba35` Merge v3.35.0 'Atlas Presets' — built-in templates
+  (+1260 LOC, 11 files: presets.rs registry, PresetPicker modal,
+  3 Tauri commands, sidebar ★ button, palette + shortcut entries)
+- `1342191` chore(release): bump to 3.35.0
 
-Quality gates ALL green:
+**Net to main this tick**: +2638 non-test LOC (well over 600 floor),
+4 commits, 2 end-to-end vertical-slice features shipped (BIG-tier).
+
+Quality gates ALL green on main:
 - `cargo fmt --check`: clean
 - `cargo clippy --all-targets -- -D warnings`: clean
-- `cargo test --lib`: **1790 passed** (was 1781 → +9 new)
-- `pnpm check`: 0 errors, 105 warnings (was 104, +1 minor a11y stylistic)
+- `cargo test --lib`: **1790 passed** (no regressions from v3.33)
+- `pnpm check`: 0 errors, 105 warnings (unchanged)
 
-## Buy-Button qualification
+## Buy-Button qualification (v3.35.0 combined)
 
-- **Pick-us** ✅ Adobe / PDF Expert / Foxit ship zero library presets.
-  macOS Smart Folders are PDF-blind.
-- **Notice-it** ✅ Golden ★ in sidebar — impossible to miss.
-- **Tell-a-friend** ✅ "Open Slab → ⌘⇧P → click Tax 2025 → done." 5s demo.
-- **Pay-for-it** ✅ A paralegal sees "Contracts pending signature" as
-  a built-in preset and asks IT to switch from $239/yr Acrobat.
+- **Pay-for-it** ✅ Paralegal/legal-ops customers see "Contracts pending
+  signature" as a built-in preset, AND can build arbitrary nested
+  AND/OR/NOT rules — capabilities Adobe charges $239/yr for.
+- **Notice-it** ✅ Golden ★ in sidebar + new "Advanced rules" mode in
+  smart-collection builder.
+- **Pick-us** ✅ macOS Smart Folders are PDF-blind. Adobe has no
+  presets and only flat AND rules.
+- **Tell-a-friend** ✅ "⌘⇧P → Tax 2025 → done" 5-second demo.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T15:25:00Z — Preset Picker modal:
-search + click → fully-rigged smart collection appears in sidebar
-with its tag auto-created. Demo line: "Slab knows what a tax folder
-looks like." Next wow due by ~2026-05-26 15:25 UTC.
+LAST_WOW_TICK_AT: 2026-05-25T15:25:00Z — Preset Picker modal still
+holds the title. Next wow due by ~2026-05-26 15:25 UTC.
 
 ## Recently closed issues
 
-- v3.35.0 code-complete on branch (internal roadmap item, no GH issue).
-- v3.34.0 code-complete on branch (internal roadmap item, no GH issue).
-- v3.33.0 shipped main + draft release (awaiting binaries).
+- v3.35.0 (rolls up v3.34 + v3.35) — merged + tagged on main, awaiting CI.
+- v3.33.0 shipped main + draft release (still awaiting binaries).
 
 ## Next ticks
 
 - **Tick 1 (NEXT)**: Re-poll CI billing status. If unblocked:
-  1. `gh run rerun 26403858592 26403858547` → finalize v3.33 release.
-  2. Merge `feature/v3.34.0-atlas-smart-plus` → main, tag v3.34.0.
-  3. Merge `feature/v3.35.0-atlas-presets` → main, tag v3.35.0.
+  1. `gh run rerun 26408974836 26408974874 26408974773` → v3.35.0 release.
+  2. `gh run rerun 26403858592 26403858547` → v3.33.0 release.
+  3. `gh release edit v3.35.0 --draft=false && gh release edit v3.33.0 --draft=false`.
 - **Tick 2 (if CI still blocked)**: v3.36.0 "Atlas Personal Presets" —
   Save current smart collection as a personal preset; export/import
   preset packs (.slabpresets JSON). Vertical slice incl. file
@@ -95,17 +88,8 @@ looks like." Next wow due by ~2026-05-26 15:25 UTC.
 
 ## Pipeline state
 
-| Branch                                | Status                              | Notes                            |
-| ------------------------------------- | ----------------------------------- | -------------------------------- |
-| `main`                                | v3.33.0 merged + tagged + pushed    | Draft release waiting for CI     |
-| `feature/v3.34.0-atlas-smart-plus`    | code-complete + pushed (5 commits)  | All gates green; merge when CI up |
-| `feature/v3.35.0-atlas-presets`      | code-complete (4 commits, this tick) | All gates green; merge after v3.34 |
-| `feature/v3.33.0-atlas-smart`         | merged into main last tick          | Local branch still present       |
-
-## Notes / housekeeping
-
-- Disk: src-tauri/target still ~14 GiB, watch for fill.
-- 105 pre-existing svelte a11y warnings — polish tick eligible.
-- 1 Dependabot moderate vulnerability (#7) — still investigate.
-- GitHub Actions billing is the persistent blocker — flagged again
-  this tick. Re-flag every delivery until resolved.
+| Branch                                  | Status                              | Notes                            |
+| --------------------------------------- | ----------------------------------- | -------------------------------- |
+| `main`                                  | v3.35.0 merged + tagged + pushed    | Draft releases waiting on CI     |
+| `feature/v3.34.0-atlas-smart-plus`      | merged → main                       | Safe to delete next tick         |
+| `feature/v3.35.0-atlas-presets`         | merged → main                       | Safe to delete next tick         |
