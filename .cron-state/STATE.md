@@ -4,7 +4,48 @@
 
 ---
 
-## STATUS: 📝 v3.26.0 'Quill Designer' PLANNED (2026-05-24 18:02 PT)
+## STATUS: 📝 v3.27.0 'Quill Auto-Detect' PLANNED (2026-05-24 18:15 PT)
+
+**TICK 2026-05-24 18:15 PT (Sunday off-hours)** — Planning tick
+(`writing-plans` skill invocation by Sanjay, second in a row).
+
+- Plan: `docs/plans/2026-05-24-v3.27.0-quill-autodetect.md` (~700 lines, 10 tasks).
+- Scope: **heuristic form-field DETECTOR** — scan flat PDFs, find
+  horizontal-rule blanks, square checkbox glyphs, "Signature:" lines,
+  emit a `DetectionReport` of `FieldCandidate`s that round-trip into the
+  v3.26.0 Designer (`FieldDraft`). Completes the Quill suite:
+  **detect → design → fill → batch**.
+  - New `src-tauri/src/pdf/forms_detect.rs` — geom walker + text walker +
+    heuristic detector + 5 unit tests + 1 realistic-form integration test.
+  - 1 Tauri command (`slab_forms_autodetect`).
+  - `QuillAutodetectModal.svelte` — Liquid Glass review modal with
+    per-candidate keep/skip + confidence threshold slider + accept-all,
+    forwards to existing `slab_forms_design_add`. `Cmd/Ctrl+Shift+A`
+    global + palette entry + ShortcutsOverlay row.
+- Buy-button verdict: ✅ PASS on all four. This IS Acrobat Pro's
+  "Prepare Form" feature (the headline reason firms keep $239/yr seats).
+  PDF Expert can't, Foxit charges Editor-tier, Preview can't. Plus
+  v3.26.0 Designer alone requires drawing every field by hand — this
+  is the magic glue that makes the trio feel automatic.
+
+### Execution order
+
+1. **v3.25.0 Quill Pro Batch** (plan in repo, branch
+   `feature/v3.25.0-quill-pro-batch`) — ship first.
+2. **v3.26.0 Quill Designer** — ship second.
+3. **v3.27.0 Quill Auto-Detect** — ship third; together = full
+   Acrobat-Prepare-Form replacement, offline, free, three OSes.
+4. Show-HN headline draft: _"Drag a flat PDF in. Watch it become fillable."_
+
+### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
+
+Within 24h — no wow required for a planning tick.
+
+---
+
+## (previous status, kept for history)
+
+### STATUS: 📝 v3.26.0 'Quill Designer' PLANNED (2026-05-24 18:02 PT)
 
 **TICK 2026-05-24 18:02 PT (Sunday off-hours)** — Planning tick
 (writing-plans skill invocation by Sanjay).
