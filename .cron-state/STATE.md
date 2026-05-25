@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 04:55 PT by Cake (cron)
+Last updated: 2026-05-25 05:30 PT by Cake (cron) — planning tick
 
 ## Active version
 
@@ -42,8 +42,23 @@ Next BIG wow due by ~2026-05-26 11:40 UTC.
 - **Tick 1 (NEXT, MODE B)**: poll CI runs 26399157609 + 26399160794.
   If green → finalize v3.32.0 GitHub release with 6 artifacts.
   If failing → read log, fix, hotfix on a follow-up branch.
-- **Tick 2 (MODE C)**: start v3.33.0 — Smart Collection builder
-  modal (filter picker UI) + drag-from-doc-card to collection rail.
+- **Tick 2 (MODE C)**: execute v3.33.0 "Atlas Smart" plan at
+  `docs/plans/2026-05-25-v3.33.0-atlas-smart.md` (6 tasks, ≥6 commits,
+  end-to-end Smart Collection builder + drag-to-collection).
+
+## v3.33.0 plan written this tick
+
+Plan at `docs/plans/2026-05-25-v3.33.0-atlas-smart.md` covers:
+- Task 1: backend `update_smart_collection` + unit test
+- Task 2: Tauri command + TS wrapper
+- Task 3: `SmartCollectionBuilder.svelte` modal w/ live preview
+- Task 4: wire into sidebar + Cmd+Shift+N + context menu
+- Task 5: drag-from-doc-card → collection rail
+- Task 6: release prep (3.33.0 version bump + release notes)
+
+Branch will be `feature/v3.33.0-atlas-smart`. Buy-Button test: Pick-us
+(Smart Mailboxes for PDF, Adobe/PDF Expert have no equivalent) + Tell-a-friend
+(live preview pane + pulsing count badge on add).
 
 ## Pipeline state
 
