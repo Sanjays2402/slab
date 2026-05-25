@@ -364,10 +364,13 @@ fn find_preset(id: &str) -> Option<Preset> {
     builtin_presets().into_iter().find(|p| p.id == id)
 }
 
-/// Materialize a preset into a real smart collection row. Idempotency
-/// is deliberately NOT enforced here — calling apply() twice gives
-/// two rows. Frontend uses the existing collection list to dedupe in
-/// the UI ("This preset is already added").
+/// Materialize a preset into a real smart collection row. The
+/// underlying `library_smart_collections.name` column is UNIQUE, so
+/// calling `apply_preset` twice for the same id returns a constraint
+/// error — the frontend should call `presets_already_applied` first
+/// and grey out the button. We surface the raw DB error rather than
+/// mapping to a typed variant because the UI just shows a toast
+/// either way.
 pub fn apply_preset(
     db: &mut LibraryDb,
     preset_id: &str,
@@ -498,11 +501,13 @@ mod tests {
     }
 
     #[test]
-    fn applying_same_preset_twice_creates_two_rows() {
-        // Deliberate behavior — see apply_preset doc comment.
+    fn applying_same_preset_twice_is_rejected_by_unique_name() {
+        // The smart_collections.name UNIQUE constraint guarantees
+        // dedupe at the DB layer. The frontend uses
+        // `presets_already_applied` to grey out the button instead.
         let mut db = fresh_db();
-        let a = apply_preset(&mut db, "invoices").unwrap();
-        let b = apply_preset(&mut db, "invoices").unwrap();
-        assert_ne!(a.id, b.id);
+        apply_preset(&mut db, "invoices").unwrap();
+        let second = apply_preset(&mut db, "invoices");
+        assert!(second.is_err(), "second apply should violate UNIQUE(name)");
     }
 }
