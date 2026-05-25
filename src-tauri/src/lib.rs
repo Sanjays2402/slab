@@ -3258,6 +3258,153 @@ fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
     result.into()
 }
 
+// ---------------------------------------------------------------
+// v3.32.0 "Atlas" — Collections + Smart Collections
+// ---------------------------------------------------------------
+
+#[tauri::command]
+fn slab_collection_create(
+    app: tauri::AppHandle,
+    name: String,
+    icon: Option<String>,
+    color: Option<String>,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::create_collection(
+            &mut db,
+            &name,
+            icon.as_deref(),
+            color.as_deref(),
+        )
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_list() -> CmdResult<Vec<pdf::library::collections::CollectionRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::collections::list_collections(&db)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_rename(app: tauri::AppHandle, id: i64, name: String) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::rename_collection(&mut db, id, &name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::delete_collection(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_add_docs(
+    app: tauri::AppHandle,
+    collection_id: i64,
+    doc_ids: Vec<i64>,
+) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::add_docs(&mut db, collection_id, &doc_ids)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_remove_docs(
+    app: tauri::AppHandle,
+    collection_id: i64,
+    doc_ids: Vec<i64>,
+) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::remove_docs(&mut db, collection_id, &doc_ids)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_list_docs(collection_id: i64) -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::collections::list_collection_docs(&db, collection_id)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_smart_collection_create(
+    app: tauri::AppHandle,
+    spec: pdf::library::collections::NewSmartCollection,
+) -> CmdResult<pdf::library::collections::SmartCollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::create_smart_collection(&mut db, &spec)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_smart_collection_list() -> CmdResult<Vec<pdf::library::collections::SmartCollectionRecord>>
+{
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::collections::seed_defaults(&mut open_library_db()?)?;
+        pdf::library::collections::list_smart_collections(&db)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_smart_collection_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::delete_smart_collection(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_smart_collection_expand(id: i64) -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::collections::expand_smart_collection(&db, id)
+    })();
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_add_tag(
     app: tauri::AppHandle,
@@ -4867,6 +5014,17 @@ pub fn run() {
             slab_library_list_docs,
             slab_library_search,
             slab_library_list_tags,
+            slab_collection_create,
+            slab_collection_list,
+            slab_collection_rename,
+            slab_collection_delete,
+            slab_collection_add_docs,
+            slab_collection_remove_docs,
+            slab_collection_list_docs,
+            slab_smart_collection_create,
+            slab_smart_collection_list,
+            slab_smart_collection_delete,
+            slab_smart_collection_expand,
             slab_library_add_tag,
             slab_library_set_doc_tags,
             slab_library_remove_document,

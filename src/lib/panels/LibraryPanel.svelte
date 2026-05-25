@@ -53,6 +53,7 @@
   import { basename } from "$lib/types";
   import { formatRelTime } from "$lib/recent";
   import { registerLibraryNav } from "$lib/vim/library-adapter";
+  import CollectionsSidebar from "$lib/panels/CollectionsSidebar.svelte";
 
   // ---------- Props (Cabinet v1.1.0) ----------
   //
@@ -70,6 +71,28 @@
   let tags = $state<TagRecord[]>([]);
   let docs = $state<DocumentRecord[]>([]);
   let activeFolder = $state<number | "all">("all");
+  // v3.32.0 Atlas — when set, overrides the folder/tag filter and shows
+  // the resolved collection docs instead. Null means "use folder+tag filter".
+  let activeCollection = $state<{ kind: "collection" | "smart"; id: number; name: string; docs: DocumentRecord[] } | null>(null);
+
+  function onCollectionSelect(payload: {
+    kind: "collection" | "smart";
+    id: number;
+    name: string;
+    docs: DocumentRecord[];
+  }) {
+    activeCollection = payload;
+    // Clear folder/tag filters so the user sees the collection cleanly.
+    activeFolder = "all";
+    activeTagIds = new Set();
+    docs = payload.docs;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function clearCollection() {
+    activeCollection = null;
+    refreshDocs();
+  }
   let activeTagIds = $state<Set<number>>(new Set());
   let query = $state("");
   let sort = $state<LibrarySortBy>("added_desc");
@@ -262,6 +285,11 @@
   }
 
   async function refreshDocs() {
+    // v3.32.0 Atlas — collection override short-circuits the filter.
+    if (activeCollection) {
+      docs = activeCollection.docs;
+      return;
+    }
     const filter: LibraryFilter = {
       folder_id: activeFolder === "all" ? null : activeFolder,
       tag_ids: Array.from(activeTagIds),
@@ -568,6 +596,7 @@
 
   function selectFolder(id: number | "all") {
     activeFolder = id;
+    activeCollection = null;
   }
 
   async function onRemoveFolder(folder: FolderRecord) {
@@ -859,6 +888,9 @@
         {/each}
         <button class="rail-add" onclick={onCreateTopLevelTag}>+ New tag</button>
       </div>
+
+      <!-- v3.32.0 Atlas — Collections rail -->
+      <CollectionsSidebar onSelect={onCollectionSelect} />
     </aside>
 
     <!-- Main grid -->
