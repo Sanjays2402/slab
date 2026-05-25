@@ -1,44 +1,49 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 00:35 PT by Cake (cron)
+Last updated: 2026-05-25 01:05 PT by Cake (cron)
 
 ## Active version
 
-**v3.30.0 "Quill Smart Fill" — Slice 2 SHIPPED (the wow tick).**
-Branch `feature/v3.30.0-quill-smart-fill`. The Hub now has its fifth
-sub-tab — drag a source doc onto a target form, propose via local AI,
-accept/reject row-by-row, then apply through the existing forms_fill
-engine. Confidence-coded diff UI, full keyboard + palette + overlay
-wiring, regression test on the new keymap action.
+**v3.30.0 "Quill Smart Fill" — Slice 3 SHIPPED (polish + Settings hookup).**
+Branch `feature/v3.30.0-quill-smart-fill`. Smart Fill is now configurable
+from Settings (model picker + provider + base URL + API-key env var),
+the Propose button shimmers while the local model thinks, and the
+empty state teaches the feature in five seconds with three real
+example pairings. Ready for Slice 4 (release).
 
-## This tick (2026-05-25 00:21–00:35 PT)
+## This tick (2026-05-25 00:55–01:05 PT)
 
-**MODE C — Develop.** Slice 2 of v3.30.0 — the WOW tick.
+**MODE C — Develop.** Slice 3 of v3.30.0 — polish + Settings AI hookup.
 
-- 96ffe61 — Slice 2.1: keymap action `quill.smartfill` (Mod+Shift+I)
-  in the Rust ActionId table + regression test
-- 8187dda — Slice 2.2: `QuillSmartFillPanel.svelte` with drag-drop
-  source + target zones, AI proposal diff UI, per-row accept/edit,
-  confidence chips, apply-via-forms_fill (+1 frontend QuillTab member,
-  +1 frontend ActionId)
-- 68b292c — Slice 2.3: wire into Hub TABS + NEXT_LABEL, command
-  palette ("Forms: Smart Fill from source doc" 🪄), shortcuts
-  overlay listing, global keydown handler in +page.svelte
-- *(this commit)* — Slice 2.4: marketing release notes for v3.30.0
-- Quality gates ALL CLEAN: cargo fmt ✓, clippy -D warnings ✓,
-  cargo test --lib keymap:: ✓ (42 pass, 1 new), pnpm check ✓ (0 errors)
-- ~700 net LOC frontend + ~25 LOC Rust + ~80 LOC release notes
-- Branch pushed → CI runs queued
+- 7cd097c — Slice 3.1: AI/Beacon Settings section + `beaconSettings.ts`
+  helper (read-modify-write, 5 Ollama presets, 3 OpenAI presets) +
+  7 new `settings.ai.*` i18n keys + 8 `quill.smartfill.*` keys
+  (+333 LOC, new file `src/lib/beaconSettings.ts`)
+- 303bf62 — Slice 3.2: shimmer + sparkle "thinking" animation on the
+  Propose button — accent-tinted 105° gradient + rotating ✦, pure CSS,
+  respects `prefers-reduced-motion` (+42 LOC)
+- cdf7c99 — Slice 3.3: designed empty state with 🪄 emoji + hero
+  title + 3 example source→target pairings, wired through i18n
+  (+100 LOC)
+- *(this commit)* — Slice 3.4: STATE.md + session log
 
-Buy-button test: **Pay-for-it ✓ + Tell-a-friend ✓**. Adobe charges
-extra for AI form-fill AND ships your file to their cloud. PDF Expert
-and Foxit don't ship offline AI form-fill at all. This is the wedge
-for the entire Quill arc.
+Quality gates ALL CLEAN: pnpm check ✓ (0 errors, 74 pre-existing
+a11y warnings), cargo fmt ✓, cargo clippy -D warnings ✓.
+
+~475 LOC across frontend (no Rust changes — backend already supports
+everything from earlier slices). Branch will push at end of tick.
+
+Buy-button test: **Pay-for-it ✓ + Notice-it ✓ + Tell-a-friend ✓**.
+Adobe Acrobat charges $239/yr for less. The shimmer + sparkle is the
+screenshot moment. The Settings AI section is the "wait, this is
+free?" moment for first-time users.
 
 ## Wow tracker
 
 LAST_WOW_TICK_AT: 2026-05-25T07:35:00Z (Smart Fill drag-drop +
-AI-proposal diff UI). 24h budget reset.
+AI-proposal diff UI shipped last tick). This tick added a *second*
+wow surface (shimmer + sparkle + designed empty state) but the budget
+was already covered.
 
 ## Recently closed issues
 
@@ -46,15 +51,13 @@ AI-proposal diff UI). 24h budget reset.
 
 ## Next ticks
 
-- **Tick 3 (Slice 3 — polish + release prep)**: Settings AI panel
-  hookup (provider/model picker for Smart Fill), empty-state copy
-  in the Hub when Smart Fill is selected with no input, a small
-  "shimmer/sparkle" animation on the Propose button while the
-  model is thinking, and the "Beacon model picker" cross-cutting
-  feature can fold in here.
-- **Tick 4 (Release MODE A → MODE B)**: version bump 3.29.0 →
-  3.30.0 in src-tauri/Cargo.toml + tauri.conf.json, merge
-  feature branch to main, tag v3.30.0, push, finalize via CI.
+- **Tick 4 (Slice 4 — RELEASE: MODE A → MODE B)**: version bump
+  3.29.0 → 3.30.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`,
+  `package.json`, refresh `Cargo.lock`, merge feature branch to
+  `main` with no-ff, tag `v3.30.0`, push, capture CI run id, then
+  in same tick if CI green: `gh release create v3.30.0` with the
+  6 customer-facing artifacts and the marketing notes already in
+  `docs/release-notes/v3.30.0.md` (or compose fresh).
 - Re-poll `gh issue list` at start of every tick (override active
   if any of #23-#27 reappear).
 
@@ -64,4 +67,4 @@ AI-proposal diff UI). 24h budget reset.
 | ----------------------------------- | ------------------- | -------------------------------------- |
 | `main`                              | v3.29.0 RELEASED    | Public release live, Docker live       |
 | `feature/v3.29.0-forms-tour`        | merged + released   | Safe to delete                         |
-| `feature/v3.30.0-quill-smart-fill`  | **Slice 2 done**    | 7 commits total; CI queued             |
+| `feature/v3.30.0-quill-smart-fill`  | **Slice 3 done**    | 10 commits total; ready for release    |
