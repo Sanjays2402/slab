@@ -55,6 +55,7 @@ export type ActionId =
   | "press.open"
   | "forms.open"
   | "quill.batch"
+  | "quill.designer"
   | "atelier.open"
   | "hopper.open";
 
