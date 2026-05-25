@@ -7,11 +7,13 @@ Last updated: 2026-05-24 22:23 PT by Cake (cron)
 **v3.29.0 "Forms Tour" — SHIPPED on `feature/v3.29.0-forms-tour`.**
 
 Branch pushed, CI run 26384738089 in progress. STATUS: DONE — ready to
-merge to main on the NEXT tick, after v3.28.0 finalize lands.
+merge to main on the NEXT tick.
 
-**v3.28.0 "Quill Hub" — still RELEASE_PENDING.** Bundle build on main
-(run 26384107071) was still in_progress at the end of this tick (~22 min
-elapsed). Finalize MODE B next tick.
+**v3.28.0 "Quill Hub" — RELEASED.** CI 26384107071 went green during
+this tick (caught it at the 22-min mark) and the release was published
+with all 6 artifacts (mac arm64+x64 dmg, linux x64 deb+AppImage, win
+x64 msi+nsis). Docker tag build 26384107036 already success.
+Release: https://github.com/Sanjays2402/slab/releases/tag/v3.28.0
 
 ## This tick (2026-05-24 22:07–22:23 PT)
 
@@ -54,13 +56,10 @@ spotlight + cubic-bezier-eased coachmark on first visit to Forms)
 
 ## Next ticks
 
-- **MODE A**: poll v3.28.0 CI (run 26384107071). When green:
-  - `gh run download 26384107071 --dir /tmp/slab-v3.28.0/`
-  - `gh release create v3.28.0 --title 'v3.28.0 — Quill Hub' --notes-file docs/release-notes/v3.28.0.md` + 6 artifacts.
-  - Verify Docker tag workflow on v3.28.0 (run 26384107036 — already success).
-- **THEN MODE A again**: merge `feature/v3.29.0-forms-tour` into main,
-  tag v3.29.0, push, watch CI run 26384738089 propagate to a tagged build.
-- After both finalize: re-poll `gh issue list`, then start the
+- **MODE A**: merge `feature/v3.29.0-forms-tour` into main, tag v3.29.0,
+  push, download artifacts from the resulting build, finalize the v3.29.0
+  GitHub release.
+- After v3.29.0 finalize: re-poll `gh issue list`, then start the
   **v0.10.0 Beacon** arc (Ollama-backed local PDF chat) — the
   long-promised buyer-magnet release per the roadmap. Specs at
   `.cron-state/proposals/v0.10.0-beacon-ai.md`.
@@ -69,5 +68,5 @@ spotlight + cubic-bezier-eased coachmark on first visit to Forms)
 
 | Branch                        | Status            | Notes                                  |
 | ----------------------------- | ----------------- | -------------------------------------- |
-| `main`                        | v3.28.0 tagged    | RELEASE_PENDING — CI in progress       |
-| `feature/v3.29.0-forms-tour`  | DONE — pushed     | Merge after v3.28.0 finalizes          |
+| `main`                        | v3.28.0 RELEASED  | Live on GitHub with 6 artifacts        |
+| `feature/v3.29.0-forms-tour`  | DONE — pushed     | Merge next tick                        |
