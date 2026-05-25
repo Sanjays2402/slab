@@ -37,12 +37,17 @@ LAST_WOW_TICK_AT: 2026-05-25T05:22:39Z (v3.29.0 Forms Tour — spotlight
 
 ## Next ticks
 
-- **v0.10.0 Beacon Slice 1**: `src-tauri/src/ai/provider.rs` trait +
-  `OllamaProvider` impl + `slab_beacon_chat` streaming Tauri command +
-  right-rail `BeaconChatPanel.svelte` skeleton with streaming UI +
-  palette entry + keyboard shortcut + STATE.md update.
+- **v3.30.0 "Quill Smart Fill" — plan promoted this tick.**
+  See `docs/plans/2026-05-24-v3.30.0-quill-smart-fill.md`. 4 slices, ~4 ticks.
+  Branch: `feature/v3.30.0-quill-smart-fill` (not yet created).
+  Tick 1 = Slice 1 (backend extractor + AI mapper + 10 unit tests).
 - Re-poll `gh issue list` at start of every tick (override still active
   if any of #23-#27 reappear).
+- Beacon AI (v0.10.0) deprioritized — that proposal predates the v3.x line
+  and the AI surface is already shipping piecemeal (auto-tag, citations,
+  glossary, summary, pii, selection-action, vision). Smart Fill is the
+  next high-leverage AI surface specifically because it closes the Quill
+  arc with a screenshot-worthy demo.
 
 ## Pipeline state
 
