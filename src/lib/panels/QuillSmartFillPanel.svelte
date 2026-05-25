@@ -327,11 +327,16 @@
   <div class="actions-row">
     <button
       class="primary"
+      class:thinking={status.kind === "working" && !proposal}
       onclick={runPropose}
       disabled={!hubInput || !sourceDoc || status.kind === "working"}
       data-testid="smartfill-propose"
     >
-      {status.kind === "working" && !proposal ? status.msg : "Propose with AI"}
+      {#if status.kind === "working" && !proposal}
+        <span class="sparkle" aria-hidden="true">✦</span>{status.msg}
+      {:else}
+        Propose with AI
+      {/if}
     </button>
     {#if proposal}
       <span class="counter">
@@ -665,5 +670,41 @@
     background: rgba(176, 48, 48, 0.12);
     color: #c63030;
     border: 1px solid rgba(176, 48, 48, 0.35);
+  }
+  /* v3.30.0 Slice 3.2 — Smart Fill "thinking" shimmer.
+     While the model is generating, the Propose button picks up a
+     diagonal accent shimmer + a rotating sparkle so the wait feels
+     intentional, not stuck. Pure CSS — zero JS animation cost. */
+  .primary.thinking {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(
+      105deg,
+      color-mix(in srgb, var(--accent) 30%, transparent) 0%,
+      var(--accent) 50%,
+      color-mix(in srgb, var(--accent) 30%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: smartfill-shimmer 1.6s linear infinite;
+    color: white;
+    border-color: transparent;
+  }
+  @keyframes smartfill-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .sparkle {
+    display: inline-block;
+    margin-right: 6px;
+    animation: smartfill-spin 2.2s linear infinite;
+    will-change: transform;
+  }
+  @keyframes smartfill-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .primary.thinking { animation: none; }
+    .sparkle { animation: none; }
   }
 </style>
