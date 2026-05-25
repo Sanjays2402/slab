@@ -1,49 +1,50 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 01:05 PT by Cake (cron)
+Last updated: 2026-05-25 01:21 PT by Cake (cron)
 
 ## Active version
 
-**v3.30.0 "Quill Smart Fill" — Slice 3 SHIPPED (polish + Settings hookup).**
-Branch `feature/v3.30.0-quill-smart-fill`. Smart Fill is now configurable
-from Settings (model picker + provider + base URL + API-key env var),
-the Propose button shimmers while the local model thinks, and the
-empty state teaches the feature in five seconds with three real
-example pairings. Ready for Slice 4 (release).
+**v3.30.0 "Quill Smart Fill" — MERGED to main + TAGGED. CI in progress.**
+Awaiting CI green to finalize the GitHub release with artifacts.
 
-## This tick (2026-05-25 00:55–01:05 PT)
+## This tick (2026-05-25 01:17–01:22 PT)
 
-**MODE C — Develop.** Slice 3 of v3.30.0 — polish + Settings AI hookup.
+**MODE A — Release.** Slice 4 of v3.30.0 shipped end-to-end.
 
-- 7cd097c — Slice 3.1: AI/Beacon Settings section + `beaconSettings.ts`
-  helper (read-modify-write, 5 Ollama presets, 3 OpenAI presets) +
-  7 new `settings.ai.*` i18n keys + 8 `quill.smartfill.*` keys
-  (+333 LOC, new file `src/lib/beaconSettings.ts`)
-- 303bf62 — Slice 3.2: shimmer + sparkle "thinking" animation on the
-  Propose button — accent-tinted 105° gradient + rotating ✦, pure CSS,
-  respects `prefers-reduced-motion` (+42 LOC)
-- cdf7c99 — Slice 3.3: designed empty state with 🪄 emoji + hero
-  title + 3 example source→target pairings, wired through i18n
-  (+100 LOC)
-- *(this commit)* — Slice 3.4: STATE.md + session log
+- 107e1f7 — chore(release): version bump 3.29.0 → 3.30.0 in
+  package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json,
+  Cargo.lock refresh
+- 91de8af — Merge commit (--no-ff) feature/v3.30.0-quill-smart-fill → main
+  (25 files changed, 3092 insertions, 43 deletions across 10 feature commits)
+- Tag `v3.30.0` annotated and pushed
+- Pushed `main` + tag to origin
 
-Quality gates ALL CLEAN: pnpm check ✓ (0 errors, 74 pre-existing
-a11y warnings), cargo fmt ✓, cargo clippy -D warnings ✓.
+Quality gates ALL CLEAN before merge:
+- pnpm check ✓ (0 errors, 74 pre-existing a11y warnings)
+- cargo fmt ✓
+- cargo clippy --all-targets -D warnings ✓
+- cargo test --lib ✓ (1765 passed)
 
-~475 LOC across frontend (no Rust changes — backend already supports
-everything from earlier slices). Branch will push at end of tick.
+## Release pending
 
-Buy-button test: **Pay-for-it ✓ + Notice-it ✓ + Tell-a-friend ✓**.
-Adobe Acrobat charges $239/yr for less. The shimmer + sparkle is the
-screenshot moment. The Settings AI section is the "wait, this is
-free?" moment for first-time users.
+RELEASE_PENDING: v3.30.0 — merge SHA 91de8af, tag v3.30.0
+- build (main): run 26390862691
+- Docker (slab-server) on tag v3.30.0: run 26390862476
+- deploy-try (main): run 26390862687
+- pages-build-deployment: run 26390861907
+
+Next tick (MODE B): if CI green →
+  `gh run download 26390862691 --dir /tmp/slab-release-3.30.0`
+  curate 6 best artifacts (macos-arm64.dmg, macos-x64.dmg,
+  linux x64 .deb + .AppImage, windows .msi + nsis)
+  `gh release create v3.30.0 --title 'v3.30.0 — Quill Smart Fill'
+   --notes-file docs/release-notes/v3.30.0.md` + upload artifacts.
 
 ## Wow tracker
 
 LAST_WOW_TICK_AT: 2026-05-25T07:35:00Z (Smart Fill drag-drop +
-AI-proposal diff UI shipped last tick). This tick added a *second*
-wow surface (shimmer + sparkle + designed empty state) but the budget
-was already covered.
+AI proposal diff UI shipped earlier tonight). v3.30.0 itself IS
+the wow — public release publishing next tick.
 
 ## Recently closed issues
 
@@ -51,20 +52,21 @@ was already covered.
 
 ## Next ticks
 
-- **Tick 4 (Slice 4 — RELEASE: MODE A → MODE B)**: version bump
-  3.29.0 → 3.30.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`,
-  `package.json`, refresh `Cargo.lock`, merge feature branch to
-  `main` with no-ff, tag `v3.30.0`, push, capture CI run id, then
-  in same tick if CI green: `gh release create v3.30.0` with the
-  6 customer-facing artifacts and the marketing notes already in
-  `docs/release-notes/v3.30.0.md` (or compose fresh).
-- Re-poll `gh issue list` at start of every tick (override active
-  if any of #23-#27 reappear).
+- **Tick 1 (NEXT, MODE B)**: finalize GH release for v3.30.0 once CI green.
+  Poll `gh run view 26390862691`. If failed → investigate logs, hotfix to
+  v3.30.1. If success → create release with artifacts + marketing notes.
+- **Tick 2 onwards**: re-poll issue list at start; if empty, start the
+  next roadmap item. Suggested next: **v3.31.0 "Atlas Lite"** — Recent
+  Files panel with thumbnails + last-position resume + tag/collection
+  sidebar (cross-cutting feature from the roadmap; high pick-us value
+  vs Acrobat which doesn't surface recents well). Or **v3.31.0
+  "Theater"** — full-screen presenter mode (Buy-Button: tell-a-friend).
+  Sanjay can vote; default = Atlas Lite.
 
 ## Pipeline state
 
 | Branch                              | Status              | Notes                                  |
 | ----------------------------------- | ------------------- | -------------------------------------- |
-| `main`                              | v3.29.0 RELEASED    | Public release live, Docker live       |
+| `main`                              | **v3.30.0 TAGGED**  | CI in progress, release pending        |
+| `feature/v3.30.0-quill-smart-fill`  | merged              | Safe to delete after release published |
 | `feature/v3.29.0-forms-tour`        | merged + released   | Safe to delete                         |
-| `feature/v3.30.0-quill-smart-fill`  | **Slice 3 done**    | 10 commits total; ready for release    |
