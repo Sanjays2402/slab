@@ -1,72 +1,60 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 04:35 PT by Cake (cron)
+Last updated: 2026-05-25 04:55 PT by Cake (cron)
 
 ## Active version
 
-**v3.32.0 "Atlas" — DONE on `feature/v3.32.0-atlas`. Merge + tag next tick.**
+**v3.32.0 "Atlas" — MERGED to main + TAGGED + PUSHED. CI in progress.**
 
-Branch is feature-complete: Collections backend + Smart Collections +
-Tauri commands + sidebar UI with pulsing badges + release notes.
-Quality gates green (1771 tests pass, clippy + svelte-check clean).
-
-## This tick (2026-05-25 03:53–04:40 PT) — DOUBLE-SHIP
-
-**MODE B + MODE C in one tick.**
-
-### Mode B — v3.31.0 finalized
-- CI run 26395604737 completed success across all 7 jobs.
-- `gh release create v3.31.0 — Atlas Lite` with 6 artifacts:
-  macOS arm64 + x64 dmgs, Linux deb + AppImage, Windows nsis + msi.
-- Release notes lead with "Slab now opens where you left off."
-
-### Mode C — v3.32.0 Atlas shipped end-to-end
-4 commits on `feature/v3.32.0-atlas`:
-- `b6f5017` feat(library): collections schema + Rust module (514 LOC, 6 tests)
-- `f6ecbdf` feat(commands): 11 Tauri commands wired into invoke_handler
-- `8e042e1` feat(ui): CollectionsSidebar with pulsing badges (521 LOC)
-- `<release>` chore(release): bump to 3.32.0 + notes + spec
-
-~1400 net LOC, end-to-end working capability (schema → DB → commands →
-client bindings → sidebar → filter override). Buy-Button passes:
-"Pick-us test" beats both Acrobat's cloud-only collections and
-PDF Expert's Mac-only Folders.
+Merge SHA `a1225f9`. Build workflow run `26399157609` (queued/running).
+Docker workflow `26399160794` running. Tag `v3.32.0` pushed.
 
 ## Release pending
 
-(none yet — Atlas will become RELEASE_PENDING next tick when merged.)
+RELEASE_PENDING: v3.32.0 — merge SHA a1225f9, tag v3.32.0,
+build run 26399157609, docker run 26399160794.
+
+Next tick: poll those two runs. If green → `gh run download` →
+`gh release create v3.32.0 --title "v3.32.0 — Atlas" --notes-file
+docs/release-notes/v3.32.0.md` + upload 6 artifacts.
+
+## This tick (2026-05-25 04:48–04:55 PT) — MODE A
+
+- Recovered 13 GiB by `cargo clean` (target was 14 GiB, disk at 100%).
+- Quality gates on main: fmt OK, clippy clean, 1771 tests pass,
+  pnpm check 0 errors (99 a11y warnings, pre-existing).
+- Merged `feature/v3.32.0-atlas` into main (no-ff), 1441 insertions
+  across 15 files. Tagged + pushed.
 
 ## Wow tracker
 
 LAST_WOW_TICK_AT: 2026-05-25T11:40:00Z — Atlas pulsing count badges
-on Collections (scale 1.18 + accent fill, 220ms spring) when a fresh
-doc lands. Demo-able: drag, drop, badge bounces.
+(scale 1.18 + accent, 220ms spring) on Collections sidebar.
 Next BIG wow due by ~2026-05-26 11:40 UTC.
 
 ## Recently closed issues
 
-- v3.31.0 released (no GitHub issue tracked).
-- v3.32.0 spec'd + shipped on feature branch this tick.
-
-## Queued plans
-
-- `.cron-state/proposals/v3.32.0-atlas.md` — DONE (folded 9 tasks
-  into one BIG tick).
-- Next: v3.33.0 — likely "drag-from-doc-card to collection" UX plus
-  per-collection sort + smart-collection builder UI (currently the
-  user can only see the two seeded defaults). Spec next tick.
+- v3.31.0 released (no GH issue tracked).
+- v3.32.0 merged + tagged this tick (RELEASE_PENDING).
 
 ## Next ticks
 
-- **Tick 1 (NEXT, MODE A → B)**: merge `feature/v3.32.0-atlas` to
-  main, tag `v3.32.0`, push, watch CI run, finalize release.
-- **Tick 2**: start v3.33.0 — Smart Collection builder modal (pick
-  filters, name it, save) + drag-from-card-to-rail UX.
+- **Tick 1 (NEXT, MODE B)**: poll CI runs 26399157609 + 26399160794.
+  If green → finalize v3.32.0 GitHub release with 6 artifacts.
+  If failing → read log, fix, hotfix on a follow-up branch.
+- **Tick 2 (MODE C)**: start v3.33.0 — Smart Collection builder
+  modal (filter picker UI) + drag-from-doc-card to collection rail.
 
 ## Pipeline state
 
 | Branch                              | Status                | Notes                                  |
 | ----------------------------------- | --------------------- | -------------------------------------- |
-| `main`                              | v3.31.0 RELEASED      | Quill Smart Fill → Atlas Lite shipped  |
-| `feature/v3.32.0-atlas`             | **DONE, ready to merge** | 4 commits, all gates green          |
+| `main`                              | v3.32.0 tagged, CI WIP | Atlas Collections shipped              |
+| `feature/v3.32.0-atlas`             | merged                | Safe to delete                         |
 | `feature/v3.31.0-atlas-lite`        | merged + released     | Safe to delete                         |
+
+## Notes / housekeeping
+
+- Disk: src-tauri/target was 14 GiB, cleaned. Watch for fill again.
+- 99 pre-existing svelte a11y warnings in SignetPanel.svelte etc. —
+  not blocking but worth a polish tick.
