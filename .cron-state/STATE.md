@@ -1,44 +1,45 @@
 # Slab Cron State
 
-Last updated: 2026-05-24 20:43 PT by Cake (cron)
+Last updated: 2026-05-24 20:58 PT by Cake (cron)
 
 ## Active version
 
-**v3.27.0 "Quill Auto-Detect" — SHIPPED. Tag pushed, CI in flight.**
+**v3.27.0 "Quill Auto-Detect" — tag pushed, CI still building bundles.**
 - Merge SHA on main: bcfabb2
 - Tag: v3.27.0
-- CI runs in_progress: build 26381993650, deploy-try 26381993651, Docker(v3.27.0) 26381993649
-- v3.26.0 fully green (build 26381227405, Docker v3.26.0 26381227331 — all completed/success).
+- build run 26381993650: cargo test ✓ (mac-arm64, win-x64, linux-x64) — bundles still in_progress (~17 min in)
+- deploy-try 26381993651 ✓ success
+- Docker(v3.27.0) 26381993649 ✓ success
 
 ## RELEASE_PENDING
 
-v3.27.0 — merge SHA bcfabb2 on main, tag v3.27.0, CI runs 26381993650 / 26381993651 / 26381993649
+v3.27.0 — merge SHA bcfabb2, tag v3.27.0, build run 26381993650 (bundles in flight). Next tick: poll CI, on green run `gh run download 26381993650` → `gh release create v3.27.0 --notes-file docs/release-notes/v3.27.0.md` + upload 6 artifacts.
 
-v3.26.0 — CI all green; release artifacts still need to be downloaded + attached to the release page. Carry-over from previous tick.
+## This tick (2026-05-24 20:50–20:58 PT)
+
+**v3.26.0 release artifacts ATTACHED** — closed the carry-over from prior tick.
+- Downloaded all 4 bundle artifacts from CI run 26381227405 (all green) into /tmp/slab-v3.26.0/.
+- Uploaded 6 curated artifacts to release v3.26.0:
+  - Slab_3.26.0_aarch64.dmg (macOS Apple Silicon)
+  - Slab_3.26.0_x64.dmg (macOS Intel)
+  - Slab_3.26.0_amd64.deb (Linux)
+  - Slab_3.26.0_amd64.AppImage (Linux portable)
+  - Slab_3.26.0_x64-setup.exe (Windows NSIS)
+  - Slab_3.26.0_x64_en-US.msi (Windows MSI)
+- v3.26.0 release page now has full cross-platform download set live.
+
+This is a MODE B finalize tick. No new code shipped this tick — but downloadable installers for a major Quill Designer release crossed the line from "tagged" to "actually usable by paying customers."
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T03:42:35Z (v3.27.0 Quill Auto-Detect — heuristic form-field detector; drag a flat PDF, get fillable AcroForm in one click. Adobe's "Prepare Form" replacement, free + offline.)
+LAST_WOW_TICK_AT: 2026-05-25T03:42:35Z (v3.27.0 Quill Auto-Detect — heuristic form-field detector)
 
 ## Recently closed issues
 
-(none — issues #23-#27 not re-polled this tick due to back-to-back releases; next tick should re-poll)
-
-## What shipped this tick (v3.27.0 — 3 commits on feature branch + merge, ~2080 net LOC)
-
-1. (prior tick) `pdf/forms_detect.rs` 845 LOC + 15 unit tests — DTOs, content-stream scan for rects/checkbox glyphs/labels, confidence scoring, dedup. Slices 1-5.
-2. (prior tick) `b003731` — Tauri command `slab_forms_autodetect` + `ActionId::QuillAutodetectOpen` (Mod+Shift+Y, group Forms) + ActionId TS union. Slice 6.
-3. `c5154f3` — `QuillAutodetectPanel.svelte` (753 LOC) + `+page.svelte` import/panel registry/keyboard handler/conditional render. Slice 7.
-4. `6d346c9` — version bump 3.26.0→3.27.0 (Cargo.toml, package.json, tauri.conf.json) + release notes + clippy collapse fix in forms_detect.rs.
-5. Merge `bcfabb2` to main --no-ff, tagged `v3.27.0`, pushed origin main --follow-tags.
-
-Buy-Button PASS: Adobe Acrobat's auto-detect is THE selling point of "Prepare Form" ($239/yr). Slab now ships it free, offline, cross-platform, with confidence chips on every guess. Pairs with v3.26.0 Designer (manual authoring) and v3.25.0 Batch (CSV fill).
-
-Quality gates green on main: cargo fmt --check, cargo clippy --all-targets -D warnings, cargo test --lib (1740 tests, 15 new), pnpm check (0 errors).
+(none — issue list still empty per last poll)
 
 ## Next ticks
 
-- **MODE B (next tick)**: poll v3.27.0 CI run IDs above. On green, `gh release create v3.27.0 --notes-file docs/release-notes/v3.27.0.md` + download/attach artifacts.
-- Also finalize v3.26.0 artifacts (still pending attach).
+- **MODE B next tick**: poll v3.27.0 build run 26381993650. On green, download artifacts + `gh release create v3.27.0 --notes-file docs/release-notes/v3.27.0.md` with 6 artifacts.
 - Then re-poll `gh issue list` for #23-#27 priority override.
 - Then v3.28.0 Quill Hub per `docs/plans/2026-05-24-v3.28.0-quill-hub.md` (queued).
