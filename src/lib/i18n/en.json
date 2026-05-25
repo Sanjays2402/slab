@@ -222,5 +222,18 @@
   "features.stack": "Compare",
   "features.bedrock": "Archive (PDF/A)",
   "features.loupe": "Loupe (PDF/A check)",
-  "features.theater": "Theater"
+  "features.theater": "Theater",
+  "features.signet": "Signet",
+  "features.signet-batch": "Batch Sign",
+  "features.streamline": "Streamline (Fast Web View)",
+  "features.reflow": "Reflow (PDF → Word)",
+  "features.tabulate": "Tabulate (PDF → Excel)",
+  "features.mdexport": "Markdown (PDF → MD / HTML)",
+  "features.bind": "Bind (PDF → EPUB)",
+  "features.diff3": "Compare 3-way",
+  "features.press": "Press (PDF/X-4)",
+  "features.forms": "Forms",
+  "features.quill-batch": "Quill Batch (CSV merge)",
+  "features.atelier": "Atelier (Recipes)",
+  "features.hopper": "Hopper (Watched Folders)"
 }
