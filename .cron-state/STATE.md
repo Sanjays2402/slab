@@ -1,54 +1,52 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 05:30 PT by Cake (cron) — planning tick
+Last updated: 2026-05-25 06:02 PT by Cake (cron) — MODE B finalize
 
 ## Active version
 
-**v3.32.0 "Atlas" — MERGED to main + TAGGED + PUSHED. CI in progress.**
+**v3.32.0 "Atlas" — RELEASED. https://github.com/Sanjays2402/slab/releases/tag/v3.32.0**
 
-Merge SHA `a1225f9`. Build workflow run `26399157609` (queued/running).
-Docker workflow `26399160794` running. Tag `v3.32.0` pushed.
+CI green (build run 26399157609, docker run 26399160794). All 6 artifacts uploaded
+(macos-arm64 dmg, macos-x64 dmg, linux deb + AppImage, windows msi + nsis).
+Merged feature branches deleted locally.
 
 ## Release pending
 
-RELEASE_PENDING: v3.32.0 — merge SHA a1225f9, tag v3.32.0,
-build run 26399157609, docker run 26399160794.
+(none)
 
-Next tick: poll those two runs. If green → `gh run download` →
-`gh release create v3.32.0 --title "v3.32.0 — Atlas" --notes-file
-docs/release-notes/v3.32.0.md` + upload 6 artifacts.
+## This tick (2026-05-25 06:01–06:05 PT) — MODE B
 
-## This tick (2026-05-25 04:48–04:55 PT) — MODE A
-
-- Recovered 13 GiB by `cargo clean` (target was 14 GiB, disk at 100%).
-- Quality gates on main: fmt OK, clippy clean, 1771 tests pass,
-  pnpm check 0 errors (99 a11y warnings, pre-existing).
-- Merged `feature/v3.32.0-atlas` into main (no-ff), 1441 insertions
-  across 15 files. Tagged + pushed.
+- Polled both CI runs → both `success`.
+- Downloaded 6 artifacts from build run 26399157609.
+- `gh release create v3.32.0 --title "v3.32.0 — Atlas"` with release notes
+  from `docs/release-notes/v3.32.0.md`. Release URL above.
+- Cleaned up: deleted merged feature branches `v3.32.0-atlas` and
+  `v3.31.0-atlas-lite` locally.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T11:40:00Z — Atlas pulsing count badges
-(scale 1.18 + accent, 220ms spring) on Collections sidebar.
-Next BIG wow due by ~2026-05-26 11:40 UTC.
+LAST_WOW_TICK_AT: 2026-05-25T11:40:00Z — Atlas pulsing count badges on
+Collections sidebar. Next BIG wow due by ~2026-05-26 11:40 UTC.
 
 ## Recently closed issues
 
 - v3.31.0 released (no GH issue tracked).
-- v3.32.0 merged + tagged this tick (RELEASE_PENDING).
+- v3.32.0 released this tick.
 
 ## Next ticks
 
-- **Tick 1 (NEXT, MODE B)**: poll CI runs 26399157609 + 26399160794.
-  If green → finalize v3.32.0 GitHub release with 6 artifacts.
-  If failing → read log, fix, hotfix on a follow-up branch.
-- **Tick 2 (MODE C)**: execute v3.33.0 "Atlas Smart" plan at
-  `docs/plans/2026-05-25-v3.33.0-atlas-smart.md` (6 tasks, ≥6 commits,
-  end-to-end Smart Collection builder + drag-to-collection).
+- **Tick 1 (NEXT, MODE C)**: Execute v3.33.0 "Atlas Smart" plan at
+  `docs/plans/2026-05-25-v3.33.0-atlas-smart.md`. Create branch
+  `feature/v3.33.0-atlas-smart` from main. Aim for Tasks 1-3 first tick
+  (backend + Tauri command + SmartCollectionBuilder modal) = ≥4 commits,
+  ≥600 LOC. Buy-Button: Pick-us (Smart Mailboxes for PDF) + Tell-a-friend
+  (live preview pane).
+- **Tick 2**: Complete Tasks 4-6 (sidebar wiring + drag-to-collection +
+  release prep). Merge + tag + release v3.33.0.
 
-## v3.33.0 plan written this tick
+## v3.33.0 plan
 
-Plan at `docs/plans/2026-05-25-v3.33.0-atlas-smart.md` covers:
+Plan at `docs/plans/2026-05-25-v3.33.0-atlas-smart.md`. 6 tasks:
 - Task 1: backend `update_smart_collection` + unit test
 - Task 2: Tauri command + TS wrapper
 - Task 3: `SmartCollectionBuilder.svelte` modal w/ live preview
@@ -56,20 +54,15 @@ Plan at `docs/plans/2026-05-25-v3.33.0-atlas-smart.md` covers:
 - Task 5: drag-from-doc-card → collection rail
 - Task 6: release prep (3.33.0 version bump + release notes)
 
-Branch will be `feature/v3.33.0-atlas-smart`. Buy-Button test: Pick-us
-(Smart Mailboxes for PDF, Adobe/PDF Expert have no equivalent) + Tell-a-friend
-(live preview pane + pulsing count badge on add).
-
 ## Pipeline state
 
 | Branch                              | Status                | Notes                                  |
 | ----------------------------------- | --------------------- | -------------------------------------- |
-| `main`                              | v3.32.0 tagged, CI WIP | Atlas Collections shipped              |
-| `feature/v3.32.0-atlas`             | merged                | Safe to delete                         |
-| `feature/v3.31.0-atlas-lite`        | merged + released     | Safe to delete                         |
+| `main`                              | v3.32.0 released      | Atlas Collections live on GitHub       |
+| `feature/v3.33.0-atlas-smart`       | not yet created       | Next tick: create + Task 1-3           |
 
 ## Notes / housekeeping
 
-- Disk: src-tauri/target was 14 GiB, cleaned. Watch for fill again.
+- Disk: src-tauri/target was 14 GiB, cleaned last tick. Watch for fill again.
 - 99 pre-existing svelte a11y warnings in SignetPanel.svelte etc. —
-  not blocking but worth a polish tick.
+  not blocking but worth a polish tick eventually.
