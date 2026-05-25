@@ -931,6 +931,18 @@
               class:vim-focused={i === vimFocusIdx}
               role="button"
               tabindex="0"
+              draggable={true}
+              ondragstart={(e) => {
+                if (!e.dataTransfer) return;
+                e.dataTransfer.effectAllowed = "copy";
+                e.dataTransfer.setData(
+                  "application/x-slab-doc-ids",
+                  JSON.stringify([d.id]),
+                );
+                // Also stash the title for friendlier drag previews on
+                // platforms that surface text/plain in the OS overlay.
+                e.dataTransfer.setData("text/plain", displayTitle(d));
+              }}
               oncontextmenu={(e) => openMenuFor(e, d)}
               onclick={() => openDocInTab(d)}
               onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") openDocInTab(d); }}
