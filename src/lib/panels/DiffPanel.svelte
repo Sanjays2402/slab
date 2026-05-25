@@ -2,6 +2,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
+  import { isInTauri } from "$lib/tauri";
+
+  const inTauri = isInTauri();
 
   // --- Backend DTOs (mirror src-tauri/src/pdf/diff.rs) ---
   type DiffOp = "equal" | "insert" | "delete";
@@ -289,7 +292,7 @@
     <div class="picker">
       <div class="picker-label">Old (left)</div>
       {#if !oldPath}
-        <button class="dropzone" onclick={pickOld}>
+        <button class="dropzone" onclick={pickOld} disabled={!inTauri}>
           <span class="dz-icon">+</span>
           <span class="dz-title">Pick the older PDF</span>
         </button>
@@ -310,7 +313,7 @@
     <div class="picker">
       <div class="picker-label">New (right)</div>
       {#if !newPath}
-        <button class="dropzone" onclick={pickNew}>
+        <button class="dropzone" onclick={pickNew} disabled={!inTauri}>
           <span class="dz-icon">+</span>
           <span class="dz-title">Pick the newer PDF</span>
         </button>
@@ -328,6 +331,15 @@
       {/if}
     </div>
   </div>
+
+  {#if !inTauri && !oldPath && !newPath}
+    <div class="note">
+      Diff needs the Slab desktop app — the web preview can&rsquo;t open local
+      PDFs or run the comparison engine. Install Slab to compare two PDFs
+      side-by-side with word-level redline, AI summaries, and exportable
+      reports.
+    </div>
+  {/if}
 
   <div class="actions">
     <button
@@ -708,5 +720,15 @@
   }
   .redline .word-eq {
     opacity: 0.78;
+  }
+  .note {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
   }
 </style>
