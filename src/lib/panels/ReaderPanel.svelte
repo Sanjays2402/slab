@@ -7,6 +7,7 @@
   import { basename, formatBytes, stripExt } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
+  import RecentsHome from "$lib/components/RecentsHome.svelte";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -1344,61 +1345,15 @@
 </header>
 
 {#if !doc}
-  <section class="panel">
-    <button class="dropzone" onclick={pickFile} disabled={loading}>
-      <span class="dz-icon">+</span>
-      <span class="dz-title">{loading ? "Loading…" : "Open a document"}</span>
-      <span class="dz-hint">PDF, Office, HTML, EPUB & more — drop or click. <span class="dz-kbd">⌘K</span> to jump anywhere.</span>
-    </button>
+  <section class="panel home-panel">
+    <RecentsHome
+      onOpen={(r) => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)}
+      onPick={pickFile}
+      onContinue={() => { /* hook reserved for analytics / cmd-palette signal */ }}
+      loading={loading}
+    />
     {#if loadError}
       <div class="status err">✕ {loadError}</div>
-    {/if}
-    {#if recents.length > 0}
-      <div class="recent-block">
-        <div class="recent-head">
-          <span class="recent-label">Recent</span>
-        </div>
-        <div class="recent-grid">
-          {#each recents as r (r.path)}
-            {@const thumb = getRecentThumb(r.path)}
-            <div class="recent-card-wrap" class:pinned={r.pinned}>
-              <button class="recent-card" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
-                <div class="recent-thumb">
-                  {#if thumb}
-                    <img src={thumb} alt="" loading="lazy" />
-                  {:else}
-                    <span class="recent-thumb-placeholder">PDF</span>
-                  {/if}
-                  {#if r.pinned}
-                    <span class="recent-pin-flag" title="Pinned">📌</span>
-                  {/if}
-                </div>
-                <div class="recent-card-body">
-                  <span class="recent-card-name">{r.name}</span>
-                  <span class="recent-card-meta">
-                    {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
-                  </span>
-                </div>
-              </button>
-              <div class="recent-card-actions">
-                <button
-                  class="recent-act"
-                  class:active={r.pinned}
-                  title={r.pinned ? "Unpin" : "Pin to top"}
-                  aria-label={r.pinned ? "Unpin" : "Pin to top"}
-                  onclick={(e) => { e.stopPropagation(); pinRecent(r.path); recents = listRecent(); notify.success(r.pinned ? `Unpinned ${r.name}` : `Pinned ${r.name}`); }}
-                >📌</button>
-                <button
-                  class="recent-act danger"
-                  title="Remove from recents"
-                  aria-label="Remove from recents"
-                  onclick={(e) => { e.stopPropagation(); removeRecent(r.path); recents = listRecent(); notify.info(`Removed ${r.name} from recents`); }}
-                >✕</button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
     {/if}
   </section>
 {/if}

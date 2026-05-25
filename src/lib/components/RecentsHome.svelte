@@ -1,0 +1,481 @@
+<script lang="ts">
+  // Atlas Lite — RecentsHome
+  //
+  // Slab's first-launch hero: the "Continue reading" card + pinned row + the
+  // full recents grid with thumbnails and progress dots. Replaces the bare
+  // empty-state that ReaderPanel rendered when no document was open.
+  //
+  // Buy-Button rationale:
+  //   - Acrobat's Home tab is universally hated for being noisy and slow.
+  //   - PDF Expert's recents are flat — no progress, no resume.
+  //   - We pick the one feature both miss (resume) and make it the hero.
+  //
+  // This component is read-only state: it derives everything from the
+  // `listRecent()` store and re-subscribes via `subscribeRecent`. Mutation
+  // helpers (pin / remove) are wired through callbacks the parent passes in.
+
+  import {
+    listRecent,
+    subscribeRecent,
+    formatRelTime,
+    getRecentThumb,
+    pinRecent,
+    removeRecent,
+    type RecentFile,
+  } from "$lib/recent";
+  import { notify } from "$lib/notify";
+  import { basename } from "$lib/types";
+  import { onMount, onDestroy } from "svelte";
+
+  type Props = {
+    onOpen: (file: RecentFile) => void;
+    onPick?: () => void;            // "Open a document" pick-from-disk
+    onContinue?: () => void;        // "Continue reading" big button
+    loading?: boolean;
+  };
+  let { onOpen, onPick, onContinue, loading = false }: Props = $props();
+
+  let recents = $state<RecentFile[]>(listRecent());
+  let unsub: (() => void) | null = null;
+  onMount(() => {
+    unsub = subscribeRecent((files) => {
+      recents = files;
+    });
+  });
+  onDestroy(() => {
+    unsub?.();
+  });
+
+  // The "Continue reading" hero card surfaces the single most useful next
+  // action: the file with the freshest reading progress. We prefer files
+  // that have a lastPage *and* are not already at the end. Pinned items
+  // are eligible but don't dominate — the hero is about momentum, not
+  // a curated favourites shelf.
+  const continueCandidate = $derived.by<RecentFile | null>(() => {
+    const withProgress = recents
+      .filter((r) => r.lastPage && r.totalPages && r.lastPage < r.totalPages)
+      .sort((a, b) => (b.lastReadAt ?? b.openedAt) - (a.lastReadAt ?? a.openedAt));
+    if (withProgress.length > 0) return withProgress[0];
+    // Fall back to most recent file even without progress (first-open case).
+    return recents[0] ?? null;
+  });
+
+  const pinned = $derived(recents.filter((r) => r.pinned));
+  // Everything except the hero candidate (avoid duplication) and pinned
+  // items (already shown in their own row, unless we have <4 pinned).
+  const others = $derived.by(() => {
+    const heroPath = continueCandidate?.path;
+    const pinnedPaths = new Set(pinned.map((p) => p.path));
+    return recents.filter((r) => {
+      if (r.path === heroPath) return false;
+      if (pinnedPaths.has(r.path)) return false;
+      return true;
+    });
+  });
+
+  function progressPct(r: RecentFile): number {
+    if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round((r.lastPage / r.totalPages) * 100)));
+  }
+
+  function dots(r: RecentFile, count = 8): boolean[] {
+    if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return [];
+    const filled = Math.round((r.lastPage / r.totalPages) * count);
+    return Array.from({ length: count }, (_, i) => i < filled);
+  }
+
+  function handlePin(e: MouseEvent, r: RecentFile) {
+    e.stopPropagation();
+    pinRecent(r.path);
+    notify.success(r.pinned ? `Unpinned ${r.name}` : `Pinned ${r.name}`);
+  }
+
+  function handleRemove(e: MouseEvent, r: RecentFile) {
+    e.stopPropagation();
+    removeRecent(r.path);
+    notify.info(`Removed ${r.name} from recents`);
+  }
+
+  function continueReading() {
+    if (continueCandidate) {
+      onContinue?.();
+      onOpen(continueCandidate);
+    }
+  }
+
+  // Pulse animation trigger: when continueCandidate changes (i.e. on resume
+  // landing), the progress bar pulses once to draw the eye.
+  let heroKey = $state(0);
+  $effect(() => {
+    // touch the path so $derived reruns
+    const _path = continueCandidate?.path;
+    heroKey++;
+    void _path;
+  });
+</script>
+
+<div class="recents-home">
+  {#if continueCandidate && continueCandidate.lastPage && continueCandidate.totalPages}
+    <!-- Hero: a user with reading momentum gets resume as the headline. -->
+    <button class="hero-card resume" onclick={continueReading} title={continueCandidate.path}>
+      <div class="hero-thumb">
+        {#if getRecentThumb(continueCandidate.path)}
+          <img src={getRecentThumb(continueCandidate.path)} alt="" loading="eager" />
+        {:else}
+          <span class="hero-thumb-placeholder">PDF</span>
+        {/if}
+      </div>
+      <div class="hero-body">
+        <span class="hero-eyebrow">Continue reading</span>
+        <h2 class="hero-title">{continueCandidate.name}</h2>
+        <p class="hero-meta">
+          Page {continueCandidate.lastPage} of {continueCandidate.totalPages}
+          · {formatRelTime(continueCandidate.lastReadAt ?? continueCandidate.openedAt)}
+        </p>
+        <div class="progress-track" aria-label="Reading progress">
+          {#key heroKey}
+            <div class="progress-fill pulse" style="width: {progressPct(continueCandidate)}%"></div>
+          {/key}
+        </div>
+        <div class="hero-cta">Resume <span class="hero-kbd">⌘0</span></div>
+      </div>
+    </button>
+  {:else if continueCandidate}
+    <!-- Hero (no progress yet): big "open last document" card. -->
+    <button class="hero-card cold" onclick={continueReading} title={continueCandidate.path}>
+      <div class="hero-thumb">
+        {#if getRecentThumb(continueCandidate.path)}
+          <img src={getRecentThumb(continueCandidate.path)} alt="" loading="eager" />
+        {:else}
+          <span class="hero-thumb-placeholder">PDF</span>
+        {/if}
+      </div>
+      <div class="hero-body">
+        <span class="hero-eyebrow">Most recent</span>
+        <h2 class="hero-title">{continueCandidate.name}</h2>
+        <p class="hero-meta">
+          {#if continueCandidate.pageCount}{continueCandidate.pageCount} pages · {/if}
+          {formatRelTime(continueCandidate.openedAt)}
+        </p>
+        <div class="hero-cta">Open <span class="hero-kbd">⌘0</span></div>
+      </div>
+    </button>
+  {:else}
+    <!-- True empty state — first launch -->
+    <button class="hero-card empty" onclick={() => onPick?.()} disabled={loading}>
+      <div class="empty-icon">+</div>
+      <div class="hero-body">
+        <h2 class="hero-title">{loading ? "Loading…" : "Open your first document"}</h2>
+        <p class="hero-meta">
+          PDF, Office, HTML, EPUB, CSV, images. Drag-drop or click. Files stay on your machine.
+        </p>
+        <div class="hero-cta">Choose a file <span class="hero-kbd">⌘O</span></div>
+      </div>
+    </button>
+  {/if}
+
+  {#if pinned.length > 0}
+    <section class="row">
+      <header class="row-head">
+        <span class="row-label">Pinned</span>
+        <span class="row-hint">{pinned.length} file{pinned.length === 1 ? "" : "s"}</span>
+      </header>
+      <div class="row-strip">
+        {#each pinned as r (r.path)}
+          {@const thumb = getRecentThumb(r.path)}
+          <div class="card pinned">
+            <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
+              <div class="card-thumb">
+                {#if thumb}
+                  <img src={thumb} alt="" loading="lazy" />
+                {:else}
+                  <span class="card-thumb-placeholder">PDF</span>
+                {/if}
+                <span class="pin-flag" aria-hidden="true">📌</span>
+              </div>
+              <span class="card-name">{r.name}</span>
+              <span class="card-meta">
+                {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
+              </span>
+              {#if r.lastPage && r.totalPages}
+                <div class="dots" aria-label="Reading progress">
+                  {#each dots(r) as on}
+                    <span class="dot" class:on></span>
+                  {/each}
+                </div>
+              {/if}
+            </button>
+            <div class="card-actions">
+              <button class="act" title="Unpin" aria-label="Unpin" onclick={(e) => handlePin(e, r)}>📌</button>
+              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>✕</button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  {#if others.length > 0}
+    <section class="row">
+      <header class="row-head">
+        <span class="row-label">Recent</span>
+        <span class="row-hint">{others.length} file{others.length === 1 ? "" : "s"}</span>
+      </header>
+      <div class="grid">
+        {#each others as r (r.path)}
+          {@const thumb = getRecentThumb(r.path)}
+          <div class="card">
+            <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
+              <div class="card-thumb">
+                {#if thumb}
+                  <img src={thumb} alt="" loading="lazy" />
+                {:else}
+                  <span class="card-thumb-placeholder">{basename(r.name).slice(0, 3).toUpperCase()}</span>
+                {/if}
+              </div>
+              <span class="card-name">{r.name}</span>
+              <span class="card-meta">
+                {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
+              </span>
+              {#if r.lastPage && r.totalPages}
+                <div class="dots" aria-label="Reading progress">
+                  {#each dots(r) as on}
+                    <span class="dot" class:on></span>
+                  {/each}
+                </div>
+              {/if}
+            </button>
+            <div class="card-actions">
+              <button class="act" title="Pin to top" aria-label="Pin" onclick={(e) => handlePin(e, r)}>📌</button>
+              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>✕</button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
+</div>
+
+<style>
+  /* Liquid Glass — frosted card, soft ring, subtle hover lift. */
+  .recents-home {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 0;
+  }
+
+  .hero-card {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 1.5rem;
+    width: 100%;
+    padding: 1.25rem;
+    border-radius: 18px;
+    background: linear-gradient(180deg, var(--surface-2, rgba(255,255,255,0.04)) 0%, var(--surface-1, rgba(255,255,255,0.02)) 100%);
+    border: 1px solid var(--border-1, rgba(255,255,255,0.08));
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    box-shadow: 0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 32px -16px rgba(0,0,0,0.45);
+    text-align: left;
+    cursor: pointer;
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    color: inherit;
+  }
+  .hero-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-2, rgba(255,255,255,0.16));
+    box-shadow: 0 1px 0 0 rgba(255,255,255,0.06) inset, 0 18px 40px -16px rgba(0,0,0,0.55);
+  }
+  .hero-card:disabled { opacity: 0.5; cursor: progress; }
+  .hero-card.empty { grid-template-columns: 96px 1fr; }
+
+  .hero-thumb {
+    position: relative;
+    aspect-ratio: 3 / 4;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface-3, rgba(255,255,255,0.05));
+    display: flex; align-items: center; justify-content: center;
+  }
+  .hero-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .hero-thumb-placeholder {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 24px; opacity: 0.5; letter-spacing: 2px;
+  }
+
+  .empty-icon {
+    width: 96px; height: 96px; border-radius: 14px;
+    background: var(--surface-3, rgba(255,255,255,0.05));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 48px; font-weight: 200; opacity: 0.65;
+  }
+
+  .hero-body { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+  .hero-eyebrow {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    opacity: 0.55;
+    font-weight: 600;
+  }
+  .hero-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hero-meta { opacity: 0.65; margin: 0; font-size: 0.9rem; }
+  .hero-cta {
+    margin-top: auto;
+    align-self: flex-start;
+    display: inline-flex; gap: 0.5rem; align-items: center;
+    padding: 0.5rem 0.9rem;
+    background: var(--accent, #5e6ad2);
+    color: white;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .hero-kbd {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.8em;
+    padding: 0.1em 0.4em;
+    background: rgba(0,0,0,0.18);
+    border-radius: 4px;
+  }
+
+  .progress-track {
+    height: 6px;
+    width: 100%;
+    border-radius: 999px;
+    background: var(--surface-3, rgba(255,255,255,0.06));
+    overflow: hidden;
+    margin: 0.3rem 0;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent, #5e6ad2), var(--accent-2, #8b5cf6));
+    border-radius: 999px;
+    transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .progress-fill.pulse { animation: pulse 720ms cubic-bezier(0.4, 0, 0.2, 1) 1; }
+  @keyframes pulse {
+    0% { filter: brightness(1); transform: scaleY(1); }
+    50% { filter: brightness(1.4); transform: scaleY(1.6); }
+    100% { filter: brightness(1); transform: scaleY(1); }
+  }
+
+  .row { display: flex; flex-direction: column; gap: 0.6rem; }
+  .row-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 0 0.25rem;
+  }
+  .row-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    opacity: 0.6;
+  }
+  .row-hint { font-size: 0.75rem; opacity: 0.45; }
+
+  .row-strip {
+    display: flex; gap: 0.75rem; overflow-x: auto; padding: 0.25rem 0 0.5rem;
+    scrollbar-width: thin;
+  }
+  .row-strip .card { min-width: 160px; flex: 0 0 160px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .card {
+    position: relative;
+    border-radius: 14px;
+    border: 1px solid var(--border-1, rgba(255,255,255,0.08));
+    background: var(--surface-2, rgba(255,255,255,0.03));
+    overflow: hidden;
+    transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .card:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-2, rgba(255,255,255,0.18));
+    box-shadow: 0 8px 22px -14px rgba(0,0,0,0.5);
+  }
+  .card.pinned { border-color: var(--accent, #5e6ad2); }
+
+  .card-body {
+    width: 100%;
+    display: flex; flex-direction: column; gap: 0.3rem;
+    padding: 0.6rem;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .card-thumb {
+    position: relative;
+    aspect-ratio: 3 / 4;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-3, rgba(255,255,255,0.04));
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .card-thumb-placeholder {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    opacity: 0.45;
+    letter-spacing: 1.5px;
+    font-size: 14px;
+  }
+  .pin-flag {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 14px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
+  }
+  .card-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-meta { font-size: 0.72rem; opacity: 0.55; }
+
+  .dots { display: flex; gap: 3px; margin-top: 0.2rem; }
+  .dot {
+    width: 6px; height: 6px; border-radius: 999px;
+    background: var(--surface-3, rgba(255,255,255,0.12));
+    transition: background 300ms ease;
+  }
+  .dot.on { background: var(--accent, #5e6ad2); }
+
+  .card-actions {
+    position: absolute;
+    top: 6px; left: 6px;
+    display: flex; gap: 4px;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+  .card:hover .card-actions { opacity: 1; }
+  .act {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    border: 1px solid var(--border-1, rgba(255,255,255,0.12));
+    background: var(--surface-1, rgba(0,0,0,0.4));
+    backdrop-filter: blur(8px);
+    color: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .act:hover { border-color: var(--accent, #5e6ad2); }
+  .act.danger:hover { border-color: #ef4444; color: #ef4444; }
+</style>
