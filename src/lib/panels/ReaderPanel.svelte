@@ -6,7 +6,7 @@
   import { join, tempDir } from "@tauri-apps/api/path";
   import { basename, formatBytes, stripExt } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
-  import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
+  import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -82,6 +82,38 @@
   let loadError = $state<string | null>(null);
 
   let currentPage = $state(1);
+
+  // Atlas Lite: debounced reading-progress emitter. We persist the user's
+  // last-viewed page so re-opening jumps straight back there.
+  let progressTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSavedProgress: { path: string; page: number } | null = null;
+  function scheduleProgressSave(path: string, page: number, total: number) {
+    // Skip duplicate writes (e.g. user lands on page 5, scrolls within page).
+    if (lastSavedProgress && lastSavedProgress.path === path && lastSavedProgress.page === page) {
+      return;
+    }
+    if (progressTimer) clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => {
+      try {
+        recordRecentProgress(path, { lastPage: page, totalPages: total });
+        lastSavedProgress = { path, page };
+      } catch { /* localStorage off — silently skip */ }
+      progressTimer = null;
+    }, 800);
+  }
+  function flushProgressSave() {
+    if (progressTimer) {
+      clearTimeout(progressTimer);
+      progressTimer = null;
+      // Force-write whatever the current state is so closing the doc
+      // doesn't lose the last 800ms of scrolling.
+      if (doc && currentPage >= 1) {
+        try {
+          recordRecentProgress(doc.path, { lastPage: currentPage, totalPages: doc.pageCount });
+        } catch { /* ignore */ }
+      }
+    }
+  }
 
   // Atlas v2.2.0 — runtime page-jump + highlight state.
   //
@@ -455,6 +487,27 @@
       void renderRecentThumb(pdf, path);
       // Notify the shell so it can update the tab title.
       onTitleChange?.(basename(path));
+      // Atlas Lite: if this file has a saved reading position, resume there
+      // (but not if the shell asked for a specific page via initialPage /
+      // pendingJump — explicit navigation always wins over implicit resume).
+      const savedProgress = getRecentProgress(path);
+      const hasExplicitJump = !!pendingJump || !!initialPage;
+      if (
+        !hasExplicitJump &&
+        savedProgress &&
+        savedProgress.lastPage > 1 &&
+        savedProgress.lastPage <= pdf.numPages
+      ) {
+        const resumePage = savedProgress.lastPage;
+        // Wait one microtask for pdfViewer to attach.
+        queueMicrotask(() => {
+          try {
+            pdfViewer.currentPageNumber = resumePage;
+            currentPage = resumePage;
+          } catch { /* viewer not ready — pagesinit will recover */ }
+        });
+        notify.info(`Resumed at page ${resumePage} of ${pdf.numPages}`, { duration: 4000 });
+      }
       // Kick off a scan-audit in the background — non-blocking. Only for
       // real file-system PDFs (skip data: URLs etc — `path` is a real path
       // by contract here).
@@ -647,6 +700,8 @@
   }
 
   function tearDownDoc() {
+    // Atlas Lite: persist any pending progress before we lose the doc handle.
+    flushProgressSave();
     // Workshop v2.0.0 Slice 6.8: fire `slab.document.onClose` for the
     // previously-open doc (if any) before we tear down its state.
     // Must run BEFORE we null out `doc` so we can read the path; plugin
@@ -735,6 +790,11 @@
     });
     eventBus.on("pagechanging", (e: any) => {
       currentPage = e.pageNumber;
+      // Atlas Lite: debounced save to the recent-files store so the next
+      // reopen jumps straight to where the user was. We pick 800ms — long
+      // enough to ignore rapid scroll-bursts, short enough that closing
+      // the tab while still scrolling still records something useful.
+      if (doc) scheduleProgressSave(doc.path, e.pageNumber, doc.pageCount);
     });
     eventBus.on("scalechanging", () => {
       syncZoom();
