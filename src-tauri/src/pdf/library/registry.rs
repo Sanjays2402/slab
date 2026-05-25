@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -187,7 +187,44 @@ impl LibraryDb {
             // to the index code that owns it. This also bumps
             // user_version to SCHEMA_VERSION.
             super::fts::migrate_v3(conn)?;
-            debug_assert_eq!(SCHEMA_VERSION, 3);
+        }
+        if version < 4 {
+            // v3.32.0 "Atlas" — Collections + Smart Collections.
+            // Manual `library_collections` group docs; smart variants
+            // store a saved `LibraryFilter` JSON that runs live.
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS library_collections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    icon TEXT,
+                    color TEXT,
+                    created_at INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS library_collection_docs (
+                    collection_id INTEGER NOT NULL
+                        REFERENCES library_collections(id) ON DELETE CASCADE,
+                    doc_id INTEGER NOT NULL
+                        REFERENCES library_documents(id) ON DELETE CASCADE,
+                    added_at INTEGER NOT NULL,
+                    PRIMARY KEY (collection_id, doc_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_collection_docs_doc
+                    ON library_collection_docs(doc_id);
+                CREATE TABLE IF NOT EXISTS library_smart_collections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    icon TEXT,
+                    color TEXT,
+                    query_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 4;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 4);
         }
         Ok(())
     }
