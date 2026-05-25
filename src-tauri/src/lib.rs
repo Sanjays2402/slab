@@ -1244,6 +1244,13 @@ fn slab_forms_design_delete(
     crate::pdf::forms_design::delete_fields(&input, &names, &output).into()
 }
 
+// --- v3.27.0 "Quill Auto-Detect" — find candidate fields on flat PDFs ------
+
+#[tauri::command]
+fn slab_forms_autodetect(input: PathBuf) -> CmdResult<crate::pdf::forms_detect::DetectionReport> {
+    crate::pdf::forms_detect::detect(&input).into()
+}
+
 #[tauri::command]
 fn slab_find_text_spans(input: PathBuf) -> CmdResult<Vec<PageSpans>> {
     do_find_text_spans(&input).into()
@@ -4698,6 +4705,7 @@ pub fn run() {
             slab_forms_design_add,
             slab_forms_design_edit,
             slab_forms_design_delete,
+            slab_forms_autodetect,
             slab_find_text_spans,
             slab_replace_text_span,
             slab_diff_pdfs,
