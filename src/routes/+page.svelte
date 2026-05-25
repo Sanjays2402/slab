@@ -531,6 +531,20 @@
         return;
       }
     }
+    // v3.29.0 Forms Tour: replay the onboarding walkthrough. Default Mod+Shift+/.
+    // Opens the Forms hub and immediately restarts the 5-step coachmark
+    // tour so users can refresh on the workflow at any time.
+    if (matches(e, "quill.tour")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "forms";
+        import("$lib/quill-tour").then((m) => m.replayTour());
+        return;
+      }
+    }
     // Atelier (v3.12.0): focus the recipe-runner panel. Default Mod+Shift+R.
     if (matches(e, "atelier.open")) {
       const tgt = e.target as HTMLElement | null;
