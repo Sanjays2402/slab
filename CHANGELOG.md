@@ -11,6 +11,29 @@ in this file too.
 
 ---
 
+## [3.26.0] — 2026-05-24 — Quill Designer
+
+### Added
+
+- **Author form fields on flat PDFs (Quill Designer)** — turn any
+  scanned or flat PDF into a fillable AcroForm without buying Adobe
+  Acrobat Pro. Add **Text**, **Checkbox**, **Dropdown**, and
+  **Signature** fields by drawing rects, configure defaults / options /
+  multiline / required / read-only / tooltip per field, then save.
+  Existing fields can be edited in place (default value, tooltip,
+  required flag) or deleted. After every Apply / Edit / Delete the
+  panel re-inspects the output PDF so changes are visible instantly.
+  Pure-Rust engine at `src-tauri/src/pdf/forms_design.rs` (lopdf,
+  AcroForm tree ensure + annot push, 1100 LOC, 15 unit tests). New
+  sidebar entry **Quill Designer (author fields)** under Forms, bound
+  to **Cmd/Ctrl + Shift + D**. Liquid Glass two-card layout (drafts on
+  the left, existing fields on the right) with kind-specific config
+  inputs and a per-field error report panel for unknown / duplicate
+  names. Free, fully offline, cross-platform — the alternative to
+  Acrobat Pro's "Prepare Form" tool.
+
+---
+
 ## [3.25.0] — 2026-05-24 — Quill Pro Batch
 
 ### Added
