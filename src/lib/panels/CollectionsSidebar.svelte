@@ -17,12 +17,15 @@
     collectionCreate,
     collectionDelete,
     collectionListDocs,
+    collectionAddDocs,
     smartCollectionList,
     smartCollectionExpand,
+    smartCollectionDelete,
     type CollectionRecord,
     type SmartCollectionRecord,
     type DocumentRecord,
   } from "$lib/library";
+  import SmartCollectionBuilder from "./SmartCollectionBuilder.svelte";
 
   type SelectPayload = {
     kind: "collection" | "smart";
@@ -40,6 +43,40 @@
   let newName = $state("");
   let loading = $state(true);
   let error = $state<string | null>(null);
+
+  // Smart collection builder
+  let builderOpen = $state(false);
+  let builderEditing = $state<SmartCollectionRecord | null>(null);
+  function openNewSmart() {
+    builderEditing = null;
+    builderOpen = true;
+  }
+  function openEditSmart(s: SmartCollectionRecord) {
+    builderEditing = s;
+    builderOpen = true;
+  }
+
+  // Context menu (right-click on a smart row)
+  let menu = $state<{
+    x: number;
+    y: number;
+    smart: SmartCollectionRecord;
+  } | null>(null);
+
+  // Drag-and-drop target state. When a doc card is being dragged over a
+  // manual collection row, we set `dragOverId` to it; smart rows show a
+  // blocked cursor instead.
+  let dragOverId = $state<number | null>(null);
+  let dragBlockedId = $state<number | null>(null);
+
+  // Toast (one-shot fade)
+  let toastMsg = $state<string | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function toast(msg: string) {
+    toastMsg = msg;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toastMsg = null), 2400);
+  }
 
   // Pulse tracking — { collectionId: previousCount } so we can detect a
   // delta on the next refresh and add a one-shot CSS class.
@@ -76,12 +113,29 @@
     }
   }
 
+  function handleGlobalKey(e: KeyboardEvent) {
+    // Cmd/Ctrl + Shift + N → new smart collection.
+    // Use e.code === "KeyN" so layouts that compose ñ etc. still work.
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyN") {
+      e.preventDefault();
+      openNewSmart();
+    } else if (e.key === "Escape" && menu) {
+      menu = null;
+    }
+  }
+
   onMount(() => {
     refresh();
-    // Library mutations broadcast `library-changed`; piggy-back on it.
-    const handler = () => refresh();
-    window.addEventListener("library-changed", handler);
-    return () => window.removeEventListener("library-changed", handler);
+    const libHandler = () => refresh();
+    window.addEventListener("library-changed", libHandler);
+    window.addEventListener("keydown", handleGlobalKey);
+    const clickAway = () => (menu = null);
+    window.addEventListener("click", clickAway);
+    return () => {
+      window.removeEventListener("library-changed", libHandler);
+      window.removeEventListener("keydown", handleGlobalKey);
+      window.removeEventListener("click", clickAway);
+    };
   });
 
   async function handleCreate() {
@@ -115,6 +169,76 @@
     await collectionDelete(c.id);
     await refresh();
   }
+
+  async function handleSmartDelete(s: SmartCollectionRecord) {
+    menu = null;
+    if (!confirm(`Delete smart collection "${s.name}"? (Rules deleted; matching docs remain.)`)) return;
+    try {
+      await smartCollectionDelete(s.id);
+      await refresh();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  function showSmartMenu(e: MouseEvent, s: SmartCollectionRecord) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu = { x: e.clientX, y: e.clientY, smart: s };
+  }
+
+  // ---- Drag-and-drop handlers (manual collections only) ----
+  function readDragIds(e: DragEvent): number[] | null {
+    const raw = e.dataTransfer?.getData("application/x-slab-doc-ids");
+    if (!raw) return null;
+    try {
+      const ids = JSON.parse(raw) as number[];
+      return Array.isArray(ids) ? ids : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function onDocDragOver(e: DragEvent, c: CollectionRecord) {
+    if (!e.dataTransfer?.types.includes("application/x-slab-doc-ids")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    dragOverId = c.id;
+  }
+  function onDocDragLeave(c: CollectionRecord) {
+    if (dragOverId === c.id) dragOverId = null;
+  }
+  async function onDocDrop(e: DragEvent, c: CollectionRecord) {
+    e.preventDefault();
+    dragOverId = null;
+    const ids = readDragIds(e);
+    if (!ids || ids.length === 0) return;
+    try {
+      const added = await collectionAddDocs(c.id, ids);
+      window.dispatchEvent(new CustomEvent("library-changed"));
+      toast(
+        `Added ${added} doc${added === 1 ? "" : "s"} to “${c.name}”` +
+          (added < ids.length ? ` (${ids.length - added} already in)` : ""),
+      );
+    } catch (err) {
+      error = (err as Error).message;
+    }
+  }
+
+  function onSmartDragOver(e: DragEvent, s: SmartCollectionRecord) {
+    if (!e.dataTransfer?.types.includes("application/x-slab-doc-ids")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "none";
+    dragBlockedId = s.id;
+  }
+  function onSmartDragLeave(s: SmartCollectionRecord) {
+    if (dragBlockedId === s.id) dragBlockedId = null;
+  }
+  function onSmartDrop(e: DragEvent, _s: SmartCollectionRecord) {
+    e.preventDefault();
+    dragBlockedId = null;
+    toast("Smart collections auto-update — edit the rules to change membership.");
+  }
 </script>
 
 <section class="cs-rail">
@@ -138,7 +262,6 @@
         type="text"
         placeholder="Name your collection…"
         bind:value={newName}
-        autofocus
       />
       <button class="cs-save" type="submit" disabled={!newName.trim()}>Create</button>
     </form>
@@ -148,11 +271,18 @@
     <div class="cs-empty">Loading…</div>
   {:else}
     {#each collections as c (c.id)}
-      <div class="cs-row-wrap" class:active={activeId === `c:${c.id}`}>
+      <div
+        class="cs-row-wrap"
+        class:active={activeId === `c:${c.id}`}
+        class:drag-over={dragOverId === c.id}
+      >
         <button
           class="cs-row"
           class:active={activeId === `c:${c.id}`}
           onclick={() => pickCollection(c)}
+          ondragover={(e) => onDocDragOver(e, c)}
+          ondragleave={() => onDocDragLeave(c)}
+          ondrop={(e) => onDocDrop(e, c)}
           title={c.name}
         >
           <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
@@ -167,19 +297,37 @@
       </div>
     {/each}
 
+    <div class="cs-sub-row">
+      <span class="cs-sub">Smart</span>
+      <button
+        class="cs-add small"
+        aria-label="New smart collection"
+        title="New smart collection (⌘⇧N)"
+        onclick={openNewSmart}
+      >+</button>
+    </div>
     {#if smart.length > 0}
-      <div class="cs-sub">Smart</div>
       {#each smart as s (s.id)}
         <button
           class="cs-row smart"
           class:active={activeId === `s:${s.id}`}
+          class:drag-blocked={dragBlockedId === s.id}
           onclick={() => pickSmart(s)}
-          title={s.name}
+          ondblclick={() => openEditSmart(s)}
+          oncontextmenu={(e) => showSmartMenu(e, s)}
+          ondragover={(e) => onSmartDragOver(e, s)}
+          ondragleave={() => onSmartDragLeave(s)}
+          ondrop={(e) => onSmartDrop(e, s)}
+          title={`${s.name} — double-click to edit`}
         >
           <span class="cs-dot diamond" style:background={s.color ?? "var(--accent)"}></span>
           <span class="cs-label">{s.name}</span>
         </button>
       {/each}
+    {:else}
+      <div class="cs-empty cs-sub-empty">
+        Click + to build one without writing JSON.
+      </div>
     {/if}
 
     {#if collections.length === 0 && smart.length === 0}
@@ -190,7 +338,40 @@
   {#if error}
     <div class="cs-err">{error}</div>
   {/if}
+
+  {#if toastMsg}
+    <div class="cs-toast" role="status" aria-live="polite">{toastMsg}</div>
+  {/if}
 </section>
+
+{#if menu}
+  <div
+    class="cs-menu"
+    style="left: {menu.x}px; top: {menu.y}px;"
+    role="menu"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={() => {}}
+    tabindex="-1"
+  >
+    <button role="menuitem" onclick={() => { const s = menu!.smart; menu = null; openEditSmart(s); }}>
+      Edit rules…
+    </button>
+    <button role="menuitem" class="danger" onclick={() => handleSmartDelete(menu!.smart)}>
+      Delete
+    </button>
+  </div>
+{/if}
+
+{#if builderOpen}
+  <SmartCollectionBuilder
+    editing={builderEditing}
+    onClose={() => (builderOpen = false)}
+    onSaved={() => {
+      builderOpen = false;
+      refresh();
+    }}
+  />
+{/if}
 
 <style>
   .cs-rail {
@@ -341,6 +522,88 @@
     text-transform: uppercase;
     letter-spacing: 0.07em;
     color: var(--text-3);
+  }
+  .cs-sub-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-right: 6px;
+  }
+  .cs-sub-row .cs-sub {
+    flex: 1;
+  }
+  .cs-add.small {
+    font-size: 14px;
+    padding: 0 6px;
+  }
+  .cs-row-wrap.drag-over,
+  .cs-row-wrap.drag-over .cs-row {
+    background: color-mix(in oklab, var(--accent) 22%, transparent);
+    outline: 1px dashed color-mix(in oklab, var(--accent) 70%, transparent);
+    outline-offset: -2px;
+    border-radius: 8px;
+  }
+  .cs-row.smart.drag-blocked {
+    cursor: not-allowed;
+    background: color-mix(in oklab, #fb7185 16%, transparent);
+    outline: 1px dashed color-mix(in oklab, #fb7185 50%, transparent);
+    outline-offset: -2px;
+  }
+  .cs-toast {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(22, 24, 33, 0.96);
+    color: rgba(235, 238, 246, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 9px 16px;
+    border-radius: 9px;
+    font-size: 13px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    z-index: 1200;
+    animation: cs-toast-in 200ms ease-out;
+  }
+  @keyframes cs-toast-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 6px);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+  }
+  .cs-menu {
+    position: fixed;
+    background: rgba(22, 24, 33, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 9px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    z-index: 1300;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+  }
+  .cs-menu button {
+    background: transparent;
+    border: none;
+    color: rgba(235, 238, 246, 0.92);
+    text-align: left;
+    padding: 7px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .cs-menu button:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .cs-menu button.danger {
+    color: rgba(251, 113, 133, 0.95);
+  }
+  .cs-menu button.danger:hover {
+    background: rgba(251, 113, 133, 0.12);
   }
   .cs-empty {
     padding: 8px;
