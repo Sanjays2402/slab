@@ -2,6 +2,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
+  import { isInTauri } from "$lib/tauri";
+
+  const inTauri = isInTauri();
 
   let input = $state<string | null>(null);
   let pageCount = $state<number | null>(null);
@@ -109,11 +112,18 @@
 
 <section class="panel">
   {#if !input}
-    <button class="dropzone" onclick={pickInput}>
+    <button class="dropzone" onclick={pickInput} disabled={!inTauri}>
       <span class="dz-icon">+</span>
       <span class="dz-title">Choose a PDF</span>
       <span class="dz-hint">Then dial in the stamp.</span>
     </button>
+    {#if !inTauri}
+      <div class="note">
+        Watermark stamping needs the Slab desktop app — the web preview can&rsquo;t
+        open local files or write PDFs. The controls below still preview how the
+        stamp will look; open this panel in the installed Slab app to apply it.
+      </div>
+    {/if}
   {:else}
     <div class="file-card">
       <div>
@@ -223,5 +233,15 @@
     letter-spacing: 0.05em;
     white-space: nowrap;
     user-select: none;
+  }
+  .note {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
   }
 </style>
