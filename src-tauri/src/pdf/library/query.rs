@@ -35,17 +35,12 @@ pub struct LibraryFilter {
 
 /// Combinator for a `FilterGroup`. Default is `And` to match historical
 /// flat-filter semantics where every condition was AND'd together.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterCombinator {
+    #[default]
     And,
     Or,
-}
-
-impl Default for FilterCombinator {
-    fn default() -> Self {
-        Self::And
-    }
 }
 
 /// One node in the recursive clause tree. Variants are tagged so the
