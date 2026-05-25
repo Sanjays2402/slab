@@ -489,38 +489,34 @@ pub(crate) mod text {
                 "T*" => {
                     ty -= tf * 1.2;
                 }
-                "Tj" | "'" => {
-                    if in_text {
-                        if let Some(lopdf::Object::String(bytes, _)) = op.operands.first() {
-                            let s = String::from_utf8_lossy(bytes).into_owned();
-                            if !s.is_empty() {
-                                out.push(TextRun {
-                                    text: s,
-                                    x: tx,
-                                    y: ty,
-                                    size: tf,
-                                });
-                            }
+                "Tj" | "'" if in_text => {
+                    if let Some(lopdf::Object::String(bytes, _)) = op.operands.first() {
+                        let s = String::from_utf8_lossy(bytes).into_owned();
+                        if !s.is_empty() {
+                            out.push(TextRun {
+                                text: s,
+                                x: tx,
+                                y: ty,
+                                size: tf,
+                            });
                         }
                     }
                 }
-                "TJ" => {
-                    if in_text {
-                        if let Some(lopdf::Object::Array(arr)) = op.operands.first() {
-                            let mut s = String::new();
-                            for el in arr {
-                                if let lopdf::Object::String(b, _) = el {
-                                    s.push_str(&String::from_utf8_lossy(b));
-                                }
+                "TJ" if in_text => {
+                    if let Some(lopdf::Object::Array(arr)) = op.operands.first() {
+                        let mut s = String::new();
+                        for el in arr {
+                            if let lopdf::Object::String(b, _) = el {
+                                s.push_str(&String::from_utf8_lossy(b));
                             }
-                            if !s.is_empty() {
-                                out.push(TextRun {
-                                    text: s,
-                                    x: tx,
-                                    y: ty,
-                                    size: tf,
-                                });
-                            }
+                        }
+                        if !s.is_empty() {
+                            out.push(TextRun {
+                                text: s,
+                                x: tx,
+                                y: ty,
+                                size: tf,
+                            });
                         }
                     }
                 }
