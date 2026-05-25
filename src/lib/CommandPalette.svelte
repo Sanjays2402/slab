@@ -146,7 +146,7 @@
     // palette action so users can `Cmd+K` → "fill form" → enter,
     // even if they've never seen the sidebar entry. This is the
     // discoverability layer for the four-tab unified workflow.
-    const FORMS_SUBTABS: { id: "detect" | "design" | "fill" | "batch"; title: string; subtitle: string; icon: string; keywords: string }[] = [
+    const FORMS_SUBTABS: { id: "detect" | "design" | "fill" | "smartfill" | "batch"; title: string; subtitle: string; icon: string; keywords: string }[] = [
       {
         id: "detect",
         title: "Forms: Auto-Detect fields",
@@ -167,6 +167,13 @@
         subtitle: "Type values into an existing AcroForm",
         icon: "📝",
         keywords: "fill inspect acroform values type form",
+      },
+      {
+        id: "smartfill",
+        title: "Forms: Smart Fill from source doc",
+        subtitle: "Drop a resume/contact/CSV — AI maps to fields",
+        icon: "🪄",
+        keywords: "quill smart fill ai magic auto-fill resume mapping intelligent beacon",
       },
       {
         id: "batch",

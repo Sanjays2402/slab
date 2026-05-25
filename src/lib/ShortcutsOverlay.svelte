@@ -153,6 +153,10 @@
           keys: bindingKeys(lookup("quill.batch", "Mod+Shift+B")),
           label: "Forms → Batch (CSV) tab",
         },
+        {
+          keys: bindingKeys(lookup("quill.smartfill", "Mod+Shift+I")),
+          label: "Forms → Smart Fill tab (AI source-to-form)",
+        },
       ],
     },
     {
