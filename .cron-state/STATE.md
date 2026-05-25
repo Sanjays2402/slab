@@ -1,72 +1,63 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 01:21 PT by Cake (cron)
+Last updated: 2026-05-25 02:28 PT by Cake (cron)
 
 ## Active version
 
-**v3.30.0 "Quill Smart Fill" — MERGED to main + TAGGED. CI in progress.**
-Awaiting CI green to finalize the GitHub release with artifacts.
+**v3.30.0 "Quill Smart Fill" — SHIPPED. Public GitHub release live.**
 
-## This tick (2026-05-25 01:17–01:22 PT)
+https://github.com/Sanjays2402/slab/releases/tag/v3.30.0
+6 artifacts: macos-arm64.dmg, macos-x64.dmg, linux .deb + .AppImage,
+windows .msi + nsis. Release notes from docs/release-notes/v3.30.0.md.
 
-**MODE A — Release.** Slice 4 of v3.30.0 shipped end-to-end.
+## This tick (2026-05-25 02:26–02:30 PT)
 
-- 107e1f7 — chore(release): version bump 3.29.0 → 3.30.0 in
-  package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json,
-  Cargo.lock refresh
-- 91de8af — Merge commit (--no-ff) feature/v3.30.0-quill-smart-fill → main
-  (25 files changed, 3092 insertions, 43 deletions across 10 feature commits)
-- Tag `v3.30.0` annotated and pushed
-- Pushed `main` + tag to origin
+**MODE B — Finalize.** v3.30.0 GitHub release published.
 
-Quality gates ALL CLEAN before merge:
-- pnpm check ✓ (0 errors, 74 pre-existing a11y warnings)
-- cargo fmt ✓
-- cargo clippy --all-targets -D warnings ✓
-- cargo test --lib ✓ (1765 passed)
+- CI run 26390862691 confirmed green (build/main, 22m37s)
+- Docker (slab-server) tag v3.30.0 green (9m37s)
+- Downloaded 6 artifacts from run 26390862691
+- `gh release create v3.30.0 --title 'v3.30.0 — Quill Smart Fill' --notes-file docs/release-notes/v3.30.0.md` + 6 artifacts
+- Cleared RELEASE_PENDING
+
+Note: an earlier `site: pivot landing` run (26391133497) had a bundle
+(windows-x64) failure — looks like a runner flake, since the very next push
+(26391483500, "docs(plans): v3.31.0 Atlas Lite") went fully green on the
+same bundle. Not blocking. No action needed.
 
 ## Release pending
 
-RELEASE_PENDING: v3.30.0 — merge SHA 91de8af, tag v3.30.0
-- build (main): run 26390862691
-- Docker (slab-server) on tag v3.30.0: run 26390862476
-- deploy-try (main): run 26390862687
-- pages-build-deployment: run 26390861907
-
-Next tick (MODE B): if CI green →
-  `gh run download 26390862691 --dir /tmp/slab-release-3.30.0`
-  curate 6 best artifacts (macos-arm64.dmg, macos-x64.dmg,
-  linux x64 .deb + .AppImage, windows .msi + nsis)
-  `gh release create v3.30.0 --title 'v3.30.0 — Quill Smart Fill'
-   --notes-file docs/release-notes/v3.30.0.md` + upload artifacts.
+(none)
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T07:35:00Z (Smart Fill drag-drop +
-AI proposal diff UI shipped earlier tonight). v3.30.0 itself IS
-the wow — public release publishing next tick.
+LAST_WOW_TICK_AT: 2026-05-25T07:35:00Z — v3.30.0 Smart Fill (drag-drop AI
+form mapping, 100% local). Now live for download. >24h gate: still within
+window, next BIG wow due by ~07:35 PT tomorrow.
 
 ## Recently closed issues
 
-(none — issue list empty)
+(none — issue list empty; #23-#27 override no longer applies)
+
+## Queued plans
+
+- `docs/plans/2026-05-25-v3.31.0-atlas-lite.md` — Recent Files panel with
+  thumbnails + last-position resume + tag/collection sidebar. 8 tasks,
+  designed to fold into 2 BIG cron ticks (1-5, then 6-8).
 
 ## Next ticks
 
-- **Tick 1 (NEXT, MODE B)**: finalize GH release for v3.30.0 once CI green.
-  Poll `gh run view 26390862691`. If failed → investigate logs, hotfix to
-  v3.30.1. If success → create release with artifacts + marketing notes.
-- **Tick 2 onwards**: re-poll issue list at start; if empty, start the
-  next roadmap item. Suggested next: **v3.31.0 "Atlas Lite"** — Recent
-  Files panel with thumbnails + last-position resume + tag/collection
-  sidebar (cross-cutting feature from the roadmap; high pick-us value
-  vs Acrobat which doesn't surface recents well). Or **v3.31.0
-  "Theater"** — full-screen presenter mode (Buy-Button: tell-a-friend).
-  Sanjay can vote; default = Atlas Lite.
+- **Tick 1 (NEXT, MODE C)**: start v3.31.0 "Atlas Lite" — execute tasks 1-5
+  of the plan as a single BIG slice (backend Recent Files store + thumbnail
+  generator + Tauri commands + frontend panel + nav entry + keyboard
+  shortcut + palette entry). Branch: `feature/v3.31.0-atlas-lite`.
+- **Tick 2**: tasks 6-8 (last-position resume + tag/collection sidebar),
+  then merge + tag + release v3.31.0.
 
 ## Pipeline state
 
-| Branch                              | Status              | Notes                                  |
-| ----------------------------------- | ------------------- | -------------------------------------- |
-| `main`                              | **v3.30.0 TAGGED**  | CI in progress, release pending        |
-| `feature/v3.30.0-quill-smart-fill`  | merged              | Safe to delete after release published |
-| `feature/v3.29.0-forms-tour`        | merged + released   | Safe to delete                         |
+| Branch                              | Status                | Notes                                  |
+| ----------------------------------- | --------------------- | -------------------------------------- |
+| `main`                              | **v3.30.0 RELEASED**  | Public release live with 6 artifacts   |
+| `feature/v3.30.0-quill-smart-fill`  | merged + released     | Safe to delete                         |
+| `feature/v3.29.0-forms-tour`        | merged + released     | Safe to delete                         |
