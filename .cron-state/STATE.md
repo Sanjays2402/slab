@@ -1,20 +1,17 @@
 # Slab Cron State
 
-Last updated: 2026-05-24 19:10 PT by Cake (cron)
+Last updated: 2026-05-24 19:42 PT by Cake (cron)
 
 ## Active version
 
-**v3.25.0 "Quill Pro Batch" — MERGED to main + tagged + pushed.**
-- Merge SHA: `71c3c26` on main
-- Tag: `v3.25.0`
-- Branch shipped: `feature/v3.25.0-quill-pro-batch` (4 commits: 094c5f5, b36ad0d, 03192ab, 9c5c82d)
-- CI runs in progress at push time: 26379549254 (deploy-try), 26379549253 (build), 26379549183 (Docker tag workflow)
+**v3.25.0 "Quill Pro Batch" — SHIPPED. Release published with 6 artifacts.**
+- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.25.0
+- CI: all 3 runs green (build 26379549253, deploy-try 26379549254, Docker 26379549183)
+- Artifacts: macOS arm64 dmg, macOS x64 dmg, Linux deb, Linux AppImage, Windows msi, Windows nsis exe
 
 ## RELEASE_PENDING
 
-`RELEASE_PENDING: v3.25.0 — merge 71c3c26, tag v3.25.0, CI runs 26379549254 / 26379549253 / 26379549183`
-
-Next tick: MODE B — poll those runs; if green, `gh run download` + `gh release create v3.25.0` with macOS/Linux/Windows artifacts and release notes from `docs/release-notes/v3.25.0.md`.
+(none — v3.25.0 finalized this tick)
 
 ## Wow tracker
 
