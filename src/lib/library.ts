@@ -579,3 +579,47 @@ export async function smartCollectionUpdate(
   );
   return unwrap(res);
 }
+
+// ---------------------------------------------------------------
+// v3.35.0 "Atlas Presets" — built-in smart-collection templates
+// ---------------------------------------------------------------
+
+/** Mirror of `pdf::library::presets::PresetInfo`. */
+export interface PresetInfo {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  description: string;
+}
+
+/** List every built-in preset. Static — cheap to call from anywhere. */
+export async function presetList(): Promise<PresetInfo[]> {
+  const res = await invoke<CmdResult<PresetInfo[]>>("slab_preset_list");
+  return unwrap(res);
+}
+
+/**
+ * Materialize the named preset as a real smart-collection row.
+ * Auto-creates any tags the preset references. Throws if the preset
+ * name is already used (UNIQUE constraint) — callers should consult
+ * `presetAlreadyApplied()` first to grey out the button.
+ */
+export async function presetApply(
+  presetId: string,
+): Promise<SmartCollectionRecord> {
+  const res = await invoke<CmdResult<SmartCollectionRecord>>(
+    "slab_preset_apply",
+    { presetId },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Return the ids of presets that already exist as smart collections
+ * (matched by name). UI uses this to dedupe the picker.
+ */
+export async function presetAlreadyApplied(): Promise<string[]> {
+  const res = await invoke<CmdResult<string[]>>("slab_preset_already_applied");
+  return unwrap(res);
+}

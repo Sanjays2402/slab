@@ -26,6 +26,7 @@
     type DocumentRecord,
   } from "$lib/library";
   import SmartCollectionBuilder from "./SmartCollectionBuilder.svelte";
+  import PresetPicker from "./PresetPicker.svelte";
 
   type SelectPayload = {
     kind: "collection" | "smart";
@@ -47,6 +48,18 @@
   // Smart collection builder
   let builderOpen = $state(false);
   let builderEditing = $state<SmartCollectionRecord | null>(null);
+
+  // Preset picker (v3.35.0)
+  let presetPickerOpen = $state(false);
+  function openPresetPicker() {
+    presetPickerOpen = true;
+  }
+  // Public hook so App.svelte can drive this from a keyboard shortcut
+  // / command palette entry without rummaging through the DOM.
+  export function openPresets() {
+    openPresetPicker();
+  }
+
   function openNewSmart() {
     builderEditing = null;
     builderOpen = true;
@@ -119,6 +132,10 @@
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyN") {
       e.preventDefault();
       openNewSmart();
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyP") {
+      // Cmd/Ctrl + Shift + P → open Preset Picker (v3.35.0).
+      e.preventDefault();
+      openPresetPicker();
     } else if (e.key === "Escape" && menu) {
       menu = null;
     }
@@ -299,12 +316,20 @@
 
     <div class="cs-sub-row">
       <span class="cs-sub">Smart</span>
-      <button
-        class="cs-add small"
-        aria-label="New smart collection"
-        title="New smart collection (⌘⇧N)"
-        onclick={openNewSmart}
-      >+</button>
+      <div class="cs-sub-actions">
+        <button
+          class="cs-add small preset"
+          aria-label="Add from preset"
+          title="Add from preset (⌘⇧P)"
+          onclick={openPresetPicker}
+        >★</button>
+        <button
+          class="cs-add small"
+          aria-label="New smart collection"
+          title="New smart collection (⌘⇧N)"
+          onclick={openNewSmart}
+        >+</button>
+      </div>
     </div>
     {#if smart.length > 0}
       {#each smart as s (s.id)}
@@ -368,6 +393,16 @@
     onClose={() => (builderOpen = false)}
     onSaved={() => {
       builderOpen = false;
+      refresh();
+    }}
+  />
+{/if}
+
+{#if presetPickerOpen}
+  <PresetPicker
+    onClose={() => (presetPickerOpen = false)}
+    onApplied={(p) => {
+      toast(`Added preset “${p.name}”`);
       refresh();
     }}
   />
@@ -535,6 +570,19 @@
   .cs-add.small {
     font-size: 14px;
     padding: 0 6px;
+  }
+  .cs-sub-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .cs-add.small.preset {
+    color: #facc15;
+    font-size: 13px;
+  }
+  .cs-add.small.preset:hover {
+    color: #fde047;
+    filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.5));
   }
   .cs-row-wrap.drag-over,
   .cs-row-wrap.drag-over .cs-row {
