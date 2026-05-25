@@ -23,6 +23,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
+  import { tStore } from "$lib/i18n";
   import {
     quill,
     setInput as quillSetInput,
@@ -274,6 +275,31 @@
 </header>
 
 <section class="panel">
+  {#if !hubInput && !sourceDoc}
+    <div class="empty-hero">
+      <div class="hero-emoji" aria-hidden="true">🪄</div>
+      <h2 class="hero-title">{$tStore("quill.smartfill.heroTitle")}</h2>
+      <p class="hero-sub">{$tStore("quill.smartfill.heroSub")}</p>
+      <div class="examples">
+        <div class="example">
+          <div class="ex-from">{$tStore("quill.smartfill.example.resume")}</div>
+          <div class="ex-arrow" aria-hidden="true">→</div>
+          <div class="ex-to">{$tStore("quill.smartfill.example.jobApp")}</div>
+        </div>
+        <div class="example">
+          <div class="ex-from">{$tStore("quill.smartfill.example.lastW2")}</div>
+          <div class="ex-arrow" aria-hidden="true">→</div>
+          <div class="ex-to">{$tStore("quill.smartfill.example.thisTax")}</div>
+        </div>
+        <div class="example">
+          <div class="ex-from">{$tStore("quill.smartfill.example.contacts")}</div>
+          <div class="ex-arrow" aria-hidden="true">→</div>
+          <div class="ex-to">{$tStore("quill.smartfill.example.engagement")}</div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <div class="drops">
     <button
       type="button"
@@ -440,6 +466,80 @@
 <style>
   .panel {
     padding: 16px 24px 32px;
+  }
+  /* v3.30.0 Slice 3.3 — Smart Fill designed empty state.
+     When both drop zones are empty we show an inviting hero block
+     above the dropzones that teaches the feature in one line and
+     suggests three real source→target pairings. */
+  .empty-hero {
+    margin: 8px auto 28px;
+    max-width: 640px;
+    padding: 28px 24px;
+    text-align: center;
+    border-radius: 14px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 8%, var(--bg-1)) 0%,
+      var(--bg-1) 100%
+    );
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  }
+  .hero-emoji {
+    font-size: 52px;
+    line-height: 1;
+    margin-bottom: 12px;
+  }
+  .hero-title {
+    font-size: 22px;
+    font-weight: 650;
+    color: var(--text-1);
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  .hero-sub {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.55;
+    margin: 0 auto 22px;
+    max-width: 520px;
+  }
+  .examples {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .example {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text-2);
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+  .example:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    transform: translateY(-1px);
+  }
+  .ex-from, .ex-to {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .ex-arrow {
+    color: var(--accent);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  @media (max-width: 720px) {
+    .examples { grid-template-columns: 1fr; }
   }
   .drops {
     display: grid;
