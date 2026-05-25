@@ -1204,6 +1204,17 @@ fn slab_forms_fill(
     crate::pdf::forms::fill(&input, &values, &output).into()
 }
 
+// --- v3.25.0 "Quill Pro" — batch CSV form-fill (mail-merge) ----------------
+
+#[tauri::command]
+async fn slab_forms_batch_fill(
+    spec: crate::pdf::forms_batch::BatchSpec,
+) -> Result<crate::pdf::forms_batch::BatchReport, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::pdf::forms_batch::run_batch(&spec))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn slab_find_text_spans(input: PathBuf) -> CmdResult<Vec<PageSpans>> {
     do_find_text_spans(&input).into()
@@ -4654,6 +4665,7 @@ pub fn run() {
             slab_pages_build,
             slab_forms_inspect,
             slab_forms_fill,
+            slab_forms_batch_fill,
             slab_find_text_spans,
             slab_replace_text_span,
             slab_diff_pdfs,

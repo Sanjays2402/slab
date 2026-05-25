@@ -11,6 +11,30 @@ in this file too.
 
 ---
 
+## [3.25.0] — 2026-05-24 — Quill Pro Batch
+
+### Added
+
+- **Mail-merge for PDFs (Quill Batch)** — drop a fillable AcroForm
+  template + a CSV, get one filled, named PDF per row. Filename
+  templating with `{row}` and `{column}` placeholders, filesystem-
+  unsafe character sanitization, optional flatten on output, optional
+  ZIP packaging of the whole batch, and a per-row pass/fail report
+  CSV emitted next to the outputs. New sidebar entry **Quill Batch
+  (CSV merge)** under Forms, bound to **Cmd/Ctrl + Shift + B**.
+  Pure-Rust pipeline at `src-tauri/src/pdf/forms_batch.rs` (`csv` +
+  `lopdf` + `zip`), 13 unit tests, runs on a Tauri `spawn_blocking`
+  worker so the UI stays responsive on thousand-row batches.
+  Replaces Adobe Acrobat Pro's $20/month Data Merge — free, offline,
+  cross-platform.
+
+### Notes
+
+- See `docs/release-notes/v3.25.0.md` for the full marketing-tier
+  walkthrough.
+
+---
+
 ## [3.24.0] — 2026-05-24 — Stack Pro
 
 ### Added

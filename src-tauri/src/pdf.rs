@@ -23,6 +23,7 @@ pub mod epub;
 pub mod extract;
 pub mod flatten;
 pub mod forms;
+pub mod forms_batch;
 pub mod grayscale;
 pub mod header_footer;
 pub mod hopper;

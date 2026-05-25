@@ -4,114 +4,34 @@
 
 ---
 
-## STATUS: 📝 v3.28.0 'Quill Hub' PLANNED — Quill quartet capstone (2026-05-24 18:30 PT)
+## STATUS: 📝 v3.25.0 'Quill Pro' PLANNED (2026-05-24 17:25 PT)
 
-**TICK 2026-05-24 18:30 PT (Sunday off-hours)** — Planning tick
-(`writing-plans` skill invocation by Sanjay, **third in a row**).
+**TICK 2026-05-24 17:25 PT (Sunday off-hours)** — MODE C planning tick
+(writing-plans skill invocation).
 
-- Plan: `docs/plans/2026-05-24-v3.28.0-quill-hub.md` (~750 lines, 8 tasks across 3 ticks).
-- Scope: **unified Forms workspace** — one panel `QuillHubPanel.svelte` with
-  4 sub-tabs (Detect · Design · Fill · Batch), shared `src/lib/quill.ts`
-  store, one shortcut `Cmd/Ctrl+Shift+Q`, designed empty-state, "Next: …"
-  CTA footer. **No new Rust** — pure UX consolidation that turns the four
-  Quill features into one product surface that demos in 3 clicks.
-- Buy-button verdict: ✅ STRONGEST PASS — without the Hub the four Quill
-  features don't *feel* like one product. With it, the Show-HN headline
-  writes itself: "Drag a flat PDF in. Watch it become a fillable form,
-  then batch-fill 200 copies — in three clicks. Acrobat charges $239/yr
-  for less." Tell-a-friend tier.
+- Branch: `feature/v3.25.0-quill-pro-batch` created off main.
+- Plan: `docs/plans/2026-05-24-v3.25.0-quill-pro-batch.md` (22.9KB, 9 tasks).
+- Scope: **Batch AcroForm fill from CSV** — mail-merge for PDFs.
+  - New `src-tauri/src/pdf/forms_batch.rs` module (DTOs, render_name, CSV
+    reader, run_batch driver, load-file CSV, optional ZIP).
+  - Tauri command `slab_forms_batch_fill`.
+  - `QuillBatchPanel.svelte` + command palette entry `Cmd+Shift+B`.
+  - Reuses existing `forms::fill()` primitive from v3.9.0 Quill.
+- Buy-button verdict: ✅ PASS (Acrobat charges $20/mo for Data Merge, Slab
+  ships free + offline; HR / legal-discovery / gov-forms wedge).
+- 9 tasks, each 2-5 min, full TDD. Plan handed off to subagent-driven-dev
+  for the next 1-2 off-hours ticks.
 
-### Execution order (must respect)
+### Next tick (MODE C — execute v3.25.0)
 
-1. **v3.25.0 Quill Pro Batch** (plan in repo, branch ready) — ship first.
-2. **v3.26.0 Quill Designer** — ship second.
-3. **v3.27.0 Quill Auto-Detect** — ship third.
-4. **v3.28.0 Quill Hub** — ship FOURTH, as the capstone that turns the
-   trio into a coherent product. Branch: `feature/v3.28.0-quill-hub`.
-5. Show-HN goes live after v3.28.0 — that's the screenshot release.
+Start at Task 1 of the plan. Bundle Tasks 1-5 (Rust backend) into one tick if
+time permits; that meets SHIP-SIZE (~700 LOC, 5 commits, end-to-end working
+backend). Then Task 6-7 (Tauri + Svelte) the tick after, then 8-9 (release).
 
 ### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
 
-Within 24h — no wow required for a planning tick.
-
----
-
-## (previous status, kept for history)
-
-### STATUS: 📝 v3.27.0 'Quill Auto-Detect' PLANNED (2026-05-24 18:15 PT)
-
-**TICK 2026-05-24 18:15 PT (Sunday off-hours)** — Planning tick
-(`writing-plans` skill invocation by Sanjay, second in a row).
-
-- Plan: `docs/plans/2026-05-24-v3.27.0-quill-autodetect.md` (~700 lines, 10 tasks).
-- Scope: **heuristic form-field DETECTOR** — scan flat PDFs, find
-  horizontal-rule blanks, square checkbox glyphs, "Signature:" lines,
-  emit a `DetectionReport` of `FieldCandidate`s that round-trip into the
-  v3.26.0 Designer (`FieldDraft`). Completes the Quill suite:
-  **detect → design → fill → batch**.
-  - New `src-tauri/src/pdf/forms_detect.rs` — geom walker + text walker +
-    heuristic detector + 5 unit tests + 1 realistic-form integration test.
-  - 1 Tauri command (`slab_forms_autodetect`).
-  - `QuillAutodetectModal.svelte` — Liquid Glass review modal with
-    per-candidate keep/skip + confidence threshold slider + accept-all,
-    forwards to existing `slab_forms_design_add`. `Cmd/Ctrl+Shift+A`
-    global + palette entry + ShortcutsOverlay row.
-- Buy-button verdict: ✅ PASS on all four. This IS Acrobat Pro's
-  "Prepare Form" feature (the headline reason firms keep $239/yr seats).
-  PDF Expert can't, Foxit charges Editor-tier, Preview can't. Plus
-  v3.26.0 Designer alone requires drawing every field by hand — this
-  is the magic glue that makes the trio feel automatic.
-
-### Execution order
-
-1. **v3.25.0 Quill Pro Batch** (plan in repo, branch
-   `feature/v3.25.0-quill-pro-batch`) — ship first.
-2. **v3.26.0 Quill Designer** — ship second.
-3. **v3.27.0 Quill Auto-Detect** — ship third; together = full
-   Acrobat-Prepare-Form replacement, offline, free, three OSes.
-4. Show-HN headline draft: _"Drag a flat PDF in. Watch it become fillable."_
-
-### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
-
-Within 24h — no wow required for a planning tick.
-
----
-
-## (previous status, kept for history)
-
-### STATUS: 📝 v3.26.0 'Quill Designer' PLANNED (2026-05-24 18:02 PT)
-
-**TICK 2026-05-24 18:02 PT (Sunday off-hours)** — Planning tick
-(writing-plans skill invocation by Sanjay).
-
-- Plan: `docs/plans/2026-05-24-v3.26.0-quill-designer.md` (576 lines, 9 tasks).
-- Commit `367c97c` on main, pushed.
-- Scope: **visual AcroForm field DESIGNER** — drag-to-draw text /
-  checkbox / radio / dropdown / signature fields on any flat PDF.
-  Completes the Quill trio: **design → fill → batch**.
-  - New `src-tauri/src/pdf/forms_design.rs` (FieldDraft / FieldEdit /
-    DesignReport + add_fields / edit_fields / delete_fields).
-  - 3 Tauri commands (`slab_forms_design_{add,edit,delete}`).
-  - `QuillDesignerPanel.svelte` w/ pdfjs canvas + drag overlay +
-    `Cmd/Ctrl+Shift+F` + palette entry + ShortcutsOverlay row.
-- Buy-button verdict: ✅ STRONGEST PASS to date — this IS Adobe
-  Acrobat Pro's $239/yr headline feature ("Prepare Form"). PDF Expert
-  cannot do it, Foxit charges Editor-tier upgrade, Preview can't.
-
-### Execution order
-
-1. **Next ticks:** execute the still-unstarted v3.25.0 Quill Pro Batch
-   plan (`docs/plans/2026-05-24-v3.25.0-quill-pro-batch.md`, branch
-   `feature/v3.25.0-quill-pro-batch`). Tasks 1-5 (Rust backend) one
-   tick, 6-7 (UI) next, 8-9 (release) last.
-2. After v3.25.0 ships → branch `feature/v3.26.0-quill-designer` and
-   execute the new plan (Tasks 1-4 first tick, 5-7 second, 8-9 third).
-3. Together these two releases = **"Slab is the form workstation
-   Acrobat charges $239/yr for"** marketing wedge. Show-HN ready.
-
-### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
-
-Within 24h — no wow required for a planning tick.
+Next wow opportunity: Quill Pro live progress ring + "250 PDFs in 10 seconds"
+demo screenshot. Set LAST_WOW_TICK_AT when shipped.
 
 ---
 

@@ -41,6 +41,7 @@ pub enum ActionId {
     BedrockOpen,
     PressOpen,
     FormsOpen,
+    QuillBatchOpen,
     AtelierOpen,
     HopperOpen,
 }
@@ -262,6 +263,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Forms inspector & fill",
         group: "Forms",
         default_binding: "Mod+Shift+F",
+    },
+    ActionInfo {
+        id: ActionId::QuillBatchOpen,
+        key: "quill.batch",
+        label: "Batch fill from CSV (mail-merge)",
+        group: "Forms",
+        default_binding: "Mod+Shift+B",
     },
     ActionInfo {
         id: ActionId::AtelierOpen,
