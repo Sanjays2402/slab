@@ -57,7 +57,8 @@
   import StackPanel from "$lib/panels/StackPanel.svelte";
   import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
   import PressPanel from "$lib/panels/PressPanel.svelte";
-  import FormsPanel from "$lib/panels/FormsPanel.svelte";
+  import QuillHubPanel from "$lib/panels/QuillHubPanel.svelte";
+  import { setActiveTab as setQuillTab } from "$lib/quill";
   import QuillBatchPanel from "$lib/panels/QuillBatchPanel.svelte";
   import QuillDesignerPanel from "$lib/panels/QuillDesignerPanel.svelte";
   import QuillAutodetectPanel from "$lib/panels/QuillAutodetectPanel.svelte";
@@ -492,35 +493,41 @@
       }
     }
     // Quill Batch (v3.25.0): CSV mail-merge form fill. Default Mod+Shift+B.
+    // v3.28.0 Hub: shortcut now opens the unified Forms hub on the Batch tab.
     if (matches(e, "quill.batch")) {
       const tgt = e.target as HTMLElement | null;
       const inField =
         tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
       if (!inField) {
         e.preventDefault();
-        active = "quill-batch";
+        setQuillTab("batch");
+        active = "forms";
         return;
       }
     }
     // Quill Designer (v3.26.0): author form fields. Default Mod+Shift+D.
+    // v3.28.0 Hub: opens the Forms hub on the Design tab.
     if (matches(e, "quill.designer")) {
       const tgt = e.target as HTMLElement | null;
       const inField =
         tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
       if (!inField) {
         e.preventDefault();
-        active = "quill-designer";
+        setQuillTab("design");
+        active = "forms";
         return;
       }
     }
     // Quill Auto-Detect (v3.27.0): propose form fields on flat PDFs. Default Mod+Shift+Y.
+    // v3.28.0 Hub: opens the Forms hub on the Detect tab.
     if (matches(e, "quill.autodetect")) {
       const tgt = e.target as HTMLElement | null;
       const inField =
         tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
       if (!inField) {
         e.preventDefault();
-        active = "quill-autodetect";
+        setQuillTab("detect");
+        active = "forms";
         return;
       }
     }
@@ -1160,7 +1167,7 @@
   {:else if active === "press"}
     <PressPanel />
   {:else if active === "forms"}
-    <FormsPanel />
+    <QuillHubPanel />
   {:else if active === "quill-batch"}
     <QuillBatchPanel />
   {:else if active === "quill-designer"}

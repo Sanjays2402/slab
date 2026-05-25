@@ -18,6 +18,7 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
   import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
+  import { setInput as quillSetInput, recordFormsReport as quillRecordReport } from "$lib/quill";
 
   type FieldType = "text" | "button" | "choice" | "signature" | "unknown";
 
@@ -76,6 +77,7 @@
     report = null;
     values = {};
     status = idle;
+    quillSetInput(picked);
     await runInspect(picked);
   }
 
@@ -85,6 +87,18 @@
       const res = await invoke<CmdResult<FormsReport>>("slab_forms_inspect", { input: path });
       if (res.kind === "ok") {
         report = res.value;
+        // Mirror to the Quill Hub store so the cross-tab CTA knows
+        // an AcroForm is now available (suggests "Fill" → "Batch").
+        quillRecordReport({
+          has_acroform: res.value.has_acroform,
+          need_appearances: res.value.need_appearances,
+          has_xfa: res.value.has_xfa,
+          fields: res.value.fields.map((f) => ({
+            name: f.name,
+            value: f.value,
+            type: f.type,
+          })),
+        });
         // Pre-populate the editor with each field's current /V so the user
         // sees what's in the doc and can decide what to change.
         const v: Record<string, string> = {};

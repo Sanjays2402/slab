@@ -21,6 +21,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { idle, basename, type CmdResult, type Status } from "$lib/types";
+  import { setInput as quillSetInput } from "$lib/quill";
 
   // ---- Types mirror src-tauri/src/pdf/forms_design.rs ---------------------
 
@@ -120,6 +121,7 @@
     drafts = [];
     report = null;
     status = idle;
+    quillSetInput(picked);
     await runInspect(picked);
   }
 
