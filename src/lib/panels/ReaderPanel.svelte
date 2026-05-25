@@ -6,7 +6,8 @@
   import { join, tempDir } from "@tauri-apps/api/path";
   import { basename, formatBytes, stripExt } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
-  import { recordRecent, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
+  import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
+  import RecentsHome from "$lib/components/RecentsHome.svelte";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -82,6 +83,38 @@
   let loadError = $state<string | null>(null);
 
   let currentPage = $state(1);
+
+  // Atlas Lite: debounced reading-progress emitter. We persist the user's
+  // last-viewed page so re-opening jumps straight back there.
+  let progressTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSavedProgress: { path: string; page: number } | null = null;
+  function scheduleProgressSave(path: string, page: number, total: number) {
+    // Skip duplicate writes (e.g. user lands on page 5, scrolls within page).
+    if (lastSavedProgress && lastSavedProgress.path === path && lastSavedProgress.page === page) {
+      return;
+    }
+    if (progressTimer) clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => {
+      try {
+        recordRecentProgress(path, { lastPage: page, totalPages: total });
+        lastSavedProgress = { path, page };
+      } catch { /* localStorage off — silently skip */ }
+      progressTimer = null;
+    }, 800);
+  }
+  function flushProgressSave() {
+    if (progressTimer) {
+      clearTimeout(progressTimer);
+      progressTimer = null;
+      // Force-write whatever the current state is so closing the doc
+      // doesn't lose the last 800ms of scrolling.
+      if (doc && currentPage >= 1) {
+        try {
+          recordRecentProgress(doc.path, { lastPage: currentPage, totalPages: doc.pageCount });
+        } catch { /* ignore */ }
+      }
+    }
+  }
 
   // Atlas v2.2.0 — runtime page-jump + highlight state.
   //
@@ -455,6 +488,27 @@
       void renderRecentThumb(pdf, path);
       // Notify the shell so it can update the tab title.
       onTitleChange?.(basename(path));
+      // Atlas Lite: if this file has a saved reading position, resume there
+      // (but not if the shell asked for a specific page via initialPage /
+      // pendingJump — explicit navigation always wins over implicit resume).
+      const savedProgress = getRecentProgress(path);
+      const hasExplicitJump = !!pendingJump || !!initialPage;
+      if (
+        !hasExplicitJump &&
+        savedProgress &&
+        savedProgress.lastPage > 1 &&
+        savedProgress.lastPage <= pdf.numPages
+      ) {
+        const resumePage = savedProgress.lastPage;
+        // Wait one microtask for pdfViewer to attach.
+        queueMicrotask(() => {
+          try {
+            pdfViewer.currentPageNumber = resumePage;
+            currentPage = resumePage;
+          } catch { /* viewer not ready — pagesinit will recover */ }
+        });
+        notify.info(`Resumed at page ${resumePage} of ${pdf.numPages}`, { duration: 4000 });
+      }
       // Kick off a scan-audit in the background — non-blocking. Only for
       // real file-system PDFs (skip data: URLs etc — `path` is a real path
       // by contract here).
@@ -647,6 +701,8 @@
   }
 
   function tearDownDoc() {
+    // Atlas Lite: persist any pending progress before we lose the doc handle.
+    flushProgressSave();
     // Workshop v2.0.0 Slice 6.8: fire `slab.document.onClose` for the
     // previously-open doc (if any) before we tear down its state.
     // Must run BEFORE we null out `doc` so we can read the path; plugin
@@ -735,6 +791,11 @@
     });
     eventBus.on("pagechanging", (e: any) => {
       currentPage = e.pageNumber;
+      // Atlas Lite: debounced save to the recent-files store so the next
+      // reopen jumps straight to where the user was. We pick 800ms — long
+      // enough to ignore rapid scroll-bursts, short enough that closing
+      // the tab while still scrolling still records something useful.
+      if (doc) scheduleProgressSave(doc.path, e.pageNumber, doc.pageCount);
     });
     eventBus.on("scalechanging", () => {
       syncZoom();
@@ -1009,8 +1070,21 @@
   // ---------- Keyboard ----------
   function onKey(e: KeyboardEvent) {
     if (!active) return;
-    if (!doc) return;
     const isMod = e.metaKey || e.ctrlKey;
+    // Atlas Lite (v3.31.0): Cmd+0 → Recents Home, Cmd+Shift+0 → Continue.
+    // These need to work whether or not a doc is open, so we handle them
+    // before the no-doc early return below.
+    if (isMod && e.key === "0" && !e.shiftKey) {
+      e.preventDefault();
+      onHomeOpen();
+      return;
+    }
+    if (isMod && e.shiftKey && (e.key === "0" || e.key === ")")) {
+      e.preventDefault();
+      onHomeContinue();
+      return;
+    }
+    if (!doc) return;
     if (isMod && e.key === "f") {
       e.preventDefault();
       toggleFind();
@@ -1041,6 +1115,9 @@
   onMount(() => {
     window.addEventListener("keydown", onKey);
     window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    // Atlas Lite (v3.31.0): the palette + Cmd+0 hotkey dispatch into here.
+    window.addEventListener("slab:home-open", onHomeOpen as EventListener);
+    window.addEventListener("slab:home-continue", onHomeContinue as EventListener);
     // Glass II Vim adapter — only the active tab actually reacts (gated
     // inside each handler), but every tab subscribes so the registration
     // matches the unsubscribe path.
@@ -1118,6 +1195,8 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    window.removeEventListener("slab:home-open", onHomeOpen as EventListener);
+    window.removeEventListener("slab:home-continue", onHomeContinue as EventListener);
     window.removeEventListener("slab:vim-reader:page", onVimPage as EventListener);
     window.removeEventListener("slab:vim-reader:goto", onVimGoto as EventListener);
     window.removeEventListener("slab:vim-reader:scroll", onVimScroll as EventListener);
@@ -1210,6 +1289,34 @@
     }
   }
 
+  // Atlas Lite (v3.31.0): "Go to Recents Home" — close the active doc so
+  // the empty-state RecentsHome renders. Only the active tab acts.
+  function onHomeOpen() {
+    if (!active) return;
+    if (doc) {
+      tearDownDoc();
+      doc = null;
+      onTitleChange?.("New tab");
+    }
+  }
+
+  // Atlas Lite (v3.31.0): "Continue reading" — pick the recent file with
+  // the freshest in-progress lastPage, fall back to the most recent file
+  // if no progress exists, then dispatch through the open path.
+  function onHomeContinue() {
+    if (!active) return;
+    const files = listRecent();
+    const withProgress = files
+      .filter((r) => r.lastPage && r.totalPages && r.lastPage < r.totalPages)
+      .sort((a, b) => (b.lastReadAt ?? b.openedAt) - (a.lastReadAt ?? a.openedAt));
+    const target = withProgress[0] ?? files[0];
+    if (!target) {
+      notify.info("No recent files to continue", { duration: 2500 });
+      return;
+    }
+    onOpenRecentEvent({ detail: target } as CustomEvent<RecentFile>);
+  }
+
   function attachThumb(el: HTMLCanvasElement, n: number) {
     thumbCanvases.set(n, el);
     return {
@@ -1284,61 +1391,15 @@
 </header>
 
 {#if !doc}
-  <section class="panel">
-    <button class="dropzone" onclick={pickFile} disabled={loading}>
-      <span class="dz-icon">+</span>
-      <span class="dz-title">{loading ? "Loading…" : "Open a document"}</span>
-      <span class="dz-hint">PDF, Office, HTML, EPUB & more — drop or click. <span class="dz-kbd">⌘K</span> to jump anywhere.</span>
-    </button>
+  <section class="panel home-panel">
+    <RecentsHome
+      onOpen={(r) => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)}
+      onPick={pickFile}
+      onContinue={() => { /* hook reserved for analytics / cmd-palette signal */ }}
+      loading={loading}
+    />
     {#if loadError}
       <div class="status err">✕ {loadError}</div>
-    {/if}
-    {#if recents.length > 0}
-      <div class="recent-block">
-        <div class="recent-head">
-          <span class="recent-label">Recent</span>
-        </div>
-        <div class="recent-grid">
-          {#each recents as r (r.path)}
-            {@const thumb = getRecentThumb(r.path)}
-            <div class="recent-card-wrap" class:pinned={r.pinned}>
-              <button class="recent-card" onclick={() => onOpenRecentEvent({ detail: r } as CustomEvent<RecentFile>)} title={r.path}>
-                <div class="recent-thumb">
-                  {#if thumb}
-                    <img src={thumb} alt="" loading="lazy" />
-                  {:else}
-                    <span class="recent-thumb-placeholder">PDF</span>
-                  {/if}
-                  {#if r.pinned}
-                    <span class="recent-pin-flag" title="Pinned">📌</span>
-                  {/if}
-                </div>
-                <div class="recent-card-body">
-                  <span class="recent-card-name">{r.name}</span>
-                  <span class="recent-card-meta">
-                    {#if r.pageCount}{r.pageCount} pages · {/if}{formatRelTime(r.openedAt)}
-                  </span>
-                </div>
-              </button>
-              <div class="recent-card-actions">
-                <button
-                  class="recent-act"
-                  class:active={r.pinned}
-                  title={r.pinned ? "Unpin" : "Pin to top"}
-                  aria-label={r.pinned ? "Unpin" : "Pin to top"}
-                  onclick={(e) => { e.stopPropagation(); pinRecent(r.path); recents = listRecent(); notify.success(r.pinned ? `Unpinned ${r.name}` : `Pinned ${r.name}`); }}
-                >📌</button>
-                <button
-                  class="recent-act danger"
-                  title="Remove from recents"
-                  aria-label="Remove from recents"
-                  onclick={(e) => { e.stopPropagation(); removeRecent(r.path); recents = listRecent(); notify.info(`Removed ${r.name} from recents`); }}
-                >✕</button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
     {/if}
   </section>
 {/if}
