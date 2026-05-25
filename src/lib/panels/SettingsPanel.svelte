@@ -19,6 +19,14 @@
   import { vimEnabled } from "$lib/vim/mode";
   import { LOCALES, locale, setLocale, t, tStore, type LocaleId } from "$lib/i18n";
   import { bootKeymap, keymapView, prettyBindingFor } from "$lib/keymap";
+  import {
+    loadBeaconCfg,
+    saveBeaconCfg,
+    OLLAMA_CHAT_PRESETS,
+    OPENAI_CHAT_PRESETS,
+    type BeaconCfg,
+    type ProviderKind,
+  } from "$lib/beaconSettings";
   import { onMount } from "svelte";
 
   // Local mirror of the current locale so the segmented control re-renders.
@@ -89,7 +97,71 @@
   // rebind without manually wiring a derived store.
   onMount(() => {
     void bootKeymap();
+    void loadBeacon();
   });
+
+  // ---- v3.30.0 "Quill Smart Fill" Slice 3 — AI / Beacon settings ----
+  //
+  // Lets users pick the chat model used by Smart Fill (and Beacon chat,
+  // summaries, search) from the Settings panel instead of hand-editing
+  // ~/.slab/config.toml. Writes go through `saveBeaconCfg` which does
+  // a read-modify-write so unrelated sections are preserved.
+  let beacon = $state<BeaconCfg | null>(null);
+  let aiSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let aiSaving = $state<"idle" | "saving" | "saved" | "error">("idle");
+
+  async function loadBeacon() {
+    try {
+      const cfg = await loadBeaconCfg();
+      beacon = { ...cfg.beacon };
+    } catch (e) {
+      // Silent: missing config file is fine (defaults kick in on first save).
+      // A noisy toast here would scare brand-new users. Only surface on
+      // explicit user action below.
+      beacon = {
+        provider: "ollama",
+        chat_model: null,
+        base_url: null,
+        api_key_env: null,
+      };
+      const _ = e;
+      void _;
+    }
+  }
+
+  function debouncedSaveBeacon(patch: Partial<BeaconCfg>) {
+    if (!beacon) return;
+    beacon = { ...beacon, ...patch };
+    aiSaving = "saving";
+    if (aiSaveTimer) clearTimeout(aiSaveTimer);
+    // 300ms debounce so typing into the model combo-box doesn't write
+    // on every keystroke. Apply itself is instant once it fires.
+    aiSaveTimer = setTimeout(async () => {
+      try {
+        await saveBeaconCfg(patch);
+        aiSaving = "saved";
+        setTimeout(() => (aiSaving = "idle"), 1400);
+      } catch (e) {
+        aiSaving = "error";
+        notify.error("Couldn't save AI settings", {
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }, 300);
+  }
+
+  function setProvider(p: ProviderKind) {
+    debouncedSaveBeacon({ provider: p });
+  }
+  function setChatModel(v: string | null) {
+    debouncedSaveBeacon({ chat_model: v && v.length ? v : null });
+  }
+  function setBaseUrl(v: string | null) {
+    debouncedSaveBeacon({ base_url: v && v.length ? v : null });
+  }
+  function setApiKeyEnv(v: string | null) {
+    debouncedSaveBeacon({ api_key_env: v && v.length ? v : null });
+  }
   $effect(() => {
     // touch the store so Svelte tracks it; the prettyBindingFor calls
     // in the template read the cache, so any rebind triggers a redraw.
@@ -285,6 +357,98 @@
     </div>
   </div>
 
+  <!-- AI / Beacon (v3.30.0 Slice 3) — pick the model used by Smart Fill,
+       Beacon chat, summaries, search. Backed by ~/.slab/config.toml
+       [beacon] section through `saveBeaconCfg` (read-modify-write). -->
+  {#if beacon}
+    <div class="row ai-row">
+      <div class="row-info">
+        <h2>{$tStore("settings.ai.heading")}</h2>
+        <p class="row-desc">{$tStore("settings.ai.subhead")}</p>
+      </div>
+      <div class="row-control">
+        <div class="ai-stack">
+          <div class="ai-field">
+            <span class="ai-label">{$tStore("settings.ai.provider")}</span>
+            <div class="seg" role="radiogroup" aria-label={$tStore("settings.ai.provider")}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={beacon.provider === "ollama"}
+                class:tab-active={beacon.provider === "ollama"}
+                onclick={() => setProvider("ollama")}
+              >Ollama</button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={beacon.provider === "openai"}
+                class:tab-active={beacon.provider === "openai"}
+                onclick={() => setProvider("openai")}
+              >OpenAI-compatible</button>
+            </div>
+          </div>
+
+          <div class="ai-field">
+            <span class="ai-label">{$tStore("settings.ai.chatModel")}</span>
+            <input
+              list={beacon.provider === "ollama" ? "ollama-chat-presets" : "openai-chat-presets"}
+              class="ai-input"
+              placeholder={beacon.provider === "ollama" ? "llama3.2:3b" : "gpt-4o-mini"}
+              value={beacon.chat_model ?? ""}
+              oninput={(e) =>
+                setChatModel((e.currentTarget as HTMLInputElement).value || null)}
+            />
+            <datalist id="ollama-chat-presets">
+              {#each OLLAMA_CHAT_PRESETS as p (p.id)}
+                <option value={p.id}>{p.label} — {p.hint}</option>
+              {/each}
+            </datalist>
+            <datalist id="openai-chat-presets">
+              {#each OPENAI_CHAT_PRESETS as p (p.id)}
+                <option value={p.id}>{p.label} — {p.hint}</option>
+              {/each}
+            </datalist>
+          </div>
+
+          <div class="ai-field">
+            <span class="ai-label">{$tStore("settings.ai.baseUrl")}</span>
+            <input
+              type="text"
+              class="ai-input"
+              placeholder={beacon.provider === "ollama"
+                ? "http://localhost:11434"
+                : "https://api.openai.com/v1"}
+              value={beacon.base_url ?? ""}
+              oninput={(e) =>
+                setBaseUrl((e.currentTarget as HTMLInputElement).value || null)}
+            />
+          </div>
+
+          {#if beacon.provider === "openai"}
+            <div class="ai-field">
+              <span class="ai-label">{$tStore("settings.ai.apiKeyEnv")}</span>
+              <input
+                type="text"
+                class="ai-input"
+                placeholder="OPENAI_API_KEY"
+                value={beacon.api_key_env ?? ""}
+                oninput={(e) =>
+                  setApiKeyEnv((e.currentTarget as HTMLInputElement).value || null)}
+              />
+              <span class="ai-hint">{$tStore("settings.ai.apiKeyEnvDesc")}</span>
+            </div>
+          {/if}
+
+          {#if aiSaving === "saving"}
+            <span class="ai-status saving">{$tStore("settings.status.saving")}</span>
+          {:else if aiSaving === "saved"}
+            <span class="ai-status ok">{$tStore("settings.status.saved")}</span>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Theater v2.3.0 — Slice 7 polish. Surface the presenter-mode
        shortcuts so first-time users discover them without hunting
        through Keymap. Knobs (default ink colour, second-display
@@ -469,5 +633,60 @@
     border-radius: 4px;
     font-family: var(--font-mono);
     font-size: 11px;
+  }
+
+  /* v3.30.0 Slice 3 — AI / Beacon section.
+     Stacks vertically inside the row-control column because the
+     section has more controls than the other rows. */
+  .ai-row .row-control {
+    width: 100%;
+    max-width: 360px;
+  }
+  .ai-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+  }
+  .ai-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ai-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .ai-input {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--text-1);
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  }
+  .ai-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .ai-hint {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .ai-status {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .ai-status.ok {
+    color: var(--ok, #2ea36a);
+  }
+  .ai-status.saving {
+    color: var(--text-3);
   }
 </style>
