@@ -380,6 +380,38 @@
       },
       keywords: "search library find query fts full text cross document indemnify clause atlas",
     });
+    // v3.35.0 "Atlas Presets" — open the preset picker from anywhere.
+    // Dispatches a window event that CollectionsSidebar listens to;
+    // we use an event rather than `bind:this` because the sidebar may
+    // not yet be mounted (user could be on the reader panel).
+    out.push({
+      id: "library:preset-picker",
+      title: "Add smart collection from preset…",
+      subtitle: "Tax 2025, Invoices, Contracts pending, Receipts… (⇧⌘P)",
+      icon: "★",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-preset-picker"));
+        });
+      },
+      keywords: "preset smart collection template tax invoice receipt contract legal research manual scanned untagged atlas built-in starter",
+    });
+    out.push({
+      id: "library:new-smart",
+      title: "New smart collection…",
+      subtitle: "Build a custom rule with the advanced builder (⇧⌘N)",
+      icon: "✦",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-smart-builder"));
+        });
+      },
+      keywords: "smart collection new rule builder nested and or not advanced atlas",
+    });
     // Hopper v3.22.0 — backfill ("Hopper Loop"). The palette entry
     // opens the Hopper panel so the user can pick a watch + click
     // "Test on this folder". The deep-link to a specific watch's

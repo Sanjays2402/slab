@@ -3405,6 +3405,49 @@ fn slab_smart_collection_expand(id: i64) -> CmdResult<Vec<DocumentRecord>> {
     result.into()
 }
 
+// -----------------------------------------------------------------
+// v3.35.0 "Atlas Presets" — built-in smart-collection templates
+// -----------------------------------------------------------------
+
+/// List every built-in preset. Static data, no DB hit, but we still
+/// return through CmdResult to keep the IPC shape consistent across
+/// library commands.
+#[tauri::command]
+fn slab_preset_list() -> CmdResult<Vec<pdf::library::presets::PresetInfo>> {
+    let result: Result<_, LibraryError> = Ok(pdf::library::presets::list_presets());
+    result.into()
+}
+
+/// Materialize the preset with `preset_id` into a real smart
+/// collection row. Auto-creates any tags the preset references.
+/// Emits library-changed so sidebars refresh.
+#[tauri::command]
+fn slab_preset_apply(
+    app: tauri::AppHandle,
+    preset_id: String,
+) -> CmdResult<pdf::library::collections::SmartCollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::presets::apply_preset(&mut db, &preset_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Return the preset ids that are already materialized as smart
+/// collections (matched by name) — frontend uses this to grey out
+/// "Add" buttons in the picker.
+#[tauri::command]
+fn slab_preset_already_applied() -> CmdResult<Vec<String>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::presets::presets_already_applied(&db)
+    })();
+    result.into()
+}
+
 /// Helper: distinguish "field omitted" (None) from "field explicitly null"
 /// (Some(None)) when deserializing JSON. Apply with
 /// `#[serde(default, deserialize_with = "deserialize_some_option")]` on
@@ -5072,6 +5115,9 @@ pub fn run() {
             slab_smart_collection_list,
             slab_smart_collection_delete,
             slab_smart_collection_expand,
+            slab_preset_list,
+            slab_preset_apply,
+            slab_preset_already_applied,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,
