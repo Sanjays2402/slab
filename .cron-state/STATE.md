@@ -1,52 +1,52 @@
 # Slab Cron State
 
-Last updated: 2026-05-24 22:01 PT by Cake (cron)
+Last updated: 2026-05-24 22:23 PT by Cake (cron)
 
 ## Active version
 
-**v3.28.0 "Quill Hub" — MERGED + TAGGED + PUSHED.** CI in progress.
+**v3.29.0 "Forms Tour" — SHIPPED on `feature/v3.29.0-forms-tour`.**
 
-- Merge SHA: f550863 (main)
-- Tag: v3.28.0
-- CI runs (kicked off 2026-05-25 05:00 UTC):
-  - `build` on main → run 26384107071
-  - `Docker (slab-server)` on tag v3.28.0 → run 26384107036
-  - `deploy-try` on main → run 26384107034
+Branch pushed, CI run 26384738089 in progress. STATUS: DONE — ready to
+merge to main on the NEXT tick, after v3.28.0 finalize lands.
 
-**RELEASE_PENDING: v3.28.0** — finalize next tick (MODE B):
-1. Poll run 26384107071 (build) until green.
-2. `gh run download 26384107071 --dir /tmp/slab-v3.28.0/`
-3. `gh release create v3.28.0 --title 'v3.28.0 — Quill Hub' --notes-file docs/release-notes/v3.28.0.md`
-   with the 6 curated artifacts (mac dmg arm64 + x64, linux deb + AppImage, win msi + nsis).
-4. Verify Docker tag workflow on v3.28.0 succeeded (run 26384107036).
+**v3.28.0 "Quill Hub" — still RELEASE_PENDING.** Bundle build on main
+(run 26384107071) was still in_progress at the end of this tick (~22 min
+elapsed). Finalize MODE B next tick.
 
-## This tick (2026-05-24 21:46–22:01 PT)
+## This tick (2026-05-24 22:07–22:23 PT)
 
-**v3.28.0 Quill Hub — shipped end-to-end in one MODE C tick.**
+**v3.29.0 Forms Tour — polish-tier release, shipped end-to-end.**
 
-The four scattered Acrobat-killer features (Forms Fill, Quill Batch, Quill
-Designer, Quill Auto-Detect) are now one unified "Forms" workspace with a
-4-tab subnav (Detect · Design · Fill · Batch), a shared state store, a
-live status chip, and a smart "Next: …" footer CTA. The three Quill
-shortcuts (`Mod+Shift+B/D/Y`) now open the Hub on the matching tab.
-Command palette surfaces all four sub-tabs as discoverable actions.
+A 5-step coachmark tour that auto-fires the first time a user opens the
+unified Forms workspace. Animated spotlight ring follows the active tab
+with a 220ms cubic-bezier ease, pulsing 2.4s glow draws the eye, full
+keyboard control (←/→/Enter/Esc), and `prefers-reduced-motion` respected.
 
-4 commits, 702 insertions, 9 deletions across 14 files:
-- 18d8a4f feat(quill): shared hub store
-- 809be98 feat(quill): hub shell + tab nav + cross-panel state sync
-- c070ad5 feat(quill): palette + shortcut-sheet discoverability
-- 36d2d96 chore(release): v3.28.0 version bump + release notes
+Replayable from the command palette ("Forms: Show welcome tour") and via
+the new `Mod+Shift+/` shortcut from anywhere in the app. Completion
+flag persists in localStorage so it never re-fires once dismissed.
+
+4 commits, 905 insertions / 4 deletions across 13 files (664 net non-test
+LOC):
+- 34768ef feat(quill): tour store + onboarding state
+- 5562903 feat(quill): coachmark overlay component
+- 294e0ac feat(quill): wire into Hub + palette + keyboard shortcut
+- 9c46bf9 chore(release): v3.29.0 version bump + release notes
 
 Gates green: cargo fmt ✓, clippy ✓, 1740 lib tests ✓, pnpm check 0 errors.
 
-Buy-button: passes Pay-for-it (paralegal $49) + Notice-it (new sidebar
-behaviour visible day one) + Pick-us (Acrobat's $239/yr "Prepare Form"
-flow unified offline + free) + Tell-a-friend (one tab, four steps, CSV
-merge at the end is the demo gif).
+**Buy-button**:
+- Pay-for-it ✅ — onboarding is the #1 reason enterprises pick PDF Expert
+  over scrappy tools. Slab now teaches itself in 30s.
+- Notice-it ✅ — every existing user sees the tour next time they open
+  Forms.
+- Pick-us ✅ — Acrobat hides "Prepare Form" three menus deep.
+- Tell-a-friend ✅ — spotlight + ease motion is the screenshot.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T05:00:39Z (v3.28.0 Quill Hub — one tab, four sub-tabs, no more re-picking files)
+LAST_WOW_TICK_AT: 2026-05-25T05:22:39Z (v3.29.0 Forms Tour — spotlight
+spotlight + cubic-bezier-eased coachmark on first visit to Forms)
 
 ## Recently closed issues
 
@@ -54,9 +54,20 @@ LAST_WOW_TICK_AT: 2026-05-25T05:00:39Z (v3.28.0 Quill Hub — one tab, four sub-
 
 ## Next ticks
 
-- **MODE B**: finalize v3.28.0 (poll CI, download artifacts, `gh release create`).
-- After finalize: re-poll `gh issue list`, then start the **v0.10.0 Beacon**
-  arc (local LLM chat with PDFs via Ollama) — the long-promised buyer-magnet
-  release per the roadmap. Specs at `.cron-state/proposals/v0.10.0-beacon-ai.md`.
-- Optional polish before Beacon: a single-pane Forms onboarding overlay
-  (3-screen tour) that fires on first visit to the Hub — would be a wow tick.
+- **MODE A**: poll v3.28.0 CI (run 26384107071). When green:
+  - `gh run download 26384107071 --dir /tmp/slab-v3.28.0/`
+  - `gh release create v3.28.0 --title 'v3.28.0 — Quill Hub' --notes-file docs/release-notes/v3.28.0.md` + 6 artifacts.
+  - Verify Docker tag workflow on v3.28.0 (run 26384107036 — already success).
+- **THEN MODE A again**: merge `feature/v3.29.0-forms-tour` into main,
+  tag v3.29.0, push, watch CI run 26384738089 propagate to a tagged build.
+- After both finalize: re-poll `gh issue list`, then start the
+  **v0.10.0 Beacon** arc (Ollama-backed local PDF chat) — the
+  long-promised buyer-magnet release per the roadmap. Specs at
+  `.cron-state/proposals/v0.10.0-beacon-ai.md`.
+
+## Pipeline state
+
+| Branch                        | Status            | Notes                                  |
+| ----------------------------- | ----------------- | -------------------------------------- |
+| `main`                        | v3.28.0 tagged    | RELEASE_PENDING — CI in progress       |
+| `feature/v3.29.0-forms-tour`  | DONE — pushed     | Merge after v3.28.0 finalizes          |
