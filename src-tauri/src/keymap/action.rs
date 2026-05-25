@@ -44,6 +44,7 @@ pub enum ActionId {
     QuillBatchOpen,
     QuillDesignerOpen,
     QuillAutodetectOpen,
+    QuillSmartFillOpen,
     QuillTour,
     AtelierOpen,
     HopperOpen,
@@ -289,6 +290,13 @@ const ACTIONS: &[ActionInfo] = &[
         default_binding: "Mod+Shift+Y",
     },
     ActionInfo {
+        id: ActionId::QuillSmartFillOpen,
+        key: "quill.smartfill",
+        label: "Smart Fill — fill form from source doc",
+        group: "Forms",
+        default_binding: "Mod+Shift+I",
+    },
+    ActionInfo {
         id: ActionId::QuillTour,
         key: "quill.tour",
         label: "Show Forms welcome tour",
@@ -416,6 +424,22 @@ mod tests {
                 .unwrap_or_else(|e| panic!("default for {} ({s}) not parseable: {e}", id.as_str()));
             assert_eq!(*b, reparsed);
         }
+    }
+
+    #[test]
+    fn v3_30_smartfill_action_is_registered() {
+        // Regression guard: v3.30.0 "Quill Smart Fill" adds a new keymap
+        // action. The wire id is what the JS layer matches on, so this
+        // pins it. Default Mod+Shift+I — "I" for intelligent fill.
+        let info = ActionId::QuillSmartFillOpen.info();
+        assert_eq!(info.key, "quill.smartfill");
+        assert_eq!(info.group, "Forms");
+        assert_eq!(info.default_binding, "Mod+Shift+I");
+        // And it must round-trip through the string parse.
+        assert_eq!(
+            ActionId::parse("quill.smartfill").unwrap(),
+            ActionId::QuillSmartFillOpen
+        );
     }
 
     #[test]
