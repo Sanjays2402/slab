@@ -42,6 +42,7 @@ pub enum ActionId {
     PressOpen,
     FormsOpen,
     QuillBatchOpen,
+    QuillDesignerOpen,
     AtelierOpen,
     HopperOpen,
 }
@@ -270,6 +271,13 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Batch fill from CSV (mail-merge)",
         group: "Forms",
         default_binding: "Mod+Shift+B",
+    },
+    ActionInfo {
+        id: ActionId::QuillDesignerOpen,
+        key: "quill.designer",
+        label: "Designer — author form fields",
+        group: "Forms",
+        default_binding: "Mod+Shift+D",
     },
     ActionInfo {
         id: ActionId::AtelierOpen,

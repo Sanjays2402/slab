@@ -1215,6 +1215,35 @@ async fn slab_forms_batch_fill(
         .map_err(|e| e.to_string())?
 }
 
+// --- v3.26.0 "Quill Designer" — author AcroForm fields ---------------------
+
+#[tauri::command]
+fn slab_forms_design_add(
+    input: PathBuf,
+    drafts: Vec<crate::pdf::forms_design::FieldDraft>,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::forms_design::DesignReport> {
+    crate::pdf::forms_design::add_fields(&input, &drafts, &output).into()
+}
+
+#[tauri::command]
+fn slab_forms_design_edit(
+    input: PathBuf,
+    edits: Vec<crate::pdf::forms_design::FieldEdit>,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::forms_design::DesignReport> {
+    crate::pdf::forms_design::edit_fields(&input, &edits, &output).into()
+}
+
+#[tauri::command]
+fn slab_forms_design_delete(
+    input: PathBuf,
+    names: Vec<String>,
+    output: PathBuf,
+) -> CmdResult<crate::pdf::forms_design::DesignReport> {
+    crate::pdf::forms_design::delete_fields(&input, &names, &output).into()
+}
+
 #[tauri::command]
 fn slab_find_text_spans(input: PathBuf) -> CmdResult<Vec<PageSpans>> {
     do_find_text_spans(&input).into()
@@ -4666,6 +4695,9 @@ pub fn run() {
             slab_forms_inspect,
             slab_forms_fill,
             slab_forms_batch_fill,
+            slab_forms_design_add,
+            slab_forms_design_edit,
+            slab_forms_design_delete,
             slab_find_text_spans,
             slab_replace_text_span,
             slab_diff_pdfs,
