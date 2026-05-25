@@ -10,7 +10,7 @@
 
 import { writable, derived, get } from "svelte/store";
 
-export type QuillTab = "detect" | "design" | "fill" | "batch";
+export type QuillTab = "detect" | "design" | "fill" | "smartfill" | "batch";
 
 export type FormsReport = {
   has_acroform: boolean;
