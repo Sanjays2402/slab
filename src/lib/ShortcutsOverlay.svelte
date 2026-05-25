@@ -132,6 +132,15 @@
       ],
     },
     {
+      // v3.35.0 "Atlas Presets": one-click smart-collection templates.
+      title: "Library (Atlas)",
+      items: [
+        { keys: [MOD, "Shift", "P"], label: "Add smart collection from preset…" },
+        { keys: [MOD, "Shift", "N"], label: "New smart collection (advanced builder)" },
+        { keys: [MOD, "Shift", "F"], label: "Search across every PDF in your library" },
+      ],
+    },
+    {
       // v3.28.0 Quill Hub: one panel, four sub-tabs. The shortcuts each
       // open the Forms hub on the corresponding tab — no more memorising
       // four separate routes.

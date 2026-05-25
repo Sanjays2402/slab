@@ -146,11 +146,18 @@
     const libHandler = () => refresh();
     window.addEventListener("library-changed", libHandler);
     window.addEventListener("keydown", handleGlobalKey);
+    // v3.35.0 — command palette opens the picker via these events.
+    const openPicker = () => openPresetPicker();
+    const openBuilder = () => openNewSmart();
+    window.addEventListener("slab:open-preset-picker", openPicker);
+    window.addEventListener("slab:open-smart-builder", openBuilder);
     const clickAway = () => (menu = null);
     window.addEventListener("click", clickAway);
     return () => {
       window.removeEventListener("library-changed", libHandler);
       window.removeEventListener("keydown", handleGlobalKey);
+      window.removeEventListener("slab:open-preset-picker", openPicker);
+      window.removeEventListener("slab:open-smart-builder", openBuilder);
       window.removeEventListener("click", clickAway);
     };
   });
