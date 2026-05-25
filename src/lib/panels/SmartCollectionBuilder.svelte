@@ -10,17 +10,21 @@
   import { onMount, onDestroy } from "svelte";
   import {
     type DocumentRecord,
+    type FilterGroup,
     type FolderRecord,
     type LibraryFilter,
     type LibrarySortBy,
     type SmartCollectionRecord,
     type TagRecord,
+    emptyFilterGroup,
     listDocuments,
     listFolders,
     listTags,
+    migrateFlatFilter,
     smartCollectionCreate,
     smartCollectionUpdate,
   } from "$lib/library";
+  import ClauseGroup from "./ClauseGroup.svelte";
 
   type Props = {
     /** When set, builder is in edit mode. */
@@ -105,6 +109,23 @@
 
   let sort = $state<LibrarySortBy>(editingFilter?.sort ?? "added_desc");
 
+  // ---------- v3.34.0 Advanced (nested AND/OR/NOT) ----------
+  // If the persisted filter already has a `clauses` tree, default to
+  // advanced mode so we don't silently lose the user's nesting. New
+  // collections default to basic mode (less intimidating).
+  let advanced = $state<boolean>(!!editingFilter?.clauses);
+  let advancedGroup = $state<FilterGroup>(
+    editingFilter ? migrateFlatFilter(editingFilter) : emptyFilterGroup(),
+  );
+  function enableAdvanced() {
+    // Carry the current basic rules over so the user doesn't lose work.
+    advancedGroup = migrateFlatFilter(buildBasicFilter());
+    advanced = true;
+  }
+  function backToBasic() {
+    advanced = false;
+  }
+
   // ---------- Catalog data for the dropdowns ----------
   let tags = $state<TagRecord[]>([]);
   let folders = $state<FolderRecord[]>([]);
@@ -131,7 +152,7 @@
   }
 
   // ---------- Filter assembly ----------
-  function buildFilter(): LibraryFilter {
+  function buildBasicFilter(): LibraryFilter {
     const f: LibraryFilter = { sort };
     for (const r of rules) {
       if (r.field === "title" && typeof r.value === "string" && r.value) {
@@ -151,6 +172,12 @@
       }
     }
     return f;
+  }
+  function buildFilter(): LibraryFilter {
+    if (advanced) {
+      return { sort, clauses: advancedGroup };
+    }
+    return buildBasicFilter();
   }
 
   // ---------- Debounced live preview ----------
@@ -182,9 +209,10 @@
     }
   }
 
-  // Re-run preview whenever rules / sort / icon-blob change.
+  // Re-run preview whenever rules / sort / advanced clauses change.
   $effect(() => {
-    // touch reactive deps so Svelte re-runs:
+    void advanced;
+    void advancedGroup;
     void rules.length;
     void sort;
     for (const r of rules) {
@@ -328,8 +356,35 @@
         </div>
 
         <div class="field">
-          <span class="label">Rules <small>(all must match)</small></span>
-          <div class="rules">
+          <span class="label">
+            Rules <small>{advanced ? "(nested AND/OR/NOT)" : "(all must match)"}</small>
+            <button
+              type="button"
+              class="mode-toggle"
+              onclick={() => (advanced ? backToBasic() : enableAdvanced())}
+              title={advanced
+                ? "Switch back to simple rules"
+                : "Unlock OR / NOT / nested groups"}
+            >
+              {advanced ? "← Simple" : "Advanced ⚡"}
+            </button>
+          </span>
+
+          {#if advanced}
+            <div class="advanced-wrap">
+              <ClauseGroup
+                group={advancedGroup}
+                {tags}
+                {folders}
+                onChange={(g) => (advancedGroup = g)}
+              />
+              <p class="advanced-hint">
+                Tip: nest groups for rules like
+                <code>(Tax 2024 OR Tax 2025) AND NOT Archived</code>.
+              </p>
+            </div>
+          {:else}
+            <div class="rules">
             {#each rules as row (row.id)}
               <div class="rule-row">
                 <select
@@ -407,6 +462,7 @@
               + Add rule
             </button>
           </div>
+          {/if}
         </div>
 
         <label class="field">
@@ -707,14 +763,50 @@
     border-color: rgba(251, 113, 133, 0.35);
   }
   .add-rule {
-    align-self: flex-start;
-    background: transparent;
-    border: 1px dashed rgba(255, 255, 255, 0.12);
-    color: rgba(235, 238, 246, 0.7);
-    padding: 7px 12px;
-    border-radius: 8px;
-    font-size: 13px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.7);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-family: inherit;
     cursor: pointer;
+  }
+
+  .mode-toggle {
+    float: right;
+    background: linear-gradient(135deg, #a78bfa, #7cc4ff);
+    border: 0;
+    color: #0b0b14;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: filter 120ms ease, transform 120ms ease;
+  }
+  .mode-toggle:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+  }
+
+  .advanced-wrap {
+    margin-top: 6px;
+  }
+  .advanced-hint {
+    margin: 8px 2px 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .advanced-hint code {
+    background: rgba(167, 139, 250, 0.12);
+    color: #c4b5fd;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px;
   }
   .add-rule:hover {
     border-color: rgba(167, 139, 250, 0.6);

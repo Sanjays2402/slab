@@ -78,6 +78,29 @@ export interface ScanReport {
 /** Mirror of `pdf::library::query::SortBy`. */
 export type LibrarySortBy = "added_desc" | "title_asc" | "last_seen_desc";
 
+/** Mirror of `pdf::library::query::FilterCombinator`. */
+export type FilterCombinator = "and" | "or";
+
+/**
+ * Mirror of `pdf::library::query::FilterClause`. Tagged with `type` so
+ * the frontend can dispatch with a single switch — much friendlier than
+ * sniffing for the presence of fields.
+ */
+export type FilterClause =
+  | { type: "tag"; id: number }
+  | { type: "not_tag"; id: number }
+  | { type: "folder"; id: number }
+  | { type: "not_folder"; id: number }
+  | { type: "title_contains"; value: string }
+  | { type: "title_not_contains"; value: string }
+  | { type: "group"; combinator: FilterCombinator; clauses: FilterClause[] };
+
+/** Mirror of `pdf::library::query::FilterGroup`. */
+export interface FilterGroup {
+  combinator: FilterCombinator;
+  clauses: FilterClause[];
+}
+
 /** Mirror of `pdf::library::query::LibraryFilter`. */
 export interface LibraryFilter {
   folder_id?: number | null;
@@ -85,6 +108,40 @@ export interface LibraryFilter {
   title_substring?: string | null;
   limit?: number | null;
   sort?: LibrarySortBy;
+  /**
+   * v3.34.0 Atlas Smart+: nested AND/OR/NOT clause tree. When present,
+   * overrides the flat `folder_id`/`tag_ids`/`title_substring` fields.
+   * The serde tagged enum on the Rust side means a `FilterClause` is
+   * `{ type: "tag", id: 42 }` — NOT `{ tag: { id: 42 } }`. The `group`
+   * variant flattens (combinator + clauses on the same object as `type`)
+   * so the JSON matches `FilterClause::Group(FilterGroup)`.
+   */
+  clauses?: FilterGroup | null;
+}
+
+/**
+ * Build a sensible default FilterGroup for an empty new smart
+ * collection — a single AND group. Used by the recursive builder UI.
+ */
+export function emptyFilterGroup(): FilterGroup {
+  return { combinator: "and", clauses: [] };
+}
+
+/**
+ * Synthesize a FilterGroup from a legacy flat LibraryFilter. v3.32 /
+ * v3.33 stored smart collections without a `clauses` field — when the
+ * v3.34+ builder opens one, we hydrate it into an equivalent AND group
+ * so the user can edit it in the new UI.
+ */
+export function migrateFlatFilter(f: LibraryFilter): FilterGroup {
+  if (f.clauses) return f.clauses;
+  const clauses: FilterClause[] = [];
+  if (f.folder_id != null) clauses.push({ type: "folder", id: f.folder_id });
+  for (const id of f.tag_ids ?? []) clauses.push({ type: "tag", id });
+  if (f.title_substring) {
+    clauses.push({ type: "title_contains", value: f.title_substring });
+  }
+  return { combinator: "and", clauses };
 }
 
 // ---------- Unwrap helper ----------
