@@ -4,7 +4,45 @@
 
 ---
 
-## STATUS: ✅ v3.24.0 'Stack Pro' PUBLISHED (2026-05-24 16:45 PT)
+## STATUS: 📝 v3.26.0 'Quill Designer' PLANNED (2026-05-24 18:02 PT)
+
+**TICK 2026-05-24 18:02 PT (Sunday off-hours)** — Planning tick
+(writing-plans skill invocation by Sanjay).
+
+- Plan: `docs/plans/2026-05-24-v3.26.0-quill-designer.md` (576 lines, 9 tasks).
+- Commit `367c97c` on main, pushed.
+- Scope: **visual AcroForm field DESIGNER** — drag-to-draw text /
+  checkbox / radio / dropdown / signature fields on any flat PDF.
+  Completes the Quill trio: **design → fill → batch**.
+  - New `src-tauri/src/pdf/forms_design.rs` (FieldDraft / FieldEdit /
+    DesignReport + add_fields / edit_fields / delete_fields).
+  - 3 Tauri commands (`slab_forms_design_{add,edit,delete}`).
+  - `QuillDesignerPanel.svelte` w/ pdfjs canvas + drag overlay +
+    `Cmd/Ctrl+Shift+F` + palette entry + ShortcutsOverlay row.
+- Buy-button verdict: ✅ STRONGEST PASS to date — this IS Adobe
+  Acrobat Pro's $239/yr headline feature ("Prepare Form"). PDF Expert
+  cannot do it, Foxit charges Editor-tier upgrade, Preview can't.
+
+### Execution order
+
+1. **Next ticks:** execute the still-unstarted v3.25.0 Quill Pro Batch
+   plan (`docs/plans/2026-05-24-v3.25.0-quill-pro-batch.md`, branch
+   `feature/v3.25.0-quill-pro-batch`). Tasks 1-5 (Rust backend) one
+   tick, 6-7 (UI) next, 8-9 (release) last.
+2. After v3.25.0 ships → branch `feature/v3.26.0-quill-designer` and
+   execute the new plan (Tasks 1-4 first tick, 5-7 second, 8-9 third).
+3. Together these two releases = **"Slab is the form workstation
+   Acrobat charges $239/yr for"** marketing wedge. Show-HN ready.
+
+### LAST_WOW_TICK_AT: 2026-05-24T23:26:19Z (shareable redline PDF, v3.24.0)
+
+Within 24h — no wow required for a planning tick.
+
+---
+
+## (previous status, kept for history)
+
+### STATUS: ✅ v3.24.0 'Stack Pro' PUBLISHED (2026-05-24 16:45 PT)
 
 **TICK 2026-05-24 16:45 PT (Sunday off-hours)** — MODE B FINALIZE complete.
 
