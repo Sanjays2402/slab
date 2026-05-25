@@ -296,6 +296,47 @@ pub fn delete_smart_collection(db: &mut LibraryDb, id: i64) -> Result<(), Librar
     Ok(())
 }
 
+/// Update one or more fields on a smart collection. Each `Option` is
+/// "don't touch this field" when `None`. `Some(Some(v))` sets,
+/// `Some(None)` clears a nullable column.
+pub fn update_smart_collection(
+    db: &mut LibraryDb,
+    id: i64,
+    name: Option<&str>,
+    icon: Option<Option<&str>>,
+    color: Option<Option<&str>>,
+    filter: Option<&LibraryFilter>,
+) -> Result<SmartCollectionRecord, LibraryError> {
+    let conn = db.conn_mut();
+    if let Some(n) = name {
+        conn.execute(
+            "UPDATE library_smart_collections SET name = ?1 WHERE id = ?2",
+            params![n, id],
+        )?;
+    }
+    if let Some(ic) = icon {
+        conn.execute(
+            "UPDATE library_smart_collections SET icon = ?1 WHERE id = ?2",
+            params![ic, id],
+        )?;
+    }
+    if let Some(c) = color {
+        conn.execute(
+            "UPDATE library_smart_collections SET color = ?1 WHERE id = ?2",
+            params![c, id],
+        )?;
+    }
+    if let Some(f) = filter {
+        let json = serde_json::to_string(f)
+            .map_err(|e| LibraryError::Db(rusqlite::Error::ToSqlConversionFailure(Box::new(e))))?;
+        conn.execute(
+            "UPDATE library_smart_collections SET query_json = ?1 WHERE id = ?2",
+            params![json, id],
+        )?;
+    }
+    get_smart_collection(db, id)
+}
+
 /// Expand a smart collection to its current document list by parsing
 /// `query_json` and running it through `query_documents`.
 pub fn expand_smart_collection(
@@ -458,6 +499,49 @@ mod tests {
         assert_eq!(all.len(), 1);
         delete_smart_collection(&mut db, sc.id).unwrap();
         assert_eq!(list_smart_collections(&db).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn smart_collection_update_roundtrip() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let sc = create_smart_collection(
+            &mut db,
+            &NewSmartCollection {
+                name: "Old name".into(),
+                icon: Some("star".into()),
+                color: Some("#aabbcc".into()),
+                filter: LibraryFilter::default(),
+            },
+        )
+        .unwrap();
+
+        let new_filter = LibraryFilter {
+            title_substring: Some("invoice".into()),
+            ..LibraryFilter::default()
+        };
+        let updated = update_smart_collection(
+            &mut db,
+            sc.id,
+            Some("Invoices"),
+            Some(Some("folder")),
+            Some(Some("#ff8800")),
+            Some(&new_filter),
+        )
+        .unwrap();
+        assert_eq!(updated.name, "Invoices");
+        assert_eq!(updated.icon.as_deref(), Some("folder"));
+        assert_eq!(updated.color.as_deref(), Some("#ff8800"));
+
+        let after = get_smart_collection(&db, sc.id).unwrap();
+        let parsed: LibraryFilter = serde_json::from_str(&after.query_json).unwrap();
+        assert_eq!(parsed.title_substring.as_deref(), Some("invoice"));
+
+        // Clearing icon to NULL.
+        update_smart_collection(&mut db, sc.id, None, Some(None), None, None).unwrap();
+        let after2 = get_smart_collection(&db, sc.id).unwrap();
+        assert!(after2.icon.is_none());
+        // Name preserved.
+        assert_eq!(after2.name, "Invoices");
     }
 
     #[test]
