@@ -1,63 +1,64 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 02:28 PT by Cake (cron)
+Last updated: 2026-05-25 03:30 PT by Cake (cron)
 
 ## Active version
 
-**v3.30.0 "Quill Smart Fill" — SHIPPED. Public GitHub release live.**
+**v3.31.0 "Atlas Lite" — merged + tagged. CI building. Finalize next tick.**
 
-https://github.com/Sanjays2402/slab/releases/tag/v3.30.0
-6 artifacts: macos-arm64.dmg, macos-x64.dmg, linux .deb + .AppImage,
-windows .msi + nsis. Release notes from docs/release-notes/v3.30.0.md.
+Merge SHA: `faedb1d`. Tag: `v3.31.0`. RELEASE_PENDING.
 
-## This tick (2026-05-25 02:26–02:30 PT)
+## This tick (2026-05-25 03:05–03:30 PT)
 
-**MODE B — Finalize.** v3.30.0 GitHub release published.
+**MODE C → MODE A.** Shipped v3.31.0 Atlas Lite end-to-end in one tick.
 
-- CI run 26390862691 confirmed green (build/main, 22m37s)
-- Docker (slab-server) tag v3.30.0 green (9m37s)
-- Downloaded 6 artifacts from run 26390862691
-- `gh release create v3.30.0 --title 'v3.30.0 — Quill Smart Fill' --notes-file docs/release-notes/v3.30.0.md` + 6 artifacts
-- Cleared RELEASE_PENDING
+5 commits, 932 LOC, 12 files changed. All quality gates green.
 
-Note: an earlier `site: pivot landing` run (26391133497) had a bundle
-(windows-x64) failure — looks like a runner flake, since the very next push
-(26391483500, "docs(plans): v3.31.0 Atlas Lite") went fully green on the
-same bundle. Not blocking. No action needed.
+- `edfa22e` feat(recent): persist lastPage + totalPages per recent file
+- `044bbbb` feat(reader): resume at last viewed page + emit reading progress
+- `f238e2e` feat(home): RecentsHome — Continue Reading hero + pinned strip + grid
+- `19e0161` feat(palette): Recents Home + Continue Reading + per-file open (Cmd+0)
+- `230c502` chore(release): bump to 3.31.0 — Atlas Lite
+- Merge `faedb1d` to main + tag v3.31.0 pushed.
+
+Buyer-magnet: hero card with progress bar that pulses on appear + ⌘0 from
+anywhere. Acrobat's home tab can't do this; PDF Expert's recents are flat.
 
 ## Release pending
 
-(none)
+**RELEASE_PENDING: v3.31.0** — merge SHA faedb1d, tag v3.31.0. CI run will
+appear at `gh run list --limit 5`. Next tick: poll, download 6 artifacts,
+`gh release create v3.31.0 --notes-file docs/release-notes/v3.31.0.md`.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T07:35:00Z — v3.30.0 Smart Fill (drag-drop AI
-form mapping, 100% local). Now live for download. >24h gate: still within
-window, next BIG wow due by ~07:35 PT tomorrow.
+LAST_WOW_TICK_AT: 2026-05-25T10:30:00Z — Atlas Lite "Continue reading"
+hero card with progress dots + pulsing bar on resume. Next BIG wow due by
+~2026-05-26 03:30 PT.
 
 ## Recently closed issues
 
-(none — issue list empty; #23-#27 override no longer applies)
+(none — issue list still empty; #23-#27 override no longer applies)
 
 ## Queued plans
 
-- `docs/plans/2026-05-25-v3.31.0-atlas-lite.md` — Recent Files panel with
-  thumbnails + last-position resume + tag/collection sidebar. 8 tasks,
-  designed to fold into 2 BIG cron ticks (1-5, then 6-8).
+- `docs/plans/2026-05-25-v3.31.0-atlas-lite.md` — DONE (folded all 8 tasks
+  into one BIG tick).
+- Next: v3.32.0 "Atlas" — full multi-doc workspace (tags, collections,
+  cross-library search). Write spec next tick.
 
 ## Next ticks
 
-- **Tick 1 (NEXT, MODE C)**: start v3.31.0 "Atlas Lite" — execute tasks 1-5
-  of the plan as a single BIG slice (backend Recent Files store + thumbnail
-  generator + Tauri commands + frontend panel + nav entry + keyboard
-  shortcut + palette entry). Branch: `feature/v3.31.0-atlas-lite`.
-- **Tick 2**: tasks 6-8 (last-position resume + tag/collection sidebar),
-  then merge + tag + release v3.31.0.
+- **Tick 1 (NEXT, MODE B)**: poll CI for run from `faedb1d` push. If green,
+  `gh run download <id>` + `gh release create v3.31.0 --notes-file ...`.
+  Confirm Docker (slab-server) on v3.31.0 tag green too.
+- **Tick 2**: start v3.32.0 "Atlas" spec — tag store backend (SQLite),
+  cross-doc search index, collection sidebar UI.
 
 ## Pipeline state
 
 | Branch                              | Status                | Notes                                  |
 | ----------------------------------- | --------------------- | -------------------------------------- |
-| `main`                              | **v3.30.0 RELEASED**  | Public release live with 6 artifacts   |
+| `main`                              | **v3.31.0 MERGED+TAGGED** | CI in progress, finalize next tick |
+| `feature/v3.31.0-atlas-lite`        | merged                | Safe to delete                         |
 | `feature/v3.30.0-quill-smart-fill`  | merged + released     | Safe to delete                         |
-| `feature/v3.29.0-forms-tour`        | merged + released     | Safe to delete                         |
