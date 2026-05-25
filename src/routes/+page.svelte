@@ -60,6 +60,7 @@
   import FormsPanel from "$lib/panels/FormsPanel.svelte";
   import QuillBatchPanel from "$lib/panels/QuillBatchPanel.svelte";
   import QuillDesignerPanel from "$lib/panels/QuillDesignerPanel.svelte";
+  import QuillAutodetectPanel from "$lib/panels/QuillAutodetectPanel.svelte";
   import AtelierPanel from "$lib/panels/AtelierPanel.svelte";
   import HopperPanel from "$lib/panels/HopperPanel.svelte";
   import LoupePanel from "$lib/panels/LoupePanel.svelte";
@@ -153,6 +154,7 @@
     { id: "forms", label: "Forms", icon: "✎", ready: true },
     { id: "quill-batch", label: "Quill Batch (CSV merge)", icon: "⋮", ready: true },
     { id: "quill-designer", label: "Quill Designer (author fields)", icon: "✎", ready: true },
+    { id: "quill-autodetect", label: "Quill Auto-Detect (✨ propose fields)", icon: "✨", ready: true },
     { id: "atelier", label: "Atelier (Recipes)", icon: "⚙", ready: true },
     { id: "hopper", label: "Hopper (Watched Folders)", icon: "🪣", ready: true },
     { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
@@ -508,6 +510,17 @@
       if (!inField) {
         e.preventDefault();
         active = "quill-designer";
+        return;
+      }
+    }
+    // Quill Auto-Detect (v3.27.0): propose form fields on flat PDFs. Default Mod+Shift+Y.
+    if (matches(e, "quill.autodetect")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "quill-autodetect";
         return;
       }
     }
@@ -1152,6 +1165,8 @@
     <QuillBatchPanel />
   {:else if active === "quill-designer"}
     <QuillDesignerPanel />
+  {:else if active === "quill-autodetect"}
+    <QuillAutodetectPanel />
   {:else if active === "atelier"}
     <AtelierPanel />
   {:else if active === "hopper"}
