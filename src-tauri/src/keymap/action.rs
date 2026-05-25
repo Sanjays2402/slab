@@ -48,6 +48,9 @@ pub enum ActionId {
     QuillTour,
     AtelierOpen,
     HopperOpen,
+    // Atlas Lite (v3.31.0): land on the Recents Home from anywhere.
+    HomeOpen,
+    HomeContinue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,6 +319,20 @@ const ACTIONS: &[ActionInfo] = &[
         label: "Hopper — watched folders",
         group: "Hopper",
         default_binding: "Mod+Shift+H",
+    },
+    ActionInfo {
+        id: ActionId::HomeOpen,
+        key: "home.open",
+        label: "Go to Recents Home",
+        group: "Home",
+        default_binding: "Mod+0",
+    },
+    ActionInfo {
+        id: ActionId::HomeContinue,
+        key: "home.continue",
+        label: "Continue reading (jump to last document)",
+        group: "Home",
+        default_binding: "Mod+Shift+0",
     },
 ];
 

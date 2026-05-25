@@ -1070,8 +1070,21 @@
   // ---------- Keyboard ----------
   function onKey(e: KeyboardEvent) {
     if (!active) return;
-    if (!doc) return;
     const isMod = e.metaKey || e.ctrlKey;
+    // Atlas Lite (v3.31.0): Cmd+0 → Recents Home, Cmd+Shift+0 → Continue.
+    // These need to work whether or not a doc is open, so we handle them
+    // before the no-doc early return below.
+    if (isMod && e.key === "0" && !e.shiftKey) {
+      e.preventDefault();
+      onHomeOpen();
+      return;
+    }
+    if (isMod && e.shiftKey && (e.key === "0" || e.key === ")")) {
+      e.preventDefault();
+      onHomeContinue();
+      return;
+    }
+    if (!doc) return;
     if (isMod && e.key === "f") {
       e.preventDefault();
       toggleFind();
@@ -1102,6 +1115,9 @@
   onMount(() => {
     window.addEventListener("keydown", onKey);
     window.addEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    // Atlas Lite (v3.31.0): the palette + Cmd+0 hotkey dispatch into here.
+    window.addEventListener("slab:home-open", onHomeOpen as EventListener);
+    window.addEventListener("slab:home-continue", onHomeContinue as EventListener);
     // Glass II Vim adapter — only the active tab actually reacts (gated
     // inside each handler), but every tab subscribes so the registration
     // matches the unsubscribe path.
@@ -1179,6 +1195,8 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("slab:open-recent", onOpenRecentEvent as EventListener);
+    window.removeEventListener("slab:home-open", onHomeOpen as EventListener);
+    window.removeEventListener("slab:home-continue", onHomeContinue as EventListener);
     window.removeEventListener("slab:vim-reader:page", onVimPage as EventListener);
     window.removeEventListener("slab:vim-reader:goto", onVimGoto as EventListener);
     window.removeEventListener("slab:vim-reader:scroll", onVimScroll as EventListener);
@@ -1269,6 +1287,34 @@
         loadError = `Reopening "${file.name}" needs the desktop app. Use Open to pick it again.`;
       })();
     }
+  }
+
+  // Atlas Lite (v3.31.0): "Go to Recents Home" — close the active doc so
+  // the empty-state RecentsHome renders. Only the active tab acts.
+  function onHomeOpen() {
+    if (!active) return;
+    if (doc) {
+      tearDownDoc();
+      doc = null;
+      onTitleChange?.("New tab");
+    }
+  }
+
+  // Atlas Lite (v3.31.0): "Continue reading" — pick the recent file with
+  // the freshest in-progress lastPage, fall back to the most recent file
+  // if no progress exists, then dispatch through the open path.
+  function onHomeContinue() {
+    if (!active) return;
+    const files = listRecent();
+    const withProgress = files
+      .filter((r) => r.lastPage && r.totalPages && r.lastPage < r.totalPages)
+      .sort((a, b) => (b.lastReadAt ?? b.openedAt) - (a.lastReadAt ?? a.openedAt));
+    const target = withProgress[0] ?? files[0];
+    if (!target) {
+      notify.info("No recent files to continue", { duration: 2500 });
+      return;
+    }
+    onOpenRecentEvent({ detail: target } as CustomEvent<RecentFile>);
   }
 
   function attachThumb(el: HTMLCanvasElement, n: number) {

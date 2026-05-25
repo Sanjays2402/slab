@@ -60,7 +60,9 @@ export type ActionId =
   | "quill.smartfill"
   | "quill.tour"
   | "atelier.open"
-  | "hopper.open";
+  | "hopper.open"
+  | "home.open"
+  | "home.continue";
 
 export interface KeymapAction {
   id: ActionId;

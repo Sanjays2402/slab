@@ -200,6 +200,54 @@
       });
     }
 
+    // v3.31.0 Atlas Lite: Home / Recents palette entries. Cmd+0 lands you
+    // back on the Recents Home from anywhere; Cmd+Shift+0 opens the file
+    // you were most recently reading. Each pinned/recent file is also a
+    // direct palette entry so power users can fuzzy-find by name.
+    out.push({
+      id: "home:open",
+      title: "Go to Recents Home",
+      subtitle: "Hero card · Continue reading · pinned & recent files",
+      icon: "🏠",
+      group: "Home",
+      run: () => {
+        // Closing the active document falls back to RecentsHome.
+        window.dispatchEvent(new CustomEvent("slab:home-open"));
+      },
+      keywords: "home recents continue reading start landing dashboard",
+    });
+    out.push({
+      id: "home:continue",
+      title: "Continue reading",
+      subtitle: "Jump to your most recently read document",
+      icon: "▶",
+      group: "Home",
+      run: () => {
+        window.dispatchEvent(new CustomEvent("slab:home-continue"));
+      },
+      keywords: "resume continue last opened recent reading",
+    });
+    // Pinned + recent files become direct palette entries — opens are
+    // dispatched through the same `slab:open-recent` channel the
+    // ReaderPanel already listens on.
+    try {
+      const recents = listRecent();
+      for (const r of recents.slice(0, 20)) {
+        out.push({
+          id: `recent:${r.path}`,
+          title: `Open ${r.name}`,
+          subtitle: r.path,
+          icon: r.pinned ? "📌" : "📄",
+          group: r.pinned ? "Pinned" : "Recent",
+          run: () => {
+            window.dispatchEvent(new CustomEvent("slab:open-recent", { detail: r }));
+          },
+          keywords: `${r.name} ${r.path} ${r.pinned ? "pinned" : "recent"} open file`,
+        });
+      }
+    } catch { /* recent module not loadable — skip dynamic entries */ }
+
+
     // v3.29.0: replay the Forms onboarding tour from anywhere. This is
     // how users who skipped the auto-fire (or want a refresher) get back
     // to the 30-second walkthrough.
