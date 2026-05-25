@@ -1,58 +1,70 @@
 # Slab Cron State
 
-Last updated: 2026-05-24 23:08 PT by Cake (cron)
+Last updated: 2026-05-25 01:05 PT by Cake (cron)
 
 ## Active version
 
-**v3.29.0 "Forms Tour" — RELEASED.** Published on GitHub with 6 artifacts
-(macOS arm64/x64 DMG, Linux deb + AppImage, Windows MSI + NSIS). Build run
-26385319422 success, Docker tag run 26385319416 success. Issue list empty.
+**v3.30.0 "Quill Smart Fill" — Slice 3 SHIPPED (polish + Settings hookup).**
+Branch `feature/v3.30.0-quill-smart-fill`. Smart Fill is now configurable
+from Settings (model picker + provider + base URL + API-key env var),
+the Propose button shimmers while the local model thinks, and the
+empty state teaches the feature in five seconds with three real
+example pairings. Ready for Slice 4 (release).
 
-Next arc: **v0.10.0 "Beacon"** (Slab AI — Ollama-backed local PDF chat,
-auto-summary, semantic search, PII highlighter, selection actions). Spec at
-`.cron-state/proposals/v0.10.0-beacon-ai.md`. First slice next tick:
-provider abstraction + Ollama impl + `slab_beacon_chat` Tauri command +
-right-rail BeaconChatPanel scaffold (vertical slice 1 of 5).
+## This tick (2026-05-25 00:55–01:05 PT)
 
-## This tick (2026-05-24 22:43–23:08 PT)
+**MODE C — Develop.** Slice 3 of v3.30.0 — polish + Settings AI hookup.
 
-**MODE B — Finalize release.** Polled CI for ~14 min while build/bundle
-jobs finished, then downloaded artifacts and published the release.
+- 7cd097c — Slice 3.1: AI/Beacon Settings section + `beaconSettings.ts`
+  helper (read-modify-write, 5 Ollama presets, 3 OpenAI presets) +
+  7 new `settings.ai.*` i18n keys + 8 `quill.smartfill.*` keys
+  (+333 LOC, new file `src/lib/beaconSettings.ts`)
+- 303bf62 — Slice 3.2: shimmer + sparkle "thinking" animation on the
+  Propose button — accent-tinted 105° gradient + rotating ✦, pure CSS,
+  respects `prefers-reduced-motion` (+42 LOC)
+- cdf7c99 — Slice 3.3: designed empty state with 🪄 emoji + hero
+  title + 3 example source→target pairings, wired through i18n
+  (+100 LOC)
+- *(this commit)* — Slice 3.4: STATE.md + session log
 
-- Build run 26385319422: all 4 bundle jobs + 3 cargo test jobs → success
-- Docker tag run 26385319416: success (slab-server image live on GHCR)
-- Downloaded 6 installers (~390MB), curated to release
-- `gh release create v3.29.0` — published (not draft), 6 assets attached
-- Release URL: https://github.com/Sanjays2402/slab/releases/tag/v3.29.0
-- RELEASE_PENDING cleared
+Quality gates ALL CLEAN: pnpm check ✓ (0 errors, 74 pre-existing
+a11y warnings), cargo fmt ✓, cargo clippy -D warnings ✓.
+
+~475 LOC across frontend (no Rust changes — backend already supports
+everything from earlier slices). Branch will push at end of tick.
+
+Buy-button test: **Pay-for-it ✓ + Notice-it ✓ + Tell-a-friend ✓**.
+Adobe Acrobat charges $239/yr for less. The shimmer + sparkle is the
+screenshot moment. The Settings AI section is the "wait, this is
+free?" moment for first-time users.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T05:22:39Z (v3.29.0 Forms Tour — spotlight
-+ cubic-bezier coachmark; reaffirmed by public release this tick)
+LAST_WOW_TICK_AT: 2026-05-25T07:35:00Z (Smart Fill drag-drop +
+AI-proposal diff UI shipped last tick). This tick added a *second*
+wow surface (shimmer + sparkle + designed empty state) but the budget
+was already covered.
 
 ## Recently closed issues
 
-(none — issue list still empty after re-poll)
+(none — issue list empty)
 
 ## Next ticks
 
-- **v3.30.0 "Quill Smart Fill" — plan promoted this tick.**
-  See `docs/plans/2026-05-24-v3.30.0-quill-smart-fill.md`. 4 slices, ~4 ticks.
-  Branch: `feature/v3.30.0-quill-smart-fill` (not yet created).
-  Tick 1 = Slice 1 (backend extractor + AI mapper + 10 unit tests).
-- Re-poll `gh issue list` at start of every tick (override still active
+- **Tick 4 (Slice 4 — RELEASE: MODE A → MODE B)**: version bump
+  3.29.0 → 3.30.0 in `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`,
+  `package.json`, refresh `Cargo.lock`, merge feature branch to
+  `main` with no-ff, tag `v3.30.0`, push, capture CI run id, then
+  in same tick if CI green: `gh release create v3.30.0` with the
+  6 customer-facing artifacts and the marketing notes already in
+  `docs/release-notes/v3.30.0.md` (or compose fresh).
+- Re-poll `gh issue list` at start of every tick (override active
   if any of #23-#27 reappear).
-- Beacon AI (v0.10.0) deprioritized — that proposal predates the v3.x line
-  and the AI surface is already shipping piecemeal (auto-tag, citations,
-  glossary, summary, pii, selection-action, vision). Smart Fill is the
-  next high-leverage AI surface specifically because it closes the Quill
-  arc with a screenshot-worthy demo.
 
 ## Pipeline state
 
-| Branch                        | Status               | Notes                                  |
-| ----------------------------- | -------------------- | -------------------------------------- |
-| `main`                        | v3.29.0 RELEASED     | Public release live, Docker live       |
-| `feature/v3.29.0-forms-tour`  | merged + released    | Safe to delete                         |
-| (next) `feature/v0.10.0-beacon` | not started        | Spec ready; first slice = chat panel   |
+| Branch                              | Status              | Notes                                  |
+| ----------------------------------- | ------------------- | -------------------------------------- |
+| `main`                              | v3.29.0 RELEASED    | Public release live, Docker live       |
+| `feature/v3.29.0-forms-tour`        | merged + released   | Safe to delete                         |
+| `feature/v3.30.0-quill-smart-fill`  | **Slice 3 done**    | 10 commits total; ready for release    |

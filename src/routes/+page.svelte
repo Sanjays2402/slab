@@ -531,6 +531,20 @@
         return;
       }
     }
+    // Quill Smart Fill (v3.30.0): AI-map a source doc onto an AcroForm.
+    // Default Mod+Shift+I — "I" for "intelligent fill". Opens the Forms hub
+    // on the Smart Fill tab.
+    if (matches(e, "quill.smartfill")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        setQuillTab("smartfill");
+        active = "forms";
+        return;
+      }
+    }
     // v3.29.0 Forms Tour: replay the onboarding walkthrough. Default Mod+Shift+/.
     // Opens the Forms hub and immediately restarts the 5-step coachmark
     // tour so users can refresh on the workflow at any time.

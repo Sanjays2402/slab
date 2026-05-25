@@ -29,11 +29,13 @@
   import QuillAutodetectPanel from "$lib/panels/QuillAutodetectPanel.svelte";
   import QuillDesignerPanel from "$lib/panels/QuillDesignerPanel.svelte";
   import QuillBatchPanel from "$lib/panels/QuillBatchPanel.svelte";
+  import QuillSmartFillPanel from "$lib/panels/QuillSmartFillPanel.svelte";
 
   const TABS: { id: QuillTab; label: string; sub: string }[] = [
     { id: "detect", label: "Detect", sub: "Find fillable spots on a flat PDF" },
     { id: "design", label: "Design", sub: "Draw fields by hand" },
     { id: "fill", label: "Fill", sub: "Type values into a form" },
+    { id: "smartfill", label: "Smart Fill", sub: "AI maps a source doc onto a form" },
     { id: "batch", label: "Batch", sub: "Merge a CSV across many copies" },
   ];
 
@@ -73,6 +75,7 @@
     detect: "Detect fields",
     design: "Design fields",
     fill: "Fill the form",
+    smartfill: "Smart Fill from source",
     batch: "Batch with CSV",
   };
 </script>
@@ -124,6 +127,8 @@
       <QuillDesignerPanel />
     {:else if state.activeTab === "fill"}
       <FormsPanel />
+    {:else if state.activeTab === "smartfill"}
+      <QuillSmartFillPanel />
     {:else if state.activeTab === "batch"}
       <QuillBatchPanel />
     {/if}

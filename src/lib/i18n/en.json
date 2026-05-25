@@ -222,5 +222,20 @@
   "features.stack": "Compare",
   "features.bedrock": "Archive (PDF/A)",
   "features.loupe": "Loupe (PDF/A check)",
-  "features.theater": "Theater"
+  "features.theater": "Theater",
+  "settings.ai.heading": "AI / Beacon",
+  "settings.ai.subhead": "Powers Smart Fill, summaries, search, and chat. Defaults to local Ollama — nothing leaves your machine.",
+  "settings.ai.provider": "Provider",
+  "settings.ai.chatModel": "Chat model",
+  "settings.ai.baseUrl": "Base URL",
+  "settings.ai.apiKeyEnv": "API key env var",
+  "settings.ai.apiKeyEnvDesc": "Name of the environment variable holding your key. We never store the key itself.",
+  "quill.smartfill.heroTitle": "Drop a source. Drop a form. Magic.",
+  "quill.smartfill.heroSub": "Slab's local AI reads the source, finds matching fields on the target form, and proposes a fill you can review row-by-row. Nothing leaves your machine.",
+  "quill.smartfill.example.resume": "Resume.pdf",
+  "quill.smartfill.example.jobApp": "Job application.pdf",
+  "quill.smartfill.example.lastW2": "Last year's W-2.pdf",
+  "quill.smartfill.example.thisTax": "This year's tax form.pdf",
+  "quill.smartfill.example.contacts": "Client contacts.csv",
+  "quill.smartfill.example.engagement": "Engagement letter.pdf"
 }
