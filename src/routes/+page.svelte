@@ -58,6 +58,7 @@
   import BedrockPanel from "$lib/panels/BedrockPanel.svelte";
   import PressPanel from "$lib/panels/PressPanel.svelte";
   import FormsPanel from "$lib/panels/FormsPanel.svelte";
+  import QuillBatchPanel from "$lib/panels/QuillBatchPanel.svelte";
   import AtelierPanel from "$lib/panels/AtelierPanel.svelte";
   import HopperPanel from "$lib/panels/HopperPanel.svelte";
   import LoupePanel from "$lib/panels/LoupePanel.svelte";
@@ -149,6 +150,7 @@
     { id: "bedrock", label: "Archive (PDF/A)", icon: "⌬", ready: true },
     { id: "press", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
     { id: "forms", label: "Forms", icon: "✎", ready: true },
+    { id: "quill-batch", label: "Quill Batch (CSV merge)", icon: "⋮", ready: true },
     { id: "atelier", label: "Atelier (Recipes)", icon: "⚙", ready: true },
     { id: "hopper", label: "Hopper (Watched Folders)", icon: "🪣", ready: true },
     { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
@@ -482,6 +484,17 @@
       if (!inField) {
         e.preventDefault();
         active = "forms";
+        return;
+      }
+    }
+    // Quill Batch (v3.25.0): CSV mail-merge form fill. Default Mod+Shift+B.
+    if (matches(e, "quill.batch")) {
+      const tgt = e.target as HTMLElement | null;
+      const inField =
+        tgt && (tgt.matches("input,textarea") || tgt.isContentEditable);
+      if (!inField) {
+        e.preventDefault();
+        active = "quill-batch";
         return;
       }
     }
@@ -1122,6 +1135,8 @@
     <PressPanel />
   {:else if active === "forms"}
     <FormsPanel />
+  {:else if active === "quill-batch"}
+    <QuillBatchPanel />
   {:else if active === "atelier"}
     <AtelierPanel />
   {:else if active === "hopper"}

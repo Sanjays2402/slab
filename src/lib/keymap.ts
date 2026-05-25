@@ -54,6 +54,7 @@ export type ActionId =
   | "bedrock.open"
   | "press.open"
   | "forms.open"
+  | "quill.batch"
   | "atelier.open"
   | "hopper.open";
 
