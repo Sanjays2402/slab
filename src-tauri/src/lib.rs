@@ -3405,6 +3405,53 @@ fn slab_smart_collection_expand(id: i64) -> CmdResult<Vec<DocumentRecord>> {
     result.into()
 }
 
+/// Helper: distinguish "field omitted" (None) from "field explicitly null"
+/// (Some(None)) when deserializing JSON. Apply with
+/// `#[serde(default, deserialize_with = "deserialize_some_option")]` on
+/// fields of type `Option<Option<T>>`.
+fn deserialize_some_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct SmartCollectionPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_some_option")]
+    pub icon: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some_option")]
+    pub color: Option<Option<String>>,
+    #[serde(default)]
+    pub filter: Option<pdf::library::query::LibraryFilter>,
+}
+
+#[tauri::command]
+fn slab_smart_collection_update(
+    app: tauri::AppHandle,
+    id: i64,
+    patch: SmartCollectionPatch,
+) -> CmdResult<pdf::library::collections::SmartCollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::update_smart_collection(
+            &mut db,
+            id,
+            patch.name.as_deref(),
+            patch.icon.as_ref().map(|o| o.as_deref()),
+            patch.color.as_ref().map(|o| o.as_deref()),
+            patch.filter.as_ref(),
+        )
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_add_tag(
     app: tauri::AppHandle,
@@ -5025,6 +5072,7 @@ pub fn run() {
             slab_smart_collection_list,
             slab_smart_collection_delete,
             slab_smart_collection_expand,
+            slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,
             slab_library_remove_document,

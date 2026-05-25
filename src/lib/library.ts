@@ -492,3 +492,33 @@ export async function smartCollectionExpand(
   );
   return unwrap(res);
 }
+
+/** Patch for `smartCollectionUpdate`. Each field follows tri-state semantics:
+ * - `undefined` (or omitted) = don't touch this field
+ * - `null` = clear (only legal for nullable columns: icon, color)
+ * - value = set
+ */
+export interface SmartCollectionPatch {
+  name?: string;
+  icon?: string | null;
+  color?: string | null;
+  filter?: LibraryFilter;
+}
+
+export async function smartCollectionUpdate(
+  id: number,
+  patch: SmartCollectionPatch,
+): Promise<SmartCollectionRecord> {
+  // Only forward fields that were actually provided so the Rust side can
+  // tell "omitted" from "explicit null".
+  const payload: Record<string, unknown> = {};
+  if (patch.name !== undefined) payload.name = patch.name;
+  if (patch.icon !== undefined) payload.icon = patch.icon; // null OK
+  if (patch.color !== undefined) payload.color = patch.color; // null OK
+  if (patch.filter !== undefined) payload.filter = patch.filter;
+  const res = await invoke<CmdResult<SmartCollectionRecord>>(
+    "slab_smart_collection_update",
+    { id, patch: payload },
+  );
+  return unwrap(res);
+}
