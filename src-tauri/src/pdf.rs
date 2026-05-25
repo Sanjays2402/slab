@@ -26,6 +26,7 @@ pub mod forms;
 pub mod forms_batch;
 pub mod forms_design;
 pub mod forms_detect;
+pub mod forms_smart_fill;
 pub mod grayscale;
 pub mod header_footer;
 pub mod hopper;
