@@ -25,6 +25,7 @@ pub mod query;
 pub mod registry;
 pub mod scanner;
 pub mod search;
+pub mod search_log;
 pub mod smart_folders;
 
 pub use auto_tagger::{
