@@ -424,7 +424,7 @@ mod tests {
     #[test]
     fn collections_tables_exist_after_open() {
         let db = LibraryDb::open_in_memory().unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert_eq!(db.schema_version().unwrap(), 5);
         // Bogus query proves the tables exist (would error if not).
         let n: i64 = db
             .conn()
