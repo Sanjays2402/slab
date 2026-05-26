@@ -3559,8 +3559,7 @@ where
 /// Return every smart folder (built-in + personal) sorted by
 /// pin-then-display-order. Backs the new SmartFoldersHubPanel.
 #[tauri::command]
-fn slab_smart_folders_list(
-) -> CmdResult<Vec<pdf::library::smart_folders::SmartFolderEntry>> {
+fn slab_smart_folders_list() -> CmdResult<Vec<pdf::library::smart_folders::SmartFolderEntry>> {
     let result = (|| -> Result<_, LibraryError> {
         let db = open_library_db()?;
         pdf::library::smart_folders::list_smart_folders(&db)

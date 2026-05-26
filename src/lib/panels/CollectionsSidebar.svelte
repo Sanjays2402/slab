@@ -28,6 +28,7 @@
   } from "$lib/library";
   import SmartCollectionBuilder from "./SmartCollectionBuilder.svelte";
   import PresetPicker from "./PresetPicker.svelte";
+  import SmartFoldersHubPanel from "./SmartFoldersHubPanel.svelte";
 
   type SelectPayload = {
     kind: "collection" | "smart";
@@ -59,6 +60,15 @@
   // / command palette entry without rummaging through the DOM.
   export function openPresets() {
     openPresetPicker();
+  }
+
+  // Smart Folders Hub (v3.37.0)
+  let smartHubOpen = $state(false);
+  function openSmartHub() {
+    smartHubOpen = true;
+  }
+  export function openSmartFoldersHub() {
+    openSmartHub();
   }
 
   function openNewSmart() {
@@ -137,6 +147,10 @@
       // Cmd/Ctrl + Shift + P → open Preset Picker (v3.35.0).
       e.preventDefault();
       openPresetPicker();
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyF") {
+      // Cmd/Ctrl + Shift + F → open Smart Folders Hub (v3.37.0).
+      e.preventDefault();
+      openSmartHub();
     } else if (e.key === "Escape" && menu) {
       menu = null;
     }
@@ -150,8 +164,10 @@
     // v3.35.0 — command palette opens the picker via these events.
     const openPicker = () => openPresetPicker();
     const openBuilder = () => openNewSmart();
+    const openHub = () => openSmartHub();
     window.addEventListener("slab:open-preset-picker", openPicker);
     window.addEventListener("slab:open-smart-builder", openBuilder);
+    window.addEventListener("slab:open-smart-folders-hub", openHub);
     const clickAway = () => (menu = null);
     window.addEventListener("click", clickAway);
     return () => {
@@ -159,6 +175,7 @@
       window.removeEventListener("keydown", handleGlobalKey);
       window.removeEventListener("slab:open-preset-picker", openPicker);
       window.removeEventListener("slab:open-smart-builder", openBuilder);
+      window.removeEventListener("slab:open-smart-folders-hub", openHub);
       window.removeEventListener("click", clickAway);
     };
   });
@@ -352,6 +369,12 @@
       <span class="cs-sub">Smart</span>
       <div class="cs-sub-actions">
         <button
+          class="cs-add small hub"
+          aria-label="Smart Folders Hub"
+          title="Smart Folders Hub (⌘⇧F)"
+          onclick={openSmartHub}
+        >🗂</button>
+        <button
           class="cs-add small preset"
           aria-label="Add from preset"
           title="Add from preset (⌘⇧P)"
@@ -444,6 +467,11 @@
     }}
   />
 {/if}
+
+<SmartFoldersHubPanel
+  open={smartHubOpen}
+  onClose={() => (smartHubOpen = false)}
+/>
 
 <style>
   .cs-rail {
