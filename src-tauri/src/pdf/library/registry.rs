@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -262,7 +262,30 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 6;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 6);
+        }
+        if version < 7 {
+            // v3.38.0 "Atlas Suggest" — rolling log of recent library
+            // searches + dismissed suggestion clusters. The suggestion
+            // engine reads from these tables to propose personal Smart
+            // Folders ("you searched 'invoice' 8 times — save a folder?").
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS library_search_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    ts INTEGER NOT NULL,
+                    result_count INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_search_log_ts
+                    ON library_search_log(ts DESC);
+                CREATE TABLE IF NOT EXISTS library_suggestion_dismissed (
+                    cluster_hash TEXT PRIMARY KEY,
+                    ts INTEGER NOT NULL
+                );
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 7;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 7);
         }
         Ok(())
     }
@@ -622,6 +645,34 @@ mod tests {
     fn schema_version_is_set() {
         let db = db();
         assert_eq!(db.schema_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn schema_v7_has_search_log_and_dismissed_tables() {
+        let db = db();
+        let log_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type='table' AND name='library_search_log'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(log_count, 1, "library_search_log table missing");
+
+        let dismissed_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type='table' AND name='library_suggestion_dismissed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dismissed_count, 1, "library_suggestion_dismissed missing");
+
+        assert_eq!(db.schema_version().unwrap(), 7);
     }
 
     #[test]

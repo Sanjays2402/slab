@@ -17,6 +17,7 @@
 
 pub mod auto_tagger;
 pub mod collections;
+pub mod folder_suggest;
 pub mod fts;
 pub mod ocr_queue;
 pub mod personal_presets;
@@ -25,6 +26,7 @@ pub mod query;
 pub mod registry;
 pub mod scanner;
 pub mod search;
+pub mod search_log;
 pub mod smart_folders;
 
 pub use auto_tagger::{

@@ -100,6 +100,9 @@ pub fn search(
     for r in rows {
         out.push(r?);
     }
+    // Best-effort: log this query for Atlas Suggest. Silently ignore
+    // errors — search results matter more than analytics.
+    let _ = super::search_log::record_conn(conn, trimmed, out.len() as i64);
     Ok(out)
 }
 
