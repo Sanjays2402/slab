@@ -32,6 +32,7 @@
   } from "$lib/library";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { writeTextFile } from "@tauri-apps/plugin-fs";
+  import SuggestedFolders from "./SuggestedFolders.svelte";
 
   type Props = {
     open: boolean;
@@ -249,6 +250,8 @@
           <button class="hub-btn" onclick={onClose} aria-label="Close">Close</button>
         </div>
       </header>
+
+      <SuggestedFolders onAccepted={refresh} />
 
       {#if error}
         <div class="hub-error" role="alert">{error}</div>
