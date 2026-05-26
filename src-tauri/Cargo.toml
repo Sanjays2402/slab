@@ -156,7 +156,7 @@ p256 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
 p384 = { version = "0.13", features = ["pkcs8", "ecdsa", "pem"] }
 der = "0.7"
 pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
-spki = "0.7"
+spki = "0.8"
 const-oid = { version = "0.9", features = ["db"] }
 pem = "3"
 directories = "5"
