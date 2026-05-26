@@ -21,6 +21,7 @@
     smartCollectionList,
     smartCollectionExpand,
     smartCollectionDelete,
+    personalPresetSave,
     type CollectionRecord,
     type SmartCollectionRecord,
     type DocumentRecord,
@@ -200,6 +201,32 @@
     try {
       await smartCollectionDelete(s.id);
       await refresh();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  async function saveAsPersonalPreset(s: SmartCollectionRecord) {
+    const name = prompt(
+      "Name this personal preset (visible in the Preset Picker):",
+      s.name,
+    );
+    if (!name || !name.trim()) return;
+    const description = prompt(
+      "Short description (optional):",
+      `Saved from "${s.name}"`,
+    );
+    try {
+      // The smart collection stores its filter as JSON — parse it back.
+      const filter = JSON.parse(s.query_json);
+      await personalPresetSave({
+        name: name.trim(),
+        icon: s.icon,
+        color: s.color,
+        description: description?.trim() || null,
+        filter,
+      });
+      toast(`Saved “${name.trim()}” to your personal presets.`);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -387,6 +414,9 @@
   >
     <button role="menuitem" onclick={() => { const s = menu!.smart; menu = null; openEditSmart(s); }}>
       Edit rules…
+    </button>
+    <button role="menuitem" onclick={() => { const s = menu!.smart; menu = null; saveAsPersonalPreset(s); }}>
+      Save as personal preset…
     </button>
     <button role="menuitem" class="danger" onclick={() => handleSmartDelete(menu!.smart)}>
       Delete

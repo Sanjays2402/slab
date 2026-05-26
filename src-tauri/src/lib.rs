@@ -3448,6 +3448,97 @@ fn slab_preset_already_applied() -> CmdResult<Vec<String>> {
     result.into()
 }
 
+// -----------------------------------------------------------------
+// v3.36.0 "Atlas Personal Presets" — user-saved recipes + .slabpresets
+// pack import/export.
+// -----------------------------------------------------------------
+
+#[tauri::command]
+fn slab_personal_preset_save(
+    app: tauri::AppHandle,
+    spec: pdf::library::personal_presets::NewPersonalPreset,
+) -> CmdResult<pdf::library::personal_presets::PersonalPresetRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::save_personal_preset(&mut db, &spec)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_personal_preset_list(
+) -> CmdResult<Vec<pdf::library::personal_presets::PersonalPresetRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::personal_presets::list_personal_presets(&db)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_personal_preset_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::delete_personal_preset(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_personal_preset_apply(
+    app: tauri::AppHandle,
+    id: i64,
+) -> CmdResult<pdf::library::collections::SmartCollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::apply_personal_preset(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Export the given personal preset ids (empty = all) to a JSON string.
+/// The frontend handles the file save dialog itself.
+#[tauri::command]
+fn slab_personal_presets_export(ids: Vec<i64>) -> CmdResult<String> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::personal_presets::export_pack(&db, &ids)
+    })();
+    result.into()
+}
+
+/// Import a `.slabpresets` JSON pack. Frontend reads the file and passes
+/// the text; we return the report (counts + per-preset errors).
+#[tauri::command]
+fn slab_personal_presets_import(
+    app: tauri::AppHandle,
+    pack_json: String,
+    rename_on_conflict: bool,
+) -> CmdResult<pdf::library::personal_presets::ImportReport> {
+    let policy = if rename_on_conflict {
+        pdf::library::personal_presets::ImportConflictPolicy::Rename
+    } else {
+        pdf::library::personal_presets::ImportConflictPolicy::Skip
+    };
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::import_pack_from_str(&mut db, &pack_json, policy)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Helper: distinguish "field omitted" (None) from "field explicitly null"
 /// (Some(None)) when deserializing JSON. Apply with
 /// `#[serde(default, deserialize_with = "deserialize_some_option")]` on
@@ -5118,6 +5209,12 @@ pub fn run() {
             slab_preset_list,
             slab_preset_apply,
             slab_preset_already_applied,
+            slab_personal_preset_save,
+            slab_personal_preset_list,
+            slab_personal_preset_delete,
+            slab_personal_preset_apply,
+            slab_personal_presets_export,
+            slab_personal_presets_import,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,
