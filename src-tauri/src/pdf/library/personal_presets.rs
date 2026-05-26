@@ -96,19 +96,14 @@ pub struct PresetPack {
 }
 
 /// What to do when an imported preset's name already exists.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportConflictPolicy {
     /// Don't touch the existing row, skip the incoming one.
+    #[default]
     Skip,
     /// Append "(2)", "(3)"... until the name is unique, then insert.
     Rename,
-}
-
-impl Default for ImportConflictPolicy {
-    fn default() -> Self {
-        Self::Skip
-    }
 }
 
 /// Summary returned to the UI after an import.
