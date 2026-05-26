@@ -54,7 +54,7 @@ lopdf = "0.40"
 ttf-parser = { version = "0.21", default-features = false, features = ["std"] }
 
 # Markdown parser for md2pdf
-pulldown-cmark = { version = "0.12", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # Regex engine for auto-redact
 regex = "1"
