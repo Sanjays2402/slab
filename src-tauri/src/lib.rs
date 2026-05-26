@@ -3602,6 +3602,79 @@ fn slab_smart_folders_pin(
     result.into()
 }
 
+// -----------------------------------------------------------------
+// v3.38.0 "Atlas Suggest" — Beacon-style heuristic suggestions for
+// personal Smart Folders, sourced from recent library searches.
+// -----------------------------------------------------------------
+
+/// Return up to 3 suggested Smart Folders based on recent search history.
+/// Returns `[]` if the user hasn't done enough searches yet.
+#[tauri::command]
+fn slab_library_suggestions_list() -> CmdResult<Vec<pdf::library::folder_suggest::Suggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::folder_suggest::suggest(&db)
+    })();
+    result.into()
+}
+
+/// Dismiss a suggestion by its cluster_hash so we don't re-suggest it.
+#[tauri::command]
+fn slab_library_suggestions_dismiss(app: tauri::AppHandle, cluster_hash: String) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::search_log::dismiss(&db, &cluster_hash)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Accept a suggestion: create a personal preset from it AND dismiss the
+/// cluster so it doesn't keep appearing.
+#[tauri::command]
+fn slab_library_suggestions_accept(
+    app: tauri::AppHandle,
+    suggestion: pdf::library::folder_suggest::Suggestion,
+) -> CmdResult<pdf::library::personal_presets::PersonalPresetRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        // Build a LibraryFilter that searches title for the dominant token.
+        let filter = pdf::library::query::LibraryFilter {
+            title_substring: Some(suggestion.query_template.clone()),
+            ..Default::default()
+        };
+        let spec = pdf::library::personal_presets::NewPersonalPreset {
+            name: suggestion.name.clone(),
+            icon: Some(suggestion.icon.clone()),
+            color: Some(suggestion.color.clone()),
+            description: Some(suggestion.reason.clone()),
+            filter,
+        };
+        let saved = pdf::library::personal_presets::save_personal_preset(&mut db, &spec)?;
+        // Best-effort dismiss so the same cluster doesn't reappear.
+        let _ = pdf::library::search_log::dismiss(&db, &suggestion.cluster_hash);
+        Ok(saved)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Total rows currently in the search log. The UI uses this to decide
+/// whether to show a "search more to unlock suggestions" empty-state
+/// vs hide the section entirely.
+#[tauri::command]
+fn slab_library_search_log_count() -> CmdResult<i64> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::search_log::count(&db)
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -5269,6 +5342,10 @@ pub fn run() {
             slab_smart_folders_list,
             slab_smart_folders_reorder,
             slab_smart_folders_pin,
+            slab_library_suggestions_list,
+            slab_library_suggestions_dismiss,
+            slab_library_suggestions_accept,
+            slab_library_search_log_count,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,

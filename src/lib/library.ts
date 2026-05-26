@@ -785,3 +785,56 @@ export async function smartFoldersPin(
   });
   unwrap(res);
 }
+
+// -----------------------------------------------------------------
+// v3.38.0 Atlas Suggest — heuristic Smart Folder suggestions.
+// -----------------------------------------------------------------
+
+/**
+ * One suggested Smart Folder produced by the local heuristic engine
+ * from the user's recent library search history. Mirrors
+ * `pdf::library::folder_suggest::Suggestion` 1:1.
+ */
+export interface FolderSuggestion {
+  name: string;
+  icon: string;
+  color: string;
+  query_template: string;
+  reason: string;
+  cluster_hash: string;
+  support: number;
+}
+
+/** Up to 3 suggestions; `[]` if the user hasn't searched enough yet. */
+export async function librarySuggestionsList(): Promise<FolderSuggestion[]> {
+  const res = await invoke<CmdResult<FolderSuggestion[]>>(
+    "slab_library_suggestions_list",
+  );
+  return unwrap(res);
+}
+
+/** Dismiss a suggestion permanently by its stable cluster_hash. */
+export async function librarySuggestionsDismiss(
+  clusterHash: string,
+): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_suggestions_dismiss", {
+    clusterHash,
+  });
+  unwrap(res);
+}
+
+/** Accept a suggestion: creates a personal preset + auto-dismisses. */
+export async function librarySuggestionsAccept(
+  suggestion: FolderSuggestion,
+): Promise<unknown> {
+  const res = await invoke<CmdResult<unknown>>("slab_library_suggestions_accept", {
+    suggestion,
+  });
+  return unwrap(res);
+}
+
+/** Total rows in the rolling search log (capped at 500). */
+export async function librarySearchLogCount(): Promise<number> {
+  const res = await invoke<CmdResult<number>>("slab_library_search_log_count");
+  return unwrap(res);
+}
