@@ -19,6 +19,7 @@ pub mod auto_tagger;
 pub mod collections;
 pub mod fts;
 pub mod ocr_queue;
+pub mod personal_presets;
 pub mod presets;
 pub mod query;
 pub mod registry;

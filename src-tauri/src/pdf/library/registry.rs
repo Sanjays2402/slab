@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -224,7 +224,27 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 4;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 4);
+        }
+        if version < 5 {
+            // v3.36.0 "Atlas Personal Presets" — user-saved smart-collection
+            // recipes. Stored as opaque filter_json so the entire FilterGroup
+            // tree survives schema changes to the query language.
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS library_personal_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    icon TEXT,
+                    color TEXT,
+                    description TEXT,
+                    filter_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 5;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 5);
         }
         Ok(())
     }
