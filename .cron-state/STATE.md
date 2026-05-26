@@ -1,85 +1,67 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 18:18 PT by Cake (cron) — v3.36.0 shipped on branch.
+Last updated: 2026-05-25 19:36 PT by Cake (cron) — v3.36.0 MERGED + TAGGED + PUSHED.
 
 ## Active version
 
-**v3.36.0 "Atlas Personal Presets" — code-complete on `feature/v3.36.0-personal-presets`.**
+**v3.36.0 "Atlas Personal Presets" — shipped to main + tag pushed.**
 
-User-saved smart-collection recipes + portable `.slabpresets` JSON
-pack import/export. 4 commits, +1040/-17 LOC, end-to-end working
-capability (backend → IPC → picker UI → sidebar save flow).
-
-## ⚠️ Disk-full warning — needs Sanjay
-
-The Mac mini host's root volume hit **100% (116Mi free / 228Gi total)**
-mid-tick. Cargo could not run a fresh `cargo test --lib` (No space left
-on device); earlier `cargo test --lib personal_presets` ran green (12/12)
-before the disk filled up.
-
-`cargo clippy --all-targets -- -D warnings` ran clean (cached partial
-build). `cargo fmt --check` clean. `pnpm check` clean (0 errors, 105
-pre-existing warnings).
-
-**Action for Sanjay:** free disk before next tick. Suggestions:
-- `cargo clean` inside slab repo (11 GB target dir).
-- Empty `~/.Trash` and `~/Library/Caches`.
+Merge SHA: `8365004` (on main). Tag: `v3.36.0`.
 
 ## ⚠️ CI STILL BLOCKED — needs Sanjay (unchanged)
 
-GitHub Actions billing failure persists (this tick's re-runs of v3.35.0
-+ v3.33.0 release workflows all failed in 4-8s with the spending-limit
-message).
+GitHub Actions billing failure persists. All prior runs failing in 5s with
+the spending-limit message. New v3.36.0 push triggered 3 workflows
+(build, deploy-try, Docker slab-server) — currently queued, will likely
+fail until billing is fixed.
 
 **Action for Sanjay**: https://github.com/settings/billing
 → update payment method OR raise spending limit.
 
-## This tick (2026-05-25 18:00–18:18 PT) — MODE C develop tick
+After fix, re-run failed workflows:
+- `gh run rerun 26429028704` (main build)
+- `gh run rerun 26429028584` (v3.36.0 docker)
 
-**v3.36.0 Atlas Personal Presets shipped on branch.**
+## This tick (2026-05-25 19:18–19:36 PT) — MODE A release tick
 
-- `9515b2e` slice 1: backend module + table + tests (12 unit tests, all green
-  pre-disk-full). +659 LOC.
-- `9a477f9` slice 2: six new Tauri commands (save/list/delete/apply/
-  export/import). +97 LOC.
-- `78e9341` slice 3: PresetPicker "★ Personal" section + Import/Export
-  pack buttons + TS bindings. +255 LOC.
-- `ccb5876` slice 4: CollectionsSidebar "Save as personal preset…"
-  context-menu entry + version bump to 3.36.0. +36 LOC.
+**Recovered disk + merged v3.36.0 to main.**
 
-**Net to branch**: +1040 non-test LOC, 4 commits, BIG end-to-end
-vertical slice.
+- `cargo clean` recovered 12.6 GiB (disk now 70% used, 10Gi free).
+- Full `cargo test --lib`: 1801 passed, 1 failed → fixed schema_version
+  assertion (4→5) for new personal_presets migration. `d0b39a6`.
+- Re-ran failing test: green. Clippy clean. Fmt clean. pnpm check clean.
+- Merged `feature/v3.36.0-personal-presets` → main (merge commit `8365004`).
+- Tagged `v3.36.0` and pushed with `--follow-tags`.
+- Net for v3.36.0: 5 commits, +1155 / -84 LOC across 15 files including
+  new `personal_presets.rs` backend (535 LOC).
 
 ## Buy-Button qualification (v3.36.0)
 
 - **Pay-for-it** ✅ Adobe Document Cloud charges per-seat for shared
-  smart-template libraries; we ship them as a one-file `.slabpresets`
-  drop, zero cloud.
-- **Notice-it** ✅ "★ Personal presets" section appears at the top of
-  the picker the moment a user saves their first one.
-- **Pick-us** ✅ macOS Preview has nothing. PDF Expert has nothing.
-  Adobe needs Document Cloud licensing for the equivalent.
-- **Tell-a-friend** ✅ Drop a `.slabpresets` file → 8 smart collections
-  appear in 1 second. 5-second demo.
+  smart-template libraries; we ship them as a one-file `.slabpresets` drop.
+- **Notice-it** ✅ "★ Personal presets" section in picker.
+- **Pick-us** ✅ Preview/PDF Expert have nothing equivalent.
+- **Tell-a-friend** ✅ Drop `.slabpresets` → 8 smart collections appear.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-26T01:18:00Z — `.slabpresets` import animation:
-drop file → preset cards animate in. Next wow due by ~2026-05-27 01:18 UTC.
+LAST_WOW_TICK_AT: 2026-05-26T01:18:00Z (`.slabpresets` import animation).
+Next wow due by ~2026-05-27 01:18 UTC.
 
 ## Recently closed issues
 
-- (none this tick — issues #23-#27 already closed in prior ticks)
+- (none — release tick)
 
 ## Next ticks
 
-- **Tick 1 (NEXT)**: If disk + CI billing both resolved, run full
-  `cargo test --lib` to confirm 1790+ tests still green, then MODE A
-  merge `feature/v3.36.0-personal-presets` → main, tag v3.36.0, push.
-- **Tick 2 (if disk still full)**: `cargo clean` to recover 11 GB,
-  retry full test suite.
+- **Tick 1 (NEXT)**: If CI billing resolved, finalize v3.36.0 release —
+  download artifacts from `gh run view <build-run>`, publish release with
+  notes + DMGs/MSI/AppImage. Also clear v3.33.0 Draft.
+- **Tick 2**: Delete merged feature branches:
+  `feature/v3.34.0-atlas-smart-plus`, `feature/v3.35.0-atlas-presets`,
+  `feature/v3.36.0-personal-presets`.
 - **Tick 3**: Ship sample pack `assets/preset-packs/legal-starter.slabpresets`
-  (3 legal-focused presets) — drop-in onboarding asset.
+  (3 legal-focused presets) as drop-in onboarding asset.
 - **Tick 4**: v3.37.0 "Atlas Smart Folders Hub" — dedicated panel listing
   all built-in + personal presets side-by-side, drag-to-reorder.
 
@@ -87,7 +69,7 @@ drop file → preset cards animate in. Next wow due by ~2026-05-27 01:18 UTC.
 
 | Branch                                  | Status                              | Notes                            |
 | --------------------------------------- | ----------------------------------- | -------------------------------- |
-| `main`                                  | v3.35.0 merged + tagged + pushed    | Draft releases waiting on CI     |
-| `feature/v3.36.0-personal-presets`     | code-complete, awaiting full tests  | 4 commits, +1040 LOC pushed      |
-| `feature/v3.34.0-atlas-smart-plus`      | merged → main                       | Safe to delete next tick         |
-| `feature/v3.35.0-atlas-presets`         | merged → main                       | Safe to delete next tick         |
+| `main`                                  | v3.36.0 merged + tagged + pushed    | CI queued, billing-blocked       |
+| `feature/v3.36.0-personal-presets`     | merged → main                       | Safe to delete                   |
+| `feature/v3.34.0-atlas-smart-plus`     | merged → main                       | Safe to delete                   |
+| `feature/v3.35.0-atlas-presets`        | merged → main                       | Safe to delete                   |
