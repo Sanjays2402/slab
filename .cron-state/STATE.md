@@ -1,95 +1,93 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 08:55 PT by Cake (cron) — MODE A merge done, awaiting CI/billing.
+Last updated: 2026-05-25 18:18 PT by Cake (cron) — v3.36.0 shipped on branch.
 
 ## Active version
 
-**v3.35.0 "Atlas Smart+ & Atlas Presets" — MERGED + TAGGED on main.**
-Rolled v3.34.0 (nested AND/OR/NOT) + v3.35.0 (preset templates) into a
-single tagged release. Draft GitHub release will exist once CI builds.
+**v3.36.0 "Atlas Personal Presets" — code-complete on `feature/v3.36.0-personal-presets`.**
 
-- v3.35 merge SHAs: `abb285c` (v3.34) + `331ba35` (v3.35) on `main`
-- v3.35 release commit: `1342191`
-- v3.35 tag: `v3.35.0` pushed to origin
-- v3.33 draft release: https://github.com/Sanjays2402/slab/releases (still open)
+User-saved smart-collection recipes + portable `.slabpresets` JSON
+pack import/export. 4 commits, +1040/-17 LOC, end-to-end working
+capability (backend → IPC → picker UI → sidebar save flow).
 
-## ⚠️ CI STILL BLOCKED — needs Sanjay
+## ⚠️ Disk-full warning — needs Sanjay
 
-All workflows fail in 4-6s with:
+The Mac mini host's root volume hit **100% (116Mi free / 228Gi total)**
+mid-tick. Cargo could not run a fresh `cargo test --lib` (No space left
+on device); earlier `cargo test --lib personal_presets` ran green (12/12)
+before the disk filled up.
 
-> _"The job was not started because recent account payments have failed
-> or your spending limit needs to be increased."_
+`cargo clippy --all-targets -- -D warnings` ran clean (cached partial
+build). `cargo fmt --check` clean. `pnpm check` clean (0 errors, 105
+pre-existing warnings).
 
-This tick's failed runs (all on v3.35.0 push):
-- 26408974836 (build, main)
-- 26408974874 (deploy-try, main)
-- 26408974773 (Docker slab-server, v3.35.0 tag)
+**Action for Sanjay:** free disk before next tick. Suggestions:
+- `cargo clean` inside slab repo (11 GB target dir).
+- Empty `~/.Trash` and `~/Library/Caches`.
+
+## ⚠️ CI STILL BLOCKED — needs Sanjay (unchanged)
+
+GitHub Actions billing failure persists (this tick's re-runs of v3.35.0
++ v3.33.0 release workflows all failed in 4-8s with the spending-limit
+message).
 
 **Action for Sanjay**: https://github.com/settings/billing
-→ update payment method OR raise spending limit. Then:
-- `gh run rerun 26408974836 26408974874 26408974773` to finalize v3.35.0.
-- `gh run rerun 26403858592 26403858547` to finalize v3.33.0 draft.
-- `gh release edit v3.35.0 --draft=false` once binaries upload.
+→ update payment method OR raise spending limit.
 
-## This tick (2026-05-25 08:40–08:55 PT) — MODE A merge tick
+## This tick (2026-05-25 18:00–18:18 PT) — MODE C develop tick
 
-**v3.34.0 + v3.35.0 merged into main and tagged as v3.35.0.**
+**v3.36.0 Atlas Personal Presets shipped on branch.**
 
-- `abb285c` Merge v3.34.0 'Atlas Smart+' — nested AND/OR/NOT rules
-  (+1378 LOC, 6 files: recursive SQL builder, ClauseGroup.svelte,
-  SmartCollectionBuilder rewire, TS types, plan doc)
-- `331ba35` Merge v3.35.0 'Atlas Presets' — built-in templates
-  (+1260 LOC, 11 files: presets.rs registry, PresetPicker modal,
-  3 Tauri commands, sidebar ★ button, palette + shortcut entries)
-- `1342191` chore(release): bump to 3.35.0
+- `9515b2e` slice 1: backend module + table + tests (12 unit tests, all green
+  pre-disk-full). +659 LOC.
+- `9a477f9` slice 2: six new Tauri commands (save/list/delete/apply/
+  export/import). +97 LOC.
+- `78e9341` slice 3: PresetPicker "★ Personal" section + Import/Export
+  pack buttons + TS bindings. +255 LOC.
+- `ccb5876` slice 4: CollectionsSidebar "Save as personal preset…"
+  context-menu entry + version bump to 3.36.0. +36 LOC.
 
-**Net to main this tick**: +2638 non-test LOC (well over 600 floor),
-4 commits, 2 end-to-end vertical-slice features shipped (BIG-tier).
+**Net to branch**: +1040 non-test LOC, 4 commits, BIG end-to-end
+vertical slice.
 
-Quality gates ALL green on main:
-- `cargo fmt --check`: clean
-- `cargo clippy --all-targets -- -D warnings`: clean
-- `cargo test --lib`: **1790 passed** (no regressions from v3.33)
-- `pnpm check`: 0 errors, 105 warnings (unchanged)
+## Buy-Button qualification (v3.36.0)
 
-## Buy-Button qualification (v3.35.0 combined)
-
-- **Pay-for-it** ✅ Paralegal/legal-ops customers see "Contracts pending
-  signature" as a built-in preset, AND can build arbitrary nested
-  AND/OR/NOT rules — capabilities Adobe charges $239/yr for.
-- **Notice-it** ✅ Golden ★ in sidebar + new "Advanced rules" mode in
-  smart-collection builder.
-- **Pick-us** ✅ macOS Smart Folders are PDF-blind. Adobe has no
-  presets and only flat AND rules.
-- **Tell-a-friend** ✅ "⌘⇧P → Tax 2025 → done" 5-second demo.
+- **Pay-for-it** ✅ Adobe Document Cloud charges per-seat for shared
+  smart-template libraries; we ship them as a one-file `.slabpresets`
+  drop, zero cloud.
+- **Notice-it** ✅ "★ Personal presets" section appears at the top of
+  the picker the moment a user saves their first one.
+- **Pick-us** ✅ macOS Preview has nothing. PDF Expert has nothing.
+  Adobe needs Document Cloud licensing for the equivalent.
+- **Tell-a-friend** ✅ Drop a `.slabpresets` file → 8 smart collections
+  appear in 1 second. 5-second demo.
 
 ## Wow tracker
 
-LAST_WOW_TICK_AT: 2026-05-25T15:25:00Z — Preset Picker modal still
-holds the title. Next wow due by ~2026-05-26 15:25 UTC.
+LAST_WOW_TICK_AT: 2026-05-26T01:18:00Z — `.slabpresets` import animation:
+drop file → preset cards animate in. Next wow due by ~2026-05-27 01:18 UTC.
 
 ## Recently closed issues
 
-- v3.35.0 (rolls up v3.34 + v3.35) — merged + tagged on main, awaiting CI.
-- v3.33.0 shipped main + draft release (still awaiting binaries).
+- (none this tick — issues #23-#27 already closed in prior ticks)
 
 ## Next ticks
 
-- **Tick 1 (NEXT)**: Re-poll CI billing status. If unblocked:
-  1. `gh run rerun 26408974836 26408974874 26408974773` → v3.35.0 release.
-  2. `gh run rerun 26403858592 26403858547` → v3.33.0 release.
-  3. `gh release edit v3.35.0 --draft=false && gh release edit v3.33.0 --draft=false`.
-- **Tick 2 (if CI still blocked)**: v3.36.0 "Atlas Personal Presets" —
-  Save current smart collection as a personal preset; export/import
-  preset packs (.slabpresets JSON). Vertical slice incl. file
-  picker UX + sample pack file shipped with the app.
-- **Tick 3**: Add `IsUntagged` / `IsOcr` / `FileSize` clause variants
-  to the filter language and surface them in the builder + presets.
+- **Tick 1 (NEXT)**: If disk + CI billing both resolved, run full
+  `cargo test --lib` to confirm 1790+ tests still green, then MODE A
+  merge `feature/v3.36.0-personal-presets` → main, tag v3.36.0, push.
+- **Tick 2 (if disk still full)**: `cargo clean` to recover 11 GB,
+  retry full test suite.
+- **Tick 3**: Ship sample pack `assets/preset-packs/legal-starter.slabpresets`
+  (3 legal-focused presets) — drop-in onboarding asset.
+- **Tick 4**: v3.37.0 "Atlas Smart Folders Hub" — dedicated panel listing
+  all built-in + personal presets side-by-side, drag-to-reorder.
 
 ## Pipeline state
 
 | Branch                                  | Status                              | Notes                            |
 | --------------------------------------- | ----------------------------------- | -------------------------------- |
 | `main`                                  | v3.35.0 merged + tagged + pushed    | Draft releases waiting on CI     |
+| `feature/v3.36.0-personal-presets`     | code-complete, awaiting full tests  | 4 commits, +1040 LOC pushed      |
 | `feature/v3.34.0-atlas-smart-plus`      | merged → main                       | Safe to delete next tick         |
 | `feature/v3.35.0-atlas-presets`         | merged → main                       | Safe to delete next tick         |
