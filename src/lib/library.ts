@@ -719,3 +719,69 @@ export async function personalPresetsImport(
   );
   return unwrap(res);
 }
+
+// -----------------------------------------------------------------
+// v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
+// list with persisted display order and pin flags.
+// -----------------------------------------------------------------
+
+/**
+ * One row in the unified Smart Folders hub. `kind` is `"builtin"` (the id
+ * is a built-in preset string like `"invoices"`) or `"personal"` (the id
+ * is a numeric personal-preset row id stringified).
+ */
+export interface SmartFolderEntry {
+  kind: "builtin" | "personal";
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  description: string;
+  pinned: boolean;
+  sort_order: number;
+}
+
+/** Reorder spec passed to {@link smartFoldersReorder}. */
+export interface SmartFolderOrderItem {
+  kind: "builtin" | "personal";
+  id: string;
+  sort_order: number;
+}
+
+/**
+ * Fetch every smart folder (built-in + personal) in display order
+ * (pinned-first, then persisted order, then alphabetical).
+ */
+export async function smartFoldersList(): Promise<SmartFolderEntry[]> {
+  const res = await invoke<CmdResult<SmartFolderEntry[]>>(
+    "slab_smart_folders_list",
+  );
+  return unwrap(res);
+}
+
+/**
+ * Persist a new visible order. Caller passes the FULL list; each item's
+ * `sort_order` is its zero-based position in the UI. Atomic.
+ */
+export async function smartFoldersReorder(
+  items: SmartFolderOrderItem[],
+): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_smart_folders_reorder", {
+    items,
+  });
+  unwrap(res);
+}
+
+/** Toggle the pin flag on a single smart folder entry. */
+export async function smartFoldersPin(
+  kind: "builtin" | "personal",
+  id: string,
+  pinned: boolean,
+): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_smart_folders_pin", {
+    kind,
+    id,
+    pinned,
+  });
+  unwrap(res);
+}
