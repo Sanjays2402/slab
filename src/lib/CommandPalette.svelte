@@ -398,6 +398,22 @@
       },
       keywords: "preset smart collection template tax invoice receipt contract legal research manual scanned untagged atlas built-in starter",
     });
+    // v3.37.0 "Atlas Smart Folders Hub" — unified panel for built-in
+    // + personal presets with drag-to-reorder, pin, bulk export.
+    out.push({
+      id: "library:smart-folders-hub",
+      title: "Smart Folders Hub…",
+      subtitle: "Manage built-in + personal smart folders — pin, reorder, export pack (⇧⌘F)",
+      icon: "🗂",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-smart-folders-hub"));
+        });
+      },
+      keywords: "smart folders hub manage organize pin reorder drag preset built-in personal pack export bulk atlas",
+    });
     out.push({
       id: "library:new-smart",
       title: "New smart collection…",

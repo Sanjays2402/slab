@@ -3551,6 +3551,57 @@ where
     serde::Deserialize::deserialize(deserializer).map(Some)
 }
 
+// -----------------------------------------------------------------
+// v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
+// list with persisted order and pin flags.
+// -----------------------------------------------------------------
+
+/// Return every smart folder (built-in + personal) sorted by
+/// pin-then-display-order. Backs the new SmartFoldersHubPanel.
+#[tauri::command]
+fn slab_smart_folders_list() -> CmdResult<Vec<pdf::library::smart_folders::SmartFolderEntry>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::smart_folders::list_smart_folders(&db)
+    })();
+    result.into()
+}
+
+/// Persist a new visible order. Caller passes the FULL list; each item's
+/// `sort_order` is its zero-based position in the UI.
+#[tauri::command]
+fn slab_smart_folders_reorder(
+    app: tauri::AppHandle,
+    items: Vec<pdf::library::smart_folders::OrderItem>,
+) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::smart_folders::set_order(&mut db, &items)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Toggle the pin flag on a single smart folder entry.
+#[tauri::command]
+fn slab_smart_folders_pin(
+    app: tauri::AppHandle,
+    kind: String,
+    id: String,
+    pinned: bool,
+) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::smart_folders::set_pinned(&mut db, &kind, &id, pinned)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -5215,6 +5266,9 @@ pub fn run() {
             slab_personal_preset_apply,
             slab_personal_presets_export,
             slab_personal_presets_import,
+            slab_smart_folders_list,
+            slab_smart_folders_reorder,
+            slab_smart_folders_pin,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,
