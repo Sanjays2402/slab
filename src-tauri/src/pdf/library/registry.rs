@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -244,7 +244,25 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 5;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 5);
+        }
+        if version < 6 {
+            // v3.37.0 "Atlas Smart Folders Hub" — persisted display order
+            // and pin state across built-in + personal preset ids.
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS library_smart_folder_order (
+                    entry_kind TEXT NOT NULL,
+                    entry_id   TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    pinned     INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (entry_kind, entry_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_smart_folder_order
+                    ON library_smart_folder_order(sort_order);
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 6;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 6);
         }
         Ok(())
     }
