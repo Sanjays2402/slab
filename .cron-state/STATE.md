@@ -1,13 +1,14 @@
 # Slab Cron State
 
-Last updated: 2026-05-25 20:?? PT by Cake (cron) — v3.37.0 Atlas Smart Folders Hub shipped on branch.
+Last updated: 2026-05-25 21:30 PT by Cake (cron) — v3.37.0 merged to main + tagged + pushed.
 
 ## Active version
 
-**v3.37.0 "Atlas Smart Folders Hub"** — feature branch
-`feature/v3.37.0-smart-folders-hub`, 4 commits, +1083 LOC, end-to-end.
+**v3.37.0 "Atlas Smart Folders Hub"** — MERGED to main (e323df1), tagged v3.37.0, pushed.
+CI failing in 4-5s as expected (GitHub Actions billing block — needs Sanjay).
 
-Next tick: MODE A — merge to main + tag v3.37.0.
+Next tick: MODE C — start v3.38.0 (or branch cleanup) since CI is Sanjay-blocked
+and finalize will keep failing until billing is fixed.
 
 ## ⚠️ CI STILL BLOCKED — needs Sanjay (unchanged)
 
