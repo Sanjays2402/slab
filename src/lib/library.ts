@@ -623,3 +623,99 @@ export async function presetAlreadyApplied(): Promise<string[]> {
   const res = await invoke<CmdResult<string[]>>("slab_preset_already_applied");
   return unwrap(res);
 }
+
+// ---------------------------------------------------------------
+// v3.36.0 "Atlas Personal Presets" — user-saved recipes + .slabpresets
+// pack import/export
+// ---------------------------------------------------------------
+
+/** Mirror of `pdf::library::personal_presets::PersonalPresetRecord`. */
+export interface PersonalPresetRecord {
+  id: number;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  description: string | null;
+  filter: LibraryFilter;
+  created_at: number;
+  sort_order: number;
+}
+
+/** Spec for `personalPresetSave`. Mirrors NewPersonalPreset on Rust side. */
+export interface NewPersonalPreset {
+  name: string;
+  icon: string | null;
+  color: string | null;
+  description: string | null;
+  filter: LibraryFilter;
+}
+
+/** Result of importing a `.slabpresets` pack. */
+export interface ImportReport {
+  imported: number;
+  skipped: number;
+  renamed: number;
+  errors: string[];
+}
+
+export async function personalPresetSave(
+  spec: NewPersonalPreset,
+): Promise<PersonalPresetRecord> {
+  const res = await invoke<CmdResult<PersonalPresetRecord>>(
+    "slab_personal_preset_save",
+    { spec },
+  );
+  return unwrap(res);
+}
+
+export async function personalPresetList(): Promise<PersonalPresetRecord[]> {
+  const res = await invoke<CmdResult<PersonalPresetRecord[]>>(
+    "slab_personal_preset_list",
+  );
+  return unwrap(res);
+}
+
+export async function personalPresetDelete(id: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_personal_preset_delete", {
+    id,
+  });
+  unwrap(res);
+}
+
+export async function personalPresetApply(
+  id: number,
+): Promise<SmartCollectionRecord> {
+  const res = await invoke<CmdResult<SmartCollectionRecord>>(
+    "slab_personal_preset_apply",
+    { id },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Export the given personal preset ids (empty = all) to a `.slabpresets`
+ * JSON string. Caller is responsible for the file save dialog + write.
+ */
+export async function personalPresetsExport(
+  ids: number[],
+): Promise<string> {
+  const res = await invoke<CmdResult<string>>("slab_personal_presets_export", {
+    ids,
+  });
+  return unwrap(res);
+}
+
+/**
+ * Import a `.slabpresets` pack from JSON text. `renameOnConflict = true`
+ * appends "(2)", "(3)"... to duplicate names; `false` skips them.
+ */
+export async function personalPresetsImport(
+  packJson: string,
+  renameOnConflict = false,
+): Promise<ImportReport> {
+  const res = await invoke<CmdResult<ImportReport>>(
+    "slab_personal_presets_import",
+    { packJson, renameOnConflict },
+  );
+  return unwrap(res);
+}

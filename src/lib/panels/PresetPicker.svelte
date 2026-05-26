@@ -20,7 +20,13 @@
     presetList,
     presetApply,
     presetAlreadyApplied,
+    personalPresetList,
+    personalPresetApply,
+    personalPresetDelete,
+    personalPresetsExport,
+    personalPresetsImport,
     type PresetInfo,
+    type PersonalPresetRecord,
   } from "$lib/library";
 
   let {
@@ -32,20 +38,29 @@
   } = $props();
 
   let presets = $state<PresetInfo[]>([]);
+  let personal = $state<PersonalPresetRecord[]>([]);
   let applied = $state<Set<string>>(new Set());
   let busyId = $state<string | null>(null);
+  let busyPersonalId = $state<number | null>(null);
   let error = $state<string | null>(null);
+  let info = $state<string | null>(null);
   let loading = $state(true);
   let query = $state("");
 
+  async function refresh() {
+    const [list, alreadyIds, mine] = await Promise.all([
+      presetList(),
+      presetAlreadyApplied(),
+      personalPresetList(),
+    ]);
+    presets = list;
+    applied = new Set(alreadyIds);
+    personal = mine;
+  }
+
   onMount(async () => {
     try {
-      const [list, alreadyIds] = await Promise.all([
-        presetList(),
-        presetAlreadyApplied(),
-      ]);
-      presets = list;
-      applied = new Set(alreadyIds);
+      await refresh();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -76,6 +91,91 @@
     } finally {
       busyId = null;
     }
+  }
+
+  async function addPersonal(p: PersonalPresetRecord) {
+    if (busyPersonalId) return;
+    busyPersonalId = p.id;
+    error = null;
+    info = null;
+    try {
+      const sc = await personalPresetApply(p.id);
+      info = `Added “${sc.name}”.`;
+      onApplied({
+        id: `personal-${p.id}`,
+        name: sc.name,
+        icon: p.icon ?? "📁",
+        color: p.color ?? "#3b82f6",
+        description: p.description ?? "",
+      });
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busyPersonalId = null;
+    }
+  }
+
+  async function deletePersonal(p: PersonalPresetRecord) {
+    if (
+      !confirm(
+        `Delete personal preset “${p.name}”? (Existing smart collections built from it are NOT affected.)`,
+      )
+    )
+      return;
+    error = null;
+    try {
+      await personalPresetDelete(p.id);
+      await refresh();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function exportPack() {
+    if (personal.length === 0) {
+      error = "No personal presets to export yet. Save one first.";
+      return;
+    }
+    try {
+      const json = await personalPresetsExport([]);
+      // Browser-style download — works in Tauri webview too.
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `slab-presets-${new Date().toISOString().slice(0, 10)}.slabpresets`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      info = `Exported ${personal.length} preset(s).`;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function importPackClick() {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = ".slabpresets,application/json";
+    inp.onchange = async () => {
+      const file = inp.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const report = await personalPresetsImport(text, true);
+        info =
+          `Imported ${report.imported}` +
+          (report.renamed ? `, renamed ${report.renamed}` : "") +
+          (report.skipped ? `, skipped ${report.skipped}` : "") +
+          (report.errors.length ? `, ${report.errors.length} error(s)` : "") +
+          ".";
+        await refresh();
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+    };
+    inp.click();
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -132,13 +232,56 @@
     {#if error}
       <div class="pp-error">{error}</div>
     {/if}
+    {#if info}
+      <div class="pp-info">{info}</div>
+    {/if}
 
     {#if loading}
       <div class="pp-empty">Loading presets…</div>
-    {:else if filtered().length === 0}
-      <div class="pp-empty">No presets match “{query}”.</div>
     {:else}
-      <ul class="pp-grid">
+      {#if personal.length > 0}
+        <h3 class="pp-section">★ Personal presets</h3>
+        <ul class="pp-grid">
+          {#each personal as p (p.id)}
+            {@const busy = busyPersonalId === p.id}
+            <li class="pp-card personal">
+              <div
+                class="pp-icon"
+                style="background:{(p.color ?? '#3b82f6')}22; color:{p.color ??
+                  '#3b82f6'};"
+              >
+                <span aria-hidden="true">{p.icon ?? "📌"}</span>
+              </div>
+              <div class="pp-body">
+                <div class="pp-name">{p.name}</div>
+                <div class="pp-desc">{p.description ?? "Personal preset"}</div>
+              </div>
+              <div class="pp-actions">
+                <button
+                  class="pp-add"
+                  disabled={busy}
+                  onclick={() => addPersonal(p)}
+                >
+                  {busy ? "Adding…" : "+ Add"}
+                </button>
+                <button
+                  class="pp-del"
+                  title="Delete personal preset"
+                  aria-label="Delete personal preset"
+                  onclick={() => deletePersonal(p)}
+                >
+                  ×
+                </button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+        <h3 class="pp-section">Built-in presets</h3>
+      {/if}
+      {#if filtered().length === 0}
+        <div class="pp-empty">No built-in presets match “{query}”.</div>
+      {:else}
+        <ul class="pp-grid">
         {#each filtered() as p (p.id)}
           {@const added = applied.has(p.id)}
           {@const busy = busyId === p.id}
@@ -165,11 +308,16 @@
             </button>
           </li>
         {/each}
-      </ul>
+        </ul>
+      {/if}
     {/if}
 
     <footer class="pp-foot">
-      <span class="pp-hint">Esc to close · Cmd/Ctrl+Shift+P to reopen</span>
+      <div class="pp-foot-left">
+        <button class="pp-link" onclick={importPackClick}>Import pack…</button>
+        <button class="pp-link" onclick={exportPack}>Export pack…</button>
+      </div>
+      <span class="pp-hint">Esc to close · ⌘⇧P</span>
       <button class="pp-done" onclick={onClose}>Done</button>
     </footer>
   </div>
