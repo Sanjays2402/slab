@@ -25,6 +25,7 @@ pub mod query;
 pub mod registry;
 pub mod scanner;
 pub mod search;
+pub mod smart_folders;
 
 pub use auto_tagger::{
     run_many as auto_tag_run_many, run_one as auto_tag_run_one, AutoTagRunResult,
