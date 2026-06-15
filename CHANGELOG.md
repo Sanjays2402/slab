@@ -43,6 +43,15 @@ in this file too.
   **⌘⇧F** (last-used tab), and **⌘K → "forms"** (palette surfaces every
   sub-tab as its own action).
 
+## [3.29.0] — 2026-05-24 — Forms Tour
+
+### Added
+
+- **Auto-firing coachmark tour** the first time you open Forms — glowing
+  spotlight ring tracks each of the four tabs, bubbles ease in with
+  cubic-bezier motion, and the whole flow is keyboard-driven: `→` next,
+  `←` back, `Esc` to dismiss. Replayable any time.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
