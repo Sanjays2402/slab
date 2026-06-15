@@ -97,6 +97,24 @@ in this file too.
 - End-to-end: SQLite tables, 11 Tauri commands, full TS client bindings,
   sidebar UI, persistent across restarts.
 
+## [3.33.0] — 2026-05-25 — Atlas Smart
+
+### Added
+
+- **Visual Smart Collection builder** (⌘⇧N / Ctrl+Shift+N) — name, icon
+  (12 glyphs), colour (8 swatches), repeating filter rules
+  (Title contains / Tag is / Folder is), sort order, and a **live preview
+  pane** that re-runs against your library as you type. Match-count badge
+  pulses on every result-set change.
+- **Drag any doc card onto a manual collection** in the sidebar to add it
+  instantly. Drop target lights up with a dashed glass outline; smart
+  collections politely refuse with a rose-tinted "blocked" outline and a
+  toast.
+- **Right-click any smart collection** for Edit rules… / Delete; double-click
+  jumps straight into the editor.
+- New backend helper `update_smart_collection` for partial updates from the
+  builder UI.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
