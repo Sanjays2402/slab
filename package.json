@@ -22,7 +22,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^5.7.284"
+    "pdfjs-dist": "^6.0.227"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
