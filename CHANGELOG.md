@@ -115,6 +115,19 @@ in this file too.
 - New backend helper `update_smart_collection` for partial updates from the
   builder UI.
 
+## [3.35.0] — 2026-05-25 — Atlas Smart+ & Atlas Presets
+
+### Added
+
+- **Nested AND/OR/NOT smart-collection rules** (v3.34.0 rolled in) — recursive
+  `FilterGroup` / `FilterClause` model, recursive SQL builder, and an
+  Advanced rules mode with a recursive `ClauseGroup` component.
+- **Built-in smart-collection presets** — curated registry of common library
+  views (recent invoices, untagged scans, etc.).
+- **Preset Picker modal** — pick and apply any preset with **⌘⇧P** (Ctrl+Shift+P).
+  Already-applied presets are visually marked; new-smart palette entries
+  surface every preset as its own command-palette action.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
