@@ -172,7 +172,7 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
 # Zip the multi-file "split" responses so the client gets one download
 # regardless of how many output PDFs the operation produced.
-zip = { version = "2", default-features = false, features = ["deflate", "time"] }
+zip = { version = "8", default-features = false, features = ["deflate", "time"] }
 
 [features]
 default = []
