@@ -150,6 +150,17 @@ in this file too.
   `library_smart_folder_order` table, `smart_folders` Tauri module, and
   `SmartFoldersHubPanel` (sidebar entry + palette + dedicated shortcut).
 
+## [3.38.0] — 2026-05-25 — Atlas Suggest
+
+### Added
+
+- **Beacon-style Smart Folder suggestions from your search history** — Slab now
+  watches what you search for, clusters recurring queries, and proposes new
+  Smart Folders for them. Accept with one click, dismiss to never see again.
+  Schema v6 → v7 (`library_search_log` + `library_dismissed_suggestions`),
+  heuristic clusterer in `pdf::library::folder_suggest`, Tauri commands +
+  TS client, and a new `SuggestedFolders` panel surfacing the proposals.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
