@@ -405,10 +405,14 @@
   }
 
   // Pending recent-file open request — Reader panel reads this and reacts.
-  // When triggered from the palette we route it to the *active* tab so the
-  // user's current view changes in place. (To open a recent in a new tab
-  // instead, hold Cmd while picking from the palette — TODO follow-up.)
-  function requestOpenRecent(file: RecentFile) {
+  // Default: route to the *active* tab so the user's current view changes in
+  // place. Pass `newTab: true` (Cmd/Ctrl-click or Cmd/Ctrl+Enter from the
+  // palette) to open the file in a brand-new tab instead.
+  function requestOpenRecent(file: RecentFile, opts: { newTab?: boolean } = {}) {
+    if (opts.newTab) {
+      openNewTab(file.path);
+      return;
+    }
     active = "reader";
     queueMicrotask(() => {
       window.dispatchEvent(new CustomEvent("slab:open-recent", { detail: file }));
@@ -1230,9 +1234,9 @@
     active = id;
     paletteOpen = false;
   }}
-  onOpenRecent={(file) => {
+  onOpenRecent={(file, opts) => {
     paletteOpen = false;
-    requestOpenRecent(file);
+    requestOpenRecent(file, opts);
   }}
   onShowShortcuts={() => {
     paletteOpen = false;

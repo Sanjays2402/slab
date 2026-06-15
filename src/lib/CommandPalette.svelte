@@ -49,7 +49,7 @@
     activePanel: string;
     onClose: () => void;
     onSelectPanel: (id: string) => void;
-    onOpenRecent: (file: RecentFile) => void;
+    onOpenRecent: (file: RecentFile, opts?: { newTab?: boolean }) => void;
     onShowShortcuts?: () => void;
   };
 
@@ -239,9 +239,7 @@
           subtitle: r.path,
           icon: r.pinned ? "📌" : "📄",
           group: r.pinned ? "Pinned" : "Recent",
-          run: () => {
-            window.dispatchEvent(new CustomEvent("slab:open-recent", { detail: r }));
-          },
+          run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
           keywords: `${r.name} ${r.path} ${r.pinned ? "pinned" : "recent"} open file`,
         });
       }
@@ -291,7 +289,7 @@
         subtitle: `Open · ${formatRelTime(r.openedAt)}${r.pageCount ? ` · ${r.pageCount} pages` : ""}`,
         icon: "▥",
         group: "Recent files",
-        run: () => onOpenRecent(r),
+        run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
         keywords: `${r.name} ${r.path} pdf recent`,
       });
     }
@@ -761,6 +759,11 @@
     if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
   });
 
+  // True when the most recent activation (Enter or click) held Cmd/Ctrl.
+  // Recent-file palette entries read this to decide between reuse-active-tab
+  // (default) and open-in-new-tab (Cmd/Ctrl held). Cleared on every run.
+  let lastActivationNewTab = false;
+
   function runSelected() {
     const a = filtered[selected];
     if (!a) return;
@@ -784,6 +787,7 @@
       selected = Math.max(0, selected - 1);
     } else if (e.key === "Enter") {
       e.preventDefault();
+      lastActivationNewTab = e.metaKey || e.ctrlKey;
       runSelected();
     }
   }
@@ -824,7 +828,10 @@
               class="palette-item"
               class:active={idx === selected}
               onmouseenter={() => (selected = idx)}
-              onclick={runSelected}
+              onclick={(e: MouseEvent) => {
+                lastActivationNewTab = e.metaKey || e.ctrlKey;
+                runSelected();
+              }}
             >
               <span class="palette-icon">{a.icon}</span>
               <span class="palette-text">
