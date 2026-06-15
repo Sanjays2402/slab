@@ -31,6 +31,18 @@ in this file too.
 
 - Clippy: collapsed double-if into match guards in `forms_detect.rs`.
 
+## [3.28.0] — 2026-05-24 — Quill Hub
+
+### Added
+
+- **Unified Forms hub** — the four Quill panels (Detect, Design, Fill, Batch)
+  collapse into one tabbed workspace. Drop a PDF once and walk it from flat
+  scan → fillable form → filled form → 200 filled forms without re-picking
+  a file.
+- Three entry points: sidebar **Forms** (lands on smart-default tab),
+  **⌘⇧F** (last-used tab), and **⌘K → "forms"** (palette surfaces every
+  sub-tab as its own action).
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
