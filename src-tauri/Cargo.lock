@@ -4744,7 +4744,7 @@ dependencies = [
  "const-oid 0.9.6",
  "crossbeam-channel",
  "csv",
- "der 0.7.10",
+ "der 0.8.0",
  "directories",
  "dirs",
  "ed25519-dalek",
