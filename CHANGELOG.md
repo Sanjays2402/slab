@@ -81,6 +81,22 @@ in this file too.
 - **Eight progress dots** per Home card — at-a-glance read progress without
   opening the document.
 
+## [3.32.0] — 2026-05-25 — Atlas
+
+### Added
+
+- **Collections** — named groups (e.g. "Tax 2026", "Q2 contracts"). A document
+  can live in any number of collections without copying files.
+- **Smart Collections** — saved searches that re-evaluate every time you open
+  them. "Recently added" auto-fills as you scan; build your own from any
+  filter combo.
+- **Animated count badges** that pulse when membership changes — Linear-quality
+  polish, built-in.
+- **Seeded defaults** — "Recently added" and "All documents" smart collections
+  ship pre-loaded on first launch.
+- End-to-end: SQLite tables, 11 Tauri commands, full TS client bindings,
+  sidebar UI, persistent across restarts.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
