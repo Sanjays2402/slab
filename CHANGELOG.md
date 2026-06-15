@@ -52,6 +52,21 @@ in this file too.
   cubic-bezier motion, and the whole flow is keyboard-driven: `→` next,
   `←` back, `Esc` to dismiss. Replayable any time.
 
+## [3.30.0] — 2026-05-25 — Quill Smart Fill
+
+### Added
+
+- **Quill Smart Fill** — drop a source document (resume, contact card, CSV
+  row, anything) onto one zone, drop the target AcroForm PDF onto the other,
+  hit **Propose with AI**. Slab maps source content onto every fillable
+  field with a per-row confidence score.
+- **100% local** — runs through your Beacon provider (Ollama by default).
+  Nothing leaves the machine.
+- **Confidence-coded diff UI** — green ≥ 85%, amber ≥ 50%, red below.
+  Inline editing per row; Accept All / Reject All when the model nails it
+  (or doesn't). Provider footer shows exactly which model answered.
+- **Shortcut**: **⌘⇧I** (Ctrl+Shift+I) jumps to Smart Fill from anywhere.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
