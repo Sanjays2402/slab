@@ -67,6 +67,20 @@ in this file too.
   (or doesn't). Provider footer shows exactly which model answered.
 - **Shortcut**: **⌘⇧I** (Ctrl+Shift+I) jumps to Smart Fill from anywhere.
 
+## [3.31.0] — 2026-05-25 — Atlas Lite
+
+### Added
+
+- **Continue reading** — hero card on Home for the last document you were
+  reading, with thumbnail, pulsing progress bar, and a big resume button.
+  Bound to **⌘0**.
+- **Per-file last-page resume** — close mid-page, reopen tomorrow, land on
+  the same page with a quiet "Resumed at page 47 of 120" toast.
+- **Pinned strip** on Home — right-click any recent file (or hover-pin icon)
+  to float it above the eviction line forever.
+- **Eight progress dots** per Home card — at-a-glance read progress without
+  opening the document.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
