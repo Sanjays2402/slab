@@ -128,6 +128,18 @@ in this file too.
   Already-applied presets are visually marked; new-smart palette entries
   surface every preset as its own command-palette action.
 
+## [3.36.0] — 2026-05-25 — Atlas Personal Presets
+
+### Added
+
+- **Save any Smart Collection as a personal preset** — right-click any smart
+  collection → "Save as personal preset…" persists the entire filter tree
+  for reuse. Personal presets show up in the Preset Picker alongside the
+  built-ins.
+- **`.slabpresets` pack import/export** — share preset bundles across machines
+  or teams in a single portable file. Conflict policy is explicit via
+  `ImportConflictPolicy` (skip / overwrite / rename).
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
