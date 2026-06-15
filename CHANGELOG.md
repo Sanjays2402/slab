@@ -11,6 +11,26 @@ in this file too.
 
 ---
 
+## [3.27.0] — 2026-05-24 — Quill Auto-Detect
+
+### Added
+
+- **Heuristic form-field detector** — content-stream pass over each page
+  picks up underlines, boxes, and labels that look like form prompts. Each
+  candidate ships with a confidence score so you can filter noise.
+- **New panel: Quill Auto-Detect** — pick a PDF, choose a page range, run
+  the scan, review candidates side-by-side. Toggle individually, bulk-accept
+  high-confidence ones, commit straight into a Designer document via the
+  existing `slab_forms_design_add` pipeline.
+- **Shortcut**: **⌘⇧Y** (Ctrl+Shift+Y) opens the panel anywhere.
+- New module `pdf::forms_detect` (~845 LOC, 15 unit tests) — pure-Rust, no
+  new deps, runs on the same `lopdf` content streams the rest of the
+  pipeline uses.
+
+### Fixed
+
+- Clippy: collapsed double-if into match guards in `forms_detect.rs`.
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
