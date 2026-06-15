@@ -140,6 +140,16 @@ in this file too.
   or teams in a single portable file. Conflict policy is explicit via
   `ImportConflictPolicy` (skip / overwrite / rename).
 
+## [3.37.0] — 2026-05-25 — Atlas Smart Folders Hub
+
+### Added
+
+- **Unified Smart Folders Hub** — single workspace combining built-in presets,
+  personal presets, and ad-hoc smart collections in one searchable view.
+  Drag to reorder, pin favourites, export as a pack. New
+  `library_smart_folder_order` table, `smart_folders` Tauri module, and
+  `SmartFoldersHubPanel` (sidebar entry + palette + dedicated shortcut).
+
 ## [3.26.0] — 2026-05-24 — Quill Designer
 
 ### Added
