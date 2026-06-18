@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 03:25 PT by Cake (cron) — roadmap #4 "Tag rename" shipped (44444f8 backend, 161dfbb UI), pushed + verified on feature branch.
+Last updated: 2026-06-18 04:20 PT by Cake (cron) — roadmap #5 "Recently-used tags" shipped (cf62147 backend, 3fc663a UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `161dfbb` — "feat(library): inline tag-rename affordance in the tag rail".
+Latest commit: `3fc663a` — "feat(library): recently-used tag quick-chips in the doc tag menu".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -93,10 +93,33 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
    on success the row swaps into the rail + every doc card in place (no
    refetch); a rejected rename keeps the row in edit mode and shows the
    backend reason inline so the user can fix + retry.
-5. **Recently-used tags** — surface the N most recently applied tags as quick
-   chips when tagging a new doc. (Likely needs an applied_at timestamp on
-   library_doc_tags — a schema bump v8->v9 — so the "recent" order is real
-   rather than insertion-rowid order.)
+5. ~~**Recently-used tags**~~ — DONE (2026-06-18 04:20 PT, cf62147 backend +
+   3fc663a UI). Schema v8->v9: nullable `applied_at` on library_doc_tags +
+   `(tag_id, applied_at)` index. `set_doc_tags` rewritten from
+   wipe-and-reinsert into a true DIFF so surviving links keep their original
+   stamp and only new links are stamped now() — re-saving an unchanged set
+   must not restamp (would shuffle a stable tag to the top). `bulk_tag` apply
+   stamps too. `registry::recently_used_tags(limit)` returns each used tag
+   once by MAX(applied_at) desc, link-rowid tie-break, NULL stamps last,
+   never-applied excluded. One Tauri command (slab_library_recently_used_tags,
+   limit default 8). TS `recentlyUsedTags` client + a "Recently used"
+   quick-chip row at the top of the per-doc tag context menu (lazy-loaded on
+   open, re-ranked after each apply/remove, hides tags already on the doc via
+   a $derived list). ALSO relaxed two schema-version-pinning tests
+   (registry + collections) from `== 8` to `>=` + added a dedicated v9 column
+   test, so the next migration won't trip an unrelated equality assert (the
+   exact trap that bit the v3.39.0->bulk tick). Gates: cargo fmt clean,
+   cargo test --lib pdf::library 206 passed/0 failed (9 new), clippy --lib
+   -D warnings clean (9.1s warm), pnpm check 0 errors. Pushed + verified.
+6. **Tag merge** — let the user fold one tag into another (pick source +
+   target, re-point every library_doc_tags link from source to target
+   coalescing duplicates by the surviving applied_at, then delete the source
+   tag row). This is the natural complement to rename: rename rejects a
+   collision with an existing name; merge is the deliberate "actually, make
+   these the same tag" path. Backend in registry.rs (transactional re-point +
+   delete; preserve the newest applied_at per doc so recent-order survives),
+   one Tauri command, TS client, and a "Merge into…" affordance in the tag
+   rail's existing row menu.
 
 ## House style (match existing code)
 
@@ -160,4 +183,23 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   + verified (local==origin 161dfbb). Build cache from the 02:40 tick still
   warm — test compile 1.46s, clippy 7s. No manifest bump (kept 3.39.0, per the
   established convention that v3.4x.0 labels are logical feature versions).
+- 2026-06-18 04:20 PT (Cake, cron): roadmap #5 "Recently-used tags" shipped.
+  Backend cf62147 (schema v8->v9: nullable applied_at on library_doc_tags +
+  (tag_id, applied_at) index; set_doc_tags rewritten wipe-and-reinsert ->
+  true diff so surviving links keep their stamp, only new links stamped now();
+  bulk_tag apply stamps too; recently_used_tags(limit) ranks each used tag
+  once by MAX(applied_at) desc, rowid tie-break, NULL-last, never-applied
+  excluded; 1 Tauri command slab_library_recently_used_tags; 9 new tests).
+  UI 3fc663a (TS recentlyUsedTags + "Recently used" quick-chip row at top of
+  the per-doc tag context menu, lazy-load on open, re-rank after each toggle,
+  $derived filter hides already-attached tags; dark-first pill styling).
+  Relaxed two schema-version-pinning tests (registry + collections) from
+  == 8 to >= + added a v9 column test, pre-empting the equality-assert trap.
+  Gates: cargo fmt clean, cargo test --lib pdf::library:: 206 passed/0 failed,
+  clippy --lib -D warnings clean (9.1s warm), pnpm check 0 errors (no new
+  LibraryPanel warnings; the 2 there are pre-existing autofocus + webkit CSS).
+  First cargo test of the session hit a borrow-lifetime slip in the new
+  set_doc_tags (query_map temporary outliving stmt at block end) — fixed by
+  draining rows with a while-let loop instead. Pushed + verified (local==origin
+  3fc663a). Build cache from the 03:25 tick still warm — test 1.72s, clippy 9s.
 
