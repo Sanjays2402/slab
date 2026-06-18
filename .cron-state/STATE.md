@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 05:50 PT by Cake (cron) — fresh roadmap #7 "Tag usage counts" shipped (966db5e), pushed + verified on feature branch.
+Last updated: 2026-06-18 06:35 PT by Cake (cron) — fresh roadmap #8 "Empty/unused tag cleanup" shipped (cd4219a backend + ba7a83d UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `966db5e` — "feat(library): show per-tag document counts in the rail + most-used sort".
+Latest commit: `ba7a83d` — "feat(library): one-click clean up unused tags in the rail head".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -160,13 +160,23 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
    Gates: cargo fmt clean, cargo test --lib pdf::library:: 224 passed/0 failed
    (6 new), clippy --lib -D warnings clean (6.61s warm), pnpm check 0 errors
    (no new LibraryPanel warnings; still the 2 pre-existing autofocus + webkit).
-8. **Empty/unused tag cleanup** — a one-click "Remove N unused tags"
-   affordance on the Tags rail head that deletes every tag attached to zero
-   documents (the residue merges/removals leave behind). Backend:
-   `registry::delete_unused_tags() -> usize` (DELETE ... WHERE id NOT IN
-   (SELECT tag_id FROM library_doc_tags), returns rows removed), one Tauri
-   command, TS client, a confirm + an "N of M" toast. Tests: leaves
-   in-use tags, counts correctly, no-op when all used.
+8. ~~**Empty/unused tag cleanup**~~ — DONE (2026-06-18 06:35 PT, cd4219a
+   backend + ba7a83d UI). `registry::delete_unused_tags() -> usize`: a single
+   DELETE over library_tags guarded by `NOT EXISTS` against library_doc_tags
+   (tag_id is NOT NULL so NOT EXISTS is the clean form), removes every tag on
+   zero docs and returns the count; a tag with even one link is untouched, an
+   empty library is a no-op returning 0. One Tauri command
+   (slab_library_delete_unused_tags) emits library-changed only on a non-empty
+   cleanup. 4 tests (removes-only-unused, no-op when all used, empty-is-zero,
+   and the motivating bulk-remove-leaves-residue-at-0 reclaim). UI: TS
+   deleteUnusedTags + a $derived unusedTagCount off the existing tagCounts map
+   (count 0 == unused, self-heals on every refresh, no bespoke plumbing); a
+   muted "Clean up N" rail-head affordance shown only when >0, danger-tinted
+   hover, disabled while pruning; click confirms with the exact count,
+   snapshots doomed ids to prune the active filter, toasts "Removed N", then
+   refreshAll reconciles off the backend. Gates: cargo fmt clean, cargo test
+   --lib pdf::library:: 228 passed/0 failed (4 new), clippy --lib -D warnings
+   clean (6.48s warm), pnpm check 0 errors (no new LibraryPanel warnings).
 9. **Tag filter combinator (AND/OR)** — the rail's tag toggles currently
    union (OR). Add an AND/OR switch on the Tags rail head so selecting two
    tags can mean "docs with BOTH" not just "either". Wire through the
@@ -297,4 +307,29 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   warm — first session test compile 16s (test profile cold-ish), full suite
   1.72s warm. Pushed + verified (local==origin 966db5e). Next undone: #8
   empty/unused tag cleanup.
+- 2026-06-18 06:35 PT (Cake, cron): fresh roadmap #8 "Empty/unused tag
+  cleanup" shipped (cd4219a backend + ba7a83d UI, two commits). Backend
+  registry::delete_unused_tags() -> usize: one DELETE over library_tags
+  guarded by NOT EXISTS against library_doc_tags (tag_id is NOT NULL so
+  NOT EXISTS is the clean idiomatic form vs NOT IN), removes every zero-doc
+  tag and returns the count; a tag with even one link untouched, empty
+  library a no-op returning 0. 1 Tauri command slab_library_delete_unused_tags
+  emits library-changed only when removed>0. 4 new tests (removes-only-unused
+  keeps in-use drops orphans, no-op when all used, empty-is-zero, and the
+  motivating case: a bulk-remove that strips a tag off its last doc leaves it
+  in tag_usage_counts at 0 and the cleanup reclaims it). UI: TS deleteUnusedTags
+  + a $derived unusedTagCount computed straight off the existing tagCounts map
+  (count 0 == unused) so it self-heals on every refreshAll with zero bespoke
+  plumbing; a muted "Clean up N" affordance in the Tags rail head (shown only
+  when >0, danger-tinted hover marking it destructive, disabled while pruning).
+  Click confirms with the exact count, snapshots the doomed ids to prune any
+  now-stale tag out of the active filter, calls backend, toasts "Removed N
+  unused tags" via the existing bulkSummary channel, then refreshAll reconciles
+  rail+counts off the source of truth. Gates: cargo fmt clean, cargo test --lib
+  pdf::library:: 228 passed/0 failed (4 new), clippy --lib -D warnings clean
+  (6.48s warm), pnpm check 0 errors (105 warnings, all pre-existing in other
+  panels — none in LibraryPanel from this change). No schema bump (pure delete
+  over existing tables). Build cache from the 05:50 tick still warm — full
+  library suite 1.74s, clippy 6.48s. Pushed + verified (local==origin ba7a83d).
+  Next undone: #9 tag filter combinator (AND/OR).
 
