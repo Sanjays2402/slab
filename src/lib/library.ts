@@ -282,6 +282,24 @@ export async function setTagColor(
   return unwrap(res);
 }
 
+/**
+ * Rename a tag everywhere it is used. Documents are linked to tags by id, so
+ * the new name shows up on every document and in tag co-occurrence without a
+ * migration. Returns the updated tag row so callers can swap it in without a
+ * full refetch. The backend rejects an empty name or a name already taken by a
+ * different tag. v3.43.0 Atlas Tag-Rename.
+ */
+export async function renameTag(
+  tagId: number,
+  newName: string,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>("slab_library_rename_tag", {
+    tagId,
+    newName,
+  });
+  return unwrap(res);
+}
+
 export async function setDocumentTags(
   docId: number,
   tagIds: number[],

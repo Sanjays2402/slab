@@ -44,6 +44,7 @@
     scanFolder,
     setDocumentTags,
     setTagColor,
+    renameTag,
     type AutoTagRunResult,
     type DocumentRecord,
     type FilterClause,
@@ -162,6 +163,15 @@
   let editColorTag = $state<TagRecord | null>(null);
   let editColorValue = $state<string | null>(null);
   let editColorBusy = $state(false);
+
+  // Inline tag-rename state (v3.43.0 Atlas Tag-Rename). When `renameTagId` is
+  // set, that rail row renders a text input seeded with `renameDraft` instead
+  // of its label. `renameBusy` guards the in-flight commit; `renameError`
+  // surfaces a rejected rename (e.g. a name collision) inline on the row.
+  let renameTagId = $state<number | null>(null);
+  let renameDraft = $state("");
+  let renameBusy = $state(false);
+  let renameError = $state<string | null>(null);
 
   // Debounced search.
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -837,6 +847,58 @@
     }
   }
 
+  // ---------- Rename tag inline (v3.43.0 Atlas Tag-Rename) ----------
+
+  function startRenameTag(tag: TagRecord) {
+    renameTagId = tag.id;
+    renameDraft = tag.name;
+    renameError = null;
+    renameBusy = false;
+  }
+
+  function cancelRenameTag() {
+    renameTagId = null;
+    renameDraft = "";
+    renameError = null;
+    renameBusy = false;
+  }
+
+  async function commitRenameTag() {
+    if (renameTagId === null || renameBusy) return;
+    const id = renameTagId;
+    const next = renameDraft.trim();
+    const current = tags.find((t) => t.id === id);
+    // Empty, or unchanged — treat as a cancel, no backend round-trip.
+    if (!next || (current && current.name === next)) {
+      cancelRenameTag();
+      return;
+    }
+    renameBusy = true;
+    renameError = null;
+    try {
+      const updated = await renameTag(id, next);
+      // Swap the renamed row into the rail and every doc card that carries it
+      // so labels repaint in place without a full refetch.
+      tags = tags.map((t) => (t.id === updated.id ? updated : t));
+      docs = docs.map((d) => ({
+        ...d,
+        tags: d.tags.map((t) => (t.id === updated.id ? updated : t)),
+      }));
+      cancelRenameTag();
+    } catch (e) {
+      // Keep the row in edit mode so the user can fix a collision and retry.
+      renameError = String(e).replace(/^.*?library:\s*/, "");
+      renameBusy = false;
+    }
+  }
+
+  // Svelte action: focus + select-all a freshly-mounted input. Used by the
+  // inline tag-rename field so the whole name is highlighted on open.
+  function focusSelect(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
   async function commitNewTag() {
     const name = newTagName.trim();
     if (!name) return;
@@ -1082,26 +1144,56 @@
         </div>
         {#each tags as t (t.id)}
           <div class="rail-row-wrap">
-            <button
-              class="rail-row tag"
-              class:active={activeTagIds.has(t.id)}
-              onclick={() => toggleTag(t)}
-            >
-              <span class="rail-icon dot" style:background={t.color ?? "var(--text-3)"}></span>
-              <span class="rail-label">{t.name}</span>
-            </button>
-            <button
-              class="rail-row-x"
-              title="Edit color"
-              aria-label="Edit tag color"
-              onclick={() => openEditColor(t)}
-            >&#9679;</button>
-            <button
-              class="rail-row-x"
-              title="Delete tag"
-              aria-label="Delete tag"
-              onclick={() => onRemoveTag(t)}
-            >×</button>
+            {#if renameTagId === t.id}
+              <div class="rail-rename">
+                <input
+                  class="rail-rename-input"
+                  class:invalid={renameError !== null}
+                  value={renameDraft}
+                  aria-label="Rename tag {t.name}"
+                  use:focusSelect
+                  oninput={(e) => {
+                    renameDraft = e.currentTarget.value;
+                    renameError = null;
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") commitRenameTag();
+                    else if (e.key === "Escape") cancelRenameTag();
+                  }}
+                  onblur={commitRenameTag}
+                />
+                {#if renameError}
+                  <span class="rail-rename-error" title={renameError}>{renameError}</span>
+                {/if}
+              </div>
+            {:else}
+              <button
+                class="rail-row tag"
+                class:active={activeTagIds.has(t.id)}
+                onclick={() => toggleTag(t)}
+              >
+                <span class="rail-icon dot" style:background={t.color ?? "var(--text-3)"}></span>
+                <span class="rail-label">{t.name}</span>
+              </button>
+              <button
+                class="rail-row-x"
+                title="Rename tag"
+                aria-label="Rename tag"
+                onclick={() => startRenameTag(t)}
+              >&#9998;</button>
+              <button
+                class="rail-row-x"
+                title="Edit color"
+                aria-label="Edit tag color"
+                onclick={() => openEditColor(t)}
+              >&#9679;</button>
+              <button
+                class="rail-row-x"
+                title="Delete tag"
+                aria-label="Delete tag"
+                onclick={() => onRemoveTag(t)}
+              >×</button>
+            {/if}
           </div>
         {/each}
         <button class="rail-add" onclick={onCreateTopLevelTag}>+ New tag</button>
@@ -1726,6 +1818,33 @@
   }
   .rail-row-wrap:hover .rail-row-x { opacity: 1; }
   .rail-row-x:hover { color: var(--accent); }
+  /* Inline tag rename (v3.43.0 Atlas Tag-Rename) */
+  .rail-rename {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px 4px;
+  }
+  .rail-rename-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 4px 7px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    outline: 0;
+  }
+  .rail-rename-input.invalid { border-color: var(--danger, #e54); }
+  .rail-rename-error {
+    font-size: 11px;
+    color: var(--danger, #e54);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .rail-add {
     background: transparent;
     border: 1px dashed var(--border);
