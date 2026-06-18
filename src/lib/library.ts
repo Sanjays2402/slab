@@ -276,6 +276,48 @@ export async function setDocumentTags(
   unwrap(res);
 }
 
+/** Outcome of a bulk tag apply/remove (mirror of `bulk_tag::BulkTagResult`). */
+export interface BulkTagResult {
+  /** The tag that was applied or removed (resolved / created). */
+  tag: TagRecord;
+  /** Documents whose tag set actually changed. */
+  affected: number;
+  /** Document ids in the request, including no-ops and stale ids. */
+  total: number;
+}
+
+/**
+ * Apply a tag (by name, find-or-created) across many documents in one
+ * atomic action. Returns the resolved tag plus affected/total counts.
+ * v3.41.0 Atlas Bulk Tag-Apply.
+ */
+export async function bulkApplyTag(
+  tagName: string,
+  docIds: number[],
+): Promise<BulkTagResult> {
+  const res = await invoke<CmdResult<BulkTagResult>>(
+    "slab_library_bulk_apply_tag",
+    { tagName, docIds },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Remove a tag (by id) from many documents in one atomic action. The tag
+ * row itself is preserved — only the named doc links are detached.
+ * v3.41.0 Atlas Bulk Tag-Apply.
+ */
+export async function bulkRemoveTag(
+  tagId: number,
+  docIds: number[],
+): Promise<BulkTagResult> {
+  const res = await invoke<CmdResult<BulkTagResult>>(
+    "slab_library_bulk_remove_tag",
+    { tagId, docIds },
+  );
+  return unwrap(res);
+}
+
 export async function removeDocument(docId: number): Promise<void> {
   const res = await invoke<CmdResult<null>>("slab_library_remove_document", {
     docId,

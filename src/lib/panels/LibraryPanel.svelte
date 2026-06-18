@@ -30,6 +30,8 @@
     addTag,
     autoTagRunMany,
     autoTagRunOne,
+    bulkApplyTag,
+    bulkRemoveTag,
     listDocuments,
     listFolders,
     listTags,
@@ -117,6 +119,27 @@
   let autoTaggingAll = $state(false);
   let autoTaggingDocIds = $state<Set<number>>(new Set());
   let autoTagSummary = $state<string | null>(null);
+
+  // ---------- Bulk tag-apply (v3.41.0 Atlas) ----------
+  //
+  // Multi-select mode: a checkbox appears on each card; checking docs
+  // builds `selectedDocIds`. A floating action bar then applies or removes
+  // a tag across the whole selection in one backend transaction. Selection
+  // is keyed by doc id so it survives a grid refresh (stale ids are simply
+  // ignored by the backend and pruned on the next refreshDocs()).
+  let selecting = $state(false);
+  let selectedDocIds = $state<Set<number>>(new Set());
+  let bulkBusy = $state(false);
+  let bulkSummary = $state<string | null>(null);
+  // The bulk "apply tag" picker: a small popover listing existing tags
+  // plus a free-text "new tag" entry. Null when closed.
+  let bulkTagPickerOpen = $state(false);
+  let bulkNewTagName = $state("");
+
+  let selectedCount = $derived(selectedDocIds.size);
+  let allVisibleSelected = $derived(
+    docs.length > 0 && docs.every((d) => selectedDocIds.has(d.id)),
+  );
 
   // Context menu state. `null` when closed.
   type Menu = {
@@ -320,6 +343,15 @@
     }
     try {
       docs = await listDocuments(filter);
+      // v3.41.0: prune any selected ids that fell out of the current view
+      // so the bulk action bar's count reflects what's actually on screen.
+      if (selectedDocIds.size > 0) {
+        const visible = new Set(docs.map((d) => d.id));
+        const pruned = new Set(
+          [...selectedDocIds].filter((id) => visible.has(id)),
+        );
+        if (pruned.size !== selectedDocIds.size) selectedDocIds = pruned;
+      }
     } catch (e) {
       error = String(e);
     }
@@ -635,13 +667,93 @@
     }
   }
 
+  // ---------- Bulk tag-apply actions (v3.41.0 Atlas) ----------
+
+  function toggleSelectMode() {
+    selecting = !selecting;
+    if (!selecting) {
+      selectedDocIds = new Set();
+      bulkTagPickerOpen = false;
+    }
+  }
+
+  function toggleDocSelected(docId: number) {
+    const next = new Set(selectedDocIds);
+    if (next.has(docId)) next.delete(docId);
+    else next.add(docId);
+    selectedDocIds = next;
+  }
+
+  function selectAllVisible() {
+    if (allVisibleSelected) {
+      selectedDocIds = new Set();
+    } else {
+      selectedDocIds = new Set(docs.map((d) => d.id));
+    }
+  }
+
+  function clearSelection() {
+    selectedDocIds = new Set();
+    bulkTagPickerOpen = false;
+  }
+
+  /** Apply `tagName` (existing or freshly typed) to every selected doc. */
+  async function onBulkApplyTag(tagName: string) {
+    const name = tagName.trim();
+    if (!name || selectedDocIds.size === 0 || bulkBusy) return;
+    bulkBusy = true;
+    error = null;
+    bulkSummary = null;
+    try {
+      const ids = Array.from(selectedDocIds);
+      const res = await bulkApplyTag(name, ids);
+      const skipped = res.total - res.affected;
+      bulkSummary =
+        `Applied "${res.tag.name}" to ${res.affected} doc${res.affected === 1 ? "" : "s"}` +
+        (skipped > 0 ? ` (${skipped} already had it)` : "");
+      bulkTagPickerOpen = false;
+      bulkNewTagName = "";
+      // New tag may have been created — refresh the rail; the grid
+      // refresh comes via the library-changed event the command emits.
+      try {
+        tags = await listTags();
+      } catch {
+        // Non-fatal — next full refresh fills it in.
+      }
+      await refreshDocs();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      bulkBusy = false;
+    }
+  }
+
+  /** Remove a tag (by id) from every selected doc. Driven from the
+   * picker's "remove" affordance next to each existing tag. */
+  async function onBulkRemoveTag(tag: TagRecord) {
+    if (selectedDocIds.size === 0 || bulkBusy) return;
+    bulkBusy = true;
+    error = null;
+    bulkSummary = null;
+    try {
+      const ids = Array.from(selectedDocIds);
+      const res = await bulkRemoveTag(tag.id, ids);
+      bulkSummary = `Removed "${res.tag.name}" from ${res.affected} doc${res.affected === 1 ? "" : "s"}`;
+      bulkTagPickerOpen = false;
+      await refreshDocs();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      bulkBusy = false;
+    }
+  }
+
   // ---------- Folder rail actions ----------
 
   function selectFolder(id: number | "all") {
     activeFolder = id;
     activeCollection = null;
   }
-
   async function onRemoveFolder(folder: FolderRecord) {
     const ok = window.confirm(
       `Stop tracking ${folder.path}?\n\nThe folder stays on disk — Slab just forgets about the PDFs inside it.`,
@@ -857,6 +969,16 @@
       <span class="glyph" aria-hidden="true">&#x2298;</span>
       Untagged
     </button>
+    <button
+      class="untagged-toggle select-toggle"
+      class:active={selecting}
+      onclick={toggleSelectMode}
+      aria-pressed={selecting}
+      title="Select multiple documents to tag them all at once"
+    >
+      <span class="glyph" aria-hidden="true">&#x2611;</span>
+      {selecting ? "Done" : "Select"}
+    </button>
   </div>
 
   {#if error}
@@ -982,25 +1104,44 @@
               bind:this={cardEls[i]}
               class="card"
               class:vim-focused={i === vimFocusIdx}
+              class:selectable={selecting}
+              class:selected={selecting && selectedDocIds.has(d.id)}
               role="button"
               tabindex="0"
               draggable={true}
               ondragstart={(e) => {
                 if (!e.dataTransfer) return;
                 e.dataTransfer.effectAllowed = "copy";
+                // When a multi-selection is active, drag the whole set so a
+                // drop onto a collection moves every selected doc at once.
+                const dragIds =
+                  selecting && selectedDocIds.has(d.id)
+                    ? Array.from(selectedDocIds)
+                    : [d.id];
                 e.dataTransfer.setData(
                   "application/x-slab-doc-ids",
-                  JSON.stringify([d.id]),
+                  JSON.stringify(dragIds),
                 );
                 // Also stash the title for friendlier drag previews on
                 // platforms that surface text/plain in the OS overlay.
                 e.dataTransfer.setData("text/plain", displayTitle(d));
               }}
               oncontextmenu={(e) => openMenuFor(e, d)}
-              onclick={() => openDocInTab(d)}
-              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") openDocInTab(d); }}
+              onclick={() =>
+                selecting ? toggleDocSelected(d.id) : openDocInTab(d)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ")
+                  selecting ? toggleDocSelected(d.id) : openDocInTab(d);
+              }}
             >
               <div class="card-head">
+                {#if selecting}
+                  <span
+                    class="card-check"
+                    class:on={selectedDocIds.has(d.id)}
+                    aria-hidden="true"
+                  >{selectedDocIds.has(d.id) ? "\u2713" : ""}</span>
+                {/if}
                 <div class="card-title" title={d.path}>{displayTitle(d)}</div>
                 <button
                   class="card-menu"
@@ -1087,6 +1228,93 @@
     </main>
   </div>
 </section>
+
+<!-- v3.41.0 Atlas Bulk Tag-Apply — floating action bar -->
+{#if selecting}
+  <div class="bulk-bar" role="toolbar" tabindex="-1" aria-label="Bulk tag actions">
+    <button
+      class="bulk-select-all"
+      onclick={selectAllVisible}
+      title={allVisibleSelected ? "Deselect all" : "Select all visible"}
+    >
+      <span class="glyph" aria-hidden="true"
+        >{allVisibleSelected ? "\u2612" : "\u2610"}</span>
+      {allVisibleSelected ? "None" : "All"}
+    </button>
+    <span class="bulk-count">
+      {selectedCount} selected
+    </span>
+    <div class="bulk-actions">
+      <div class="bulk-tag-wrap">
+        <button
+          class="bulk-apply"
+          disabled={selectedCount === 0 || bulkBusy}
+          onclick={() => (bulkTagPickerOpen = !bulkTagPickerOpen)}
+          aria-expanded={bulkTagPickerOpen}
+          title="Apply or remove a tag across all selected documents"
+        >
+          {bulkBusy ? "Working\u2026" : "Tag selected\u2026"}
+        </button>
+        {#if bulkTagPickerOpen && selectedCount > 0}
+          <div class="bulk-picker" role="menu" tabindex="-1">
+            <div class="bulk-picker-section">Apply a tag</div>
+            <div class="bulk-new-tag">
+              <input
+                type="text"
+                placeholder="New or existing tag…"
+                aria-label="Tag name to apply"
+                bind:value={bulkNewTagName}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") onBulkApplyTag(bulkNewTagName);
+                }}
+              />
+              <button
+                class="bulk-new-go"
+                disabled={!bulkNewTagName.trim() || bulkBusy}
+                onclick={() => onBulkApplyTag(bulkNewTagName)}
+              >Apply</button>
+            </div>
+            {#if tags.length > 0}
+              <div class="bulk-picker-list">
+                {#each tags as t (t.id)}
+                  <div class="bulk-picker-row">
+                    <button
+                      class="bulk-picker-tag"
+                      disabled={bulkBusy}
+                      onclick={() => onBulkApplyTag(t.name)}
+                      title={`Apply "${t.name}" to ${selectedCount} doc${selectedCount === 1 ? "" : "s"}`}
+                    >
+                      <span
+                        class="dot small"
+                        style:background={t.color ?? "var(--text-3)"}
+                      ></span>
+                      <span class="bulk-picker-name">{t.name}</span>
+                    </button>
+                    <button
+                      class="bulk-picker-x"
+                      disabled={bulkBusy}
+                      aria-label={`Remove ${t.name} from selection`}
+                      title={`Remove "${t.name}" from the ${selectedCount} selected doc${selectedCount === 1 ? "" : "s"}`}
+                      onclick={() => onBulkRemoveTag(t)}
+                    >&minus;</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <button
+        class="bulk-clear"
+        disabled={selectedCount === 0 || bulkBusy}
+        onclick={clearSelection}
+      >Clear</button>
+    </div>
+  </div>
+{/if}
+{#if bulkSummary && !error}
+  <div class="bulk-toast" role="status">{bulkSummary}</div>
+{/if}
 
 <!-- Context menu (right-click / ⋯) -->
 {#if menu}
@@ -1302,6 +1530,14 @@
     opacity: 0.85;
   }
 
+  /* v3.41.0 Atlas Bulk Tag-Apply — Select toggle reuses untagged-toggle
+     chrome; active state mirrors the accent treatment. */
+  .select-toggle.active {
+    background: color-mix(in oklab, var(--accent, #7c3aed) 18%, transparent);
+    border-color: color-mix(in oklab, var(--accent, #7c3aed) 55%, transparent);
+    color: var(--text);
+  }
+
   /* Layout */
   .layout {
     display: flex;
@@ -1448,6 +1684,33 @@
   .card.vim-focused {
     border-color: var(--accent, #ff7a59);
     box-shadow: 0 0 0 1px var(--accent, #ff7a59) inset;
+  }
+  /* v3.41.0 Atlas Bulk Tag-Apply — multi-select mode. */
+  .card.selectable {
+    cursor: default;
+  }
+  .card.selected {
+    border-color: color-mix(in oklab, var(--accent, #ff7a59) 60%, var(--border));
+    background: color-mix(in oklab, var(--accent, #ff7a59) 10%, var(--bg-2));
+  }
+  .card-check {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--bg);
+    margin-top: 1px;
+    transition: background 80ms ease, border-color 80ms ease;
+  }
+  .card-check.on {
+    background: var(--accent, #ff7a59);
+    border-color: var(--accent, #ff7a59);
   }
   .card-head {
     display: flex;
@@ -1767,4 +2030,182 @@
     font-weight: 600;
   }
   .modal-actions .primary:disabled { opacity: 0.5; }
+
+  /* v3.41.0 Atlas Bulk Tag-Apply — floating action bar + tag picker. */
+  .bulk-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px 8px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md, 10px);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  }
+  .bulk-select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 5px 10px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .bulk-select-all:hover { color: var(--text); border-color: var(--border-strong); }
+  .bulk-select-all .glyph { font-size: 13px; line-height: 1; }
+  .bulk-count {
+    font-size: 12px;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    min-width: 78px;
+  }
+  .bulk-actions { display: flex; align-items: center; gap: 8px; }
+  .bulk-tag-wrap { position: relative; }
+  .bulk-apply {
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: var(--bg);
+    padding: 6px 14px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .bulk-apply:hover:not(:disabled) { background: var(--accent-2, var(--accent)); }
+  .bulk-apply:disabled { opacity: 0.5; cursor: default; }
+  .bulk-clear {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 6px 12px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .bulk-clear:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+  .bulk-clear:disabled { opacity: 0.5; cursor: default; }
+
+  .bulk-picker {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    width: 250px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .bulk-picker-section {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-3);
+    padding: 2px 2px 0;
+  }
+  .bulk-new-tag { display: flex; gap: 6px; }
+  .bulk-new-tag input {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--r-sm);
+    padding: 6px 8px;
+    font-size: 12px;
+    outline: 0;
+  }
+  .bulk-new-tag input:focus { border-color: var(--border-strong); }
+  .bulk-new-go {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--r-sm);
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .bulk-new-go:hover:not(:disabled) { border-color: var(--border-strong); }
+  .bulk-new-go:disabled { opacity: 0.5; cursor: default; }
+  .bulk-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+  }
+  .bulk-picker-row {
+    display: flex;
+    align-items: stretch;
+    border-radius: var(--r-sm);
+  }
+  .bulk-picker-row:hover { background: var(--bg-3); }
+  .bulk-picker-tag {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-2);
+    padding: 6px 8px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    text-align: left;
+    min-width: 0;
+    cursor: pointer;
+  }
+  .bulk-picker-tag:hover:not(:disabled) { color: var(--text); }
+  .bulk-picker-tag:disabled { opacity: 0.5; cursor: default; }
+  .bulk-picker-tag .dot.small {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .bulk-picker-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bulk-picker-x {
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    padding: 0 10px;
+    font-size: 16px;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .bulk-picker-row:hover .bulk-picker-x { opacity: 1; }
+  .bulk-picker-x:hover:not(:disabled) { color: var(--accent); }
+  .bulk-picker-x:disabled { opacity: 0; }
+
+  .bulk-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 78px;
+    transform: translateX(-50%);
+    z-index: 59;
+    background: var(--bg-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    padding: 7px 14px;
+    font-size: 12px;
+    color: var(--text);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
 </style>
