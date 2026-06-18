@@ -612,6 +612,48 @@ impl LibraryDb {
             .ok_or_else(|| LibraryError::Other(format!("tag {tag_id} not found")))
     }
 
+    /// Rename a tag everywhere it is used. Because `library_doc_tags` links
+    /// documents to tags by `tag_id` (never by name), the single `UPDATE` here
+    /// is automatically reflected on every document the tag is attached to and
+    /// in any live tag co-occurrence the suggester computes. Returns the
+    /// updated row so the UI can swap it in without a full refetch.
+    ///
+    /// `new_name` is trimmed. Errors if the tag id does not exist, the trimmed
+    /// name is empty, or a *different* tag already carries that exact name
+    /// (the `name` column is UNIQUE; we reject the collision rather than
+    /// silently merging the two tags). Renaming a tag to its own current name
+    /// is a no-op that returns the unchanged row. A pure case change
+    /// (`research` -> `Research`) is a valid distinct rename because the UNIQUE
+    /// constraint and lookups use SQLite's case-sensitive BINARY collation.
+    /// v3.43.0 Atlas Tag-Rename.
+    pub fn rename_tag(&mut self, tag_id: i64, new_name: &str) -> Result<TagRecord, LibraryError> {
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return Err(LibraryError::Other("tag name cannot be empty".into()));
+        }
+        let current = self
+            .find_tag_by_id(tag_id)?
+            .ok_or_else(|| LibraryError::Other(format!("tag {tag_id} not found")))?;
+        // Renaming to the same name is a harmless no-op.
+        if current.name == trimmed {
+            return Ok(current);
+        }
+        // Reject a collision with a *different* tag (UNIQUE name column).
+        if let Some(existing) = self.find_tag_by_name(trimmed)? {
+            if existing.id != tag_id {
+                return Err(LibraryError::Other(format!(
+                    "a tag named {trimmed:?} already exists"
+                )));
+            }
+        }
+        self.conn.execute(
+            "UPDATE library_tags SET name = ?1 WHERE id = ?2",
+            params![trimmed, tag_id],
+        )?;
+        self.find_tag_by_id(tag_id)?
+            .ok_or_else(|| LibraryError::Other(format!("tag {tag_id} not found")))
+    }
+
     pub fn list_tags(&self) -> Result<Vec<TagRecord>, LibraryError> {
         let mut stmt = self
             .conn
@@ -1004,6 +1046,108 @@ mod tests {
     fn set_tag_color_unknown_id_errors() {
         let mut db = db();
         assert!(db.set_tag_color(9999, Some("#ff7a59")).is_err());
+    }
+
+    #[test]
+    fn rename_tag_updates_and_returns_row() {
+        let mut db = db();
+        let t = db.add_tag("reserch", Some("#6ab7ff")).unwrap();
+        let renamed = db.rename_tag(t.id, "research").unwrap();
+        assert_eq!(renamed.id, t.id, "id is preserved across a rename");
+        assert_eq!(renamed.name, "research");
+        // Color is untouched by a rename.
+        assert_eq!(renamed.color.as_deref(), Some("#6ab7ff"));
+        // Persisted: a fresh lookup by the new name resolves to the same row,
+        // and the old name no longer exists.
+        assert_eq!(db.find_tag_by_name("research").unwrap().unwrap().id, t.id);
+        assert!(db.find_tag_by_name("reserch").unwrap().is_none());
+    }
+
+    #[test]
+    fn rename_tag_carries_document_links() {
+        // The whole point of "rename everywhere": documents wear the tag via
+        // tag_id, so a rename must leave every attachment intact.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let t = db.add_tag("draught", None).unwrap();
+        db.set_doc_tags(d.id, &[t.id]).unwrap();
+
+        let renamed = db.rename_tag(t.id, "draft").unwrap();
+        assert_eq!(renamed.name, "draft");
+
+        let attached = db.tags_for_document(d.id).unwrap();
+        assert_eq!(attached.len(), 1);
+        assert_eq!(attached[0].id, t.id);
+        assert_eq!(attached[0].name, "draft", "the doc sees the new name");
+    }
+
+    #[test]
+    fn rename_tag_trims_whitespace() {
+        let mut db = db();
+        let t = db.add_tag("temp", None).unwrap();
+        let renamed = db.rename_tag(t.id, "  invoices  ").unwrap();
+        assert_eq!(renamed.name, "invoices");
+    }
+
+    #[test]
+    fn rename_tag_to_same_name_is_noop() {
+        let mut db = db();
+        let t = db.add_tag("research", Some("#abc")).unwrap();
+        let renamed = db.rename_tag(t.id, "research").unwrap();
+        assert_eq!(renamed.id, t.id);
+        assert_eq!(renamed.name, "research");
+        assert_eq!(renamed.color.as_deref(), Some("#abc"));
+        // Trimming still applies to the no-op path.
+        let trimmed = db.rename_tag(t.id, "  research  ").unwrap();
+        assert_eq!(trimmed.name, "research");
+    }
+
+    #[test]
+    fn rename_tag_allows_pure_case_change() {
+        // BINARY collation makes "research" and "Research" distinct names, so a
+        // case-only rename is a real rename, not a self-collision.
+        let mut db = db();
+        let t = db.add_tag("research", None).unwrap();
+        let renamed = db.rename_tag(t.id, "Research").unwrap();
+        assert_eq!(renamed.name, "Research");
+        assert!(db.find_tag_by_name("research").unwrap().is_none());
+        assert_eq!(db.find_tag_by_name("Research").unwrap().unwrap().id, t.id);
+    }
+
+    #[test]
+    fn rename_tag_rejects_collision_with_other_tag() {
+        let mut db = db();
+        let a = db.add_tag("research", None).unwrap();
+        let b = db.add_tag("draft", None).unwrap();
+        // Renaming b onto a's name must fail and leave both rows untouched.
+        assert!(db.rename_tag(b.id, "research").is_err());
+        assert_eq!(db.find_tag_by_id(a.id).unwrap().unwrap().name, "research");
+        assert_eq!(db.find_tag_by_id(b.id).unwrap().unwrap().name, "draft");
+        // Still exactly two tags — no merge, no orphan.
+        assert_eq!(db.list_tags().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn rename_tag_rejects_empty_name() {
+        let mut db = db();
+        let t = db.add_tag("keep", None).unwrap();
+        for bad in ["", "   ", "\t\n"] {
+            assert!(
+                db.rename_tag(t.id, bad).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+        // The original name survives every rejected rename.
+        assert_eq!(db.find_tag_by_id(t.id).unwrap().unwrap().name, "keep");
+    }
+
+    #[test]
+    fn rename_tag_unknown_id_errors() {
+        let mut db = db();
+        assert!(db.rename_tag(9999, "whatever").is_err());
     }
 
     #[test]

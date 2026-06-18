@@ -3816,6 +3816,25 @@ fn slab_library_set_tag_color(
     result.into()
 }
 
+/// Rename a tag everywhere it is used. Returns the updated tag row so the UI
+/// can swap it in without a full refetch. Rejects an empty name or a name
+/// already taken by a different tag. v3.43.0 Atlas Tag-Rename.
+#[tauri::command]
+fn slab_library_rename_tag(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    new_name: String,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.rename_tag(tag_id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_set_doc_tags(
     app: tauri::AppHandle,
@@ -5482,6 +5501,7 @@ pub fn run() {
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_tag_color,
+            slab_library_rename_tag,
             slab_library_set_doc_tags,
             slab_library_bulk_apply_tag,
             slab_library_bulk_remove_tag,
