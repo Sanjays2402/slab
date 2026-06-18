@@ -315,6 +315,26 @@ export async function renameTag(
   return unwrap(res);
 }
 
+/**
+ * Fold the `sourceId` tag into `targetId`: every document that wore the source
+ * tag ends up wearing the target, duplicate links collapse keeping the newer
+ * `applied_at` (so recently-used order survives), and the source tag row is
+ * deleted. Returns the surviving target row. This is the deliberate "these are
+ * actually the same tag" path — `renameTag` rejects a name collision rather
+ * than merging. The backend errors on an unknown id or merging a tag into
+ * itself. v3.45.0 Atlas Tag-Merge.
+ */
+export async function mergeTags(
+  sourceId: number,
+  targetId: number,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>("slab_library_merge_tags", {
+    sourceId,
+    targetId,
+  });
+  return unwrap(res);
+}
+
 export async function setDocumentTags(
   docId: number,
   tagIds: number[],

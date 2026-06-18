@@ -45,6 +45,7 @@
     setDocumentTags,
     setTagColor,
     renameTag,
+    mergeTags,
     recentlyUsedTags,
     type AutoTagRunResult,
     type DocumentRecord,
@@ -198,6 +199,21 @@
   let renameDraft = $state("");
   let renameBusy = $state(false);
   let renameError = $state<string | null>(null);
+
+  // Tag-merge state (v3.45.0 Atlas Tag-Merge). `mergeSourceTag` is the tag the
+  // user chose to fold away; the modal then picks a `mergeTargetId` to fold it
+  // into. `mergeBusy` guards the in-flight fold; `mergeError` surfaces a
+  // rejected merge inline.
+  let mergeSourceTag = $state<TagRecord | null>(null);
+  let mergeTargetId = $state<number | null>(null);
+  let mergeBusy = $state(false);
+  let mergeError = $state<string | null>(null);
+  // The tags the source can be merged into — everything except the source.
+  let mergeCandidates = $derived(
+    mergeSourceTag
+      ? tags.filter((t) => t.id !== mergeSourceTag!.id)
+      : [],
+  );
 
   // Debounced search.
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -925,6 +941,64 @@
     node.select();
   }
 
+  // ---------- Merge tag (v3.45.0 Atlas Tag-Merge) ----------
+
+  function openMergeTag(tag: TagRecord) {
+    mergeSourceTag = tag;
+    mergeTargetId = null;
+    mergeError = null;
+    mergeBusy = false;
+  }
+
+  function closeMergeTag() {
+    mergeSourceTag = null;
+    mergeTargetId = null;
+    mergeError = null;
+    mergeBusy = false;
+  }
+
+  async function commitMergeTag() {
+    if (!mergeSourceTag || mergeTargetId === null || mergeBusy) return;
+    const sourceId = mergeSourceTag.id;
+    const targetId = mergeTargetId;
+    mergeBusy = true;
+    mergeError = null;
+    try {
+      const target = await mergeTags(sourceId, targetId);
+      // Drop the folded-away source from the rail and any active filter, then
+      // swap the surviving target row in place. Doc cards re-point their
+      // source chip to the target and de-dupe, so the grid repaints without a
+      // full refetch.
+      tags = tags
+        .filter((t) => t.id !== sourceId)
+        .map((t) => (t.id === target.id ? target : t));
+      if (activeTagIds.has(sourceId)) {
+        const next = new Set(activeTagIds);
+        next.delete(sourceId);
+        next.add(target.id);
+        activeTagIds = next;
+      }
+      docs = docs.map((d) => {
+        if (!d.tags.some((t) => t.id === sourceId)) return d;
+        const seen = new Set<number>();
+        const merged: TagRecord[] = [];
+        for (const t of d.tags) {
+          const swapped = t.id === sourceId ? target : t;
+          if (seen.has(swapped.id)) continue;
+          seen.add(swapped.id);
+          merged.push(swapped);
+        }
+        return { ...d, tags: merged };
+      });
+      // Recently-used chips may have inherited the source's recency.
+      recentTags = await recentlyUsedTags(8);
+      closeMergeTag();
+    } catch (e) {
+      mergeError = String(e).replace(/^.*?library:\s*/, "");
+      mergeBusy = false;
+    }
+  }
+
   async function commitNewTag() {
     const name = newTagName.trim();
     if (!name) return;
@@ -1211,6 +1285,12 @@
                 aria-label="Rename tag"
                 onclick={() => startRenameTag(t)}
               >&#9998;</button>
+              <button
+                class="rail-row-x"
+                title="Merge into another tag"
+                aria-label="Merge tag"
+                onclick={() => openMergeTag(t)}
+              >&#8703;</button>
               <button
                 class="rail-row-x"
                 title="Edit color"
@@ -1639,6 +1719,58 @@
         <button class="ghost" onclick={() => (editColorTag = null)}>Cancel</button>
         <button class="primary" onclick={commitEditColor} disabled={editColorBusy}>
           {editColorBusy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Merge tag modal (v3.45.0 Atlas Tag-Merge) -->
+{#if mergeSourceTag}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={closeMergeTag}
+    onkeydown={(e) => { if (e.key === "Escape") closeMergeTag(); }}
+  >
+    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <div class="modal-title">Merge tag</div>
+      <div class="merge-lead">
+        Fold <span class="merge-source">{mergeSourceTag.name}</span> into another
+        tag. Every document tagged
+        <span class="merge-source">{mergeSourceTag.name}</span> will be re-tagged,
+        and <span class="merge-source">{mergeSourceTag.name}</span> will be deleted.
+      </div>
+      {#if mergeCandidates.length === 0}
+        <div class="merge-empty">No other tags to merge into.</div>
+      {:else}
+        <div class="merge-list">
+          {#each mergeCandidates as c (c.id)}
+            <button
+              class="merge-option"
+              class:active={mergeTargetId === c.id}
+              onclick={() => { mergeTargetId = c.id; mergeError = null; }}
+            >
+              <span class="dot" style:background={c.color ?? "var(--text-3)"}></span>
+              <span class="merge-option-name">{c.name}</span>
+              {#if mergeTargetId === c.id}<span class="merge-check">&#10003;</span>{/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if mergeError}
+        <div class="merge-error" title={mergeError}>{mergeError}</div>
+      {/if}
+      <div class="modal-actions">
+        <button class="ghost" onclick={closeMergeTag}>Cancel</button>
+        <button
+          class="primary"
+          onclick={commitMergeTag}
+          disabled={mergeBusy || mergeTargetId === null}
+        >
+          {mergeBusy ? "Merging…" : "Merge"}
         </button>
       </div>
     </div>
@@ -2348,6 +2480,70 @@
     font-weight: 600;
   }
   .modal-actions .primary:disabled { opacity: 0.5; }
+
+  /* v3.45.0 Atlas Tag-Merge — merge modal */
+  .merge-lead {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-2);
+  }
+  .merge-source {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .merge-empty {
+    font-size: 12px;
+    color: var(--text-3);
+    padding: 8px 0;
+  }
+  .merge-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 2px 0;
+  }
+  .merge-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-2);
+    padding: 7px 9px;
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .merge-option:hover { background: var(--bg-3); color: var(--text); }
+  .merge-option.active {
+    background: var(--bg-3);
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .merge-option .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .merge-option-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .merge-check { color: var(--accent); font-size: 12px; }
+  .merge-error {
+    font-size: 11px;
+    color: var(--danger, #e54);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   /* v3.41.0 Atlas Bulk Tag-Apply — floating action bar + tag picker. */
   .bulk-bar {
