@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 07:25 PT by Cake (cron) — fresh roadmap #9 "Tag filter combinator (AND/OR)" shipped (18229a8 backend + 522cbe9 UI), pushed + verified on feature branch.
+Last updated: 2026-06-18 07:50 PT by Cake (cron) — roadmap #11 "Tag filter clear-all" shipped (f41a6a1, frontend-only), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `522cbe9` — "feat(library): All/Any toggle in the Tags rail head".
+Latest commit: `f41a6a1` — "feat(library): one-click Clear for the tag-rail filter".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -226,11 +226,26 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
     CRUD + query_json roundtrip + that a restored view reproduces the doc
     set. Good-sized but self-contained; the filter serialization is already
     proven by the smart-collection builder.
-11. **Tag filter clear-all** — a one-click "Clear" affordance in the Tags
-    rail head (shown only when >=1 tag selected OR untaggedOnly on) that
-    resets activeTagIds + untaggedOnly + tagMatch to defaults in a single
-    action. Pure frontend (no backend), small but genuinely useful once the
-    rail has many tags. Lowest-risk pick if a tick is tight on build budget.
+11. ~~**Tag filter clear-all**~~ — DONE (2026-06-18 07:50 PT, f41a6a1,
+    frontend-only single commit). A "Clear" affordance in the Tags rail
+    head, shown only when `tagFilterActive` ($derived: activeTagIds.size > 0
+    || untaggedOnly). One click runs clearTagFilter(): activeTagIds = new
+    Set(), untaggedOnly = false, tagMatch = "all" — three fresh assignments
+    so the existing reactive $effect (deps activeTagIds/untaggedOnly/tagMatch/
+    sort/activeFolder) re-queries exactly once, no manual refresh. Match mode
+    is excluded from the visibility test on purpose (inert with 0 tags, so a
+    lingering non-default mode shouldn't surface a Clear on its own) but is
+    reset anyway for a fully clean slate. Button is first in the rail-head
+    chrome group, mirrors the .rail-sort/.rail-match chrome (muted uppercase,
+    margin-left:auto, neutral hover-to-text); non-destructive reset so NO
+    danger tint (unlike .rail-cleanup). No backend, no schema, no cargo. Gate:
+    pnpm check 0 errors, LibraryPanel still only its 2 pre-existing warnings
+    (autofocus + webkit), none new. Pushed + verified (local==origin f41a6a1).
+    Picked over #10 saved-views because only ~12 min remained before the 08:00
+    auto-stop — #11 was the seeded "lowest-risk pick if a tick is tight on
+    build budget", needs no slow cargo gate, and is genuinely useful now the
+    rail has many tags. Next undone: #10 saved tag-filter views, #12 tag
+    descriptions/notes.
 12. **Tag descriptions / notes** — an optional freeform note per tag (schema
     add: nullable `description` on library_tags), surfaced as a tooltip on
     the rail row + editable from the existing tag edit affordances. Backend
@@ -409,4 +424,22 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
   was 951280e (the 06:35 cron-state chore), already on origin, not ba7a83d —
   the prior tick's STATE commit had landed. Next undone: #10 saved tag-filter
   views.
+- 2026-06-18 07:50 PT (Cake, cron): round-3 roadmap #11 "Tag filter clear-all"
+  shipped (f41a6a1, single frontend-only commit). A "Clear" affordance in the
+  Tags rail head, gated by a new tagFilterActive $derived (activeTagIds.size > 0
+  || untaggedOnly). clearTagFilter() resets activeTagIds = new Set(),
+  untaggedOnly = false, tagMatch = "all" — three fresh assignments so the
+  existing reactive $effect re-queries exactly once (no manual refresh). Match
+  mode excluded from the visibility test (inert with 0 tags) but reset anyway
+  for a clean slate. New .rail-clear CSS mirrors .rail-sort/.rail-match chrome
+  (muted uppercase, margin-left:auto, neutral hover-to-text) — non-destructive
+  reset so NO danger tint. No backend, no schema, no cargo. Gate: pnpm check
+  0 errors, LibraryPanel still only its 2 pre-existing warnings (autofocus +
+  webkit), none new. Pushed + verified (local==origin f41a6a1). DELIBERATELY
+  picked the small #11 over the larger #10 saved-views because the tick started
+  at 07:44 PT with only ~16 min before the 08:00 hard auto-stop — #10's new
+  schema table + full Rust+TS+Svelte slice needs a slow cargo test gate that
+  wouldn't finish in budget, whereas #11 was the seeded "lowest-risk pick if a
+  tick is tight on build budget" and gates on pnpm check alone. Next undone:
+  #10 saved tag-filter views, #12 tag descriptions/notes.
 
