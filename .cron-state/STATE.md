@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 01:55 PT by Cake (cron) — roadmap #2 "Bulk tag-apply" shipped (d6a46fb backend, c4c9848 UI), pushed + verified on feature branch.
+Last updated: 2026-06-18 02:40 PT by Cake (cron) — roadmap #3 "Tag colors" shipped (6a7ff10 backend, 155fe06 UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `c4c9848` — "feat(library): multi-select grid + bulk tag-apply UI".
+Latest commit: `155fe06` — "feat(library): edit tag color picker in the tag rail".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -66,14 +66,17 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
    ALSO fixed a stale collections.rs test (schema_version 7→8) that the
    v3.39.0 migration had silently broken — earlier ticks ran scoped tests so
    the full `cargo test --lib` never surfaced it.
-3. **Tag colors** — let a tag carry a color; store on the tag row (schema bump),
-   render colored chips. Visual "wow" candidate. NOTE: tags ALREADY have a
-   `color` column (TEXT, nullable) and chips already render `border-left-color`
-   from it; new tags auto-get a deterministic pastel via `pastel_for`. So the
-   remaining work is a COLOR PICKER to edit an existing tag's color + persist
-   it (needs a new `registry::set_tag_color` + Tauri command + swatch UI on the
-   tag rail / a tag-edit affordance). Scope it as "edit tag color", not "add
-   color storage".
+3. ~~**Tag colors**~~ — DONE (2026-06-18 02:40 PT, 6a7ff10 backend +
+   155fe06 UI). The `color` column already existed, so this shipped the
+   EDIT path: `registry::set_tag_color(tag_id, Option<&str>)` updates/clears
+   a tag's color + returns the row, guarded by `valid_tag_color()` which only
+   persists `#hex` / `hsl()/hsla()/rgb()/rgba()` shapes (functional body
+   restricted to digits/dots/%/comma/space — no CSS injection). Unknown id and
+   bad color both error without touching the row (11 tests). One Tauri command
+   (set_tag_color). TS `setTagColor` client + a tag-rail color-edit affordance:
+   a filled-dot button per row opens a "Tag color" modal (live preview swatch +
+   the existing palette + a "Default" clear-to-deterministic option); saving
+   swaps the updated row into the rail and every doc card in place (no refetch).
 4. **Tag rename** — rename a tag everywhere it's used (single backend op +
    inline-edit UI on the tag chip). Co-occurrence data updates automatically.
 5. **Recently-used tags** — surface the N most recently applied tags as quick
@@ -116,3 +119,13 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   scoped tests (query/presets) so the full --lib suite never caught it. This
   session's first `cargo test` was warm (~24s compile) — build cache from the
   01:05 tick was still fresh, no cold recompile this time.
+- 2026-06-18 02:40 PT (Cake, cron): roadmap #3 "Tag colors" shipped.
+  Backend 6a7ff10 (registry::set_tag_color + valid_tag_color guard + 1 Tauri
+  command; 11 new tests), UI 155fe06 (TS setTagColor + tag-rail color-edit
+  affordance: per-row dot button -> "Tag color" modal with preview swatch +
+  palette + Default clear, in-place row swap on save). No schema bump — the
+  color column already existed; this was the edit path. Gates: cargo fmt clean,
+  cargo test --lib pdf::library:: 190 passed/0 failed (8 new tag_color tests
+  green), clippy --lib -D warnings clean (7.2s warm), pnpm check 0 errors.
+  Pushed + verified (local==origin). Build cache from the 01:55 tick was still
+  warm — test compile ~under a sec incremental, clippy 7s.
