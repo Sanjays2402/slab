@@ -838,3 +838,85 @@ export async function librarySearchLogCount(): Promise<number> {
   const res = await invoke<CmdResult<number>>("slab_library_search_log_count");
   return unwrap(res);
 }
+
+// -----------------------------------------------------------------
+// v3.39.0 Atlas Tag-Suggest — per-document heuristic tag suggestions.
+// -----------------------------------------------------------------
+
+/**
+ * One suggested tag for a document, produced locally from the doc's
+ * title/filename, the existing tag vocabulary, co-occurrence stats, and
+ * a built-in domain dictionary. Mirrors
+ * `pdf::library::tag_suggest::TagSuggestion` 1:1.
+ */
+export interface TagSuggestion {
+  tag_name: string;
+  score: number;
+  source: "vocabulary" | "cooccurrence" | "domain";
+  existing: boolean;
+}
+
+/** A document plus its suggested tags (bulk endpoint). */
+export interface BulkTagSuggestion {
+  doc_id: number;
+  title: string | null;
+  path: string;
+  suggestions: TagSuggestion[];
+}
+
+/** Up to 5 suggested tags for one document; `[]` if nothing plausible. */
+export async function tagSuggestionsForDoc(
+  docId: number,
+): Promise<TagSuggestion[]> {
+  const res = await invoke<CmdResult<TagSuggestion[]>>(
+    "slab_library_tag_suggestions_for_doc",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/** Suggest tags for every untagged document (skips zero-suggestion docs). */
+export async function tagSuggestionsBulk(
+  limit = 50,
+): Promise<BulkTagSuggestion[]> {
+  const res = await invoke<CmdResult<BulkTagSuggestion[]>>(
+    "slab_library_tag_suggestions_bulk_for_untagged",
+    { limit },
+  );
+  return unwrap(res);
+}
+
+/** Accept a suggested tag: find-or-create it and attach it to the doc. */
+export async function acceptTagSuggestion(
+  docId: number,
+  tagName: string,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>(
+    "slab_library_tag_suggestion_accept",
+    { docId, tagName },
+  );
+  return unwrap(res);
+}
+
+/** Dismiss a suggested tag so it never resurfaces for this doc. */
+export async function dismissTagSuggestion(
+  docId: number,
+  tagName: string,
+): Promise<void> {
+  const res = await invoke<CmdResult<null>>(
+    "slab_library_tag_suggestion_dismiss",
+    { docId, tagName },
+  );
+  unwrap(res);
+}
+
+/** Clear all dismissed tag suggestions for a doc (settings escape hatch). */
+export async function undismissAllTagSuggestions(
+  docId: number,
+): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_tag_suggestion_undismiss_all",
+    { docId },
+  );
+  return unwrap(res);
+}

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -285,7 +285,27 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 7;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 7);
+        }
+        if version < 8 {
+            // v3.39.0 "Atlas Tag-Suggest" — per-doc dismissals for the
+            // heuristic tag suggester. When the user clicks ✗ on a
+            // suggested tag chip, we record (doc_id, tag_name) here so
+            // that suggestion never resurfaces for that document.
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS library_tag_suggestion_dismissed (
+                    doc_id INTEGER NOT NULL
+                        REFERENCES library_documents(id) ON DELETE CASCADE,
+                    tag_name TEXT NOT NULL,
+                    dismissed_at INTEGER NOT NULL,
+                    PRIMARY KEY (doc_id, tag_name)
+                );
+                CREATE INDEX IF NOT EXISTS idx_tag_sugg_dismissed_doc
+                    ON library_tag_suggestion_dismissed(doc_id);
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 8;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 8);
         }
         Ok(())
     }
@@ -672,7 +692,25 @@ mod tests {
             .unwrap();
         assert_eq!(dismissed_count, 1, "library_suggestion_dismissed missing");
 
-        assert_eq!(db.schema_version().unwrap(), 7);
+        // Schema always migrates to the latest version; the dedicated
+        // version test pins the exact number. Here we only assert the v7
+        // tables landed.
+    }
+
+    #[test]
+    fn schema_v8_has_tag_suggestion_dismissed_table() {
+        let db = db();
+        let count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type='table' AND name='library_tag_suggestion_dismissed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "library_tag_suggestion_dismissed table missing");
+        assert_eq!(db.schema_version().unwrap(), 8);
     }
 
     #[test]

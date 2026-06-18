@@ -3675,6 +3675,76 @@ fn slab_library_search_log_count() -> CmdResult<i64> {
     result.into()
 }
 
+// ---------------------------------------------------------------------
+// v3.39.0 "Atlas Tag-Suggest" — per-document heuristic tag suggestions.
+// ---------------------------------------------------------------------
+
+/// Suggest up to 5 tags for a single document, computed locally from its
+/// title/filename, the existing tag vocabulary, co-occurrence stats, and a
+/// built-in domain dictionary. Returns `[]` if nothing plausible.
+#[tauri::command]
+fn slab_library_tag_suggestions_for_doc(
+    doc_id: i64,
+) -> CmdResult<Vec<pdf::library::tag_suggest::TagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_tags_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Suggest tags for every untagged document (bulk). Skips docs that yield
+/// no suggestions. `limit` caps how many untagged docs are scanned.
+#[tauri::command]
+fn slab_library_tag_suggestions_bulk_for_untagged(
+    limit: Option<usize>,
+) -> CmdResult<Vec<pdf::library::tag_suggest::BulkTagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_for_untagged(&db, limit.unwrap_or(50))
+    })();
+    result.into()
+}
+
+/// Accept a suggested tag: find-or-create it (auto-colored) and attach it
+/// to the document, unioned with its existing tags.
+#[tauri::command]
+fn slab_library_tag_suggestion_accept(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    tag_name: String,
+) -> CmdResult<pdf::library::TagRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::tag_suggest::accept_tag_suggestion(&mut db, doc_id, &tag_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Dismiss a suggested tag for a document so it never resurfaces there.
+#[tauri::command]
+fn slab_library_tag_suggestion_dismiss(doc_id: i64, tag_name: String) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::dismiss_tag_suggestion(&db, doc_id, &tag_name)
+    })();
+    result.into()
+}
+
+/// Clear all dismissed tag suggestions for a document (settings escape
+/// hatch — "show me suggestions again").
+#[tauri::command]
+fn slab_library_tag_suggestion_undismiss_all(doc_id: i64) -> CmdResult<usize> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::undismiss_all_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -5346,6 +5416,11 @@ pub fn run() {
             slab_library_suggestions_dismiss,
             slab_library_suggestions_accept,
             slab_library_search_log_count,
+            slab_library_tag_suggestions_for_doc,
+            slab_library_tag_suggestions_bulk_for_untagged,
+            slab_library_tag_suggestion_accept,
+            slab_library_tag_suggestion_dismiss,
+            slab_library_tag_suggestion_undismiss_all,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,

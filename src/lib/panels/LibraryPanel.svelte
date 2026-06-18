@@ -54,6 +54,7 @@
   import { formatRelTime } from "$lib/recent";
   import { registerLibraryNav } from "$lib/vim/library-adapter";
   import CollectionsSidebar from "$lib/panels/CollectionsSidebar.svelte";
+  import SuggestedTagsRow from "$lib/panels/SuggestedTagsRow.svelte";
 
   // ---------- Props (Cabinet v1.1.0) ----------
   //
@@ -524,6 +525,26 @@
     if (menu && menu.doc.id === r.doc_id) {
       const fresh = docs.find((d) => d.id === r.doc_id);
       if (fresh) menu = { ...menu, doc: fresh };
+    }
+  }
+
+  /** v3.39.0 Atlas Tag-Suggest — optimistically attach an accepted
+   * suggested tag to a doc's chip row (unioned, no dupes), then refresh
+   * the tag rail so a newly-created tag shows up there too. */
+  async function onTagSuggestionAccepted(docId: number, tag: TagRecord): Promise<void> {
+    docs = docs.map((d) => {
+      if (d.id !== docId) return d;
+      if (d.tags.some((t) => t.id === tag.id)) return d;
+      return { ...d, tags: [...d.tags, tag] };
+    });
+    if (menu && menu.doc.id === docId) {
+      const fresh = docs.find((d) => d.id === docId);
+      if (fresh) menu = { ...menu, doc: fresh };
+    }
+    try {
+      tags = await listTags();
+    } catch {
+      // Non-fatal: the rail will catch up on the next full refresh.
     }
   }
 
@@ -1023,6 +1044,10 @@
                   {/if}
                 </div>
               {/if}
+              <SuggestedTagsRow
+                docId={d.id}
+                onAccepted={(tag) => onTagSuggestionAccepted(d.id, tag)}
+              />
             </div>
           {/each}
         </div>
