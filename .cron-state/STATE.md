@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 01:05 PT by Cake (cron) — v3.40.0 slice "Untagged filter" committed + pushed to feature branch (a0836e3 backend, 95ed028 UI). v3.39.0 already shipped by the interactive session.
+Last updated: 2026-06-18 01:55 PT by Cake (cron) — roadmap #2 "Bulk tag-apply" shipped (d6a46fb backend, c4c9848 UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `95ed028` — "feat(library): one-click Untagged filter toggle".
+Latest commit: `c4c9848` — "feat(library): multi-select grid + bulk tag-apply UI".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -54,10 +54,26 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
    95ed028). Added first-class `Untagged`/`Tagged` clauses to the filter
    language (query.rs), fixed the `untagged` preset TODO, and added a one-click
    "Untagged" toggle chip to the LibraryPanel toolbar.
-2. **Bulk tag-apply** — multi-select documents in the library and apply/remove a
-   tag across all of them in one action. (Backend bulk op + selection UI.)
+2. ~~**Bulk tag-apply**~~ — DONE (2026-06-18 01:55 PT, d6a46fb backend +
+   c4c9848 UI). New `bulk_tag.rs` (apply_tag_to_docs find-or-creates + unions,
+   remove_tag_from_docs detaches links only; both transactional, report
+   affected/total; 12 tests). `registry::find_tag_by_id` added; `pastel_for`
+   promoted to pub(crate). Two Tauri commands (bulk_apply / bulk_remove).
+   TS clients + a multi-select grid: "Select" toolbar toggle, per-card
+   checkboxes, floating action bar with All/None/Clear + a tag picker
+   (apply existing/new, remove existing) and an "N of M" toast. Selection is
+   pruned to the visible set each refresh; live multi-selection drags as a set.
+   ALSO fixed a stale collections.rs test (schema_version 7→8) that the
+   v3.39.0 migration had silently broken — earlier ticks ran scoped tests so
+   the full `cargo test --lib` never surfaced it.
 3. **Tag colors** — let a tag carry a color; store on the tag row (schema bump),
-   render colored chips. Visual "wow" candidate.
+   render colored chips. Visual "wow" candidate. NOTE: tags ALREADY have a
+   `color` column (TEXT, nullable) and chips already render `border-left-color`
+   from it; new tags auto-get a deterministic pastel via `pastel_for`. So the
+   remaining work is a COLOR PICKER to edit an existing tag's color + persist
+   it (needs a new `registry::set_tag_color` + Tauri command + swatch UI on the
+   tag rail / a tag-edit affordance). Scope it as "edit tag color", not "add
+   color storage".
 4. **Tag rename** — rename a tag everywhere it's used (single backend op +
    inline-edit UI on the tag chip). Co-occurrence data updates automatically.
 5. **Recently-used tags** — surface the N most recently applied tags as quick
@@ -89,3 +105,14 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   build of a session generously. Also: the interactive session committed v3.39.0
   mid-build under author "Sanjay Santhanam" (its default git identity) — that's
   expected for the interactive session, not a cron mis-attribution.
+- 2026-06-18 01:55 PT (Cake, cron): roadmap #2 "Bulk tag-apply" shipped.
+  Backend d6a46fb (bulk_tag.rs apply/remove + find_tag_by_id + pastel_for
+  pub(crate) + 2 Tauri commands; 12 new tests), UI c4c9848 (TS clients +
+  multi-select grid + floating action bar + tag picker). Gates: cargo fmt clean,
+  clippy --lib -D warnings clean (10.9s warm), cargo test --lib pdf::library::
+  182 passed/0 failed, pnpm check 0 errors. Pushed + verified (local==origin).
+  Incidentally fixed a PRE-EXISTING red test: collections.rs asserted
+  schema_version==7 but the v3.39.0 migration moved it to 8; prior ticks only ran
+  scoped tests (query/presets) so the full --lib suite never caught it. This
+  session's first `cargo test` was warm (~24s compile) — build cache from the
+  01:05 tick was still fresh, no cold recompile this time.
