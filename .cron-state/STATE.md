@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 04:55 PT by Cake (cron) — roadmap #6 "Tag merge" shipped (2083c1f backend, e2fe7b7 UI), pushed + verified on feature branch.
+Last updated: 2026-06-18 05:50 PT by Cake (cron) — fresh roadmap #7 "Tag usage counts" shipped (966db5e), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `e2fe7b7` — "feat(library): merge-into-another-tag affordance in the tag rail".
+Latest commit: `966db5e` — "feat(library): show per-tag document counts in the rail + most-used sort".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -143,15 +143,23 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
 
 ## Roadmap — fresh items (tag system is feature-complete; these are new)
 
-7. **Tag usage counts in the rail** — show how many documents wear each
-   tag as a muted count beside its rail row (mirror the folder rail's
-   existing `rail-count`/`rail-meta` styling). Backend: a
-   `registry::tag_usage_counts() -> Vec<(tag_id, count)>` single GROUP BY
-   over library_doc_tags (one round-trip, not N), one Tauri command, TS
-   client, and a `$derived` map the rail row reads. Also surface a
-   secondary "sort tags by most-used vs A-Z" toggle on the Tags rail head
-   since the count makes ordering meaningful. Tests: counts exclude
-   never-used tags as 0 (LEFT JOIN), reflect bulk apply/remove and merge.
+7. ~~**Tag usage counts in the rail**~~ — DONE (2026-06-18 05:50 PT, 966db5e).
+   `registry::tag_usage_counts() -> Vec<(tag_id, count)>` single LEFT JOIN +
+   GROUP BY (one round-trip, never N); every tag appears once, a tag on zero
+   docs reports 0 (LEFT JOIN keeps the merge/remove residue an INNER JOIN
+   would drop), id-ordered. One Tauri command (slab_library_tag_usage_counts);
+   6 tests (per-doc counts, zero-for-unused, one-row-per-tag-id-ordered,
+   empty, reflects bulk apply/remove, reflects merge as a distinct union with
+   no double-count + gone source unreported). TS `tagUsageCounts()` returns a
+   Map<tagId,count>. LibraryPanel loads counts alongside listFolders/listTags
+   in refreshAll so the rail count self-heals on every library-changed poke
+   (no bespoke optimistic plumbing — same resync path tags/docs already use);
+   a muted `rail-meta` count renders beside each tag (mirrors the folder rail)
+   and a rail-head A-Z / Most-used sort toggle (count desc, name tie-break for
+   a stable order; shown only when >1 tag) makes the count meaningful.
+   Gates: cargo fmt clean, cargo test --lib pdf::library:: 224 passed/0 failed
+   (6 new), clippy --lib -D warnings clean (6.61s warm), pnpm check 0 errors
+   (no new LibraryPanel warnings; still the 2 pre-existing autofocus + webkit).
 8. **Empty/unused tag cleanup** — a one-click "Remove N unused tags"
    affordance on the Tags rail head that deletes every tag attached to zero
    documents (the residue merges/removals leave behind). Backend:
@@ -269,4 +277,24 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   Build cache from the 04:20 tick still warm — test 1.72s. Pushed + verified
   (local==origin e2fe7b7). Seeded a fresh roadmap (#7 usage counts, #8 unused-
   tag cleanup, #9 AND/OR tag combinator) since the tag roadmap is exhausted.
+- 2026-06-18 05:50 PT (Cake, cron): fresh roadmap #7 "Tag usage counts in the
+  rail" shipped (966db5e, single commit). Backend registry::tag_usage_counts()
+  -> Vec<(tag_id, count)>: one LEFT JOIN + GROUP BY round-trip (never N), every
+  tag once, zero-doc tags report 0 (LEFT JOIN keeps the residue an INNER JOIN
+  would drop), id-ordered; 1 Tauri command slab_library_tag_usage_counts; 6
+  new tests (per-doc counts, zero-for-unused, one-row-per-tag-id-ordered, empty,
+  reflects bulk apply/remove, reflects merge as distinct union no-double-count
+  + gone source unreported). Frontend: TS tagUsageCounts() -> Map<tagId,count>;
+  LibraryPanel loads counts in refreshAll alongside listFolders/listTags so the
+  rail count self-heals on every library-changed poke (reused the existing
+  resync path, no bespoke optimistic plumbing); muted rail-meta count beside
+  each tag (mirrors folder rail) + a rail-head A-Z/Most-used sort toggle (count
+  desc, name tie-break, shown only when >1 tag). Gates: cargo fmt clean, cargo
+  test --lib pdf::library:: 224 passed/0 failed (6 new), clippy --lib -D
+  warnings clean (6.61s warm), pnpm check 0 errors (no new LibraryPanel
+  warnings; still the 2 pre-existing autofocus + webkit line-clamp). No schema
+  bump (pure read over existing tables). Build cache from the 04:55 tick still
+  warm — first session test compile 16s (test profile cold-ish), full suite
+  1.72s warm. Pushed + verified (local==origin 966db5e). Next undone: #8
+  empty/unused tag cleanup.
 
