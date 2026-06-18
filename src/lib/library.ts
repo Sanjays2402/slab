@@ -93,6 +93,8 @@ export type FilterClause =
   | { type: "not_folder"; id: number }
   | { type: "title_contains"; value: string }
   | { type: "title_not_contains"; value: string }
+  | { type: "untagged" }
+  | { type: "tagged" }
   | { type: "group"; combinator: FilterCombinator; clauses: FilterClause[] };
 
 /** Mirror of `pdf::library::query::FilterGroup`. */

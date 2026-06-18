@@ -43,6 +43,8 @@
     setDocumentTags,
     type AutoTagRunResult,
     type DocumentRecord,
+    type FilterClause,
+    type FilterCombinator,
     type FolderRecord,
     type LibraryFilter,
     type LibrarySortBy,
@@ -97,6 +99,10 @@
   let activeTagIds = $state<Set<number>>(new Set());
   let query = $state("");
   let sort = $state<LibrarySortBy>("added_desc");
+  // v3.40.0 Atlas Untagged-Filter — when on, restrict the grid to docs
+  // that carry no tags (the "cleanup queue"). Composes with the active
+  // folder / tag / search filters via the clause tree.
+  let untaggedOnly = $state(false);
   let loading = $state(false);
   let scanning = $state(false);
   let error = $state<string | null>(null);
@@ -291,12 +297,27 @@
       docs = activeCollection.docs;
       return;
     }
-    const filter: LibraryFilter = {
-      folder_id: activeFolder === "all" ? null : activeFolder,
-      tag_ids: Array.from(activeTagIds),
-      title_substring: query.trim() ? query.trim() : null,
-      sort,
-    };
+    const folderId = activeFolder === "all" ? null : activeFolder;
+    const title = query.trim() ? query.trim() : null;
+    let filter: LibraryFilter;
+    if (untaggedOnly) {
+      // v3.40.0: the flat folder/tag/title fields and the clause tree are
+      // mutually exclusive on the backend, so when the untagged toggle is
+      // on we express the whole filter as an AND clause group.
+      const clauses: FilterClause[] = [{ type: "untagged" }];
+      if (folderId != null) clauses.push({ type: "folder", id: folderId });
+      for (const id of activeTagIds) clauses.push({ type: "tag", id });
+      if (title) clauses.push({ type: "title_contains", value: title });
+      const combinator: FilterCombinator = "and";
+      filter = { sort, clauses: { combinator, clauses } };
+    } else {
+      filter = {
+        folder_id: folderId,
+        tag_ids: Array.from(activeTagIds),
+        title_substring: title,
+        sort,
+      };
+    }
     try {
       docs = await listDocuments(filter);
     } catch (e) {
@@ -322,6 +343,7 @@
     activeFolder;
     activeTagIds;
     sort;
+    untaggedOnly;
     void refreshDocs();
   });
 
@@ -825,6 +847,16 @@
         </select>
       </label>
     </div>
+    <button
+      class="untagged-toggle"
+      class:active={untaggedOnly}
+      onclick={() => (untaggedOnly = !untaggedOnly)}
+      aria-pressed={untaggedOnly}
+      title="Show only documents that have no tags yet"
+    >
+      <span class="glyph" aria-hidden="true">&#x2298;</span>
+      Untagged
+    </button>
   </div>
 
   {#if error}
@@ -1235,6 +1267,39 @@
     padding: 6px 8px;
     border-radius: var(--r-sm);
     font-size: 12px;
+  }
+
+  /* v3.40.0 Atlas Untagged-Filter toggle chip */
+  .untagged-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    padding: 6px 11px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+  .untagged-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .untagged-toggle.active {
+    background: color-mix(in oklab, var(--accent, #7c3aed) 18%, transparent);
+    border-color: color-mix(in oklab, var(--accent, #7c3aed) 55%, transparent);
+    color: var(--text);
+  }
+  .untagged-toggle .glyph {
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.85;
   }
 
   /* Layout */
