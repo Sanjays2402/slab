@@ -15,9 +15,16 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LibraryFilter {
     pub folder_id: Option<i64>,
-    /// All listed tag ids must be attached to the doc (AND match).
+    /// Tag ids to filter by. How they combine is governed by `tag_match`:
+    /// `All` (default) requires every listed tag (AND/intersection), `Any`
+    /// requires at least one (OR/union).
     #[serde(default)]
     pub tag_ids: Vec<i64>,
+    /// Combinator for `tag_ids`. Defaults to `All` so every pre-v3.48 stored
+    /// filter — which never carried this field — keeps its historical
+    /// intersection semantics byte-for-byte.
+    #[serde(default)]
+    pub tag_match: TagMatch,
     /// Case-insensitive substring match against either title or
     /// filename component of `path`. None = no title filter.
     pub title_substring: Option<String>,
@@ -31,6 +38,19 @@ pub struct LibraryFilter {
     /// working byte-for-byte. Forward + backward compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clauses: Option<FilterGroup>,
+}
+
+/// Combinator for the flat `tag_ids` list. `All` (the default) keeps the
+/// historical AND/intersection behavior — a doc must wear every listed tag.
+/// `Any` switches to OR/union — a doc matching any one listed tag is
+/// returned. Serializes snake_case (`"all"` / `"any"`) to mirror
+/// `FilterCombinator` and `SortBy`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TagMatch {
+    #[default]
+    All,
+    Any,
 }
 
 /// Combinator for a `FilterGroup`. Default is `And` to match historical
@@ -134,23 +154,43 @@ pub fn query_documents(
             }
         }
         if !filter.tag_ids.is_empty() {
-            // Force AND-match across all tag ids: doc must have a
-            // doc_tags row for each requested tag. We do this with a
-            // subquery so we can keep one prepared statement.
+            // Combine the requested tag ids per `tag_match`. Both shapes use
+            // a single subquery so we keep one prepared statement.
             let placeholders = filter
                 .tag_ids
                 .iter()
                 .map(|_| "?")
                 .collect::<Vec<_>>()
                 .join(",");
-            where_clauses.push(format!(
-                "id IN (SELECT doc_id FROM library_doc_tags WHERE tag_id IN ({placeholders})
-                        GROUP BY doc_id HAVING COUNT(DISTINCT tag_id) = ?)",
-            ));
-            for tid in &filter.tag_ids {
-                params.push(Box::new(*tid));
+            match filter.tag_match {
+                TagMatch::All => {
+                    // AND/intersection: doc must carry a doc_tags row for
+                    // EACH requested tag. COUNT(DISTINCT) guards against a
+                    // duplicate id in the list inflating the match.
+                    where_clauses.push(format!(
+                        "id IN (SELECT doc_id FROM library_doc_tags WHERE tag_id IN ({placeholders})
+                                GROUP BY doc_id HAVING COUNT(DISTINCT tag_id) = ?)",
+                    ));
+                    for tid in &filter.tag_ids {
+                        params.push(Box::new(*tid));
+                    }
+                    // Distinct count so a repeated id doesn't raise the bar
+                    // past what any single doc can satisfy.
+                    let mut distinct = filter.tag_ids.clone();
+                    distinct.sort_unstable();
+                    distinct.dedup();
+                    params.push(Box::new(distinct.len() as i64));
+                }
+                TagMatch::Any => {
+                    // OR/union: doc matching ANY one requested tag is enough.
+                    where_clauses.push(format!(
+                        "id IN (SELECT doc_id FROM library_doc_tags WHERE tag_id IN ({placeholders}))",
+                    ));
+                    for tid in &filter.tag_ids {
+                        params.push(Box::new(*tid));
+                    }
+                }
             }
-            params.push(Box::new(filter.tag_ids.len() as i64));
         }
     }
 
@@ -440,6 +480,126 @@ mod tests {
     }
 
     #[test]
+    fn query_tag_match_all_is_default_and_intersects() {
+        // Default TagMatch (All) over [research, urgent] → only alpha.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let urgent = tags.iter().find(|t| t.name == "urgent").unwrap().id;
+        let f = LibraryFilter {
+            tag_ids: vec![research, urgent],
+            ..Default::default()
+        };
+        assert_eq!(f.tag_match, TagMatch::All); // default
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/papers/alpha.pdf");
+    }
+
+    #[test]
+    fn query_tag_match_any_unions() {
+        // Any over [urgent, done] → alpha (urgent) + beta (done). lease has
+        // neither so it's excluded. This is the OR case the rail combinator
+        // toggle exposes.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let urgent = tags.iter().find(|t| t.name == "urgent").unwrap().id;
+        let done = tags.iter().find(|t| t.name == "done").unwrap().id;
+        let f = LibraryFilter {
+            tag_ids: vec![urgent, done],
+            tag_match: TagMatch::Any,
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 2);
+        let paths: Vec<_> = rows.iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains(&"/papers/alpha.pdf"));
+        assert!(paths.contains(&"/papers/beta.pdf"));
+        assert!(!paths.contains(&"/contracts/lease.pdf"));
+    }
+
+    #[test]
+    fn query_tag_match_any_vs_all_diverge_on_same_ids() {
+        // Same id set [research, urgent]; Any returns both papers (each has
+        // research), All returns only alpha (the one with both). Proves the
+        // toggle actually changes the result, not just the SQL shape.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let urgent = tags.iter().find(|t| t.name == "urgent").unwrap().id;
+
+        let any = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research, urgent],
+                tag_match: TagMatch::Any,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(any.len(), 2);
+
+        let all = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research, urgent],
+                tag_match: TagMatch::All,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, "/papers/alpha.pdf");
+    }
+
+    #[test]
+    fn query_tag_match_all_tolerates_duplicate_ids() {
+        // A duplicated id in the All list must not raise the HAVING bar past
+        // what a single doc can satisfy (regression guard: a naive len()
+        // count would require COUNT(DISTINCT)=2 for one real tag → 0 rows).
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let f = LibraryFilter {
+            tag_ids: vec![research, research],
+            tag_match: TagMatch::All,
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        // research is on alpha + beta → both returned despite the dup.
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn query_tag_match_any_single_tag_equals_all_single_tag() {
+        // With one tag id, Any and All must agree (no combinator can change
+        // a one-element set). Belt-and-suspenders on the boundary.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let any = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research],
+                tag_match: TagMatch::Any,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let all = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research],
+                tag_match: TagMatch::All,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(any.len(), 2);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
     fn query_sort_title_asc() {
         let db = seed();
         let rows = query_documents(
@@ -513,6 +673,23 @@ mod tests {
         assert_eq!(f.tag_ids, vec![1, 2]);
         assert_eq!(f.title_substring.as_deref(), Some("tax"));
         assert!(f.clauses.is_none());
+        // A pre-v3.48 blob has no `tag_match` → must default to All so old
+        // stored filters keep their historical intersection semantics.
+        assert_eq!(f.tag_match, TagMatch::All);
+    }
+
+    #[test]
+    fn tag_match_roundtrips_json_snake_case() {
+        let f = LibraryFilter {
+            tag_ids: vec![7, 8],
+            tag_match: TagMatch::Any,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        assert!(s.contains("\"tag_match\":\"any\""));
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.tag_match, TagMatch::Any);
+        assert_eq!(back.tag_ids, vec![7, 8]);
     }
 
     #[test]
