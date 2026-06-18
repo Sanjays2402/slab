@@ -269,6 +269,20 @@ export async function recentlyUsedTags(limit?: number): Promise<TagRecord[]> {
   return unwrap(res);
 }
 
+/**
+ * Document count per tag, as a `Map<tagId, count>`. Every tag in the library
+ * is present; a tag attached to no document maps to 0 (the backend LEFT JOINs
+ * so unused tags aren't dropped). One GROUP BY round-trip, not N queries.
+ * Powers the muted usage count beside each tag in the rail and the
+ * "sort by most used" ordering. v3.46.0 Atlas Tag-Usage-Counts.
+ */
+export async function tagUsageCounts(): Promise<Map<number, number>> {
+  const res = await invoke<CmdResult<[number, number][]>>(
+    "slab_library_tag_usage_counts",
+  );
+  return new Map(unwrap(res));
+}
+
 export async function addTag(
   name: string,
   color?: string | null,

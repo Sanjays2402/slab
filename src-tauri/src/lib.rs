@@ -3271,6 +3271,19 @@ fn slab_library_recently_used_tags(limit: Option<u32>) -> CmdResult<Vec<TagRecor
     result.into()
 }
 
+/// Document count per tag as `(tag_id, count)` pairs (every tag once; unused
+/// tags report 0). Powers the muted usage count beside each tag in the rail and
+/// the "sort by most used" ordering. One GROUP BY round-trip, not N queries.
+/// v3.46.0 Atlas Tag-Usage-Counts.
+#[tauri::command]
+fn slab_library_tag_usage_counts() -> CmdResult<Vec<(i64, i64)>> {
+    let result = (|| -> Result<Vec<(i64, i64)>, LibraryError> {
+        let db = open_library_db()?;
+        db.tag_usage_counts()
+    })();
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -5501,6 +5514,7 @@ pub fn run() {
             slab_library_search,
             slab_library_list_tags,
             slab_library_recently_used_tags,
+            slab_library_tag_usage_counts,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,

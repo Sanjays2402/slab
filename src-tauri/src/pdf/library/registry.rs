@@ -839,6 +839,27 @@ impl LibraryDb {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+
+    /// Document count per tag, as `(tag_id, count)` pairs ordered by tag id.
+    /// Every tag in the library appears exactly once; a tag attached to zero
+    /// documents reports a count of 0 because the LEFT JOIN keeps it (an
+    /// INNER JOIN would silently drop unused tags, which is exactly the
+    /// residue the rail needs to surface). One GROUP BY round-trip, never a
+    /// per-tag query. Powers the muted usage count beside each tag in the rail
+    /// and the "sort by most used" ordering. v3.46.0 Atlas Tag-Usage-Counts.
+    pub fn tag_usage_counts(&self) -> Result<Vec<(i64, i64)>, LibraryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, COUNT(dt.doc_id)
+             FROM library_tags t
+             LEFT JOIN library_doc_tags dt ON dt.tag_id = t.id
+             GROUP BY t.id
+             ORDER BY t.id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
 }
 
 fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderRecord> {
@@ -1602,6 +1623,127 @@ mod tests {
         let survivor = db.merge_tags(source.id, target.id).unwrap();
         assert_eq!(survivor.id, target.id);
         assert!(db.find_tag_by_id(source.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn tag_usage_counts_counts_documents_per_tag() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d1 = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h1", 1, 1, None, None)
+            .unwrap();
+        let d2 = db
+            .upsert_document(Some(f.id), "/tmp/b.pdf", None, "h2", 1, 1, None, None)
+            .unwrap();
+        let d3 = db
+            .upsert_document(Some(f.id), "/tmp/c.pdf", None, "h3", 1, 1, None, None)
+            .unwrap();
+        let popular = db.add_tag("popular", None).unwrap();
+        let rare = db.add_tag("rare", None).unwrap();
+        // popular on all three docs, rare on just one.
+        db.set_doc_tags(d1.id, &[popular.id, rare.id]).unwrap();
+        db.set_doc_tags(d2.id, &[popular.id]).unwrap();
+        db.set_doc_tags(d3.id, &[popular.id]).unwrap();
+
+        let counts: std::collections::HashMap<i64, i64> =
+            db.tag_usage_counts().unwrap().into_iter().collect();
+        assert_eq!(counts.get(&popular.id), Some(&3));
+        assert_eq!(counts.get(&rare.id), Some(&1));
+    }
+
+    #[test]
+    fn tag_usage_counts_reports_zero_for_unused_tags() {
+        // A tag attached to no document must still appear, with a count of 0 —
+        // a LEFT JOIN keeps it where an INNER JOIN would drop it. This is what
+        // lets the rail show "0" and what the unused-tag cleanup builds on.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let used = db.add_tag("used", None).unwrap();
+        let unused = db.add_tag("unused", None).unwrap();
+        db.set_doc_tags(d.id, &[used.id]).unwrap();
+
+        let counts: std::collections::HashMap<i64, i64> =
+            db.tag_usage_counts().unwrap().into_iter().collect();
+        // Both tags present; the never-applied one reports 0, not missing.
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts.get(&used.id), Some(&1));
+        assert_eq!(counts.get(&unused.id), Some(&0));
+    }
+
+    #[test]
+    fn tag_usage_counts_lists_every_tag_once_ordered_by_id() {
+        let mut db = db();
+        let a = db.add_tag("a", None).unwrap();
+        let b = db.add_tag("b", None).unwrap();
+        let c = db.add_tag("c", None).unwrap();
+        let rows = db.tag_usage_counts().unwrap();
+        let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec![a.id, b.id, c.id], "one row per tag, id-ordered");
+        assert!(rows.iter().all(|(_, n)| *n == 0));
+    }
+
+    #[test]
+    fn tag_usage_counts_is_empty_with_no_tags() {
+        let db = db();
+        assert!(db.tag_usage_counts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tag_usage_counts_reflects_bulk_apply_and_remove() {
+        // Counts must track bulk operations, not just single set_doc_tags.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d1 = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h1", 1, 1, None, None)
+            .unwrap();
+        let d2 = db
+            .upsert_document(Some(f.id), "/tmp/b.pdf", None, "h2", 1, 1, None, None)
+            .unwrap();
+        let tag = db.add_tag("topic", None).unwrap();
+
+        crate::pdf::library::bulk_tag::apply_tag_to_docs(&mut db, "topic", &[d1.id, d2.id])
+            .unwrap();
+        let after_apply: std::collections::HashMap<i64, i64> =
+            db.tag_usage_counts().unwrap().into_iter().collect();
+        assert_eq!(after_apply.get(&tag.id), Some(&2));
+
+        crate::pdf::library::bulk_tag::remove_tag_from_docs(&mut db, tag.id, &[d1.id]).unwrap();
+        let after_remove: std::collections::HashMap<i64, i64> =
+            db.tag_usage_counts().unwrap().into_iter().collect();
+        assert_eq!(after_remove.get(&tag.id), Some(&1));
+    }
+
+    #[test]
+    fn tag_usage_counts_reflects_merge() {
+        // After folding source into target, the surviving target's count is the
+        // number of DISTINCT docs that wore either tag (no double-counting the
+        // doc that wore both), and the gone source is no longer reported.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d1 = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h1", 1, 1, None, None)
+            .unwrap();
+        let d2 = db
+            .upsert_document(Some(f.id), "/tmp/b.pdf", None, "h2", 1, 1, None, None)
+            .unwrap();
+        let d3 = db
+            .upsert_document(Some(f.id), "/tmp/c.pdf", None, "h3", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        // d1 wears both, d2 source-only, d3 target-only → union is 3 docs.
+        db.set_doc_tags(d1.id, &[source.id, target.id]).unwrap();
+        db.set_doc_tags(d2.id, &[source.id]).unwrap();
+        db.set_doc_tags(d3.id, &[target.id]).unwrap();
+
+        db.merge_tags(source.id, target.id).unwrap();
+        let counts: std::collections::HashMap<i64, i64> =
+            db.tag_usage_counts().unwrap().into_iter().collect();
+        assert_eq!(counts.get(&target.id), Some(&3), "distinct union, no dup");
+        assert_eq!(counts.get(&source.id), None, "source tag is gone");
     }
 
     #[test]

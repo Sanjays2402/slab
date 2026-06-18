@@ -47,6 +47,7 @@
     renameTag,
     mergeTags,
     recentlyUsedTags,
+    tagUsageCounts,
     type AutoTagRunResult,
     type DocumentRecord,
     type FilterClause,
@@ -78,6 +79,28 @@
 
   let folders = $state<FolderRecord[]>([]);
   let tags = $state<TagRecord[]>([]);
+  // v3.46.0 Atlas Tag-Usage-Counts — how many documents wear each tag, keyed
+  // by tag id (a tag attached to nothing maps to 0). Loaded alongside the tag
+  // list and refreshed on every library-changed poke, so the muted rail count
+  // stays truthful through tag/merge/bulk edits. `tagSort` flips the rail
+  // between alphabetical (the default) and most-used-first; the count is what
+  // makes "most used" a meaningful order.
+  let tagCounts = $state<Map<number, number>>(new Map());
+  let tagSort = $state<"name" | "count">("name");
+  // The tag rail's render order. Alphabetical mirrors the backend's
+  // `list_tags` ORDER BY name; "count" sorts by usage desc, falling back to
+  // name for ties so the order is stable and never jitters between equal
+  // counts. Either way it's a cheap copy-then-sort over the in-memory list.
+  let sortedTags = $derived.by(() => {
+    const list = [...tags];
+    if (tagSort === "count") {
+      list.sort((a, b) => {
+        const d = (tagCounts.get(b.id) ?? 0) - (tagCounts.get(a.id) ?? 0);
+        return d !== 0 ? d : a.name.localeCompare(b.name);
+      });
+    }
+    return list;
+  });
   let docs = $state<DocumentRecord[]>([]);
   let activeFolder = $state<number | "all">("all");
   // v3.32.0 Atlas — when set, overrides the folder/tag filter and shows
@@ -362,9 +385,14 @@
     loading = true;
     error = null;
     try {
-      const [f, t] = await Promise.all([listFolders(), listTags()]);
+      const [f, t, c] = await Promise.all([
+        listFolders(),
+        listTags(),
+        tagUsageCounts(),
+      ]);
       folders = f;
       tags = t;
+      tagCounts = c;
       await refreshDocs();
     } catch (e) {
       error = String(e);
@@ -1244,9 +1272,19 @@
       <div class="rail-section">
         <div class="rail-head">
           <span class="rail-title">Tags</span>
+          {#if tags.length > 1}
+            <button
+              class="rail-sort"
+              title={tagSort === "name"
+                ? "Sorted A-Z - click to sort by most used"
+                : "Sorted by most used - click to sort A-Z"}
+              aria-label="Toggle tag sort order"
+              onclick={() => (tagSort = tagSort === "name" ? "count" : "name")}
+            >{tagSort === "name" ? "A-Z" : "Most used"}</button>
+          {/if}
           <span class="rail-count">{tags.length}</span>
         </div>
-        {#each tags as t (t.id)}
+        {#each sortedTags as t (t.id)}
           <div class="rail-row-wrap">
             {#if renameTagId === t.id}
               <div class="rail-rename">
@@ -1278,6 +1316,7 @@
               >
                 <span class="rail-icon dot" style:background={t.color ?? "var(--text-3)"}></span>
                 <span class="rail-label">{t.name}</span>
+                <span class="rail-meta">{tagCounts.get(t.id) ?? 0}</span>
               </button>
               <button
                 class="rail-row-x"
@@ -1936,6 +1975,22 @@
     font-variant-numeric: tabular-nums;
     color: var(--text-3);
   }
+  /* v3.46.0 Atlas Tag-Usage-Counts — alphabetical/most-used sort toggle on
+     the Tags rail head. Sits between the title and the count; monochrome,
+     uppercase like the rest of the head chrome. */
+  .rail-sort {
+    margin-left: auto;
+    margin-right: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    cursor: pointer;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0;
+  }
+  .rail-sort:hover { color: var(--text); }
   .rail-row-wrap {
     display: flex;
     align-items: stretch;
