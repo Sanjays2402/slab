@@ -16,6 +16,7 @@
 // * `query` — list/filter/sort with eager tag loading.
 
 pub mod auto_tagger;
+pub mod bulk_tag;
 pub mod collections;
 pub mod folder_suggest;
 pub mod fts;

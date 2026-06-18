@@ -567,6 +567,19 @@ impl LibraryDb {
         Ok(row)
     }
 
+    /// Look up a tag by its primary key. Returns `None` if no such row.
+    pub fn find_tag_by_id(&self, tag_id: i64) -> Result<Option<TagRecord>, LibraryError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, name, color FROM library_tags WHERE id = ?1",
+                params![tag_id],
+                tag_from_row,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     pub fn list_tags(&self) -> Result<Vec<TagRecord>, LibraryError> {
         let mut stmt = self
             .conn

@@ -3836,6 +3836,44 @@ fn slab_library_remove_tag(app: tauri::AppHandle, tag_id: i64) -> CmdResult<()> 
     result.into()
 }
 
+/// Bulk apply a tag (by name, find-or-created) across many documents in one
+/// atomic action. Returns the resolved tag plus affected/total counts so the
+/// UI can report "Applied to N of M". v3.41.0 Atlas Bulk Tag-Apply.
+#[tauri::command]
+fn slab_library_bulk_apply_tag(
+    app: tauri::AppHandle,
+    tag_name: String,
+    doc_ids: Vec<i64>,
+) -> CmdResult<pdf::library::bulk_tag::BulkTagResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::bulk_tag::apply_tag_to_docs(&mut db, &tag_name, &doc_ids)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Bulk remove a tag (by id) from many documents in one atomic action. The
+/// tag row itself is preserved — only the named doc links are detached.
+/// v3.41.0 Atlas Bulk Tag-Apply.
+#[tauri::command]
+fn slab_library_bulk_remove_tag(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    doc_ids: Vec<i64>,
+) -> CmdResult<pdf::library::bulk_tag::BulkTagResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::bulk_tag::remove_tag_from_docs(&mut db, tag_id, &doc_ids)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Rescan every registered folder in one call. Returns one ScanReport
 /// per folder, in folder-insertion order. Folders that fail to scan
 /// (permission denied, etc.) emit a zero-counts report rather than
@@ -5424,6 +5462,8 @@ pub fn run() {
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_doc_tags,
+            slab_library_bulk_apply_tag,
+            slab_library_bulk_remove_tag,
             slab_library_remove_document,
             slab_library_remove_tag,
             slab_library_rescan_all,

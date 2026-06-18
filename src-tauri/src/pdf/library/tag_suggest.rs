@@ -368,7 +368,10 @@ pub fn undismiss_all_for_doc(db: &LibraryDb, doc_id: i64) -> Result<usize, Libra
 
 /// Deterministic soft-pastel hex-ish HSL color from a tag name (FNV-1a →
 /// hue). Fixed saturation/lightness so the palette stays cohesive.
-fn pastel_for(name: &str) -> String {
+///
+/// Shared with `bulk_tag.rs` so a tag auto-created by a bulk apply gets the
+/// same color it would if created via an accepted suggestion.
+pub(crate) fn pastel_for(name: &str) -> String {
     let mut h: u32 = 0x811c_9dc5;
     for b in name.bytes() {
         h ^= b as u32;
