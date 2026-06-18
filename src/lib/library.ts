@@ -283,6 +283,20 @@ export async function tagUsageCounts(): Promise<Map<number, number>> {
   return new Map(unwrap(res));
 }
 
+/**
+ * Delete every tag attached to zero documents, returning the number removed.
+ * Reclaims the residue merges and bulk-removes leave behind — a tag whose last
+ * document link was detached lingers in the rail at count 0 until something
+ * prunes it. Tags carrying even one document are untouched, so no document
+ * loses a tag it actually wears. v3.47.0 Atlas Tag-Cleanup.
+ */
+export async function deleteUnusedTags(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_delete_unused_tags",
+  );
+  return unwrap(res);
+}
+
 export async function addTag(
   name: string,
   color?: string | null,

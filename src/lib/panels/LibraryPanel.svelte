@@ -48,6 +48,7 @@
     mergeTags,
     recentlyUsedTags,
     tagUsageCounts,
+    deleteUnusedTags,
     type AutoTagRunResult,
     type DocumentRecord,
     type FilterClause,
@@ -87,6 +88,15 @@
   // makes "most used" a meaningful order.
   let tagCounts = $state<Map<number, number>>(new Map());
   let tagSort = $state<"name" | "count">("name");
+  // v3.47.0 Atlas Tag-Cleanup — how many tags are attached to zero documents.
+  // Derived straight from the usage-count map the rail already loads, so it
+  // self-heals on every refresh; drives the rail-head "Clean up N" affordance.
+  // `cleaningTags` guards the one-click prune from double-fire while the
+  // backend round-trips.
+  let unusedTagCount = $derived(
+    tags.reduce((n, t) => n + ((tagCounts.get(t.id) ?? 0) === 0 ? 1 : 0), 0),
+  );
+  let cleaningTags = $state(false);
   // The tag rail's render order. Alphabetical mirrors the backend's
   // `list_tags` ORDER BY name; "count" sorts by usage desc, falling back to
   // name for ties so the order is stable and never jitters between equal
@@ -887,6 +897,42 @@
     }
   }
 
+  // ---------- Clean up unused tags (v3.47.0 Atlas Tag-Cleanup) ----------
+  //
+  // One click on the rail head deletes every tag attached to zero documents —
+  // the residue merges and bulk-removes leave behind. We confirm with the exact
+  // count so the action is never a surprise, prune any now-stale ids out of the
+  // active filter, then refresh so the rail + counts self-heal off the backend.
+  async function onCleanupUnusedTags() {
+    if (cleaningTags || unusedTagCount === 0) return;
+    const n = unusedTagCount;
+    const ok = window.confirm(
+      `Remove ${n} unused tag${n === 1 ? "" : "s"}? ` +
+        `${n === 1 ? "This tag is" : "These tags are"} not on any document.`,
+    );
+    if (!ok) return;
+    cleaningTags = true;
+    try {
+      // Snapshot the ids we're about to drop so we can prune the filter; the
+      // backend deletes by the same zero-doc predicate this set is built from.
+      const doomed = new Set(
+        tags.filter((t) => (tagCounts.get(t.id) ?? 0) === 0).map((t) => t.id),
+      );
+      const removed = await deleteUnusedTags();
+      if (doomed.size > 0) {
+        const next = new Set(activeTagIds);
+        for (const id of doomed) next.delete(id);
+        activeTagIds = next;
+      }
+      bulkSummary = `Removed ${removed} unused tag${removed === 1 ? "" : "s"}`;
+      await refreshAll();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      cleaningTags = false;
+    }
+  }
+
   // ---------- Edit tag color (v3.42.0 Atlas Tag-Color editing) ----------
 
   function openEditColor(tag: TagRecord) {
@@ -1272,6 +1318,17 @@
       <div class="rail-section">
         <div class="rail-head">
           <span class="rail-title">Tags</span>
+          {#if unusedTagCount > 0}
+            <button
+              class="rail-cleanup"
+              title="Remove {unusedTagCount} tag{unusedTagCount === 1
+                ? ''
+                : 's'} attached to no documents"
+              aria-label="Remove unused tags"
+              disabled={cleaningTags}
+              onclick={onCleanupUnusedTags}
+            >Clean up {unusedTagCount}</button>
+          {/if}
           {#if tags.length > 1}
             <button
               class="rail-sort"
@@ -1991,6 +2048,24 @@
     padding: 0;
   }
   .rail-sort:hover { color: var(--text); }
+  /* v3.47.0 Atlas Tag-Cleanup — one-click prune of zero-document tags. Same
+     muted uppercase chrome as the sort toggle, but a danger-tinted hover marks
+     it destructive. `margin-left: auto` right-aligns the head group (cleanup +
+     sort + count) when it's the first auto-margin element present. */
+  .rail-cleanup {
+    margin-left: auto;
+    margin-right: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    cursor: pointer;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0;
+  }
+  .rail-cleanup:hover:not(:disabled) { color: var(--danger, #e54); }
+  .rail-cleanup:disabled { opacity: 0.5; cursor: default; }
   .rail-row-wrap {
     display: flex;
     align-items: stretch;
