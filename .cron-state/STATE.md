@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 06:35 PT by Cake (cron) — fresh roadmap #8 "Empty/unused tag cleanup" shipped (cd4219a backend + ba7a83d UI), pushed + verified on feature branch.
+Last updated: 2026-06-18 07:25 PT by Cake (cron) — fresh roadmap #9 "Tag filter combinator (AND/OR)" shipped (18229a8 backend + 522cbe9 UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `ba7a83d` — "feat(library): one-click clean up unused tags in the rail head".
+Latest commit: `522cbe9` — "feat(library): All/Any toggle in the Tags rail head".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -177,13 +177,66 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
    refreshAll reconciles off the backend. Gates: cargo fmt clean, cargo test
    --lib pdf::library:: 228 passed/0 failed (4 new), clippy --lib -D warnings
    clean (6.48s warm), pnpm check 0 errors (no new LibraryPanel warnings).
-9. **Tag filter combinator (AND/OR)** — the rail's tag toggles currently
-   union (OR). Add an AND/OR switch on the Tags rail head so selecting two
-   tags can mean "docs with BOTH" not just "either". Wire through the
-   existing query.rs tag clause + the LibraryPanel filter builder. Pure
-   filter-language work (query.rs already has the AND/OR ClauseGroup
-   machinery the Untagged slice touched) + a small UI toggle. Tests in
-   query.rs for the AND vs OR tag-clause expansion.
+9. ~~**Tag filter combinator (AND/OR)**~~ — DONE (2026-06-18 07:25 PT,
+   18229a8 backend + 522cbe9 UI, two commits). The rail's multi-tag
+   selection has always intersected (AND). Added a `TagMatch` enum
+   (All default / Any, serde snake_case like FilterCombinator/SortBy) +
+   a `tag_match` field on LibraryFilter (#[serde(default)] => All, so every
+   pre-v3.48 stored filter keeps intersection semantics byte-for-byte, no
+   migration). query_documents now branches the FLAT tag path: All keeps
+   the GROUP BY ... HAVING COUNT(DISTINCT tag_id) = N intersection, Any
+   drops the HAVING and matches on `tag_id IN (...)` alone (union). The All
+   count was hardened to DEDUP the requested ids first so a duplicated id
+   can't raise the HAVING bar past what a single doc can satisfy. 8 new
+   tests (All-default-intersects, Any-unions, Any-vs-All-diverge on the
+   same id set, All-tolerates-dup-ids, Any==All for one tag, legacy-JSON-
+   defaults-to-All, tag_match snake_case roundtrip). UI: TS TagMatch type +
+   tag_match on the mirror; LibraryPanel tagMatch state (default "all")
+   threaded into the flat refreshDocs filter + the reactive $effect deps so
+   flipping re-queries; an "All tags"/"Any tag" toggle in the Tags rail head
+   shown ONLY when >1 tag is selected (the only time AND vs OR changes the
+   result), accent-tinted in the non-default "Any" state, mirrors .rail-sort
+   chrome. Chose the flat tag_match field over hand-assembling nested clause
+   groups in the UI: tiny frontend churn, fully backward-compatible, and the
+   rail's tag toggles stay a flat list. Gates: cargo fmt clean, cargo test
+   --lib pdf::library:: 234 passed/0 failed (6 new query tests; 2 of the 8
+   are serde unit tests in the same file), clippy --lib -D warnings clean
+   (8.73s), pnpm check 0 errors (LibraryPanel still only the 2 pre-existing
+   autofocus + webkit warnings, none new). Build cache warm — test 1.75s.
+
+   This exhausts the seeded roadmap (#7 usage counts, #8 unused cleanup,
+   #9 AND/OR combinator all done). Fresh roadmap below.
+
+## Roadmap — fresh items (round 3; the tag rail is deep now)
+
+These are NEW surfaces, not more tag plumbing — the tag-management +
+tag-filter surface is mature. Ship ONE complete vertical slice per tick.
+
+10. **Saved tag-filter views** — let the user pin the current rail filter
+    (selected folder + tag set + All/Any mode + untagged toggle + sort) as a
+    named "view" that one click restores. This is distinct from v3.32
+    Collections (which snapshot a doc list); a view re-runs the live filter.
+    Backend: a `library_saved_views` table (name, query_json of the
+    LibraryFilter, created_at, sort_order) + registry CRUD (create/list/
+    delete/rename) mirroring the smart_folders/personal_presets pattern;
+    serialize the existing LibraryFilter straight into query_json so it
+    round-trips through the same serde the query path already trusts. Tauri
+    commands + TS client + a small "Saved views" rail section (mirror
+    CollectionsSidebar) with a "Save current filter" affordance. Tests:
+    CRUD + query_json roundtrip + that a restored view reproduces the doc
+    set. Good-sized but self-contained; the filter serialization is already
+    proven by the smart-collection builder.
+11. **Tag filter clear-all** — a one-click "Clear" affordance in the Tags
+    rail head (shown only when >=1 tag selected OR untaggedOnly on) that
+    resets activeTagIds + untaggedOnly + tagMatch to defaults in a single
+    action. Pure frontend (no backend), small but genuinely useful once the
+    rail has many tags. Lowest-risk pick if a tick is tight on build budget.
+12. **Tag descriptions / notes** — an optional freeform note per tag (schema
+    add: nullable `description` on library_tags), surfaced as a tooltip on
+    the rail row + editable from the existing tag edit affordances. Backend
+    set_tag_description + valid-length guard + tests; TS + a small textarea
+    in the tag context menu. Schema bump (remember the >= version-pin assert
+    convention so the migration doesn't trip an equality test).
 
 ## House style (match existing code)
 
@@ -332,4 +385,28 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   over existing tables). Build cache from the 05:50 tick still warm — full
   library suite 1.74s, clippy 6.48s. Pushed + verified (local==origin ba7a83d).
   Next undone: #9 tag filter combinator (AND/OR).
+- 2026-06-18 07:25 PT (Cake, cron): fresh roadmap #9 "Tag filter combinator
+  (AND/OR)" shipped — and it's the LAST seeded roadmap item, so a round-3
+  roadmap (#10 saved views, #11 clear-all, #12 tag descriptions) was seeded.
+  Backend 18229a8 (TagMatch enum All-default/Any + tag_match field on
+  LibraryFilter, #[serde(default)]=>All so legacy filters keep intersection
+  byte-for-byte; query_documents branches the flat tag path — All keeps the
+  GROUP BY ... HAVING COUNT(DISTINCT tag_id)=N intersect, Any drops HAVING for
+  a `tag_id IN (...)` union; All count hardened to dedup requested ids so a
+  dup can't raise the bar past one doc; 8 new tests incl. Any-vs-All-diverge,
+  dup-id tolerance, legacy-JSON-default-All, snake_case roundtrip). UI 522cbe9
+  (TS TagMatch type + tag_match mirror; LibraryPanel tagMatch state default
+  "all" threaded into flat refreshDocs + $effect deps; "All tags"/"Any tag"
+  rail-head toggle shown only when >1 tag selected, accent-tinted in the
+  non-default Any state, mirrors .rail-sort chrome). Picked the flat tag_match
+  field over UI-side nested clause groups: minimal churn, backward-compatible,
+  rail stays a flat toggle list. Gates: cargo fmt clean, cargo test --lib
+  pdf::library:: 234 passed/0 failed (6 new query tests), clippy --lib -D
+  warnings clean (8.73s), pnpm check 0 errors (LibraryPanel still only the 2
+  pre-existing autofocus + webkit warnings, none new). No schema bump (pure
+  read-path change over existing tables). Build cache from the 06:35 tick still
+  warm — test 1.75s. Pushed + verified (local==origin 522cbe9). Note: my parent
+  was 951280e (the 06:35 cron-state chore), already on origin, not ba7a83d —
+  the prior tick's STATE commit had landed. Next undone: #10 saved tag-filter
+  views.
 
