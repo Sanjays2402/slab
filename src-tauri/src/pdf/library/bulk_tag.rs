@@ -24,6 +24,16 @@ use super::registry::{LibraryDb, LibraryError, TagRecord};
 use super::tag_suggest::pastel_for;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Current unix time in seconds (used to stamp `applied_at` on new links so
+/// bulk-applied tags feed the recently-used list like single applies do).
+fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 /// Outcome of a bulk apply/remove over a document set.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,13 +70,15 @@ pub fn apply_tag_to_docs(
     let total = doc_ids.len();
     let mut affected = 0usize;
 
+    let now = now_unix();
     let tx = db.conn_mut().transaction()?;
     {
         let mut doc_exists = tx.prepare("SELECT 1 FROM library_documents WHERE id = ?1")?;
         let mut already_linked =
             tx.prepare("SELECT 1 FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2")?;
-        let mut insert =
-            tx.prepare("INSERT INTO library_doc_tags (doc_id, tag_id) VALUES (?1, ?2)")?;
+        let mut insert = tx.prepare(
+            "INSERT INTO library_doc_tags (doc_id, tag_id, applied_at) VALUES (?1, ?2, ?3)",
+        )?;
         for &doc_id in doc_ids {
             if !doc_exists.exists(params![doc_id])? {
                 continue; // stale selection — silently skip
@@ -74,7 +86,7 @@ pub fn apply_tag_to_docs(
             if already_linked.exists(params![doc_id, tag.id])? {
                 continue; // no-op, doc already tagged
             }
-            insert.execute(params![doc_id, tag.id])?;
+            insert.execute(params![doc_id, tag.id, now])?;
             affected += 1;
         }
     }
@@ -283,5 +295,26 @@ mod tests {
         let mut d = db();
         let a = add_doc(&mut d, "A", "/tmp/a.pdf");
         assert!(remove_tag_from_docs(&mut d, 4242, &[a]).is_err());
+    }
+
+    #[test]
+    fn bulk_apply_stamps_applied_at_so_it_feeds_recently_used() {
+        // Bulk-applied tags must show up in the recently-used list just like
+        // single per-doc applies — i.e. their links carry a non-null
+        // applied_at.
+        let mut d = db();
+        let a = add_doc(&mut d, "A", "/tmp/a.pdf");
+        let res = apply_tag_to_docs(&mut d, "ledger", &[a]).unwrap();
+        let stamped: Option<i64> = d
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![a, res.tag.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(stamped.is_some(), "bulk apply must stamp applied_at");
+        let recent = d.recently_used_tags(10).unwrap();
+        assert!(recent.iter().any(|t| t.name == "ledger"));
     }
 }

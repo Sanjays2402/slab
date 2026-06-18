@@ -424,9 +424,9 @@ mod tests {
     #[test]
     fn collections_tables_exist_after_open() {
         let db = LibraryDb::open_in_memory().unwrap();
-        // Schema is at v8 since the v3.39.0 tag-suggestion-dismissed
-        // migration; this assertion just guards that open() ran migrations.
-        assert_eq!(db.schema_version().unwrap(), 8);
+        // Schema migrates to the latest version on open; this assertion just
+        // guards that open() ran migrations past the collections tables (v4).
+        assert!(db.schema_version().unwrap() >= 4);
         // Bogus query proves the tables exist (would error if not).
         let n: i64 = db
             .conn()

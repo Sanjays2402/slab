@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -305,7 +305,23 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 8;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 8);
+        }
+        if version < 9 {
+            // v3.44.0 "Atlas Recent-Tags" — stamp each (doc, tag) link with
+            // the time the tag was applied so the UI can surface the most
+            // recently used tags as quick chips. Legacy links predate this
+            // column and carry a NULL applied_at (they sort last in the
+            // recently-used list but are not lost). The (tag_id, applied_at)
+            // index serves the `recently_used_tags` GROUP BY + MAX().
+            conn.execute_batch(
+                r#"
+                ALTER TABLE library_doc_tags ADD COLUMN applied_at INTEGER;
+                CREATE INDEX IF NOT EXISTS idx_doc_tags_tag_applied
+                    ON library_doc_tags(tag_id, applied_at);
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 9;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 9);
         }
         Ok(())
     }
@@ -675,22 +691,78 @@ impl LibraryDb {
     /// Replace this document's tag set with exactly `tag_ids`. Missing
     /// tag ids that exist in the table become attached; ids not in
     /// the slice get detached.
+    ///
+    /// This is a *diff*, not a wipe-and-reinsert: links that survive the
+    /// update keep their original `applied_at`, only newly-attached links
+    /// are stamped with the current time. That preserves a truthful
+    /// "recently used" ordering (re-saving an unchanged tag set must not
+    /// shuffle every tag to the top of `recently_used_tags`). Duplicate ids
+    /// in `tag_ids` are coalesced.
     pub fn set_doc_tags(&mut self, doc_id: i64, tag_ids: &[i64]) -> Result<(), LibraryError> {
+        let now = now_unix();
+        let desired: std::collections::HashSet<i64> = tag_ids.iter().copied().collect();
         let tx = self.conn.transaction()?;
-        tx.execute(
-            "DELETE FROM library_doc_tags WHERE doc_id = ?1",
-            params![doc_id],
-        )?;
         {
-            let mut stmt = tx.prepare(
-                "INSERT OR IGNORE INTO library_doc_tags (doc_id, tag_id) VALUES (?1, ?2)",
-            )?;
-            for tid in tag_ids {
-                stmt.execute(params![doc_id, tid])?;
+            // Current links for this doc.
+            let mut current = std::collections::HashSet::new();
+            {
+                let mut stmt =
+                    tx.prepare("SELECT tag_id FROM library_doc_tags WHERE doc_id = ?1")?;
+                let mut rows = stmt.query(params![doc_id])?;
+                while let Some(row) = rows.next()? {
+                    current.insert(row.get::<_, i64>(0)?);
+                }
+            }
+            // Detach the links the caller dropped.
+            {
+                let mut del =
+                    tx.prepare("DELETE FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2")?;
+                for tid in current.difference(&desired) {
+                    del.execute(params![doc_id, tid])?;
+                }
+            }
+            // Attach the new links, stamped now. INSERT OR IGNORE keeps the
+            // call idempotent even if the same id appears twice.
+            {
+                let mut ins = tx.prepare(
+                    "INSERT OR IGNORE INTO library_doc_tags (doc_id, tag_id, applied_at)
+                     VALUES (?1, ?2, ?3)",
+                )?;
+                for tid in desired.difference(&current) {
+                    ins.execute(params![doc_id, tid, now])?;
+                }
             }
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// The `limit` most recently *applied* tags, newest first, each tag
+    /// listed once by its newest application time. Tags never applied to a
+    /// document are excluded (there is nothing recent about them). Legacy
+    /// links written before the `applied_at` column existed carry NULL and
+    /// sort after every timestamped link, with the link rowid as a stable
+    /// final tie-break so ordering is deterministic. Powers the
+    /// "Recently used" quick-chips when tagging a document.
+    /// v3.44.0 Atlas Recent-Tags.
+    pub fn recently_used_tags(&self, limit: usize) -> Result<Vec<TagRecord>, LibraryError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.name, t.color
+             FROM library_tags t
+             INNER JOIN library_doc_tags dt ON dt.tag_id = t.id
+             GROUP BY t.id
+             ORDER BY MAX(dt.applied_at) IS NULL,
+                      MAX(dt.applied_at) DESC,
+                      MAX(dt.rowid) DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], tag_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
 
@@ -828,7 +900,27 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1, "library_tag_suggestion_dismissed table missing");
-        assert_eq!(db.schema_version().unwrap(), 8);
+        // v3.39.0 landed this table at schema v8; the dedicated version test
+        // (`schema_version_is_set`) pins the current number — this one only
+        // asserts the table exists and migrations ran past v8.
+        assert!(db.schema_version().unwrap() >= 8);
+    }
+
+    #[test]
+    fn schema_v9_has_applied_at_on_doc_tags() {
+        let db = db();
+        // The migration adds an `applied_at` column to library_doc_tags.
+        let has_col: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library_doc_tags') \
+                 WHERE name = 'applied_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1, "library_doc_tags.applied_at column missing");
+        assert_eq!(db.schema_version().unwrap(), 9);
     }
 
     #[test]
@@ -1210,6 +1302,167 @@ mod tests {
         assert!(attached.iter().any(|t| t.id == t1.id));
         assert!(attached.iter().any(|t| t.id == t3.id));
         assert!(!attached.iter().any(|t| t.id == t2.id));
+    }
+
+    // Force a known applied_at on a (doc, tag) link so ordering tests are
+    // deterministic despite now_unix()'s 1-second resolution.
+    fn stamp(db: &LibraryDb, doc_id: i64, tag_id: i64, ts: i64) {
+        db.conn()
+            .execute(
+                "UPDATE library_doc_tags SET applied_at = ?1 WHERE doc_id = ?2 AND tag_id = ?3",
+                params![ts, doc_id, tag_id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn set_doc_tags_preserves_applied_at_for_surviving_links() {
+        // Re-saving an unchanged tag must NOT restamp it — that would shuffle
+        // a stable tag to the top of the recently-used list on every save.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let t1 = db.add_tag("keep", None).unwrap();
+        let t2 = db.add_tag("temp", None).unwrap();
+        db.set_doc_tags(d.id, &[t1.id]).unwrap();
+        stamp(&db, d.id, t1.id, 1000);
+
+        // Add t2 later; t1's stamp must be untouched.
+        db.set_doc_tags(d.id, &[t1.id, t2.id]).unwrap();
+        let t1_at: i64 = db
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![d.id, t1.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(t1_at, 1000, "surviving link keeps its original applied_at");
+        // t2 is freshly stamped (non-null, set by now_unix()).
+        let t2_at: Option<i64> = db
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![d.id, t2.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(t2_at.is_some(), "newly attached link is stamped");
+    }
+
+    #[test]
+    fn recently_used_tags_orders_by_newest_application() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let old = db.add_tag("old", None).unwrap();
+        let mid = db.add_tag("mid", None).unwrap();
+        let new = db.add_tag("new", None).unwrap();
+        db.set_doc_tags(d.id, &[old.id, mid.id, new.id]).unwrap();
+        stamp(&db, d.id, old.id, 100);
+        stamp(&db, d.id, mid.id, 200);
+        stamp(&db, d.id, new.id, 300);
+
+        let recent = db.recently_used_tags(10).unwrap();
+        let names: Vec<&str> = recent.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["new", "mid", "old"], "newest applied first");
+    }
+
+    #[test]
+    fn recently_used_tags_respects_limit() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let a = db.add_tag("a", None).unwrap();
+        let b = db.add_tag("b", None).unwrap();
+        let c = db.add_tag("c", None).unwrap();
+        db.set_doc_tags(d.id, &[a.id, b.id, c.id]).unwrap();
+        stamp(&db, d.id, a.id, 1);
+        stamp(&db, d.id, b.id, 2);
+        stamp(&db, d.id, c.id, 3);
+
+        let recent = db.recently_used_tags(2).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].name, "c");
+        assert_eq!(recent[1].name, "b");
+        // limit 0 returns an empty list, not every tag.
+        assert!(db.recently_used_tags(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recently_used_tags_excludes_never_applied_tags() {
+        // A tag that exists but was never attached to a document has nothing
+        // recent about it and must not appear.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let used = db.add_tag("used", None).unwrap();
+        let _unused = db.add_tag("unused", None).unwrap();
+        db.set_doc_tags(d.id, &[used.id]).unwrap();
+
+        let recent = db.recently_used_tags(10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].name, "used");
+    }
+
+    #[test]
+    fn recently_used_tags_lists_each_tag_once_by_newest_use() {
+        // A tag applied to several docs collapses to one chip, ranked by its
+        // single newest application across all of them.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d1 = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let d2 = db
+            .upsert_document(Some(f.id), "/tmp/b.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let shared = db.add_tag("shared", None).unwrap();
+        let other = db.add_tag("other", None).unwrap();
+        db.set_doc_tags(d1.id, &[shared.id]).unwrap();
+        db.set_doc_tags(d2.id, &[shared.id, other.id]).unwrap();
+        stamp(&db, d1.id, shared.id, 100);
+        stamp(&db, d2.id, shared.id, 500); // shared's newest use
+        stamp(&db, d2.id, other.id, 300);
+
+        let recent = db.recently_used_tags(10).unwrap();
+        let names: Vec<&str> = recent.iter().map(|t| t.name.as_str()).collect();
+        // shared appears once, and ranks above other (500 > 300).
+        assert_eq!(names, vec!["shared", "other"]);
+    }
+
+    #[test]
+    fn recently_used_tags_sorts_legacy_null_stamps_last() {
+        // Links predating the applied_at column carry NULL; they must sort
+        // after every timestamped link but still be reachable.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let legacy = db.add_tag("legacy", None).unwrap();
+        let fresh = db.add_tag("fresh", None).unwrap();
+        db.set_doc_tags(d.id, &[legacy.id, fresh.id]).unwrap();
+        // Simulate a pre-migration link: NULL stamp on legacy, real on fresh.
+        db.conn()
+            .execute(
+                "UPDATE library_doc_tags SET applied_at = NULL WHERE tag_id = ?1",
+                params![legacy.id],
+            )
+            .unwrap();
+        stamp(&db, d.id, fresh.id, 50);
+
+        let recent = db.recently_used_tags(10).unwrap();
+        let names: Vec<&str> = recent.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["fresh", "legacy"], "NULL stamps sort last");
     }
 
     #[test]

@@ -3258,6 +3258,19 @@ fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
     result.into()
 }
 
+/// The most recently *applied* tags, newest first (each listed once by its
+/// newest application time). Powers the "Recently used" quick-chips when
+/// tagging a document so the common tags are one click away. `limit` defaults
+/// to 8 when omitted. v3.44.0 Atlas Recent-Tags.
+#[tauri::command]
+fn slab_library_recently_used_tags(limit: Option<u32>) -> CmdResult<Vec<TagRecord>> {
+    let result = (|| -> Result<Vec<TagRecord>, LibraryError> {
+        let db = open_library_db()?;
+        db.recently_used_tags(limit.unwrap_or(8) as usize)
+    })();
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -5466,6 +5479,7 @@ pub fn run() {
             slab_library_list_docs,
             slab_library_search,
             slab_library_list_tags,
+            slab_library_recently_used_tags,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,
