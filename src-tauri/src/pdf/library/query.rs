@@ -60,6 +60,10 @@ pub enum FilterClause {
     TitleContains { value: String },
     /// Negation of TitleContains.
     TitleNotContains { value: String },
+    /// Document has NO tags at all (no `library_doc_tags` rows).
+    Untagged,
+    /// Document has at least one tag.
+    Tagged,
     /// Nested group — enables `(A OR B) AND NOT C` style rules.
     Group(FilterGroup),
 }
@@ -293,6 +297,8 @@ fn build_clause_sql(clause: &FilterClause, params: &mut Vec<Box<dyn ToSql>>) -> 
             params.push(Box::new(pat));
             "NOT (LOWER(COALESCE(title, '')) LIKE LOWER(?) OR LOWER(path) LIKE LOWER(?))".into()
         }
+        FilterClause::Untagged => "id NOT IN (SELECT doc_id FROM library_doc_tags)".into(),
+        FilterClause::Tagged => "id IN (SELECT doc_id FROM library_doc_tags)".into(),
         FilterClause::Group(g) => build_group_sql(g, params),
     }
 }
@@ -682,5 +688,90 @@ mod tests {
         let rows = query_documents(&db, &f_not).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|r| r.folder_id == Some(papers)));
+    }
+
+    #[test]
+    fn query_untagged_clause_returns_only_untagged() {
+        // seed(): alpha + beta are tagged, lease has no tags.
+        let db = seed();
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Untagged],
+            }),
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/contracts/lease.pdf");
+        assert!(rows[0].tags.is_empty());
+    }
+
+    #[test]
+    fn query_tagged_clause_returns_only_tagged() {
+        let db = seed();
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Tagged],
+            }),
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| !r.tags.is_empty()));
+        let paths: Vec<_> = rows.iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains(&"/papers/alpha.pdf"));
+        assert!(paths.contains(&"/papers/beta.pdf"));
+    }
+
+    #[test]
+    fn query_untagged_composes_with_folder_clause() {
+        // Untagged AND in /contracts → just lease. Untagged AND in
+        // /papers → nothing (both papers are tagged).
+        let db = seed();
+        let folders = db.list_folders().unwrap();
+        let papers = folders.iter().find(|f| f.path == "/papers").unwrap().id;
+        let contracts = folders.iter().find(|f| f.path == "/contracts").unwrap().id;
+
+        let f_contracts = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![
+                    FilterClause::Untagged,
+                    FilterClause::Folder { id: contracts },
+                ],
+            }),
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f_contracts).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/contracts/lease.pdf");
+
+        let f_papers = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Untagged, FilterClause::Folder { id: papers }],
+            }),
+            ..Default::default()
+        };
+        assert_eq!(query_documents(&db, &f_papers).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn untagged_clause_roundtrips_json() {
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Untagged, FilterClause::Tagged],
+            }),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert_eq!(f.clauses, back.clauses);
+        // Unit variants serialize as `{"type":"untagged"}` (internally tagged).
+        assert!(s.contains("\"type\":\"untagged\""));
+        assert!(s.contains("\"type\":\"tagged\""));
     }
 }
