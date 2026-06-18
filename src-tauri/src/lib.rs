@@ -3284,6 +3284,23 @@ fn slab_library_tag_usage_counts() -> CmdResult<Vec<(i64, i64)>> {
     result.into()
 }
 
+/// Delete every tag attached to zero documents, returning the number removed.
+/// Reclaims the residue merges and bulk-removes leave behind (a tag whose last
+/// document link was detached lingers in the rail at count 0). Tags carrying
+/// even one document are untouched. Emits `library-changed` on a non-empty
+/// cleanup so the rail self-heals. v3.47.0 Atlas Tag-Cleanup.
+#[tauri::command]
+fn slab_library_delete_unused_tags(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        db.delete_unused_tags()
+    })();
+    if matches!(&result, Ok(removed) if *removed > 0) {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -5515,6 +5532,7 @@ pub fn run() {
             slab_library_list_tags,
             slab_library_recently_used_tags,
             slab_library_tag_usage_counts,
+            slab_library_delete_unused_tags,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,

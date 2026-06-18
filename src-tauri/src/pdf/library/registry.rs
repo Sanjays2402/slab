@@ -860,6 +860,27 @@ impl LibraryDb {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+
+    /// Delete every tag attached to zero documents in one statement, returning
+    /// the number of tag rows removed. This is the cleanup for the residue that
+    /// merges and bulk-removes leave behind: a tag whose last document link was
+    /// detached still lingers in the rail with a usage count of 0 (the very
+    /// thing `tag_usage_counts`' LEFT JOIN surfaces) until something prunes it.
+    ///
+    /// `NOT EXISTS` against `library_doc_tags` keeps an unused tag and drops it;
+    /// a tag carrying even one link is untouched, so documents never lose a tag
+    /// they actually wear. One DELETE, never a per-tag query. A library with no
+    /// unused tags is a no-op that returns 0. v3.47.0 Atlas Tag-Cleanup.
+    pub fn delete_unused_tags(&mut self) -> Result<usize, LibraryError> {
+        let removed = self.conn.execute(
+            "DELETE FROM library_tags
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM library_doc_tags dt WHERE dt.tag_id = library_tags.id
+             )",
+            [],
+        )?;
+        Ok(removed)
+    }
 }
 
 fn folder_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderRecord> {
@@ -1744,6 +1765,82 @@ mod tests {
             db.tag_usage_counts().unwrap().into_iter().collect();
         assert_eq!(counts.get(&target.id), Some(&3), "distinct union, no dup");
         assert_eq!(counts.get(&source.id), None, "source tag is gone");
+    }
+
+    #[test]
+    fn delete_unused_tags_removes_only_unused() {
+        // The cleanup must drop tags on zero documents and keep the rest.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let used = db.add_tag("used", None).unwrap();
+        let orphan_a = db.add_tag("orphan_a", None).unwrap();
+        let orphan_b = db.add_tag("orphan_b", None).unwrap();
+        db.set_doc_tags(d.id, &[used.id]).unwrap();
+
+        let removed = db.delete_unused_tags().unwrap();
+        assert_eq!(removed, 2, "both orphans removed, used kept");
+        // The in-use tag survives; the orphans are gone.
+        assert!(db.find_tag_by_id(used.id).unwrap().is_some());
+        assert!(db.find_tag_by_id(orphan_a.id).unwrap().is_none());
+        assert!(db.find_tag_by_id(orphan_b.id).unwrap().is_none());
+        // Only the in-use tag is left in the table.
+        let remaining = db.list_tags().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, used.id);
+    }
+
+    #[test]
+    fn delete_unused_tags_is_noop_when_all_used() {
+        // Every tag wears at least one doc → nothing to remove, returns 0,
+        // and no tag is touched.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let a = db.add_tag("a", None).unwrap();
+        let b = db.add_tag("b", None).unwrap();
+        db.set_doc_tags(d.id, &[a.id, b.id]).unwrap();
+
+        let removed = db.delete_unused_tags().unwrap();
+        assert_eq!(removed, 0, "all tags in use, nothing removed");
+        assert_eq!(db.list_tags().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn delete_unused_tags_empty_library_is_zero() {
+        // No tags at all is a clean no-op (not an error).
+        let mut db = db();
+        assert_eq!(db.delete_unused_tags().unwrap(), 0);
+    }
+
+    #[test]
+    fn delete_unused_tags_cleans_merge_and_remove_residue() {
+        // The real motivation: a merge leaves the source tag gone, but a
+        // *bulk remove* that strips a tag off its last document leaves the tag
+        // row behind with count 0. delete_unused_tags is what reclaims it.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let lonely = db.add_tag("lonely", None).unwrap();
+        let keeper = db.add_tag("keeper", None).unwrap();
+        db.set_doc_tags(d.id, &[lonely.id, keeper.id]).unwrap();
+
+        // Strip "lonely" off its only document — the tag row now lingers unused.
+        crate::pdf::library::bulk_tag::remove_tag_from_docs(&mut db, lonely.id, &[d.id]).unwrap();
+        let before: std::collections::HashMap<i64, i64> =
+            db.tag_usage_counts().unwrap().into_iter().collect();
+        assert_eq!(before.get(&lonely.id), Some(&0), "lonely lingers at 0");
+
+        let removed = db.delete_unused_tags().unwrap();
+        assert_eq!(removed, 1, "the now-unused tag is reclaimed");
+        assert!(db.find_tag_by_id(lonely.id).unwrap().is_none());
+        assert!(db.find_tag_by_id(keeper.id).unwrap().is_some());
     }
 
     #[test]
