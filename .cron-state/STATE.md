@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 04:20 PT by Cake (cron) — roadmap #5 "Recently-used tags" shipped (cf62147 backend, 3fc663a UI), pushed + verified on feature branch.
+Last updated: 2026-06-18 04:55 PT by Cake (cron) — roadmap #6 "Tag merge" shipped (2083c1f backend, e2fe7b7 UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `3fc663a` — "feat(library): recently-used tag quick-chips in the doc tag menu".
+Latest commit: `e2fe7b7` — "feat(library): merge-into-another-tag affordance in the tag rail".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -111,15 +111,61 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
    exact trap that bit the v3.39.0->bulk tick). Gates: cargo fmt clean,
    cargo test --lib pdf::library 206 passed/0 failed (9 new), clippy --lib
    -D warnings clean (9.1s warm), pnpm check 0 errors. Pushed + verified.
-6. **Tag merge** — let the user fold one tag into another (pick source +
-   target, re-point every library_doc_tags link from source to target
-   coalescing duplicates by the surviving applied_at, then delete the source
-   tag row). This is the natural complement to rename: rename rejects a
-   collision with an existing name; merge is the deliberate "actually, make
-   these the same tag" path. Backend in registry.rs (transactional re-point +
-   delete; preserve the newest applied_at per doc so recent-order survives),
-   one Tauri command, TS client, and a "Merge into…" affordance in the tag
-   rail's existing row menu.
+6. ~~**Tag merge**~~ — DONE (2026-06-18 04:55 PT, 2083c1f backend +
+   e2fe7b7 UI). `registry::merge_tags(source_id, target_id)` folds the
+   source tag into the target in one transaction: step 1 lifts the target
+   link's applied_at to the NULL-aware max of both stamps for docs carrying
+   BOTH tags (max(coalesce(a,b), coalesce(b,a)) so a real timestamp always
+   beats a legacy NULL, NULL only when both are), step 2 re-points
+   source-only links via UPDATE OR IGNORE (keeping their own stamp), step 3
+   deletes leftover source links + the orphaned source tag row. Both ends
+   validated up front so a rejected merge (unknown id, or merge-into-self)
+   leaves every row untouched; returns the surviving target. One Tauri
+   command (slab_library_merge_tags). 12 new tests (source-only re-point,
+   both-tag coalesce-to-one-link, newest-stamp each side, real-beats-NULL
+   either side, re-pointed stamp carry-over, recently-used order survives,
+   self/unknown rejection intact, multi-doc, no-doc). UI: TS mergeTags +
+   a merge glyph in the rail row menu (beside rename/color/delete) opening
+   a "Merge tag" modal that names the source and lists every other tag as a
+   target ($derived candidates exclude source); on success the rail drops
+   the source row + swaps the target in place, an active filter on the
+   source re-points to the target, doc cards re-point + de-dupe their
+   source chip in place (no refetch), recently-used reloads; a rejected
+   merge keeps the modal open with the reason inline. Gates: cargo fmt
+   clean, cargo test --lib pdf::library:: 218 passed/0 failed (12 new),
+   clippy --lib -D warnings clean (6.2s warm), pnpm check 0 errors (no new
+   LibraryPanel warnings; the 2 there are pre-existing autofocus + webkit
+   CSS). Build cache from the 04:20 tick still warm — test 1.72s.
+
+   This completes the tag-management surface the v3.39.0 work introduced
+   (suggest, untagged filter, bulk apply, color, rename, recently-used,
+   merge). Next ticks pick from the fresh roadmap below.
+
+## Roadmap — fresh items (tag system is feature-complete; these are new)
+
+7. **Tag usage counts in the rail** — show how many documents wear each
+   tag as a muted count beside its rail row (mirror the folder rail's
+   existing `rail-count`/`rail-meta` styling). Backend: a
+   `registry::tag_usage_counts() -> Vec<(tag_id, count)>` single GROUP BY
+   over library_doc_tags (one round-trip, not N), one Tauri command, TS
+   client, and a `$derived` map the rail row reads. Also surface a
+   secondary "sort tags by most-used vs A-Z" toggle on the Tags rail head
+   since the count makes ordering meaningful. Tests: counts exclude
+   never-used tags as 0 (LEFT JOIN), reflect bulk apply/remove and merge.
+8. **Empty/unused tag cleanup** — a one-click "Remove N unused tags"
+   affordance on the Tags rail head that deletes every tag attached to zero
+   documents (the residue merges/removals leave behind). Backend:
+   `registry::delete_unused_tags() -> usize` (DELETE ... WHERE id NOT IN
+   (SELECT tag_id FROM library_doc_tags), returns rows removed), one Tauri
+   command, TS client, a confirm + an "N of M" toast. Tests: leaves
+   in-use tags, counts correctly, no-op when all used.
+9. **Tag filter combinator (AND/OR)** — the rail's tag toggles currently
+   union (OR). Add an AND/OR switch on the Tags rail head so selecting two
+   tags can mean "docs with BOTH" not just "either". Wire through the
+   existing query.rs tag clause + the LibraryPanel filter builder. Pure
+   filter-language work (query.rs already has the AND/OR ClauseGroup
+   machinery the Untagged slice touched) + a small UI toggle. Tests in
+   query.rs for the AND vs OR tag-clause expansion.
 
 ## House style (match existing code)
 
@@ -202,4 +248,25 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
   set_doc_tags (query_map temporary outliving stmt at block end) — fixed by
   draining rows with a while-let loop instead. Pushed + verified (local==origin
   3fc663a). Build cache from the 03:25 tick still warm — test 1.72s, clippy 9s.
+- 2026-06-18 04:55 PT (Cake, cron): roadmap #6 "Tag merge" shipped — and it's
+  the LAST tag-system item; the surface is now feature-complete (suggest /
+  untagged filter / bulk apply / color / rename / recently-used / merge).
+  Backend 2083c1f (registry::merge_tags — transactional fold: NULL-aware-max
+  lift of applied_at for both-tag docs via max(coalesce(a,b),coalesce(b,a)),
+  UPDATE OR IGNORE re-point of source-only links keeping their stamp, delete
+  leftover source links + orphaned source row; both ends validated up front so
+  a rejected merge/self-merge leaves rows untouched; 1 Tauri command
+  slab_library_merge_tags; 12 new tests). UI e2fe7b7 (TS mergeTags + a merge
+  glyph in the rail row menu opening a "Merge tag" target-picker modal;
+  $derived candidates exclude the source; on success rail drops source + swaps
+  target in place, active filter re-points, doc cards re-point + de-dupe their
+  chip in place no refetch, recently-used reloads; rejected merge keeps modal
+  open w/ inline reason; dark-first, monochrome glyph). Gates: cargo fmt clean,
+  cargo test --lib pdf::library:: 218 passed/0 failed (12 new merge tests all
+  green), clippy --lib -D warnings clean (6.2s warm), pnpm check 0 errors (no
+  new LibraryPanel warnings — still the 2 pre-existing autofocus + webkit CSS).
+  No schema bump (no new columns; pure re-point + delete over existing tables).
+  Build cache from the 04:20 tick still warm — test 1.72s. Pushed + verified
+  (local==origin e2fe7b7). Seeded a fresh roadmap (#7 usage counts, #8 unused-
+  tag cleanup, #9 AND/OR tag combinator) since the tag roadmap is exhausted.
 
