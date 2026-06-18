@@ -148,6 +148,14 @@
   // that carry no tags (the "cleanup queue"). Composes with the active
   // folder / tag / search filters via the clause tree.
   let untaggedOnly = $state(false);
+  // v3.49.0 Atlas Tag-Filter-Clear — true when any tag-rail filter is engaged
+  // (>=1 tag selected, or the untagged-only toggle is on). Drives the rail-head
+  // "Clear" affordance, which resets the whole tag filter in one click. The
+  // match mode is excluded from this test on purpose: it only affects results
+  // with >1 tag selected, so a lingering non-default mode with 0 tags is inert
+  // and shouldn't surface a Clear button on its own — clearTagFilter resets it
+  // anyway for a clean slate.
+  let tagFilterActive = $derived(activeTagIds.size > 0 || untaggedOnly);
   let loading = $state(false);
   let scanning = $state(false);
   let error = $state<string | null>(null);
@@ -885,6 +893,19 @@
     activeTagIds = next;
   }
 
+  // v3.49.0 Atlas Tag-Filter-Clear — reset the entire tag-rail filter in one
+  // click: drop every selected tag, clear the untagged-only toggle, and return
+  // the match mode to its "all" default. Each assignment is a fresh value so
+  // the reactive $effect that watches activeTagIds / untaggedOnly / tagMatch
+  // re-queries once; no manual refresh call needed. No-op-safe (the button is
+  // only shown when tagFilterActive), but resetting unconditionally is cheap
+  // and keeps the slate fully clean.
+  function clearTagFilter() {
+    activeTagIds = new Set();
+    untaggedOnly = false;
+    tagMatch = "all";
+  }
+
   async function onCreateTopLevelTag() {
     pendingDocForTag = null;
     newTagName = "";
@@ -1329,6 +1350,14 @@
       <div class="rail-section">
         <div class="rail-head">
           <span class="rail-title">Tags</span>
+          {#if tagFilterActive}
+            <button
+              class="rail-clear"
+              title="Clear the tag filter (deselect all tags, drop the untagged filter, reset match mode)"
+              aria-label="Clear tag filter"
+              onclick={clearTagFilter}
+            >Clear</button>
+          {/if}
           {#if activeTagIds.size > 1}
             <button
               class="rail-match"
@@ -2108,6 +2137,25 @@
   }
   .rail-cleanup:hover:not(:disabled) { color: var(--danger, #e54); }
   .rail-cleanup:disabled { opacity: 0.5; cursor: default; }
+  /* v3.49.0 Atlas Tag-Filter-Clear — one-click reset of the whole tag filter
+     (selected tags + untagged toggle + match mode). Same muted uppercase chrome
+     as the sort/match toggles; this is a non-destructive reset (no data is
+     deleted), so it gets the neutral hover-to-text treatment, NOT the danger
+     tint the cleanup prune uses. It's first in the rail-head chrome group, so
+     its `margin-left: auto` right-aligns the group like its siblings. */
+  .rail-clear {
+    margin-left: auto;
+    margin-right: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    cursor: pointer;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0;
+  }
+  .rail-clear:hover { color: var(--text); }
   .rail-row-wrap {
     display: flex;
     align-items: stretch;
