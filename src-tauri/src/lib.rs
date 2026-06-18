@@ -3848,6 +3848,27 @@ fn slab_library_rename_tag(
     result.into()
 }
 
+/// Fold `source_id` into `target_id`: re-point every document link from the
+/// source tag to the target, coalescing duplicates by the newer `applied_at`,
+/// then delete the source tag. Returns the surviving target row. This is the
+/// deliberate "make these the same tag" path that `rename_tag` rejects.
+/// v3.45.0 Atlas Tag-Merge.
+#[tauri::command]
+fn slab_library_merge_tags(
+    app: tauri::AppHandle,
+    source_id: i64,
+    target_id: i64,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.merge_tags(source_id, target_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_set_doc_tags(
     app: tauri::AppHandle,
@@ -5516,6 +5537,7 @@ pub fn run() {
             slab_library_add_tag,
             slab_library_set_tag_color,
             slab_library_rename_tag,
+            slab_library_merge_tags,
             slab_library_set_doc_tags,
             slab_library_bulk_apply_tag,
             slab_library_bulk_remove_tag,

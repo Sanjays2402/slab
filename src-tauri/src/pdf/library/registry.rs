@@ -670,6 +670,81 @@ impl LibraryDb {
             .ok_or_else(|| LibraryError::Other(format!("tag {tag_id} not found")))
     }
 
+    /// Fold the `source_id` tag into `target_id`, then delete the source tag.
+    /// Every document that wore the source tag ends up wearing the target tag,
+    /// and the source row is removed — the deliberate "actually, these are the
+    /// same tag" path that `rename_tag` refuses (a rename onto an existing name
+    /// is rejected rather than silently merging). Returns the surviving target
+    /// row so the UI can keep it selected.
+    ///
+    /// `applied_at` is coalesced so the recently-used order survives the merge:
+    /// for a document that carried *both* tags, the surviving target link keeps
+    /// the NULL-aware **newest** of the two stamps (a real timestamp always
+    /// beats a legacy NULL). For a document that carried only the source tag,
+    /// its link is re-pointed to the target and keeps its original stamp.
+    ///
+    /// Errors if either id is unknown or `source_id == target_id` (merging a
+    /// tag into itself is meaningless). Validation happens before any mutation,
+    /// so a rejected merge leaves every row untouched. The whole fold runs in
+    /// one transaction. v3.45.0 Atlas Tag-Merge.
+    pub fn merge_tags(
+        &mut self,
+        source_id: i64,
+        target_id: i64,
+    ) -> Result<TagRecord, LibraryError> {
+        if source_id == target_id {
+            return Err(LibraryError::Other("cannot merge a tag into itself".into()));
+        }
+        // Validate both ends up front so a bad id never half-applies a merge.
+        self.find_tag_by_id(source_id)?
+            .ok_or_else(|| LibraryError::Other(format!("tag {source_id} not found")))?;
+        let target = self
+            .find_tag_by_id(target_id)?
+            .ok_or_else(|| LibraryError::Other(format!("tag {target_id} not found")))?;
+
+        let tx = self.conn.transaction()?;
+        {
+            // 1. For documents carrying BOTH tags, lift the target link's
+            //    applied_at to the NULL-aware max of the two so the merged tag
+            //    keeps the more recent "used at". `max(coalesce(a,b),
+            //    coalesce(b,a))` returns the larger when both are real, the
+            //    real one when exactly one is NULL, and NULL only when both
+            //    are NULL — exactly the ordering recently_used_tags expects.
+            tx.execute(
+                "UPDATE library_doc_tags
+                 SET applied_at = (
+                     SELECT max(coalesce(s.applied_at, library_doc_tags.applied_at),
+                                coalesce(library_doc_tags.applied_at, s.applied_at))
+                     FROM library_doc_tags s
+                     WHERE s.doc_id = library_doc_tags.doc_id AND s.tag_id = ?1
+                 )
+                 WHERE tag_id = ?2
+                   AND EXISTS (
+                     SELECT 1 FROM library_doc_tags s
+                     WHERE s.doc_id = library_doc_tags.doc_id AND s.tag_id = ?1
+                   )",
+                params![source_id, target_id],
+            )?;
+            // 2. Re-point source links onto the target. Links for documents
+            //    that already carry the target collide on the (doc_id, tag_id)
+            //    primary key and are skipped by OR IGNORE — those duplicates
+            //    were already accounted for in step 1.
+            tx.execute(
+                "UPDATE OR IGNORE library_doc_tags SET tag_id = ?2 WHERE tag_id = ?1",
+                params![source_id, target_id],
+            )?;
+            // 3. Delete the leftover (both-tag) source links OR IGNORE skipped,
+            //    then drop the now-orphaned source tag row.
+            tx.execute(
+                "DELETE FROM library_doc_tags WHERE tag_id = ?1",
+                params![source_id],
+            )?;
+            tx.execute("DELETE FROM library_tags WHERE id = ?1", params![source_id])?;
+        }
+        tx.commit()?;
+        Ok(target)
+    }
+
     pub fn list_tags(&self) -> Result<Vec<TagRecord>, LibraryError> {
         let mut stmt = self
             .conn
@@ -1240,6 +1315,293 @@ mod tests {
     fn rename_tag_unknown_id_errors() {
         let mut db = db();
         assert!(db.rename_tag(9999, "whatever").is_err());
+    }
+
+    #[test]
+    fn merge_tags_deletes_source_and_returns_target() {
+        let mut db = db();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("machine-learning", Some("#6ab7ff")).unwrap();
+        let survivor = db.merge_tags(source.id, target.id).unwrap();
+        // The returned row is the surviving target, color intact.
+        assert_eq!(survivor.id, target.id);
+        assert_eq!(survivor.name, "machine-learning");
+        assert_eq!(survivor.color.as_deref(), Some("#6ab7ff"));
+        // The source tag row is gone; only the target remains.
+        assert!(db.find_tag_by_id(source.id).unwrap().is_none());
+        assert_eq!(db.list_tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn merge_tags_repoints_source_only_docs_to_target() {
+        // A document that wore ONLY the source tag must end up wearing the
+        // target tag after the merge.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        db.set_doc_tags(d.id, &[source.id]).unwrap();
+
+        db.merge_tags(source.id, target.id).unwrap();
+        let attached = db.tags_for_document(d.id).unwrap();
+        assert_eq!(attached.len(), 1, "doc carries exactly one tag");
+        assert_eq!(attached[0].id, target.id, "and it is the target");
+    }
+
+    #[test]
+    fn merge_tags_coalesces_docs_carrying_both_into_one_link() {
+        // A document that wore BOTH tags must end up with a single target
+        // link, never a duplicate — the (doc, tag) primary key forbids it and
+        // the merge must respect that.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        let other = db.add_tag("keep", None).unwrap();
+        db.set_doc_tags(d.id, &[source.id, target.id, other.id])
+            .unwrap();
+
+        db.merge_tags(source.id, target.id).unwrap();
+        let attached = db.tags_for_document(d.id).unwrap();
+        let ids: std::collections::HashSet<i64> = attached.iter().map(|t| t.id).collect();
+        // Exactly target + the untouched third tag — no source, no duplicate.
+        assert_eq!(attached.len(), 2);
+        assert!(ids.contains(&target.id));
+        assert!(ids.contains(&other.id));
+        assert!(!ids.contains(&source.id));
+    }
+
+    #[test]
+    fn merge_tags_keeps_newest_applied_at_when_doc_had_both() {
+        // When a doc carried both tags with different stamps, the surviving
+        // target link must keep the NEWER of the two so recent-order survives.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        db.set_doc_tags(d.id, &[source.id, target.id]).unwrap();
+
+        // Case A: source is newer than target → target link lifts to source's.
+        stamp(&db, d.id, source.id, 900);
+        stamp(&db, d.id, target.id, 100);
+        db.merge_tags(source.id, target.id).unwrap();
+        let at: i64 = db
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![d.id, target.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(at, 900, "merged link keeps the newer (source) stamp");
+    }
+
+    #[test]
+    fn merge_tags_keeps_target_stamp_when_target_is_newer() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        db.set_doc_tags(d.id, &[source.id, target.id]).unwrap();
+        stamp(&db, d.id, source.id, 100);
+        stamp(&db, d.id, target.id, 900); // target newer
+        db.merge_tags(source.id, target.id).unwrap();
+        let at: i64 = db
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![d.id, target.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(at, 900, "merged link keeps the newer (target) stamp");
+    }
+
+    #[test]
+    fn merge_tags_real_stamp_beats_legacy_null_either_side() {
+        // A real timestamp must always win over a legacy NULL, whichever side
+        // carries it — this is the NULL-aware max the coalesce pair guarantees.
+        for source_null in [true, false] {
+            let mut db = db();
+            let f = db.add_folder("/tmp").unwrap();
+            let d = db
+                .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+                .unwrap();
+            let source = db.add_tag("ml", None).unwrap();
+            let target = db.add_tag("ai", None).unwrap();
+            db.set_doc_tags(d.id, &[source.id, target.id]).unwrap();
+            // NULL one side, a real 500 on the other.
+            let (null_tag, real_tag) = if source_null {
+                (source.id, target.id)
+            } else {
+                (target.id, source.id)
+            };
+            db.conn()
+                .execute(
+                    "UPDATE library_doc_tags SET applied_at = NULL WHERE doc_id = ?1 AND tag_id = ?2",
+                    params![d.id, null_tag],
+                )
+                .unwrap();
+            stamp(&db, d.id, real_tag, 500);
+
+            db.merge_tags(source.id, target.id).unwrap();
+            let at: Option<i64> = db
+                .conn()
+                .query_row(
+                    "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                    params![d.id, target.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                at,
+                Some(500),
+                "real stamp beats NULL (source_null={source_null})"
+            );
+        }
+    }
+
+    #[test]
+    fn merge_tags_repointed_link_keeps_its_own_stamp() {
+        // A source-only link is re-pointed, not restamped: its applied_at must
+        // carry over unchanged so the merged tag's recency is truthful.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        db.set_doc_tags(d.id, &[source.id]).unwrap();
+        stamp(&db, d.id, source.id, 1234);
+
+        db.merge_tags(source.id, target.id).unwrap();
+        let at: i64 = db
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![d.id, target.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(at, 1234, "re-pointed link keeps its original stamp");
+    }
+
+    #[test]
+    fn merge_tags_preserves_recently_used_order() {
+        // End-to-end: after folding `ml` into `ai`, `ai` should rank by the
+        // newest application it inherited, ahead of an untouched older tag.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        let older = db.add_tag("older", None).unwrap();
+        db.set_doc_tags(d.id, &[source.id, target.id, older.id])
+            .unwrap();
+        stamp(&db, d.id, source.id, 800); // source is the most recent use
+        stamp(&db, d.id, target.id, 200);
+        stamp(&db, d.id, older.id, 400);
+
+        db.merge_tags(source.id, target.id).unwrap();
+        let recent = db.recently_used_tags(10).unwrap();
+        let names: Vec<&str> = recent.iter().map(|t| t.name.as_str()).collect();
+        // ai inherited source's 800, so it ranks above older (400).
+        assert_eq!(names, vec!["ai", "older"]);
+    }
+
+    #[test]
+    fn merge_tags_into_self_errors_and_changes_nothing() {
+        let mut db = db();
+        let t = db.add_tag("ml", None).unwrap();
+        assert!(db.merge_tags(t.id, t.id).is_err());
+        // The tag is untouched.
+        assert!(db.find_tag_by_id(t.id).unwrap().is_some());
+        assert_eq!(db.list_tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn merge_tags_unknown_id_errors_and_leaves_rows_untouched() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let real = db.add_tag("real", None).unwrap();
+        db.set_doc_tags(d.id, &[real.id]).unwrap();
+        // Unknown source, and unknown target — both must error.
+        assert!(db.merge_tags(9999, real.id).is_err());
+        assert!(db.merge_tags(real.id, 9999).is_err());
+        // The real tag and its single doc link survive every rejected merge.
+        assert!(db.find_tag_by_id(real.id).unwrap().is_some());
+        assert_eq!(db.tags_for_document(d.id).unwrap().len(), 1);
+        assert_eq!(db.list_tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn merge_tags_across_multiple_docs() {
+        // The fold spans every document, mixing source-only, target-only and
+        // both-carrying docs in one call.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let only_src = db
+            .upsert_document(Some(f.id), "/tmp/s.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let only_tgt = db
+            .upsert_document(Some(f.id), "/tmp/t.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let both = db
+            .upsert_document(Some(f.id), "/tmp/b.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        db.set_doc_tags(only_src.id, &[source.id]).unwrap();
+        db.set_doc_tags(only_tgt.id, &[target.id]).unwrap();
+        db.set_doc_tags(both.id, &[source.id, target.id]).unwrap();
+
+        db.merge_tags(source.id, target.id).unwrap();
+        // Every doc wears exactly the target now.
+        for doc in [only_src.id, only_tgt.id, both.id] {
+            let attached = db.tags_for_document(doc).unwrap();
+            assert_eq!(attached.len(), 1, "doc {doc} has one tag");
+            assert_eq!(attached[0].id, target.id);
+        }
+        // No orphaned source links survive anywhere.
+        let leftover: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM library_doc_tags WHERE tag_id = ?1",
+                params![source.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover, 0, "no source links remain after merge");
+    }
+
+    #[test]
+    fn merge_tags_with_no_documents_just_drops_source() {
+        // Merging two tags that aren't on any document is still valid — it just
+        // deletes the now-redundant source row.
+        let mut db = db();
+        let source = db.add_tag("ml", None).unwrap();
+        let target = db.add_tag("ai", None).unwrap();
+        let survivor = db.merge_tags(source.id, target.id).unwrap();
+        assert_eq!(survivor.id, target.id);
+        assert!(db.find_tag_by_id(source.id).unwrap().is_none());
     }
 
     #[test]
