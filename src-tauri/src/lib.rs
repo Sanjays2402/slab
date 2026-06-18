@@ -3796,6 +3796,26 @@ fn slab_library_add_tag(
     result.into()
 }
 
+/// Update an existing tag's color (or clear it with `null`). Returns the
+/// updated tag row so the UI can swap it in without a full refetch. Rejects
+/// colors that aren't `#hex` / `hsl()` / `rgb()` shapes. v3.42.0 Atlas
+/// Tag-Color editing.
+#[tauri::command]
+fn slab_library_set_tag_color(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    color: Option<String>,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_tag_color(tag_id, color.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_set_doc_tags(
     app: tauri::AppHandle,
@@ -5461,6 +5481,7 @@ pub fn run() {
             slab_library_tag_suggestion_undismiss_all,
             slab_smart_collection_update,
             slab_library_add_tag,
+            slab_library_set_tag_color,
             slab_library_set_doc_tags,
             slab_library_bulk_apply_tag,
             slab_library_bulk_remove_tag,

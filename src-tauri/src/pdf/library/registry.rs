@@ -580,6 +580,38 @@ impl LibraryDb {
         Ok(row)
     }
 
+    /// Update an existing tag's color. Pass `None` to clear it back to the
+    /// default (deterministic) rendering. Returns the updated row.
+    ///
+    /// Errors if the tag id does not exist or `color` is not a recognized CSS
+    /// color (so the column only ever holds values the UI can safely drop into
+    /// a CSS property). v3.42.0 Atlas Tag-Color editing.
+    pub fn set_tag_color(
+        &mut self,
+        tag_id: i64,
+        color: Option<&str>,
+    ) -> Result<TagRecord, LibraryError> {
+        let normalized = match color {
+            Some(c) => {
+                let trimmed = c.trim();
+                if !valid_tag_color(trimmed) {
+                    return Err(LibraryError::Other(format!("invalid tag color: {c:?}")));
+                }
+                Some(trimmed)
+            }
+            None => None,
+        };
+        let changed = self.conn.execute(
+            "UPDATE library_tags SET color = ?1 WHERE id = ?2",
+            params![normalized, tag_id],
+        )?;
+        if changed == 0 {
+            return Err(LibraryError::Other(format!("tag {tag_id} not found")));
+        }
+        self.find_tag_by_id(tag_id)?
+            .ok_or_else(|| LibraryError::Other(format!("tag {tag_id} not found")))
+    }
+
     pub fn list_tags(&self) -> Result<Vec<TagRecord>, LibraryError> {
         let mut stmt = self
             .conn
@@ -653,6 +685,37 @@ fn tag_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TagRecord> {
         name: row.get(1)?,
         color: row.get(2)?,
     })
+}
+
+/// Whether `c` is a CSS color value we're willing to persist on a tag row.
+///
+/// We accept exactly the two shapes the app produces — `#rgb` / `#rgba` /
+/// `#rrggbb` / `#rrggbbaa` hex (the swatch palette) and the functional
+/// `hsl()/hsla()/rgb()/rgba()` notations (`pastel_for` emits `hsl(...)`).
+/// The functional body is restricted to digits, dots, `%`, commas and spaces
+/// so a stored value can never carry CSS that breaks out of the property it's
+/// dropped into (no `;`, `{`, `url(`, quotes, angle brackets, etc.).
+pub(crate) fn valid_tag_color(c: &str) -> bool {
+    let c = c.trim();
+    if c.is_empty() {
+        return false;
+    }
+    if let Some(hex) = c.strip_prefix('#') {
+        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    let lower = c.to_ascii_lowercase();
+    for fname in ["hsla(", "rgba(", "hsl(", "rgb("] {
+        if let Some(rest) = lower.strip_prefix(fname) {
+            let Some(body) = rest.strip_suffix(')') else {
+                return false;
+            };
+            return !body.is_empty()
+                && body
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'%' | b',' | b' '));
+        }
+    }
+    false
 }
 
 fn now_unix() -> i64 {
@@ -870,6 +933,113 @@ mod tests {
             listed.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
             vec!["apple", "mango", "zebra"]
         );
+    }
+
+    #[test]
+    fn set_tag_color_updates_and_returns_row() {
+        let mut db = db();
+        let t = db.add_tag("invoice", Some("#ff7a59")).unwrap();
+        let updated = db.set_tag_color(t.id, Some("#6ab7ff")).unwrap();
+        assert_eq!(updated.id, t.id);
+        assert_eq!(updated.name, "invoice");
+        assert_eq!(updated.color.as_deref(), Some("#6ab7ff"));
+        // Persisted: a fresh read sees the new color.
+        assert_eq!(
+            db.find_tag_by_id(t.id).unwrap().unwrap().color.as_deref(),
+            Some("#6ab7ff")
+        );
+    }
+
+    #[test]
+    fn set_tag_color_trims_whitespace() {
+        let mut db = db();
+        let t = db.add_tag("draft", None).unwrap();
+        let updated = db.set_tag_color(t.id, Some("  #7ee787  ")).unwrap();
+        assert_eq!(updated.color.as_deref(), Some("#7ee787"));
+    }
+
+    #[test]
+    fn set_tag_color_none_clears() {
+        let mut db = db();
+        let t = db.add_tag("done", Some("#f5c518")).unwrap();
+        let cleared = db.set_tag_color(t.id, None).unwrap();
+        assert_eq!(cleared.color, None);
+    }
+
+    #[test]
+    fn set_tag_color_accepts_hsl_from_pastel_for() {
+        let mut db = db();
+        let t = db.add_tag("research", None).unwrap();
+        // pastel_for emits e.g. "hsl(123, 60%, 80%)" — must round-trip.
+        let updated = db.set_tag_color(t.id, Some("hsl(123, 60%, 80%)")).unwrap();
+        assert_eq!(updated.color.as_deref(), Some("hsl(123, 60%, 80%)"));
+    }
+
+    #[test]
+    fn set_tag_color_rejects_invalid_color() {
+        let mut db = db();
+        let t = db.add_tag("contract", Some("#abc")).unwrap();
+        for bad in [
+            "red",                      // bare keyword, not in our accepted set
+            "#12",                      // wrong hex length
+            "#gggggg",                  // non-hex digits
+            "url(x)",                   // function we don't allow
+            "hsl(120, 60%, 80%); evil", // CSS injection attempt
+            "hsl(120, 60%, 80%",        // missing close paren
+            "",                         // empty
+        ] {
+            assert!(
+                db.set_tag_color(t.id, Some(bad)).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+        // The row's original color is untouched after a rejected update.
+        assert_eq!(
+            db.find_tag_by_id(t.id).unwrap().unwrap().color.as_deref(),
+            Some("#abc")
+        );
+    }
+
+    #[test]
+    fn set_tag_color_unknown_id_errors() {
+        let mut db = db();
+        assert!(db.set_tag_color(9999, Some("#ff7a59")).is_err());
+    }
+
+    #[test]
+    fn valid_tag_color_accepts_expected_shapes() {
+        for ok in [
+            "#abc",
+            "#abcd",
+            "#aabbcc",
+            "#aabbccdd",
+            "#FF7A59",
+            "hsl(123, 60%, 80%)",
+            "hsla(123, 60%, 80%, 0.5)",
+            "rgb(255, 122, 89)",
+            "rgba(255, 122, 89, 0.5)",
+        ] {
+            assert!(valid_tag_color(ok), "expected {ok:?} to be valid");
+        }
+    }
+
+    #[test]
+    fn valid_tag_color_rejects_bad_shapes() {
+        for bad in [
+            "",
+            "   ",
+            "red",
+            "#12",
+            "#12345",
+            "#gggggg",
+            "url(javascript:1)",
+            "hsl(1)x",
+            "hsl(1, 2, 3); background: url(x)",
+            "<script>",
+            "rgb(1, 2, 3) !important",
+        ] {
+            assert!(!valid_tag_color(bad), "expected {bad:?} to be invalid");
+        }
     }
 
     #[test]
