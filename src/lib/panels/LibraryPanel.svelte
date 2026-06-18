@@ -59,6 +59,7 @@
     type OcrQueueResult,
     type OcrState,
     type TagRecord,
+    type TagMatch,
   } from "$lib/library";
   import { basename } from "$lib/types";
   import { formatRelTime } from "$lib/recent";
@@ -136,6 +137,11 @@
     refreshDocs();
   }
   let activeTagIds = $state<Set<number>>(new Set());
+  // v3.48.0 Atlas Tag-Combinator — how multiple selected tags combine in the
+  // rail filter. "all" (default) intersects (docs with EVERY selected tag),
+  // "any" unions (docs with AT LEAST ONE). Only meaningful with >1 tag
+  // selected; the toggle is shown in the Tags rail head in that case.
+  let tagMatch = $state<TagMatch>("all");
   let query = $state("");
   let sort = $state<LibrarySortBy>("added_desc");
   // v3.40.0 Atlas Untagged-Filter — when on, restrict the grid to docs
@@ -434,6 +440,10 @@
       filter = {
         folder_id: folderId,
         tag_ids: Array.from(activeTagIds),
+        // v3.48.0: "all" intersects, "any" unions. Sent always; the backend
+        // treats a missing field as "all" but being explicit keeps stored
+        // filters self-describing.
+        tag_match: tagMatch,
         title_substring: title,
         sort,
       };
@@ -471,6 +481,7 @@
     // Touching reactive deps deliberately:
     activeFolder;
     activeTagIds;
+    tagMatch;
     sort;
     untaggedOnly;
     void refreshDocs();
@@ -1318,6 +1329,17 @@
       <div class="rail-section">
         <div class="rail-head">
           <span class="rail-title">Tags</span>
+          {#if activeTagIds.size > 1}
+            <button
+              class="rail-match"
+              class:any={tagMatch === "any"}
+              title={tagMatch === "all"
+                ? "Showing docs with ALL selected tags - click to match ANY"
+                : "Showing docs with ANY selected tag - click to require ALL"}
+              aria-label="Toggle tag match mode"
+              onclick={() => (tagMatch = tagMatch === "all" ? "any" : "all")}
+            >{tagMatch === "all" ? "All tags" : "Any tag"}</button>
+          {/if}
           {#if unusedTagCount > 0}
             <button
               class="rail-cleanup"
@@ -2048,6 +2070,26 @@
     padding: 0;
   }
   .rail-sort:hover { color: var(--text); }
+  /* v3.48.0 Atlas Tag-Combinator — All/Any toggle on the Tags rail head,
+     shown only when >1 tag is selected (when AND vs OR changes the result).
+     Same muted uppercase chrome as the sort toggle; `margin-left: auto`
+     right-aligns the whole head chrome group when it's the first auto-margin
+     element present (it precedes cleanup + sort in DOM order). The non-default
+     "Any" mode gets an accent so the active union state is legible at a glance. */
+  .rail-match {
+    margin-left: auto;
+    margin-right: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    cursor: pointer;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0;
+  }
+  .rail-match:hover { color: var(--text); }
+  .rail-match.any { color: var(--accent, #6aa3ff); }
   /* v3.47.0 Atlas Tag-Cleanup — one-click prune of zero-document tags. Same
      muted uppercase chrome as the sort toggle, but a danger-tinted hover marks
      it destructive. `margin-left: auto` right-aligns the head group (cleanup +

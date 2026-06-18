@@ -82,6 +82,13 @@ export type LibrarySortBy = "added_desc" | "title_asc" | "last_seen_desc";
 export type FilterCombinator = "and" | "or";
 
 /**
+ * Mirror of `pdf::library::query::TagMatch`. Governs how the flat
+ * `tag_ids` list combines: `"all"` requires every tag (AND/intersection,
+ * the historical default), `"any"` requires at least one (OR/union).
+ */
+export type TagMatch = "all" | "any";
+
+/**
  * Mirror of `pdf::library::query::FilterClause`. Tagged with `type` so
  * the frontend can dispatch with a single switch — much friendlier than
  * sniffing for the presence of fields.
@@ -107,6 +114,12 @@ export interface FilterGroup {
 export interface LibraryFilter {
   folder_id?: number | null;
   tag_ids?: number[];
+  /**
+   * v3.48.0 Atlas Tag-Combinator: how `tag_ids` combine. `"all"` (default,
+   * omitted on the wire) intersects; `"any"` unions. Absent on legacy
+   * filters, which the backend reads as `"all"`.
+   */
+  tag_match?: TagMatch;
   title_substring?: string | null;
   limit?: number | null;
   sort?: LibrarySortBy;
