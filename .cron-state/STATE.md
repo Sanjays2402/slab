@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 00:45 PT by Cake — v3.39.0 "Atlas Tag-Suggest" committed + pushed to feature branch (NOT merged; Sanjay reviews in AM).
+Last updated: 2026-06-18 01:05 PT by Cake (cron) — v3.40.0 slice "Untagged filter" committed + pushed to feature branch (a0836e3 backend, 95ed028 UI). v3.39.0 already shipped by the interactive session.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `f997a33` — "feat(library): v3.39.0 Atlas Tag-Suggest".
+Latest commit: `95ed028` — "feat(library): one-click Untagged filter toggle".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -50,9 +50,10 @@ limit. Does NOT affect local dev or branch pushes.
 These extend the tag system the v3.39.0 work introduced. Ship ONE complete
 vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
 
-1. **Untagged filter** — a one-click "Show untagged documents" toggle in the
-   library panel (backend: `LibraryFilter` already exists; add an `untagged`
-   predicate + Tauri command + a chip in LibraryPanel). High user value, small.
+1. ~~**Untagged filter**~~ — DONE (v3.40.0 slice, 2026-06-18 01:05 PT, a0836e3 +
+   95ed028). Added first-class `Untagged`/`Tagged` clauses to the filter
+   language (query.rs), fixed the `untagged` preset TODO, and added a one-click
+   "Untagged" toggle chip to the LibraryPanel toolbar.
 2. **Bulk tag-apply** — multi-select documents in the library and apply/remove a
    tag across all of them in one action. (Backend bulk op + selection UI.)
 3. **Tag colors** — let a tag carry a color; store on the tag row (schema bump),
@@ -77,3 +78,14 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
 - 2026-06-18 00:45 PT (Cake, interactive): committed + pushed v3.39.0 Atlas
   Tag-Suggest to feature branch (f997a33). Diagnosed slow-disk full-build wedge;
   set gates to lib-only. Seeded roadmap above. Overnight loop armed (30m, →08:00).
+- 2026-06-18 01:05 PT (Cake, cron): roadmap #1 "Untagged filter" shipped.
+  Backend a0836e3 (Untagged/Tagged filter clauses + preset TODO fixed, 32 query/
+  preset tests green), UI 95ed028 (toolbar toggle chip + TS union + ClauseGroup
+  narrowing fix). Gates: cargo fmt clean, clippy --lib -D warnings clean (13s warm),
+  cargo test query 22 + presets 10 green, pnpm check 0 errors. Pushed + verified.
+  NOTE for next tick: v3.39.0's first `cargo test`/`clippy` were COLD (~12-14 min
+  each on the image) because the test/clippy profiles recompiled tauri+mockito
+  from scratch; once warm, incremental test+clippy is ~10-20s. Budget the first
+  build of a session generously. Also: the interactive session committed v3.39.0
+  mid-build under author "Sanjay Santhanam" (its default git identity) — that's
+  expected for the interactive session, not a cron mis-attribution.
