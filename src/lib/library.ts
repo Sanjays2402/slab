@@ -254,6 +254,21 @@ export async function listTags(): Promise<TagRecord[]> {
   return unwrap(res);
 }
 
+/**
+ * The most recently *applied* tags, newest first (each listed once by its
+ * newest application time). Surfaced as "Recently used" quick-chips when
+ * tagging a document so the tags you reach for most are one click away.
+ * `limit` defaults to 8 on the backend when omitted.
+ * v3.44.0 Atlas Recent-Tags.
+ */
+export async function recentlyUsedTags(limit?: number): Promise<TagRecord[]> {
+  const res = await invoke<CmdResult<TagRecord[]>>(
+    "slab_library_recently_used_tags",
+    { limit: limit ?? null },
+  );
+  return unwrap(res);
+}
+
 export async function addTag(
   name: string,
   color?: string | null,

@@ -45,6 +45,7 @@
     setDocumentTags,
     setTagColor,
     renameTag,
+    recentlyUsedTags,
     type AutoTagRunResult,
     type DocumentRecord,
     type FilterClause,
@@ -151,6 +152,31 @@
     submenu: "tag" | null;
   };
   let menu = $state<Menu | null>(null);
+
+  // v3.44.0 Atlas Recent-Tags — the most recently applied tags, surfaced as
+  // quick-chips at the top of a doc's tag menu so common tags are one click
+  // away. Loaded lazily when a tag menu opens, then refreshed after any tag
+  // change so the order stays current. Chips already on the doc are hidden.
+  let recentTags = $state<TagRecord[]>([]);
+
+  // Recently-used chips minus the tags already on the menu's doc (those show
+  // checked in the list below, so re-offering them as "apply" chips is noise).
+  let recentChips = $derived(
+    menu
+      ? recentTags.filter(
+          (rt) => !menu!.doc.tags.some((dt) => dt.id === rt.id),
+        )
+      : [],
+  );
+
+  async function loadRecentTags() {
+    try {
+      recentTags = await recentlyUsedTags(8);
+    } catch {
+      // Non-fatal: the menu still shows the full alphabetical tag list.
+      recentTags = [];
+    }
+  }
 
   // New-tag modal state.
   let newTagOpen = $state(false);
@@ -930,6 +956,8 @@
     e.preventDefault();
     e.stopPropagation();
     menu = { doc, x: e.clientX, y: e.clientY, submenu: null };
+    // Surface the recently-used tags at the top of the Tags section.
+    loadRecentTags();
   }
 
   function onMenuItemClick(e: MouseEvent) {
@@ -950,6 +978,8 @@
     try {
       await setDocumentTags(doc.id, next);
       await refreshDocs();
+      // A tag was just applied/removed — re-rank the recently-used chips.
+      await loadRecentTags();
       // Re-load the menu's `doc` from the fresh list so future
       // toggles see the new tag set.
       const fresh = docs.find((d) => d.id === doc.id);
@@ -1492,6 +1522,23 @@
     </button>
     <div class="menu-sep"></div>
     <div class="menu-section">Tags</div>
+    {#if recentChips.length > 0}
+      <div class="recent-tags" role="group" aria-label="Recently used tags">
+        {#each recentChips as rt (rt.id)}
+          <button
+            class="recent-chip"
+            title={`Apply "${rt.name}"`}
+            onclick={() => onMenuToggleTag(menu!.doc, rt)}
+          >
+            <span
+              class="dot small"
+              style:background={rt.color ?? "var(--text-3)"}
+            ></span>
+            <span class="recent-chip-label">{rt.name}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
     {#each tags as t (t.id)}
       {@const attached = menu.doc.tags.some((dt) => dt.id === t.id)}
       <button
@@ -2158,6 +2205,38 @@
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+
+  /* v3.44.0 Atlas Recent-Tags — quick-apply chips at the top of the Tags
+     section. A wrapped row of compact pills; clicking one applies that tag. */
+  .recent-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 2px 8px 6px;
+  }
+  .recent-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 140px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+  .recent-chip:hover {
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .recent-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Modal */
