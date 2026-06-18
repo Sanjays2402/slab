@@ -265,6 +265,23 @@ export async function addTag(
   return unwrap(res);
 }
 
+/**
+ * Update an existing tag's color (pass `null` to clear it back to the default
+ * deterministic rendering). Returns the updated tag row. The backend rejects
+ * anything that isn't a `#hex` / `hsl()` / `rgb()` color.
+ * v3.42.0 Atlas Tag-Color editing.
+ */
+export async function setTagColor(
+  tagId: number,
+  color: string | null,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>("slab_library_set_tag_color", {
+    tagId,
+    color,
+  });
+  return unwrap(res);
+}
+
 export async function setDocumentTags(
   docId: number,
   tagIds: number[],

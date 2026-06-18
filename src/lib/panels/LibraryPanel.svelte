@@ -43,6 +43,7 @@
     rescanAll,
     scanFolder,
     setDocumentTags,
+    setTagColor,
     type AutoTagRunResult,
     type DocumentRecord,
     type FilterClause,
@@ -155,6 +156,12 @@
   let newTagName = $state("");
   let newTagColor = $state<string | null>(null);
   let pendingDocForTag = $state<DocumentRecord | null>(null);
+
+  // Edit-tag-color modal state (v3.42.0 Atlas Tag-Color editing). Holds the
+  // tag whose color is being edited plus the in-flight selection; null = closed.
+  let editColorTag = $state<TagRecord | null>(null);
+  let editColorValue = $state<string | null>(null);
+  let editColorBusy = $state(false);
 
   // Debounced search.
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -800,6 +807,36 @@
     }
   }
 
+  // ---------- Edit tag color (v3.42.0 Atlas Tag-Color editing) ----------
+
+  function openEditColor(tag: TagRecord) {
+    editColorTag = tag;
+    // Seed the picker with the tag's current swatch if it's one of ours,
+    // otherwise leave the palette unselected (custom hsl()/rgb() defaults).
+    editColorValue = tag.color ?? null;
+    editColorBusy = false;
+  }
+
+  async function commitEditColor() {
+    if (!editColorTag || editColorBusy) return;
+    editColorBusy = true;
+    try {
+      const updated = await setTagColor(editColorTag.id, editColorValue);
+      // Swap the updated row into the rail and every doc card that carries it,
+      // so colored chips repaint without a full refetch.
+      tags = tags.map((t) => (t.id === updated.id ? updated : t));
+      docs = docs.map((d) => ({
+        ...d,
+        tags: d.tags.map((t) => (t.id === updated.id ? updated : t)),
+      }));
+      editColorTag = null;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      editColorBusy = false;
+    }
+  }
+
   async function commitNewTag() {
     const name = newTagName.trim();
     if (!name) return;
@@ -1053,6 +1090,12 @@
               <span class="rail-icon dot" style:background={t.color ?? "var(--text-3)"}></span>
               <span class="rail-label">{t.name}</span>
             </button>
+            <button
+              class="rail-row-x"
+              title="Edit color"
+              aria-label="Edit tag color"
+              onclick={() => openEditColor(t)}
+            >&#9679;</button>
             <button
               class="rail-row-x"
               title="Delete tag"
@@ -1413,6 +1456,50 @@
         <button class="ghost" onclick={() => (newTagOpen = false)}>Cancel</button>
         <button class="primary" onclick={commitNewTag} disabled={!newTagName.trim()}>
           Create
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Edit tag color modal (v3.42.0 Atlas Tag-Color editing) -->
+{#if editColorTag}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={() => (editColorTag = null)}
+    onkeydown={(e) => { if (e.key === "Escape") editColorTag = null; }}
+  >
+    <div class="modal" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <div class="modal-title">Tag color</div>
+      <div class="color-preview">
+        <span class="dot preview" style:background={editColorValue ?? "var(--text-3)"}></span>
+        <span class="color-preview-name">{editColorTag.name}</span>
+      </div>
+      <div class="palette">
+        {#each TAG_PALETTE as c (c)}
+          <button
+            class="swatch"
+            class:active={editColorValue === c}
+            style:background={c}
+            aria-label="Pick color {c}"
+            onclick={() => (editColorValue = c)}
+          ></button>
+        {/each}
+        <button
+          class="swatch default-swatch"
+          class:active={editColorValue === null}
+          title="Default (automatic)"
+          aria-label="Use default color"
+          onclick={() => (editColorValue = null)}
+        >&#8856;</button>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" onclick={() => (editColorTag = null)}>Cancel</button>
+        <button class="primary" onclick={commitEditColor} disabled={editColorBusy}>
+          {editColorBusy ? "Saving…" : "Save"}
         </button>
       </div>
     </div>
@@ -2006,6 +2093,39 @@
   .swatch.active {
     border-color: var(--text);
     transform: scale(1.1);
+  }
+  .default-swatch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-3);
+    border: 2px solid var(--border);
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+  }
+  .default-swatch.active {
+    border-color: var(--text);
+    color: var(--text);
+  }
+  .color-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+  }
+  .color-preview .dot.preview {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .color-preview-name {
+    font-size: 13px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .modal-actions {
     display: flex;
