@@ -3777,6 +3777,39 @@ fn slab_library_search_log_count() -> CmdResult<i64> {
     result.into()
 }
 
+/// Most-recent N library search rows from the rolling log, newest first.
+/// Powers the LibrarySearchPanel's "Recent searches" chip strip — one click
+/// to re-run a prior query. `limit` clamps to `1..=50`; default 8.
+/// v3.52.0 Atlas Recent-Searches.
+#[tauri::command]
+fn slab_library_recent_searches(
+    limit: Option<u32>,
+) -> CmdResult<Vec<pdf::library::search_log::QueryRow>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let cap = limit.unwrap_or(8).clamp(1, 50) as usize;
+        pdf::library::search_log::recent_queries(&db, cap)
+    })();
+    result.into()
+}
+
+/// Wipe every row from `library_search_log`. Returns the count removed so
+/// the UI can decide whether to toast or stay quiet. Suggestion-cluster
+/// dismissals live in a sibling table and are NOT touched.
+/// v3.52.0 Atlas Recent-Searches.
+#[tauri::command]
+fn slab_library_clear_search_history(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let n = pdf::library::search_log::clear(&db)?;
+        if n > 0 {
+            emit_library_changed(&app);
+        }
+        Ok(n)
+    })();
+    result.into()
+}
+
 // ---------------------------------------------------------------------
 // v3.39.0 "Atlas Tag-Suggest" — per-document heuristic tag suggestions.
 // ---------------------------------------------------------------------
@@ -5644,6 +5677,8 @@ pub fn run() {
             slab_library_suggestions_dismiss,
             slab_library_suggestions_accept,
             slab_library_search_log_count,
+            slab_library_recent_searches,
+            slab_library_clear_search_history,
             slab_library_tag_suggestions_for_doc,
             slab_library_tag_suggestions_bulk_for_untagged,
             slab_library_tag_suggestion_accept,

@@ -263,6 +263,57 @@ export async function librarySearch(
 }
 
 
+/**
+ * One row from the rolling library search history.
+ * Newest first when returned from {@link recentLibrarySearches}.
+ * v3.52.0 Atlas Recent-Searches.
+ */
+export interface RecentSearch {
+  id: number;
+  query: string;
+  /** Unix seconds. */
+  ts: number;
+  /** How many hits this query produced the last time it ran. */
+  resultCount: number;
+}
+
+/**
+ * Most-recent N library search rows, newest first. Powers the
+ * LibrarySearchPanel's "Recent searches" chip strip — one click to re-run
+ * a prior query. `limit` clamps backend-side to `1..=50`; default 8.
+ * v3.52.0 Atlas Recent-Searches.
+ */
+export async function recentLibrarySearches(
+  limit?: number,
+): Promise<RecentSearch[]> {
+  const res = await invoke<
+    CmdResult<
+      Array<{ id: number; query: string; ts: number; result_count: number }>
+    >
+  >("slab_library_recent_searches", { limit: limit ?? null });
+  const rows = unwrap(res);
+  return rows.map((r) => ({
+    id: r.id,
+    query: r.query,
+    ts: r.ts,
+    resultCount: r.result_count,
+  }));
+}
+
+/**
+ * Wipe every row from the rolling search log. Returns the number removed
+ * (0 if the log was already empty). Cluster-dismissals (the Atlas-suggest
+ * "don't show me this again" memory) live in a sibling table and are NOT
+ * touched. v3.52.0 Atlas Recent-Searches.
+ */
+export async function clearLibrarySearchHistory(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_clear_search_history",
+  );
+  return unwrap(res);
+}
+
+
 // ---------- Tags ----------
 
 export async function listTags(): Promise<TagRecord[]> {
