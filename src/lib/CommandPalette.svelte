@@ -412,6 +412,23 @@
       },
       keywords: "smart folders hub manage organize pin reorder drag preset built-in personal pack export bulk atlas",
     });
+    // v3.52.0 "Atlas OCR-Queue" — dedicated panel for the auto-OCR
+    // pipeline: dashboard counts, failure inbox with persisted reasons,
+    // re-queue/retry, pending preview.
+    out.push({
+      id: "library:ocr-queue",
+      title: "OCR Queue…",
+      subtitle: "Pending docs, failure inbox with reasons, re-queue (⇧⌘O)",
+      icon: "◳",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-ocr-queue"));
+        });
+      },
+      keywords: "ocr queue scan tesseract retry failed pending inbox dashboard auto recognise text searchable image atlas",
+    });
     out.push({
       id: "library:new-smart",
       title: "New smart collection…",

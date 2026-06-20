@@ -29,6 +29,7 @@
   import SmartCollectionBuilder from "./SmartCollectionBuilder.svelte";
   import PresetPicker from "./PresetPicker.svelte";
   import SmartFoldersHubPanel from "./SmartFoldersHubPanel.svelte";
+  import OcrQueuePanel from "./OcrQueuePanel.svelte";
 
   type SelectPayload = {
     kind: "collection" | "smart";
@@ -69,6 +70,15 @@
   }
   export function openSmartFoldersHub() {
     openSmartHub();
+  }
+
+  // OCR Queue Panel (v3.52.0 Atlas OCR-Queue Slice 5)
+  let ocrQueueOpen = $state(false);
+  function openOcrQueue() {
+    ocrQueueOpen = true;
+  }
+  export function openOcrQueuePanel() {
+    openOcrQueue();
   }
 
   function openNewSmart() {
@@ -151,6 +161,10 @@
       // Cmd/Ctrl + Shift + F → open Smart Folders Hub (v3.37.0).
       e.preventDefault();
       openSmartHub();
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyO") {
+      // Cmd/Ctrl + Shift + O → open OCR Queue Panel (v3.52.0).
+      e.preventDefault();
+      openOcrQueue();
     } else if (e.key === "Escape" && menu) {
       menu = null;
     }
@@ -168,6 +182,8 @@
     window.addEventListener("slab:open-preset-picker", openPicker);
     window.addEventListener("slab:open-smart-builder", openBuilder);
     window.addEventListener("slab:open-smart-folders-hub", openHub);
+    const openOcrQ = () => openOcrQueue();
+    window.addEventListener("slab:open-ocr-queue", openOcrQ);
     const clickAway = () => (menu = null);
     window.addEventListener("click", clickAway);
     return () => {
@@ -176,6 +192,7 @@
       window.removeEventListener("slab:open-preset-picker", openPicker);
       window.removeEventListener("slab:open-smart-builder", openBuilder);
       window.removeEventListener("slab:open-smart-folders-hub", openHub);
+      window.removeEventListener("slab:open-ocr-queue", openOcrQ);
       window.removeEventListener("click", clickAway);
     };
   });
@@ -471,6 +488,11 @@
 <SmartFoldersHubPanel
   open={smartHubOpen}
   onClose={() => (smartHubOpen = false)}
+/>
+
+<OcrQueuePanel
+  open={ocrQueueOpen}
+  onClose={() => (ocrQueueOpen = false)}
 />
 
 <style>
