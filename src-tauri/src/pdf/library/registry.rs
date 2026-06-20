@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 10;
+const SCHEMA_VERSION: u32 = 11;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -86,6 +86,11 @@ pub struct TagRecord {
     pub id: i64,
     pub name: String,
     pub color: Option<String>,
+    /// Optional freeform note about the tag. Trimmed, never empty (empty
+    /// trims clear the column). Surfaced as the rail tooltip + the doc-card
+    /// chip tooltip so people can capture *why* a tag exists ("invoices
+    /// pending bookkeeper review"). v3.51.0 Atlas Tag-Descriptions.
+    pub description: Option<String>,
 }
 
 /// Returns the default path Slab opens its library DB at.
@@ -345,7 +350,17 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 10;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 10);
+        }
+        if version < 11 {
+            // v3.51.0 "Atlas Tag-Descriptions" — an optional freeform note per
+            // tag, surfaced as the rail tooltip + every doc-card chip tooltip
+            // so the *why* of a tag travels with it. Nullable so every pre-v11
+            // tag silently picks up `NULL` (no rewrite, no defaulting); the
+            // setter rejects oversized text and trims empty to NULL so the
+            // column only ever holds "real" notes.
+            conn.execute_batch("ALTER TABLE library_tags ADD COLUMN description TEXT;")?;
+            conn.execute_batch("PRAGMA user_version = 11;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 11);
         }
         Ok(())
     }
@@ -564,7 +579,7 @@ impl LibraryDb {
     /// Tags attached to a single document, ordered by name.
     pub fn tags_for_document(&self, doc_id: i64) -> Result<Vec<TagRecord>, LibraryError> {
         let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.name, t.color FROM library_tags t
+            "SELECT t.id, t.name, t.color, t.description FROM library_tags t
              INNER JOIN library_doc_tags dt ON dt.tag_id = t.id
              WHERE dt.doc_id = ?1
              ORDER BY t.name ASC",
@@ -592,6 +607,7 @@ impl LibraryDb {
             id,
             name: name.to_string(),
             color: color.map(str::to_string),
+            description: None,
         })
     }
 
@@ -599,7 +615,7 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, name, color FROM library_tags WHERE name = ?1",
+                "SELECT id, name, color, description FROM library_tags WHERE name = ?1",
                 params![name],
                 tag_from_row,
             )
@@ -612,7 +628,7 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, name, color FROM library_tags WHERE id = ?1",
+                "SELECT id, name, color, description FROM library_tags WHERE id = ?1",
                 params![tag_id],
                 tag_from_row,
             )
@@ -643,6 +659,48 @@ impl LibraryDb {
         };
         let changed = self.conn.execute(
             "UPDATE library_tags SET color = ?1 WHERE id = ?2",
+            params![normalized, tag_id],
+        )?;
+        if changed == 0 {
+            return Err(LibraryError::Other(format!("tag {tag_id} not found")));
+        }
+        self.find_tag_by_id(tag_id)?
+            .ok_or_else(|| LibraryError::Other(format!("tag {tag_id} not found")))
+    }
+
+    /// Set (or clear) the freeform `description` on a tag. Pass `None` — or any
+    /// string that trims to empty — to clear the column back to `NULL`. Returns
+    /// the updated row so the UI can swap it in without a full refetch.
+    ///
+    /// The persisted text is **always trimmed**, so trailing whitespace never
+    /// makes it into a tooltip. We cap the length at `MAX_TAG_DESCRIPTION_LEN`
+    /// chars (measured in Unicode scalars, not bytes, so emoji and CJK get a
+    /// sane budget) so a runaway paste can't bloat the DB or the rail tooltip.
+    /// Errors on unknown id or oversized text; a rejected update leaves the
+    /// row's old description untouched (the length check runs before the
+    /// UPDATE). v3.51.0 Atlas Tag-Descriptions.
+    pub fn set_tag_description(
+        &mut self,
+        tag_id: i64,
+        description: Option<&str>,
+    ) -> Result<TagRecord, LibraryError> {
+        let normalized: Option<String> = match description {
+            Some(d) => {
+                let trimmed = d.trim();
+                if trimmed.is_empty() {
+                    None
+                } else if !valid_tag_description(trimmed) {
+                    return Err(LibraryError::Other(format!(
+                        "tag description too long (max {MAX_TAG_DESCRIPTION_LEN} chars)"
+                    )));
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            None => None,
+        };
+        let changed = self.conn.execute(
+            "UPDATE library_tags SET description = ?1 WHERE id = ?2",
             params![normalized, tag_id],
         )?;
         if changed == 0 {
@@ -772,7 +830,7 @@ impl LibraryDb {
     pub fn list_tags(&self) -> Result<Vec<TagRecord>, LibraryError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name, color FROM library_tags ORDER BY name ASC")?;
+            .prepare("SELECT id, name, color, description FROM library_tags ORDER BY name ASC")?;
         let rows = stmt
             .query_map([], tag_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -849,7 +907,7 @@ impl LibraryDb {
             return Ok(Vec::new());
         }
         let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.name, t.color
+            "SELECT t.id, t.name, t.color, t.description
              FROM library_tags t
              INNER JOIN library_doc_tags dt ON dt.tag_id = t.id
              GROUP BY t.id
@@ -939,7 +997,21 @@ fn tag_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TagRecord> {
         id: row.get(0)?,
         name: row.get(1)?,
         color: row.get(2)?,
+        description: row.get(3)?,
     })
+}
+
+/// Maximum length of a tag description, in Unicode scalar values. Picked
+/// large enough that a real sentence or two fits ("invoices pending the
+/// bookkeeper's monthly review — auto-applied by the email rule") but small
+/// enough that the rail tooltip stays glanceable and the DB column stays
+/// cheap. Measured in chars (not bytes) so emoji and CJK get a sane budget.
+/// v3.51.0 Atlas Tag-Descriptions.
+pub(crate) const MAX_TAG_DESCRIPTION_LEN: usize = 500;
+
+/// Whether `d` (assumed already trimmed) fits the persisted-description budget.
+pub(crate) fn valid_tag_description(d: &str) -> bool {
+    d.chars().count() <= MAX_TAG_DESCRIPTION_LEN
 }
 
 /// Whether `c` is a CSS color value we're willing to persist on a tag row.
@@ -1097,6 +1169,28 @@ mod tests {
             assert_eq!(has_col, 1, "library_saved_views.{col} column missing");
         }
         assert!(db.schema_version().unwrap() >= 10);
+    }
+
+    #[test]
+    fn schema_v11_has_description_on_tags() {
+        // v3.51.0 Atlas Tag-Descriptions — adds a nullable `description`
+        // column to library_tags so each tag can carry an optional
+        // freeform note. Assert with `>=` not `==` so the next migration
+        // doesn't trip an unrelated equality check (the trap that bit
+        // the v3.39 -> bulk-tag tick).
+        let db = db();
+        let has_col: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library_tags') \
+                 WHERE name = 'description'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1, "library_tags.description column missing");
+        // Pre-v11 tags pick up NULL automatically (no default rewriting).
+        assert!(db.schema_version().unwrap() >= 11);
     }
 
     #[test]
@@ -1314,6 +1408,188 @@ mod tests {
     fn set_tag_color_unknown_id_errors() {
         let mut db = db();
         assert!(db.set_tag_color(9999, Some("#ff7a59")).is_err());
+    }
+
+    // ---- set_tag_description (v3.51.0 Atlas Tag-Descriptions) ----
+
+    #[test]
+    fn add_tag_starts_with_no_description() {
+        let mut db = db();
+        let t = db.add_tag("invoice", None).unwrap();
+        // Fresh tags carry NULL — descriptions are an explicit opt-in.
+        assert_eq!(t.description, None);
+        assert_eq!(db.find_tag_by_id(t.id).unwrap().unwrap().description, None);
+    }
+
+    #[test]
+    fn set_tag_description_updates_and_returns_row() {
+        let mut db = db();
+        let t = db.add_tag("invoice", None).unwrap();
+        let updated = db
+            .set_tag_description(t.id, Some("Bills waiting on bookkeeper"))
+            .unwrap();
+        assert_eq!(updated.id, t.id);
+        assert_eq!(updated.name, "invoice");
+        assert_eq!(
+            updated.description.as_deref(),
+            Some("Bills waiting on bookkeeper")
+        );
+        // Persisted: a fresh read sees the new description.
+        let fresh = db.find_tag_by_id(t.id).unwrap().unwrap();
+        assert_eq!(
+            fresh.description.as_deref(),
+            Some("Bills waiting on bookkeeper")
+        );
+        // Color and name are untouched by a description update.
+        assert_eq!(fresh.color, None);
+        assert_eq!(fresh.name, "invoice");
+    }
+
+    #[test]
+    fn set_tag_description_trims_whitespace() {
+        let mut db = db();
+        let t = db.add_tag("draft", None).unwrap();
+        let updated = db
+            .set_tag_description(t.id, Some("   First draft only.  \n"))
+            .unwrap();
+        // Both ends trimmed; persisted text never carries trailing whitespace.
+        assert_eq!(updated.description.as_deref(), Some("First draft only."));
+    }
+
+    #[test]
+    fn set_tag_description_empty_trims_to_null() {
+        let mut db = db();
+        let t = db.add_tag("note", None).unwrap();
+        // Seed a description.
+        db.set_tag_description(t.id, Some("something")).unwrap();
+        // An empty or whitespace-only string is equivalent to passing None —
+        // it clears the column back to NULL rather than persisting "".
+        for clearer in ["", "   ", "\n\t  "] {
+            db.set_tag_description(t.id, Some("something")).unwrap();
+            let cleared = db.set_tag_description(t.id, Some(clearer)).unwrap();
+            assert_eq!(cleared.description, None, "{clearer:?} should clear");
+        }
+    }
+
+    #[test]
+    fn set_tag_description_none_clears() {
+        let mut db = db();
+        let t = db.add_tag("done", None).unwrap();
+        db.set_tag_description(t.id, Some("ready to archive"))
+            .unwrap();
+        let cleared = db.set_tag_description(t.id, None).unwrap();
+        assert_eq!(cleared.description, None);
+    }
+
+    #[test]
+    fn set_tag_description_accepts_max_length() {
+        let mut db = db();
+        let t = db.add_tag("research", None).unwrap();
+        let exact = "x".repeat(MAX_TAG_DESCRIPTION_LEN);
+        let updated = db.set_tag_description(t.id, Some(&exact)).unwrap();
+        assert_eq!(updated.description.as_deref(), Some(exact.as_str()));
+    }
+
+    #[test]
+    fn set_tag_description_rejects_oversized_text() {
+        let mut db = db();
+        let t = db.add_tag("contract", None).unwrap();
+        db.set_tag_description(t.id, Some("original")).unwrap();
+        let oversize = "x".repeat(MAX_TAG_DESCRIPTION_LEN + 1);
+        assert!(
+            db.set_tag_description(t.id, Some(&oversize)).is_err(),
+            "{} chars should be rejected",
+            MAX_TAG_DESCRIPTION_LEN + 1
+        );
+        // The row's original description is untouched after a rejected update.
+        assert_eq!(
+            db.find_tag_by_id(t.id)
+                .unwrap()
+                .unwrap()
+                .description
+                .as_deref(),
+            Some("original")
+        );
+    }
+
+    #[test]
+    fn set_tag_description_counts_chars_not_bytes() {
+        // The length cap is in Unicode scalars, not bytes — emoji and CJK
+        // should each count as ONE toward the budget, not 3-4 bytes. A
+        // string of MAX scalars (where each is multi-byte) must still fit.
+        let mut db = db();
+        let t = db.add_tag("emoji", None).unwrap();
+        let multibyte = "漢".repeat(MAX_TAG_DESCRIPTION_LEN); // 3 bytes each
+        assert!(multibyte.len() > MAX_TAG_DESCRIPTION_LEN);
+        let updated = db.set_tag_description(t.id, Some(&multibyte)).unwrap();
+        assert_eq!(updated.description.as_deref(), Some(multibyte.as_str()));
+    }
+
+    #[test]
+    fn set_tag_description_unknown_id_errors() {
+        let mut db = db();
+        assert!(db.set_tag_description(9999, Some("missing tag")).is_err());
+    }
+
+    #[test]
+    fn set_tag_description_persists_across_list_and_recently_used() {
+        // The widened SELECT in list_tags and recently_used_tags must
+        // surface the description so the rail tooltip and the recent-chip
+        // tooltip both pick it up. This catches a column drift if the
+        // SQL widening regresses.
+        let mut db = db();
+        let folder = db.add_folder("/tmp/desc").unwrap();
+        let doc = db
+            .upsert_document(
+                Some(folder.id),
+                "/tmp/desc/p.pdf",
+                Some("p"),
+                "hash1",
+                1,
+                1,
+                None,
+                None,
+            )
+            .unwrap();
+        let t = db.add_tag("priority", None).unwrap();
+        db.set_doc_tags(doc.id, &[t.id]).unwrap();
+        db.set_tag_description(t.id, Some("URGENT")).unwrap();
+
+        // list_tags carries it.
+        let listed = db.list_tags().unwrap();
+        let from_list = listed.iter().find(|x| x.id == t.id).unwrap();
+        assert_eq!(from_list.description.as_deref(), Some("URGENT"));
+
+        // recently_used_tags carries it.
+        let recent = db.recently_used_tags(5).unwrap();
+        let from_recent = recent.iter().find(|x| x.id == t.id).unwrap();
+        assert_eq!(from_recent.description.as_deref(), Some("URGENT"));
+
+        // tags_for_document carries it.
+        let on_doc = db.tags_for_document(doc.id).unwrap();
+        assert_eq!(on_doc[0].description.as_deref(), Some("URGENT"));
+    }
+
+    #[test]
+    fn rename_tag_preserves_description() {
+        let mut db = db();
+        let t = db.add_tag("reserch", None).unwrap();
+        db.set_tag_description(t.id, Some("Papers I'm reading"))
+            .unwrap();
+        let renamed = db.rename_tag(t.id, "research").unwrap();
+        // Renaming is a pure UPDATE on (name); description must survive it.
+        assert_eq!(renamed.description.as_deref(), Some("Papers I'm reading"));
+    }
+
+    #[test]
+    fn set_tag_color_preserves_description() {
+        let mut db = db();
+        let t = db.add_tag("priority", None).unwrap();
+        db.set_tag_description(t.id, Some("Drop everything"))
+            .unwrap();
+        let updated = db.set_tag_color(t.id, Some("#ff7a59")).unwrap();
+        // Setting a color must NOT clobber the description column.
+        assert_eq!(updated.description.as_deref(), Some("Drop everything"));
     }
 
     #[test]

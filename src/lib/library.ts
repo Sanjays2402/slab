@@ -31,6 +31,9 @@ export interface TagRecord {
   id: number;
   name: string;
   color: string | null;
+  /** Optional freeform note about the tag (rail + chip tooltip). Trimmed,
+   * `null` when unset. v3.51.0 Atlas Tag-Descriptions. */
+  description: string | null;
 }
 
 /** OCR pipeline state for a document. Mirror of `OCR_STATE_*` constants
@@ -353,6 +356,27 @@ export async function renameTag(
     tagId,
     newName,
   });
+  return unwrap(res);
+}
+
+/**
+ * Set (or clear) the optional freeform description on a tag. Pass `null` — or
+ * any string that trims to empty — to clear the column back to `null`. The
+ * backend trims the input and rejects oversized text (cap is 500 Unicode
+ * scalars). Returns the updated row so callers can swap it in without a
+ * refetch. v3.51.0 Atlas Tag-Descriptions.
+ */
+export async function setTagDescription(
+  tagId: number,
+  description: string | null,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>(
+    "slab_library_set_tag_description",
+    {
+      tagId,
+      description,
+    },
+  );
   return unwrap(res);
 }
 

@@ -240,7 +240,7 @@ pub fn query_documents(
         .collect::<Vec<_>>()
         .join(",");
     let mut tag_stmt = conn.prepare(&format!(
-        "SELECT dt.doc_id, t.id, t.name, t.color
+        "SELECT dt.doc_id, t.id, t.name, t.color, t.description
          FROM library_doc_tags dt
          INNER JOIN library_tags t ON t.id = dt.tag_id
          WHERE dt.doc_id IN ({id_list})
@@ -254,6 +254,7 @@ pub fn query_documents(
                 id: row.get(1)?,
                 name: row.get(2)?,
                 color: row.get(3)?,
+                description: row.get(4)?,
             },
         ))
     })?;

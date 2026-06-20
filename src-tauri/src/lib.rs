@@ -3937,6 +3937,27 @@ fn slab_library_rename_tag(
     result.into()
 }
 
+/// Set (or clear) the freeform description on a tag. Pass `null` — or any
+/// string that trims to empty — to clear it back to NULL. Returns the updated
+/// tag row so the UI can swap it in without a full refetch. The backend trims
+/// the input and rejects oversized text (cap is `MAX_TAG_DESCRIPTION_LEN`
+/// Unicode scalars). v3.51.0 Atlas Tag-Descriptions.
+#[tauri::command]
+fn slab_library_set_tag_description(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    description: Option<String>,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_tag_description(tag_id, description.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Fold `source_id` into `target_id`: re-point every document link from the
 /// source tag to the target, coalescing duplicates by the newer `applied_at`,
 /// then delete the source tag. Returns the surviving target row. This is the
@@ -5632,6 +5653,7 @@ pub fn run() {
             slab_library_add_tag,
             slab_library_set_tag_color,
             slab_library_rename_tag,
+            slab_library_set_tag_description,
             slab_library_merge_tags,
             slab_library_set_doc_tags,
             slab_library_bulk_apply_tag,
