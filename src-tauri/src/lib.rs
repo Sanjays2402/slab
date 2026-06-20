@@ -93,10 +93,11 @@ use pdf::legal_stamp::{
 use pdf::library::{
     auto_tag_run_many as do_auto_tag_run_many, auto_tag_run_one as do_auto_tag_run_one,
     default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
-    ocr_queue_run_all as do_ocr_queue_run_all, ocr_queue_run_one as do_ocr_queue_run_one,
-    query_documents as do_query_documents, scan_folder as do_scan_folder, AutoTagRunResult,
-    DocumentRecord, FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult,
-    ScanReport, TagRecord,
+    ocr_queue_requeue_all_failed as do_ocr_queue_requeue_all_failed,
+    ocr_queue_requeue_doc as do_ocr_queue_requeue_doc, ocr_queue_run_all as do_ocr_queue_run_all,
+    ocr_queue_run_one as do_ocr_queue_run_one, query_documents as do_query_documents,
+    scan_folder as do_scan_folder, AutoTagRunResult, DocumentRecord, FolderRecord, LibraryDb,
+    LibraryError, LibraryFilter, OcrQueueResult, ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
@@ -4181,6 +4182,38 @@ fn slab_library_ocr_queue_run_all(
     result.into()
 }
 
+/// Re-queue one document — flip `ocr_done` / `ocr_failed` / `ocr_pending`
+/// back to `scanned` and clear `ocr_error` + `ocr_output_path` so the
+/// next `run_one` picks it up fresh. Returns the updated row.
+/// v3.52.0 Atlas OCR-Queue Slice 2.
+#[tauri::command]
+fn slab_library_ocr_queue_requeue(app: tauri::AppHandle, doc_id: i64) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_requeue_doc(&mut db, doc_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Re-queue every `ocr_failed` document in one shot. Returns the number
+/// of rows that flipped. v3.52.0 Atlas OCR-Queue Slice 2 companion.
+#[tauri::command]
+fn slab_library_ocr_queue_requeue_all_failed(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_requeue_all_failed(&mut db)
+    })();
+    if let Ok(n) = &result {
+        if *n > 0 {
+            emit_library_changed(&app);
+        }
+    }
+    result.into()
+}
+
 // ---------- Library auto-tag (Lens Slice 6) ----------
 
 /// Run auto-tag on one library document. Extracts page text, asks the
@@ -5714,6 +5747,8 @@ pub fn run() {
             slab_library_ocr_queue_list_pending,
             slab_library_ocr_queue_run_one,
             slab_library_ocr_queue_run_all,
+            slab_library_ocr_queue_requeue,
+            slab_library_ocr_queue_requeue_all_failed,
             slab_library_auto_tag_one,
             slab_library_auto_tag_many,
             windows::slab_window_open,

@@ -608,6 +608,34 @@ export async function ocrQueueRunAll(
   return unwrap(res);
 }
 
+/**
+ * Re-queue a single document by flipping `ocr_done` / `ocr_failed` /
+ * `ocr_pending` back to `scanned` and clearing both the persisted
+ * error and any stale output path. Returns the updated row so callers
+ * can patch their local doc list in place. v3.52.0 Atlas OCR-Queue
+ * Slice 2.
+ */
+export async function ocrQueueRequeue(
+  docId: number,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_ocr_queue_requeue",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Re-queue every `ocr_failed` document in one shot. Returns the count
+ * of rows that flipped. v3.52.0 Atlas OCR-Queue Slice 2 companion.
+ */
+export async function ocrQueueRequeueAllFailed(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_ocr_queue_requeue_all_failed",
+  );
+  return unwrap(res);
+}
+
 // ---------- Auto-tag (Lens Slice 6) ----------
 
 /**

@@ -1,25 +1,23 @@
-//! Library auto-OCR queue — Slice 2 of v0.13.0 Lens.
-//!
-//! A simple sequential queue: ask the library for docs whose
-//! `ocr_state` is `scanned` or `mixed` (and not currently pending /
-//! done), then OCR them one at a time, writing a searchable PDF next
-//! to the source as `<basename>.ocr.pdf`.
-//!
-//! The queue is intentionally synchronous — Tauri commands invoke
-//! `run_one` directly. Slice 2 ships the building blocks; Slice 7 may
-//! upgrade to a `tauri::async_runtime::spawn` worker with progress
-//! events once the UX needs them.
+//! Library auto-OCR queue — Slice 2 of v0.13.0 Lens, expanded by
+//! v3.52.0 "Atlas OCR-Queue" into a real subsystem with re-queue,
+//! stats, and failure-inbox surfaces.
 //!
 //! ## State machine
 //!
 //! ```text
 //!   scanned ────► ocr_pending ────► ocr_done
 //!   mixed   ──┘                ╲
-//!                               ╲──► ocr_failed (with error message)
+//!                               ╲──► ocr_failed (with persisted error message)
 //! ```
 //!
-//! Failed entries can be re-queued by setting their state back to
-//! `scanned` / `mixed`; that's a future UX affordance.
+//! - `scanned`/`mixed` rows are picked up by [`list_pending`] and
+//!   [`run_all`].
+//! - [`run_one`] writes the failure reason to `ocr_error` on failure and
+//!   clears it on success (v3.52.0 Slice 1).
+//! - [`requeue_doc`] flips a `ocr_done` / `ocr_failed` / `ocr_pending`
+//!   row back to `scanned` so the queue picks it up again, clearing
+//!   `ocr_error` and `ocr_output_path` so the row is genuinely fresh
+//!   (v3.52.0 Slice 2).
 
 use super::registry::{
     DocumentRecord, LibraryDb, LibraryError, OCR_STATE_DONE, OCR_STATE_FAILED, OCR_STATE_MIXED,
@@ -212,6 +210,84 @@ pub fn run_all(db: &mut LibraryDb, opts: &OcrOpts) -> Result<Vec<OcrQueueResult>
     Ok(out)
 }
 
+/// Re-queue a single document by flipping its `ocr_state` back to
+/// `scanned`, clearing the persisted `ocr_error` and `ocr_output_path`
+/// so the row is genuinely fresh before the next run_one picks it up.
+///
+/// Accepts `ocr_done`, `ocr_failed` and `ocr_pending` (a stale "pending"
+/// row from a crashed worker IS the prime use case). Rejects rows that
+/// the queue doesn't own — `text_native` and `unknown` are scanner
+/// classifications, not queue states; re-queueing them would lie. An
+/// unknown doc id errors so callers know nothing happened. v3.52.0 Slice 2.
+pub fn requeue_doc(db: &mut LibraryDb, doc_id: i64) -> Result<DocumentRecord, LibraryError> {
+    // Look up current state up-front so we can give a meaningful error
+    // before mutating anything.
+    let current = {
+        let conn = db.conn();
+        conn.query_row(
+            "SELECT ocr_state FROM library_documents WHERE id = ?1",
+            rusqlite::params![doc_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(LibraryError::from)?
+    };
+    match current.as_str() {
+        OCR_STATE_DONE | OCR_STATE_FAILED | OCR_STATE_PENDING => {}
+        other => {
+            return Err(LibraryError::Other(format!(
+                "cannot re-queue document in ocr_state '{other}' — only ocr_done / ocr_failed / ocr_pending are accepted",
+            )));
+        }
+    }
+    db.set_doc_ocr_state(doc_id, OCR_STATE_SCANNED)?;
+    db.set_doc_ocr_error(doc_id, None)?;
+    db.set_doc_ocr_output_path(doc_id, None)?;
+    // Re-read so callers get the canonical post-write row (no client-side
+    // mutation drift).
+    let conn = db.conn();
+    let row = conn.query_row(
+        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
+                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+         FROM library_documents WHERE id = ?1",
+        rusqlite::params![doc_id],
+        |row| {
+            Ok(DocumentRecord {
+                id: row.get(0)?,
+                folder_id: row.get(1)?,
+                path: row.get(2)?,
+                title: row.get(3)?,
+                hash: row.get(4)?,
+                size_bytes: row.get(5)?,
+                mtime_ns: row.get(6)?,
+                pages: row.get(7)?,
+                added_at: row.get(8)?,
+                last_seen_at: row.get(9)?,
+                ocr_state: row.get(10)?,
+                ocr_output_path: row.get(11)?,
+                ocr_error: row.get(12)?,
+                tags: Vec::new(),
+            })
+        },
+    )?;
+    Ok(row)
+}
+
+/// Re-queue every `ocr_failed` document in one shot. Useful for "fix
+/// tesseract install, then retry everything that broke" workflows.
+/// Returns the count of rows that flipped. Documents in other states
+/// are untouched. v3.52.0 Slice 2 companion.
+pub fn requeue_all_failed(db: &mut LibraryDb) -> Result<usize, LibraryError> {
+    let tx = db.conn_mut().transaction()?;
+    let n = tx.execute(
+        "UPDATE library_documents
+            SET ocr_state = ?1, ocr_error = NULL, ocr_output_path = NULL
+          WHERE ocr_state = ?2",
+        rusqlite::params![OCR_STATE_SCANNED, OCR_STATE_FAILED],
+    )?;
+    tx.commit()?;
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,5 +476,97 @@ mod tests {
         let _ = id;
         let r = run_all(&mut db, &OcrOpts::default()).unwrap();
         assert!(r.is_empty());
+    }
+
+    // -- v3.52.0 Atlas OCR-Queue Slice 2: requeue --
+
+    #[test]
+    fn requeue_doc_flips_failed_back_to_scanned() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/a.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(id, OCR_STATE_FAILED).unwrap();
+        db.set_doc_ocr_error(id, Some("bad day")).unwrap();
+        let out = requeue_doc(&mut db, id).unwrap();
+        assert_eq!(out.ocr_state, OCR_STATE_SCANNED);
+        assert!(out.ocr_error.is_none(), "requeue clears stale error");
+        assert!(out.ocr_output_path.is_none());
+        assert_eq!(out.id, id);
+    }
+
+    #[test]
+    fn requeue_doc_clears_output_path_from_prior_success() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/done.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(id, OCR_STATE_DONE).unwrap();
+        db.set_doc_ocr_output_path(id, Some("/done.ocr.pdf"))
+            .unwrap();
+        let out = requeue_doc(&mut db, id).unwrap();
+        assert_eq!(out.ocr_state, OCR_STATE_SCANNED);
+        assert!(
+            out.ocr_output_path.is_none(),
+            "requeue clears the prior .ocr.pdf so the row isn't lying"
+        );
+    }
+
+    #[test]
+    fn requeue_doc_accepts_stale_pending() {
+        // A crashed worker can leave a row in ocr_pending forever;
+        // re-queueing has to be the escape hatch.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/stuck.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(id, OCR_STATE_PENDING).unwrap();
+        let out = requeue_doc(&mut db, id).unwrap();
+        assert_eq!(out.ocr_state, OCR_STATE_SCANNED);
+    }
+
+    #[test]
+    fn requeue_doc_rejects_text_native_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/text.pdf", OCR_STATE_TEXT_NATIVE);
+        let err = requeue_doc(&mut db, id).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("text_native"),
+            "error should name the rejected state: {msg}"
+        );
+        // Row must be untouched.
+        let row = db.find_document_by_path("/text.pdf").unwrap().unwrap();
+        assert_eq!(row.ocr_state, OCR_STATE_TEXT_NATIVE);
+    }
+
+    #[test]
+    fn requeue_doc_rejects_unknown_id() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        assert!(requeue_doc(&mut db, 99_999).is_err());
+    }
+
+    #[test]
+    fn requeue_all_failed_flips_only_failed_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let f1 = seed_doc(&mut db, "/f1.pdf", OCR_STATE_SCANNED);
+        let f2 = seed_doc(&mut db, "/f2.pdf", OCR_STATE_SCANNED);
+        let f3 = seed_doc(&mut db, "/f3.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(f1, OCR_STATE_FAILED).unwrap();
+        db.set_doc_ocr_error(f1, Some("a")).unwrap();
+        db.set_doc_ocr_state(f2, OCR_STATE_FAILED).unwrap();
+        db.set_doc_ocr_error(f2, Some("b")).unwrap();
+        // f3 stays scanned — must not be touched.
+        let n = requeue_all_failed(&mut db).unwrap();
+        assert_eq!(n, 2, "exactly the failed rows flip");
+        let r1 = db.find_document_by_path("/f1.pdf").unwrap().unwrap();
+        let r2 = db.find_document_by_path("/f2.pdf").unwrap().unwrap();
+        let r3 = db.find_document_by_path("/f3.pdf").unwrap().unwrap();
+        assert_eq!(r1.ocr_state, OCR_STATE_SCANNED);
+        assert!(r1.ocr_error.is_none());
+        assert_eq!(r2.ocr_state, OCR_STATE_SCANNED);
+        assert!(r2.ocr_error.is_none());
+        assert_eq!(r3.ocr_state, OCR_STATE_SCANNED, "untouched");
+    }
+
+    #[test]
+    fn requeue_all_failed_is_zero_on_clean_library() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        seed_doc(&mut db, "/clean.pdf", OCR_STATE_TEXT_NATIVE);
+        assert_eq!(requeue_all_failed(&mut db).unwrap(), 0);
     }
 }
