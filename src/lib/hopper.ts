@@ -354,7 +354,32 @@ export interface BackfillReport {
   planned: PlannedAction[];
   /** Unix-seconds UTC. */
   generated_at: number;
+  /** Tally of files per matched rule, plus the synthetic
+   *  `__defaults__` (no rule, fell through to watch defaults) and
+   *  `__skip__` (plan-time skip) buckets. Rules with zero hits are
+   *  absent. Powers the panel's "Tax: 17 · Invoices: 23 · No rule:
+   *  4" pre-flight coverage strip. Optional on the wire — pre-v3.39
+   *  reports decode with this missing and the UI strip just doesn't
+   *  render. */
+  per_rule_counts?: Record<string, number>;
 }
+
+/** Bucket key in `BackfillReport.per_rule_counts` for plans that fell
+ *  through to the watch defaults (no rule matched). */
+export const BACKFILL_BUCKET_DEFAULTS = "__defaults__";
+
+/** Bucket key for plan-time skips (probe error, missing metadata). */
+export const BACKFILL_BUCKET_SKIP = "__skip__";
+
+/** Pretty-print a per_rule_counts bucket key for UI chips. The
+ *  synthetic `__defaults__` / `__skip__` keys are translated to
+ *  user-facing labels; any other key is the user-set rule name and
+ *  passes through unchanged. */
+export const backfillBucketLabel = (key: string): string => {
+  if (key === BACKFILL_BUCKET_DEFAULTS) return "No rule";
+  if (key === BACKFILL_BUCKET_SKIP) return "Skipped";
+  return key;
+};
 
 /** Per-file outcome after `executeBackfill` has run. */
 export type BackfillOutcomeStatus = "moved" | "skipped" | "failed";

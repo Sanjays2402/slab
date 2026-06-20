@@ -106,7 +106,31 @@ pub struct BackfillReport {
     /// "stale plan, re-scan?" hint if the user delays more than ~60s
     /// between planning and applying.
     pub generated_at: u64,
+    /// Tally of files that matched each rule, *plus* the synthetic
+    /// `__defaults__` bucket for files that fell through to the
+    /// watch defaults and `__skip__` for plan-time skips. Insertion
+    /// order tracks first-seen-during-walk; rules with zero hits do
+    /// NOT appear (saves UI clutter — the editor already lists them).
+    ///
+    /// Powers the Backfill panel's "Tax: 17 · Invoices: 23 · No rule:
+    /// 4" pre-flight strip so the user sees coverage at a glance
+    /// before clicking Apply.
+    ///
+    /// Serde default keeps pre-v3.39 cached reports decoding cleanly
+    /// (they get an empty BTreeMap; the UI strip just doesn't render).
+    #[serde(default)]
+    pub per_rule_counts: std::collections::BTreeMap<String, usize>,
 }
+
+/// Synthetic bucket key in [`BackfillReport::per_rule_counts`] for
+/// files that matched no rule and fell through to the watch defaults.
+/// The UI translates this to the user-facing label "No rule".
+pub const RULE_BUCKET_DEFAULTS: &str = "__defaults__";
+
+/// Synthetic bucket key in [`BackfillReport::per_rule_counts`] for
+/// files that were skipped at plan time (probe error, missing
+/// metadata, etc). The UI translates this to "Skipped".
+pub const RULE_BUCKET_SKIP: &str = "__skip__";
 
 /// Per-file outcome of `execute_backfill` — sibling to [`PlannedAction`]
 /// but reports *what actually happened* rather than what was planned.
@@ -229,6 +253,7 @@ pub fn plan_backfill_with_options(
             scanned: 0,
             planned,
             generated_at: now,
+            per_rule_counts: tally_rule_counts(&[]),
         };
     }
 
@@ -241,12 +266,32 @@ pub fn plan_backfill_with_options(
     }
 
     let scanned = planned.len();
+    let per_rule_counts = tally_rule_counts(&planned);
     BackfillReport {
         folder: folder_str,
         scanned,
         planned,
         generated_at: now,
+        per_rule_counts,
     }
+}
+
+/// Tally per-rule hit counts from a `planned` vector. Files with no
+/// matched rule but a destination land in the synthetic
+/// [`RULE_BUCKET_DEFAULTS`] bucket; plan-time skips land in
+/// [`RULE_BUCKET_SKIP`]. Buckets with zero hits are omitted so the
+/// UI strip stays tight.
+fn tally_rule_counts(planned: &[PlannedAction]) -> std::collections::BTreeMap<String, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for action in planned {
+        let key = match (action.action, action.matched_rule.as_deref()) {
+            (ActionKind::Skip, _) | (ActionKind::NoMatch, _) => RULE_BUCKET_SKIP.to_string(),
+            (_, Some(rule_name)) => rule_name.to_string(),
+            (_, None) => RULE_BUCKET_DEFAULTS.to_string(),
+        };
+        *counts.entry(key).or_insert(0) += 1;
+    }
+    counts
 }
 
 /// Walk `folder` and push every `*.pdf` into `out`. `current_depth`
@@ -1003,6 +1048,163 @@ mod tests {
         assert_eq!(default_back, PlanOptions::default());
     }
 
+    // ─── per_rule_counts (v3.39 round-10 pre-flight coverage strip) ─
+
+    /// Empty plan → empty per_rule_counts. Pins the "no buckets means
+    /// nothing to show" UI contract.
+    #[test]
+    fn per_rule_counts_empty_for_empty_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = plan_backfill(dir.path(), &base_watch(dir.path()), &[]);
+        assert!(report.per_rule_counts.is_empty());
+    }
+
+    /// Files that fall through to the watch defaults land in the
+    /// synthetic `__defaults__` bucket. Verifies the "No rule" strip
+    /// label has correct count math.
+    #[test]
+    fn per_rule_counts_buckets_unmatched_into_defaults() {
+        let src = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["a.pdf", "b.pdf", "c.pdf"]);
+        let report = plan_backfill(src.path(), &base_watch(out.path()), &[]);
+        assert_eq!(
+            report.per_rule_counts.get(RULE_BUCKET_DEFAULTS).copied(),
+            Some(3)
+        );
+        assert_eq!(report.per_rule_counts.len(), 1);
+    }
+
+    /// A mixed plan with rule matches + fall-throughs splits buckets
+    /// correctly. The headline pre-flight contract: "Tax: 2 · No
+    /// rule: 1".
+    #[test]
+    fn per_rule_counts_splits_matched_and_defaults() {
+        let src = tempfile::tempdir().unwrap();
+        let out_default = tempfile::tempdir().unwrap();
+        let out_tax = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["tax_a.pdf", "tax_b.pdf", "invoice.pdf"]);
+        let rules = vec![Rule {
+            name: "Tax docs".into(),
+            predicate: RulePredicate::FilenameGlob {
+                pattern: "tax_*.pdf".into(),
+            },
+            action: RuleAction {
+                recipe_id: None,
+                output_dir: Some(out_tax.path().display().to_string()),
+                rename_pattern: None,
+            },
+        }];
+        let report = plan_backfill(src.path(), &base_watch(out_default.path()), &rules);
+        assert_eq!(report.per_rule_counts.get("Tax docs").copied(), Some(2));
+        assert_eq!(
+            report.per_rule_counts.get(RULE_BUCKET_DEFAULTS).copied(),
+            Some(1)
+        );
+        assert_eq!(report.per_rule_counts.len(), 2);
+    }
+
+    /// Plan-time skips (unreadable folder) land in the `__skip__`
+    /// bucket — the UI shows them dimmed alongside actionable counts.
+    #[test]
+    fn per_rule_counts_buckets_skip_actions() {
+        let missing = Path::new("/definitely/does/not/exist/cake");
+        let report = plan_backfill(missing, &base_watch(Path::new("/tmp/out")), &[]);
+        // One synthetic Skip row from the unreadable-folder fall-back.
+        assert_eq!(
+            report.per_rule_counts.get(RULE_BUCKET_SKIP).copied(),
+            Some(1)
+        );
+    }
+
+    /// Rules with ZERO matches are absent from per_rule_counts —
+    /// keeps the UI strip tight (the editor already shows all rule
+    /// names). Pins the "no empty buckets" cleanup rule.
+    #[test]
+    fn per_rule_counts_omits_zero_match_rules() {
+        let src = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["random.pdf"]);
+        let rules = vec![Rule {
+            name: "Never matches".into(),
+            predicate: RulePredicate::FilenameGlob {
+                pattern: "absolutely_no_match_*.pdf".into(),
+            },
+            action: RuleAction {
+                recipe_id: None,
+                output_dir: Some(out.path().display().to_string()),
+                rename_pattern: None,
+            },
+        }];
+        let report = plan_backfill(src.path(), &base_watch(out.path()), &rules);
+        assert!(report.per_rule_counts.get("Never matches").is_none());
+        // The defaults bucket gets the lone unmatched file.
+        assert_eq!(
+            report.per_rule_counts.get(RULE_BUCKET_DEFAULTS).copied(),
+            Some(1)
+        );
+    }
+
+    /// Per-rule count sum must always equal `scanned`. Pins the "no
+    /// double-counting" arithmetic invariant the UI's strip relies on.
+    #[test]
+    fn per_rule_counts_sum_to_scanned() {
+        let src = tempfile::tempdir().unwrap();
+        let out_default = tempfile::tempdir().unwrap();
+        let out_a = tempfile::tempdir().unwrap();
+        let out_b = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["a1.pdf", "a2.pdf", "b1.pdf", "other.pdf"]);
+        let rules = vec![
+            Rule {
+                name: "A".into(),
+                predicate: RulePredicate::FilenameGlob {
+                    pattern: "a*.pdf".into(),
+                },
+                action: RuleAction {
+                    recipe_id: None,
+                    output_dir: Some(out_a.path().display().to_string()),
+                    rename_pattern: None,
+                },
+            },
+            Rule {
+                name: "B".into(),
+                predicate: RulePredicate::FilenameGlob {
+                    pattern: "b*.pdf".into(),
+                },
+                action: RuleAction {
+                    recipe_id: None,
+                    output_dir: Some(out_b.path().display().to_string()),
+                    rename_pattern: None,
+                },
+            },
+        ];
+        let report = plan_backfill(src.path(), &base_watch(out_default.path()), &rules);
+        let bucket_sum: usize = report.per_rule_counts.values().sum();
+        assert_eq!(bucket_sum, report.scanned);
+        assert_eq!(report.per_rule_counts.get("A").copied(), Some(2));
+        assert_eq!(report.per_rule_counts.get("B").copied(), Some(1));
+        assert_eq!(
+            report.per_rule_counts.get(RULE_BUCKET_DEFAULTS).copied(),
+            Some(1)
+        );
+    }
+
+    /// Pre-v3.39 cached BackfillReport JSON (no `per_rule_counts`
+    /// field) must deserialise cleanly with an empty map. Pins the
+    /// serde-default back-compat contract.
+    #[test]
+    fn per_rule_counts_serde_default_decodes_legacy_json() {
+        let legacy = r#"{
+            "folder": "/x",
+            "scanned": 0,
+            "planned": [],
+            "generated_at": 100
+        }"#;
+        let report: BackfillReport = serde_json::from_str(legacy).unwrap();
+        assert!(report.per_rule_counts.is_empty());
+        assert_eq!(report.scanned, 0);
+    }
+
     // ─── execute_backfill ───────────────────────────────────────────
 
     #[test]
@@ -1081,6 +1283,7 @@ mod tests {
                 action: ActionKind::Skip,
                 reason: "probe failed".into(),
             }],
+            per_rule_counts: Default::default(),
         };
         let run = execute_backfill(&report);
         assert_eq!(run.applied, 0);
@@ -1145,6 +1348,7 @@ mod tests {
             scanned: 0,
             generated_at: 0,
             planned: vec![],
+            per_rule_counts: Default::default(),
         };
         let mut frames: Vec<BackfillProgress> = Vec::new();
         let cancel = CancelFlag::new();
