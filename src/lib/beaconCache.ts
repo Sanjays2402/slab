@@ -46,3 +46,18 @@ export async function beaconIndexList(): Promise<IndexedPdfRecord[]> {
   );
   return unwrap(res);
 }
+
+/**
+ * Bulk-delete every PDF whose hash is in `pdfHashes`. Returns the count
+ * actually removed — unknown hashes silently skip so a stale id from a
+ * list-vs-forget race can't crash the inspector.
+ */
+export async function beaconIndexForgetMany(
+  pdfHashes: string[],
+): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_beacon_index_forget_many",
+    { pdfHashes },
+  );
+  return unwrap(res);
+}

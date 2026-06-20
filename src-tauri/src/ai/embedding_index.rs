@@ -204,6 +204,27 @@ impl EmbeddingIndex {
         Ok(())
     }
 
+    /// Bulk-delete every PDF named in `pdf_hashes` plus its chunks, in
+    /// one transaction. Returns the count of rows actually removed —
+    /// unknown hashes are silently skipped (tolerant wire contract so a
+    /// stale hash from a list-vs-forget race can't crash the inspector).
+    /// v3.54.0 Atlas Beacon-Cache — Slice 29.
+    pub fn forget_many(&mut self, pdf_hashes: &[String]) -> Result<usize, IndexError> {
+        if pdf_hashes.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.conn.transaction()?;
+        let mut removed = 0usize;
+        {
+            let mut stmt = tx.prepare("DELETE FROM pdfs WHERE hash = ?1")?;
+            for h in pdf_hashes {
+                removed += stmt.execute(params![h])?;
+            }
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
     /// Return every indexed PDF, newest first, with per-row chunk count
     /// joined in via a single LEFT JOIN + GROUP BY round-trip. LEFT JOIN
     /// keeps a PDF whose chunks got zeroed by a partial-write recovery
@@ -964,5 +985,43 @@ mod tests {
         assert!(json.contains("\"indexed_at\""));
         let back: Vec<IndexedPdfRecord> = serde_json::from_str(&json).unwrap();
         assert_eq!(back, listed);
+    }
+
+    #[test]
+    fn forget_many_removes_named_hashes_in_one_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 4, 2, "m", dir.path());
+        let to_drop: Vec<String> = hashes[..2].to_vec();
+        let removed = idx.forget_many(&to_drop).unwrap();
+        assert_eq!(removed, 2);
+        let remaining = idx.list_indexed().unwrap();
+        assert_eq!(remaining.len(), 2);
+        for r in &remaining {
+            assert!(!to_drop.contains(&r.pdf_hash));
+        }
+        // CASCADE handled chunk rows.
+        assert_eq!(idx.stats().unwrap().pdfs, 2);
+        assert_eq!(idx.stats().unwrap().chunks, 4);
+    }
+
+    #[test]
+    fn forget_many_silently_skips_unknown_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 2, 1, "m", dir.path());
+        let mix = vec![hashes[0].clone(), "deadbeef".repeat(8), hashes[1].clone()];
+        let removed = idx.forget_many(&mix).unwrap();
+        assert_eq!(removed, 2, "the bogus hash is silently skipped");
+        assert_eq!(idx.list_indexed().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn forget_many_empty_is_zero_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        assert_eq!(idx.forget_many(&[]).unwrap(), 0);
+        assert_eq!(idx.list_indexed().unwrap().len(), 1);
     }
 }

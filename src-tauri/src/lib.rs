@@ -2968,6 +2968,22 @@ fn slab_beacon_index_list() -> CmdResult<Vec<IndexedPdfRecord>> {
     index.list_indexed().into()
 }
 
+/// Bulk-forget every PDF whose hash is in `pdf_hashes`. Returns the
+/// count actually removed; unknown hashes silently skip (tolerant wire
+/// contract for the inspector's multi-select).
+#[tauri::command]
+fn slab_beacon_index_forget_many(pdf_hashes: Vec<String>) -> CmdResult<usize> {
+    let mut index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget_many(&pdf_hashes).into()
+}
+
 // ---------- Beacon PII Highlighter (Slice 8) ----------
 
 impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
@@ -5771,6 +5787,7 @@ pub fn run() {
             slab_beacon_index_stats,
             slab_beacon_index_forget,
             slab_beacon_index_list,
+            slab_beacon_index_forget_many,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
