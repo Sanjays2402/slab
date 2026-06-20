@@ -43,6 +43,9 @@
     rescanAll,
     scanFolder,
     setDocumentTags,
+    setDocumentTitle,
+    setDocumentNotes,
+    setDocumentStarred,
     setTagColor,
     renameTag,
     mergeTags,
@@ -74,6 +77,7 @@
   import { registerLibraryNav } from "$lib/vim/library-adapter";
   import CollectionsSidebar from "$lib/panels/CollectionsSidebar.svelte";
   import SuggestedTagsRow from "$lib/panels/SuggestedTagsRow.svelte";
+  import DocInspectorPanel from "$lib/panels/DocInspectorPanel.svelte";
 
   // ---------- Props (Cabinet v1.1.0) ----------
   //
@@ -1497,6 +1501,61 @@
     requestOpen(doc.path);
   }
 
+  // v3.55.0 Atlas Doc-Inspector — drawer state. Holds the single doc
+  // currently being inspected (or null when closed). The drawer
+  // component re-fetches a fresh row on open so it never edits a stale
+  // copy. setInspectorDoc() is what the drawer calls back when it
+  // successfully edits title/notes/starred so the LibraryPanel can
+  // splice the freshly-mutated doc into the grid without a full
+  // listDocuments round-trip.
+  let inspectorDoc = $state<DocumentRecord | null>(null);
+  function openInspectorFor(doc: DocumentRecord) {
+    menu = null;
+    inspectorDoc = doc;
+  }
+  function closeInspector() {
+    inspectorDoc = null;
+  }
+  function onInspectorUpdated(updated: DocumentRecord) {
+    // Splice the refreshed row into `docs` so the grid card updates
+    // immediately (title, ★, notes-hint badge if we ever add one).
+    inspectorDoc = updated;
+    const idx = docs.findIndex((d) => d.id === updated.id);
+    if (idx >= 0) {
+      docs = [...docs.slice(0, idx), updated, ...docs.slice(idx + 1)];
+    }
+    // If the starred-only toggle is on and the doc just got unstarred,
+    // it must drop out of the grid — the simplest correct path is a
+    // refresh, which also re-applies sort.
+    if (starredOnly && !updated.starred) void refreshDocs();
+  }
+  function onInspectorRemoved(removedId: number) {
+    docs = docs.filter((d) => d.id !== removedId);
+    closeInspector();
+  }
+
+  // Star/unstar from the context menu (or anywhere else) — wraps the
+  // setDocumentStarred IPC, splices the fresh row into `docs`, no
+  // intervening reload. Independent of the inspector state so the
+  // user can star without opening the drawer.
+  async function onToggleStar(doc: DocumentRecord) {
+    menu = null;
+    try {
+      const updated = await setDocumentStarred(doc.id, !doc.starred);
+      const idx = docs.findIndex((d) => d.id === updated.id);
+      if (idx >= 0) {
+        docs = [...docs.slice(0, idx), updated, ...docs.slice(idx + 1)];
+      }
+      if (inspectorDoc && inspectorDoc.id === updated.id) {
+        inspectorDoc = updated;
+      }
+      // Same starred-only side-effect as the inspector.
+      if (starredOnly && !updated.starred) void refreshDocs();
+    } catch (e) {
+      error = `Star failed: ${String(e)}`;
+    }
+  }
+
   function openMenuFor(e: MouseEvent, doc: DocumentRecord) {
     e.preventDefault();
     e.stopPropagation();
@@ -1989,7 +2048,21 @@
                     aria-hidden="true"
                   >{selectedDocIds.has(d.id) ? "\u2713" : ""}</span>
                 {/if}
+                {#if d.starred}
+                  <span
+                    class="card-star"
+                    aria-label="Starred"
+                    title="Starred"
+                  >&#x2605;</span>
+                {/if}
                 <div class="card-title" title={d.path}>{displayTitle(d)}</div>
+                {#if d.notes}
+                  <span
+                    class="card-notes-hint"
+                    aria-label="Has notes"
+                    title={`Has notes — open inspector to read`}
+                  >&#x270e;</span>
+                {/if}
                 <button
                   class="card-menu"
                   title="More"
@@ -2224,6 +2297,12 @@
     <button class="menu-item" onclick={() => openDocInTab(menu!.doc)}>
       <span>Open in Reader tab</span>
     </button>
+    <button class="menu-item" onclick={() => openInspectorFor(menu!.doc)}>
+      <span>Inspect&hellip;</span>
+    </button>
+    <button class="menu-item" onclick={() => onToggleStar(menu!.doc)}>
+      <span>{menu.doc.starred ? "Unstar" : "Star"}</span>
+    </button>
     {#if isOcrCandidate(menu.doc.ocr_state)}
       <button
         class="menu-item"
@@ -2288,6 +2367,15 @@
     </button>
   </div>
 {/if}
+
+<!-- v3.55.0 Atlas Doc-Inspector slice 37 — slide-from-right drawer for
+     editing a single doc's title/notes/star + viewing its metadata. -->
+<DocInspectorPanel
+  doc={inspectorDoc}
+  onUpdate={onInspectorUpdated}
+  onRemove={onInspectorRemoved}
+  onClose={closeInspector}
+/>
 
 <!-- New tag modal -->
 {#if newTagOpen}
@@ -2906,6 +2994,21 @@
   }
   .card:hover .card-menu { opacity: 1; }
   .card-menu:hover { color: var(--text); }
+  /* v3.55.0 Atlas Doc-Inspector — star + notes-hint glyphs on the card head. */
+  .card-star {
+    color: #f7c948;
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .card-notes-hint {
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 1;
+    flex-shrink: 0;
+    opacity: 0.75;
+  }
+  .card:hover .card-notes-hint { opacity: 1; }
   .card-meta {
     font-size: 11px;
     color: var(--text-3);
