@@ -456,6 +456,29 @@ export async function setTagDescription(
 }
 
 /**
+ * Override a library document's displayed `title`. Pass `null` — or any string
+ * that trims to empty on the backend — to clear the column back to `null` so
+ * the basename fallback resumes. Returns the refreshed `DocumentRecord` (with
+ * tags eager-loaded) so the LibraryPanel can splice the card back into the
+ * grid without a full `listDocuments` refetch. The backend trims input and
+ * rejects oversized text (cap is 500 Unicode scalars). v3.55.0 Atlas
+ * Doc-Inspector.
+ */
+export async function setDocumentTitle(
+  docId: number,
+  title: string | null,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_title",
+    {
+      docId,
+      title,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
  * Fold the `sourceId` tag into `targetId`: every document that wore the source
  * tag ends up wearing the target, duplicate links collapse keeping the newer
  * `applied_at` (so recently-used order survives), and the source tag row is

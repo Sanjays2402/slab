@@ -573,6 +573,65 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// Override a library document's displayed `title`. The persisted
+    /// title is what the LibraryPanel card and the search rail show; if
+    /// it is `NULL`, the UI falls back to the file's basename. This is
+    /// the user's lever to give a meaningless filename (`scan_001.pdf`)
+    /// a real human label without renaming the file on disk.
+    ///
+    /// `title` is trimmed. Pass `None` — or any string that trims to
+    /// empty — to clear the override back to `NULL` so the basename
+    /// fallback resumes. The trimmed value is capped at
+    /// [`MAX_DOC_TITLE_LEN`] Unicode scalars (cap measured in `chars`
+    /// so emoji and CJK get a sane budget). Errors on unknown id or
+    /// oversized text; a rejected update leaves the row's prior title
+    /// untouched because the length check runs before the UPDATE.
+    /// Returns the refreshed [`DocumentRecord`] with tags re-loaded so
+    /// the UI can splice it back into the doc grid without a full
+    /// list_documents round-trip. v3.55.0 Atlas Doc-Inspector.
+    pub fn set_doc_title(
+        &mut self,
+        doc_id: i64,
+        title: Option<&str>,
+    ) -> Result<DocumentRecord, LibraryError> {
+        let normalized: Option<String> = match title {
+            Some(t) => {
+                let trimmed = t.trim();
+                if trimmed.is_empty() {
+                    None
+                } else if !valid_doc_title(trimmed) {
+                    return Err(LibraryError::Other(format!(
+                        "document title too long (max {MAX_DOC_TITLE_LEN} chars)"
+                    )));
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            None => None,
+        };
+        let changed = self.conn.execute(
+            "UPDATE library_documents SET title = ?1 WHERE id = ?2",
+            params![normalized, doc_id],
+        )?;
+        if changed == 0 {
+            return Err(LibraryError::Other(format!("document {doc_id} not found")));
+        }
+        // Re-read so we return a normalized row, then eager-load tags so
+        // the UI doesn't need a second round-trip to repaint the card.
+        let mut doc = self
+            .conn
+            .query_row(
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                 FROM library_documents WHERE id = ?1",
+                params![doc_id],
+                document_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| LibraryError::Other(format!("document {doc_id} not found")))?;
+        doc.tags = self.tags_for_document(doc.id)?;
+        Ok(doc)
+    }
+
     /// Remove a document row by id. ON DELETE CASCADE on
     /// `library_doc_tags` will drop its tag links too.
     pub fn remove_document(&mut self, doc_id: i64) -> Result<(), LibraryError> {
@@ -1049,6 +1108,19 @@ pub(crate) fn valid_tag_description(d: &str) -> bool {
     d.chars().count() <= MAX_TAG_DESCRIPTION_LEN
 }
 
+/// Maximum length of an override title on `library_documents.title`, in
+/// Unicode scalar values. Big enough for a real document name (most paper
+/// titles fit comfortably under 200 chars; book chapters and legal exhibits
+/// occasionally hit 400) but capped so a runaway paste can't bloat the DB or
+/// the doc-card layout. Counted in chars (not bytes) so emoji and CJK get a
+/// sane budget. v3.55.0 Atlas Doc-Inspector.
+pub(crate) const MAX_DOC_TITLE_LEN: usize = 500;
+
+/// Whether `t` (assumed already trimmed) fits the persisted-title budget.
+pub(crate) fn valid_doc_title(t: &str) -> bool {
+    t.chars().count() <= MAX_DOC_TITLE_LEN
+}
+
 /// Whether `c` is a CSS color value we're willing to persist on a tag row.
 ///
 /// We accept exactly the two shapes the app produces — `#rgb` / `#rgba` /
@@ -1432,6 +1504,115 @@ mod tests {
         assert_eq!(d2.size_bytes, 200);
         assert_eq!(d2.pages, Some(5));
         assert_eq!(d2.title.as_deref(), Some("New"));
+    }
+
+    #[test]
+    fn set_doc_title_updates_and_returns_row_with_tags() {
+        // v3.55.0 Atlas Doc-Inspector — verifies the setter returns a
+        // refreshed DocumentRecord with tags eager-loaded so the UI can
+        // splice the card without a list_documents round-trip.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/x.pdf", None, "h", 10, 1, Some(2), None)
+            .unwrap();
+        let t = db.add_tag("research", None).unwrap();
+        db.set_doc_tags(d.id, &[t.id]).unwrap();
+        let updated = db.set_doc_title(d.id, Some("Quarterly Filing")).unwrap();
+        assert_eq!(updated.id, d.id);
+        assert_eq!(updated.title.as_deref(), Some("Quarterly Filing"));
+        // Eager-loaded tags survive the round-trip.
+        assert_eq!(updated.tags.len(), 1);
+        assert_eq!(updated.tags[0].name, "research");
+        // Persisted: a fresh path lookup also sees the new title.
+        let fresh = db.find_document_by_path("/tmp/x.pdf").unwrap().unwrap();
+        assert_eq!(fresh.title.as_deref(), Some("Quarterly Filing"));
+        // Other columns are untouched by a pure title update.
+        assert_eq!(fresh.hash, "h");
+        assert_eq!(fresh.size_bytes, 10);
+        assert_eq!(fresh.pages, Some(2));
+    }
+
+    #[test]
+    fn set_doc_title_trims_whitespace() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/y.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let updated = db
+            .set_doc_title(d.id, Some("   Important Report  \n"))
+            .unwrap();
+        assert_eq!(updated.title.as_deref(), Some("Important Report"));
+    }
+
+    #[test]
+    fn set_doc_title_empty_or_none_clears_to_null() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/z.pdf",
+                Some("Seed Title"),
+                "h",
+                1,
+                1,
+                None,
+                None,
+            )
+            .unwrap();
+        // Empty / whitespace strings collapse to NULL so the basename
+        // fallback resumes — never persist "real but empty" trash.
+        for clearer in ["", "   ", "\n\t  "] {
+            db.set_doc_title(d.id, Some("Seed Title")).unwrap();
+            let cleared = db.set_doc_title(d.id, Some(clearer)).unwrap();
+            assert!(cleared.title.is_none(), "{clearer:?} should clear");
+        }
+        // None explicitly clears too.
+        db.set_doc_title(d.id, Some("Seed Title")).unwrap();
+        let cleared = db.set_doc_title(d.id, None).unwrap();
+        assert!(cleared.title.is_none());
+    }
+
+    #[test]
+    fn set_doc_title_rejects_oversized_text_and_preserves_prior() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/big.pdf",
+                Some("Original"),
+                "h",
+                1,
+                1,
+                None,
+                None,
+            )
+            .unwrap();
+        let oversize = "x".repeat(MAX_DOC_TITLE_LEN + 1);
+        assert!(
+            db.set_doc_title(d.id, Some(&oversize)).is_err(),
+            "{} chars should be rejected",
+            MAX_DOC_TITLE_LEN + 1
+        );
+        // Length check runs BEFORE the UPDATE so the prior title survives.
+        let fresh = db.find_document_by_path("/tmp/big.pdf").unwrap().unwrap();
+        assert_eq!(fresh.title.as_deref(), Some("Original"));
+        // Exact-cap input is accepted.
+        let exact = "y".repeat(MAX_DOC_TITLE_LEN);
+        let accepted = db.set_doc_title(d.id, Some(&exact)).unwrap();
+        assert_eq!(accepted.title.as_deref(), Some(exact.as_str()));
+    }
+
+    #[test]
+    fn set_doc_title_unknown_id_errors() {
+        let mut db = db();
+        assert!(
+            db.set_doc_title(424242, Some("nope")).is_err(),
+            "unknown id should error"
+        );
     }
 
     #[test]
