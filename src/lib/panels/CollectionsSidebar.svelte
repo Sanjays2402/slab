@@ -19,6 +19,7 @@
     collectionRename,
     collectionSetColor,
     collectionReorder,
+    collectionDuplicate,
     collectionListDocs,
     collectionAddDocs,
     smartCollectionList,
@@ -271,6 +272,31 @@
       error = (err as Error).message;
     } finally {
       reorderBusy = false;
+    }
+  }
+
+  // -------- Duplicate (v3.53.0 Atlas Collections — Slice 26) --------
+  let duplicateBusyId = $state<number | null>(null);
+
+  async function handleDuplicate(c: CollectionRecord, ev: MouseEvent) {
+    ev.stopPropagation();
+    if (duplicateBusyId !== null) return;
+    duplicateBusyId = c.id;
+    try {
+      const created: CollectionRecord = await collectionDuplicate(c.id);
+      // The new row sorts to the end of the rail — refreshAll already
+      // wires that in but we proactively splice it in so the toast and
+      // the rail update land together.
+      collections = [...collections, created];
+      toast(
+        `Duplicated “${c.name}” to “${created.name}” (${created.doc_count} doc${
+          created.doc_count === 1 ? "" : "s"
+        })`,
+      );
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      duplicateBusyId = null;
     }
   }
 
@@ -589,6 +615,13 @@
             title="Rename collection"
             onclick={(e) => startRename(c, e)}
           >&#9998;</button>
+          <button
+            class="cs-edit cs-duplicate"
+            aria-label="Duplicate {c.name}"
+            title="Duplicate collection"
+            disabled={duplicateBusyId !== null}
+            onclick={(e) => handleDuplicate(c, e)}
+          >&#10063;</button>
           <button
             class="cs-x"
             aria-label="Delete {c.name}"

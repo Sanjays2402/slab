@@ -285,6 +285,80 @@ pub fn reorder_collections(db: &mut LibraryDb, ordered_ids: &[i64]) -> Result<us
     Ok(moved)
 }
 
+/// Clone a manual collection — name, icon, color, AND its full document
+/// membership — under a new auto-suffixed name. The new row drops in at
+/// the end of the sort_order (`MAX(sort_order) + 1`). Atomic.
+///
+/// Name semantics: appends `" (copy)"` to the source name; if that's
+/// already taken, tries `" (copy 2)"`, `" (copy 3)"`, …. Caps after
+/// `MAX_COLLECTION_NAME_LEN - 8` source chars so the suffix fits.
+/// Returns the freshly-created CollectionRecord with a populated
+/// `doc_count` already reflecting the cloned membership (no extra
+/// round-trip needed). Unknown id errors before any write.
+/// v3.53.0 Atlas Collections — Slice 26.
+pub fn duplicate_collection(
+    db: &mut LibraryDb,
+    source_id: i64,
+) -> Result<CollectionRecord, LibraryError> {
+    let source = get_collection(db, source_id)?;
+    let new_name = next_copy_name(db, &source.name)?;
+    let now = now_unix();
+    let tx = db.conn_mut().transaction()?;
+    let new_id = {
+        tx.execute(
+            "INSERT INTO library_collections (name, icon, color, created_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, COALESCE((SELECT MAX(sort_order) + 1 FROM library_collections), 0))",
+            params![new_name, source.icon, source.color, now],
+        )?;
+        let id = tx.last_insert_rowid();
+        // Clone the membership in one INSERT … SELECT so we never touch
+        // doc_id rows individually (fewer round-trips, identical added_at
+        // baseline for every doc copied across — so the new collection's
+        // "added_at DESC" preview lands in a stable order).
+        tx.execute(
+            "INSERT OR IGNORE INTO library_collection_docs (collection_id, doc_id, added_at)
+             SELECT ?1, doc_id, ?2 FROM library_collection_docs WHERE collection_id = ?3",
+            params![id, now, source_id],
+        )?;
+        id
+    };
+    tx.commit()?;
+    get_collection(db, new_id)
+}
+
+/// Pick the next available `"X (copy)"` / `"X (copy 2)"` / … name for a
+/// duplicate, capped at [`MAX_COLLECTION_NAME_LEN`] scalars (the source is
+/// truncated, not the suffix). Skips up to 999 collisions before giving
+/// up — a paralegal who has duplicated a collection 999 times has bigger
+/// problems than this loop.
+fn next_copy_name(db: &LibraryDb, source_name: &str) -> Result<String, LibraryError> {
+    // Reserve 8 chars for " (copy)" + buffer; suffix grows to " (copy 999)"
+    // which is 11 chars — give a 12-char budget.
+    let budget = MAX_COLLECTION_NAME_LEN.saturating_sub(12);
+    let trimmed_source: String = source_name.chars().take(budget).collect();
+    let name_exists = |name: &str| -> Result<bool, LibraryError> {
+        let count: i64 = db.conn().query_row(
+            "SELECT COUNT(*) FROM library_collections WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )?;
+        Ok(count > 0)
+    };
+    let first = format!("{trimmed_source} (copy)");
+    if !name_exists(&first)? {
+        return Ok(first);
+    }
+    for n in 2..=999 {
+        let cand = format!("{trimmed_source} (copy {n})");
+        if !name_exists(&cand)? {
+            return Ok(cand);
+        }
+    }
+    Err(LibraryError::Other(
+        "ran out of copy-suffix slots (999 dupes already)".into(),
+    ))
+}
+
 pub fn add_docs(
     db: &mut LibraryDb,
     collection_id: i64,
@@ -878,6 +952,94 @@ mod tests {
         let mut db = LibraryDb::open_in_memory().unwrap();
         let _a = create_collection(&mut db, "A", None, None).unwrap();
         assert_eq!(reorder_collections(&mut db, &[]).unwrap(), 0);
+    }
+
+    // -------- Slice 26: duplicate_collection --------
+
+    #[test]
+    fn duplicate_collection_clones_name_icon_color_and_docs() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Tax 2026", Some("folder"), Some("#7ee787")).unwrap();
+        let d1 = make_doc(&mut db, "intro");
+        let d2 = make_doc(&mut db, "policy");
+        add_docs(&mut db, c.id, &[d1, d2]).unwrap();
+        let dup = duplicate_collection(&mut db, c.id).unwrap();
+        assert_ne!(dup.id, c.id);
+        assert_eq!(dup.name, "Tax 2026 (copy)");
+        assert_eq!(dup.icon.as_deref(), Some("folder"));
+        assert_eq!(dup.color.as_deref(), Some("#7ee787"));
+        // doc_count reflects the cloned membership without an extra round-trip.
+        assert_eq!(dup.doc_count, 2);
+        // Source collection is untouched.
+        let src_after = get_collection(&db, c.id).unwrap();
+        assert_eq!(src_after.name, "Tax 2026");
+        assert_eq!(src_after.doc_count, 2);
+        // Both collections list the same doc set.
+        let src_docs = list_collection_docs(&db, c.id).unwrap();
+        let dup_docs = list_collection_docs(&db, dup.id).unwrap();
+        assert_eq!(src_docs.len(), 2);
+        assert_eq!(dup_docs.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_collection_auto_suffixes_on_collision() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Onboarding", None, None).unwrap();
+        let first = duplicate_collection(&mut db, c.id).unwrap();
+        assert_eq!(first.name, "Onboarding (copy)");
+        let second = duplicate_collection(&mut db, c.id).unwrap();
+        // Source name is still "Onboarding"; second clone goes to (copy 2)
+        // because (copy) is already taken.
+        assert_eq!(second.name, "Onboarding (copy 2)");
+        let third = duplicate_collection(&mut db, c.id).unwrap();
+        assert_eq!(third.name, "Onboarding (copy 3)");
+        // Duplicating the FIRST clone takes a fresh slot: "(copy) (copy)".
+        let chain = duplicate_collection(&mut db, first.id).unwrap();
+        assert_eq!(chain.name, "Onboarding (copy) (copy)");
+    }
+
+    #[test]
+    fn duplicate_collection_lands_at_end_of_sort_order() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "A", None, None).unwrap();
+        let b = create_collection(&mut db, "B", None, None).unwrap();
+        let dup = duplicate_collection(&mut db, a.id).unwrap();
+        // Existing rows kept their default sort_order (0/1); the clone lands
+        // at MAX + 1 = 2, so list order is A, B, A (copy).
+        let listed: Vec<i64> = list_collections(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(listed, vec![a.id, b.id, dup.id]);
+    }
+
+    #[test]
+    fn duplicate_collection_with_no_docs_returns_empty_copy() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Empty", None, None).unwrap();
+        let dup = duplicate_collection(&mut db, c.id).unwrap();
+        assert_eq!(dup.doc_count, 0);
+        assert_eq!(list_collection_docs(&db, dup.id).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn duplicate_collection_rejects_unknown_id() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        assert!(duplicate_collection(&mut db, 999_999).is_err());
+    }
+
+    #[test]
+    fn duplicate_collection_truncates_long_source_name_to_fit_suffix() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        // A source name right at the cap.
+        let long: String = "y".repeat(MAX_COLLECTION_NAME_LEN);
+        let c = create_collection(&mut db, &long, None, None).unwrap();
+        let dup = duplicate_collection(&mut db, c.id).unwrap();
+        // The clone fits under the cap because we truncated the source
+        // portion before appending " (copy)" — never the suffix.
+        assert!(dup.name.chars().count() <= MAX_COLLECTION_NAME_LEN);
+        assert!(dup.name.ends_with(" (copy)"));
     }
 
     #[test]

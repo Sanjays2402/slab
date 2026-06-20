@@ -3443,10 +3443,7 @@ fn slab_collection_set_color(
 }
 
 #[tauri::command]
-fn slab_collection_reorder(
-    app: tauri::AppHandle,
-    ordered_ids: Vec<i64>,
-) -> CmdResult<usize> {
+fn slab_collection_reorder(app: tauri::AppHandle, ordered_ids: Vec<i64>) -> CmdResult<usize> {
     let result = (|| -> Result<usize, LibraryError> {
         let mut db = open_library_db()?;
         pdf::library::collections::reorder_collections(&mut db, &ordered_ids)
@@ -3455,6 +3452,21 @@ fn slab_collection_reorder(
     // a no-op reorder would refresh every subscriber for nothing.
     let did_move = matches!(&result, Ok(n) if *n > 0);
     if did_move {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_duplicate(
+    app: tauri::AppHandle,
+    source_id: i64,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::duplicate_collection(&mut db, source_id)
+    })();
+    if result.is_ok() {
         emit_library_changed(&app);
     }
     result.into()
@@ -5766,6 +5778,7 @@ pub fn run() {
             slab_collection_delete,
             slab_collection_set_color,
             slab_collection_reorder,
+            slab_collection_duplicate,
             slab_collection_add_docs,
             slab_collection_remove_docs,
             slab_collection_list_docs,

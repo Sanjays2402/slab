@@ -842,6 +842,20 @@ export async function collectionReorder(orderedIds: number[]): Promise<number> {
   return unwrap(res);
 }
 
+/**
+ * Clone a manual collection — name, icon, color, AND its current document
+ * membership — under a new auto-suffixed name (`"X (copy)"`, `"X (copy 2)"`,
+ * …). The new row lands at the end of the rail's sort order. Returns the
+ * freshly-created row with `doc_count` already populated. v3.53.0 Atlas
+ * Collections — Slice 26.
+ */
+export async function collectionDuplicate(sourceId: number): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>("slab_collection_duplicate", {
+    sourceId,
+  });
+  return unwrap(res);
+}
+
 export async function collectionAddDocs(
   collectionId: number,
   docIds: number[],
