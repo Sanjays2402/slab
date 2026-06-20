@@ -944,5 +944,56 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
   the gate-driven fix commit at the end caught what the per-slice
   flow would have caught after each, so the iteration-cost saving is
   real with zero correctness loss.
+- 2026-06-19 21:25 PT (Cake, cron): round-5 BATCH tick — FIVE
+  OCR-Queue slices that turn the headless auto-OCR pipeline into a real
+  demo-able subsystem, all DONE, pushed + verified (local==origin
+  07f5f0a). Five commits, one per slice (slice 1 standalone,
+  slices 2/3/4 each bundle backend + tests + Tauri command + TS client
+  per the established wire-layer convention, slice 5 is the UI panel +
+  mount + palette entry).
+  - Slice 18 persisted OCR error (92fc6d8): schema v11->v12 ocr_error
+    column on library_documents; DocumentRecord widened end-to-end
+    through 4 SELECT sites (registry/query/collections/ocr_queue);
+    set_doc_ocr_error setter with trim+clear semantics; run_one writes
+    the reason on failure and clears on success; 5 new tests.
+  - Slice 19 re-queue (84a992f): requeue_doc flips done/failed/pending
+    back to scanned, clears stored error + output_path; rejects
+    text_native/unknown with named errors; requeue_all_failed bulk
+    transactional UPDATE; 7 new tests; 2 Tauri commands +
+    library-changed emits.
+  - Slice 20 stats (0e85112): OcrQueueStats with per-state counts plus
+    pending_total + total; one GROUP BY round-trip; forward-compat
+    ignores unknown buckets so a future state can't crash the
+    dashboard; 4 new tests including serde snake_case round-trip pin.
+  - Slice 21 list_failed (816a03f): every ocr_failed row, newest
+    first by last_seen_at; 3 new tests.
+  - Slice 22 OcrQueuePanel (07f5f0a): 800-LOC Svelte 5 panel ties the
+    backend slices into one surface — dashboard stats grid + indexed-%
+    tile, failure inbox with per-row Retry + section-head Retry-all,
+    pending preview with per-row Run-now + bulk Run-all; mounted by
+    CollectionsSidebar via window event + Cmd/Ctrl+Shift+O shortcut +
+    "OCR Queue…" command-palette entry; refreshes on library-changed;
+    monochrome chrome (no emoji per house style) reusing the
+    SmartFoldersHubPanel pattern. Pure frontend slice (no schema, no
+    backend, no new Tauri commands beyond the four already shipped).
+  All gates green: cargo fmt clean, cargo test --lib pdf::library:: 312
+  passed / 0 failed (+20 from 292 at v3.51/round-4), cargo clippy --lib
+  -D warnings clean (2m48s cold, 0.62s warm on the second run), pnpm
+  check 0 errors / 105 warnings all pre-existing in other panels (zero
+  on OcrQueuePanel from this batch). Pushed to
+  feature/v3.39.0-atlas-tag-suggest, verified local==origin at 07f5f0a.
+  Process note on the split: the 5-feature build started as one
+  monolithic in-memory state, then I unwound it into 5 per-slice
+  commits using /tmp/oq-slices snapshots + git checkout-then-rebuild,
+  so each slice is independently revertible per the cron prompt.
+  Time cost ~10 extra minutes vs one mega-commit; revertibility win
+  is worth it. Pattern worth retaining: build the whole batch first
+  for a single gate, then unwind per-slice from snapshots before
+  committing. Tag-system surface still feature-complete, full-text
+  search surface still feature-complete (no regressions on the 292-test
+  baseline either of those left); auto-OCR queue is now also end-to-end
+  demo-able with this batch. Next subsystem candidates: smart-folders
+  hub UI polish, collections, doc-detail metadata editor, Beacon cache
+  inspector, plugin marketplace.
 
 
