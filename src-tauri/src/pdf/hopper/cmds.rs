@@ -436,6 +436,34 @@ pub fn slab_hopper_list_backfill_runs(
         .map_err(|e| format!("log list_backfill_runs_since: {e}"))
 }
 
+/// `slab_hopper_export_backfill_csv` — write a [`super::backfill::BackfillReport`]
+/// to disk as RFC-4180 CSV. The frontend gathers the destination from
+/// a native save-as dialog and passes the absolute path here so the
+/// Tauri layer owns the disk I/O (the frontend's @tauri-apps/plugin-fs
+/// scope doesn't cover arbitrary user-chosen paths).
+///
+/// Returns the byte count actually written so the UI toast can show
+/// "Exported 42 rows (3.1 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+pub fn slab_hopper_export_backfill_csv(
+    report: super::backfill::BackfillReport,
+    path: String,
+) -> CmdResult<u64> {
+    let csv = super::backfill::backfill_report_to_csv(&report, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 // ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------

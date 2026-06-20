@@ -294,6 +294,65 @@ fn tally_rule_counts(planned: &[PlannedAction]) -> std::collections::BTreeMap<St
     counts
 }
 
+/// Render a [`BackfillReport`] as RFC-4180-compliant CSV — one header
+/// row plus one row per [`PlannedAction`]. Columns mirror what the UI
+/// table shows + the audit-trail fields a paralegal needs:
+///
+/// `source_path, size_bytes, matched_rule, destination, action, reason`
+///
+/// Used by the panel's "Export CSV…" affordance: paralegals routinely
+/// need to email the dry-run plan to a partner before applying, and
+/// every law firm runs on CSV. The header is omitted (`include_header
+/// = false`) when appending to an existing audit log.
+///
+/// Escaping policy (RFC 4180 §2):
+/// - Fields containing `,`, `"`, `\r`, `\n` are wrapped in `"`.
+/// - Embedded `"` is doubled (`""`).
+/// - Newlines inside fields are preserved (a file's `reason` may include
+///   multi-line OS error text). The UI's CSV export defaults to LF line
+///   endings between records; tools that need CRLF can post-process.
+///
+/// Pure function — never touches the filesystem; the Tauri command
+/// layer handles disk I/O.
+pub fn backfill_report_to_csv(report: &BackfillReport, include_header: bool) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str("source_path,size_bytes,matched_rule,destination,action,reason\n");
+    }
+    for action in &report.planned {
+        let action_str = match action.action {
+            ActionKind::Move => "move",
+            ActionKind::Copy => "copy",
+            ActionKind::Skip => "skip",
+            ActionKind::NoMatch => "no-match",
+        };
+        let row = [
+            csv_escape(&action.source_path),
+            action.size_bytes.to_string(),
+            csv_escape(action.matched_rule.as_deref().unwrap_or("")),
+            csv_escape(action.destination.as_deref().unwrap_or("")),
+            action_str.to_string(),
+            csv_escape(&action.reason),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+/// Escape a single CSV field per RFC 4180. Only wraps in quotes when
+/// the field actually contains a special char — the output stays
+/// human-readable for the common case of bare alphanumeric paths.
+fn csv_escape(field: &str) -> String {
+    let needs_quoting =
+        field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r');
+    if !needs_quoting {
+        return field.to_string();
+    }
+    let escaped = field.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
 /// Walk `folder` and push every `*.pdf` into `out`. `current_depth`
 /// counts levels below the original root; `max_depth` is the inclusive
 /// cap (== 0 → root only, == u32::MAX → unbounded). Hidden entries
@@ -1203,6 +1262,155 @@ mod tests {
         let report: BackfillReport = serde_json::from_str(legacy).unwrap();
         assert!(report.per_rule_counts.is_empty());
         assert_eq!(report.scanned, 0);
+    }
+
+    // ─── backfill_report_to_csv (v3.39 round-10 audit-trail export) ─
+
+    fn report_with(planned: Vec<PlannedAction>) -> BackfillReport {
+        BackfillReport {
+            folder: "/in".into(),
+            scanned: planned.len(),
+            generated_at: 100,
+            per_rule_counts: tally_rule_counts(&planned),
+            planned,
+        }
+    }
+
+    /// Header row is included exactly once when requested, omitted
+    /// otherwise. Pins the append-mode contract (audit logs that
+    /// concatenate exports).
+    #[test]
+    fn csv_header_inclusion_is_caller_controlled() {
+        let report = report_with(vec![PlannedAction {
+            source_path: "/in/a.pdf".into(),
+            size_bytes: 100,
+            matched_rule: Some("tax".into()),
+            destination: Some("/out/a.pdf".into()),
+            action: ActionKind::Move,
+            reason: "matched rule 'tax'".into(),
+        }]);
+        let with_header = backfill_report_to_csv(&report, true);
+        assert!(with_header.starts_with("source_path,size_bytes,"));
+        let lines: Vec<_> = with_header.lines().collect();
+        assert_eq!(lines.len(), 2); // header + 1 row
+
+        let without = backfill_report_to_csv(&report, false);
+        assert!(!without.contains("source_path,size_bytes,"));
+        assert_eq!(without.lines().count(), 1);
+    }
+
+    /// Empty report → just the header (or nothing without it). Pins
+    /// the "no zero-row CSV explosions" edge case.
+    #[test]
+    fn csv_empty_report_yields_header_only() {
+        let report = report_with(vec![]);
+        let with_header = backfill_report_to_csv(&report, true);
+        assert_eq!(
+            with_header,
+            "source_path,size_bytes,matched_rule,destination,action,reason\n"
+        );
+        let without = backfill_report_to_csv(&report, false);
+        assert!(without.is_empty());
+    }
+
+    /// Fields with commas/quotes/newlines are RFC-4180 escaped:
+    /// wrapped in `"`, embedded `"` doubled. Pins the spec
+    /// compliance — Excel et al. expect exactly this shape.
+    #[test]
+    fn csv_escapes_commas_quotes_and_newlines() {
+        let report = report_with(vec![PlannedAction {
+            source_path: "/in/has,comma.pdf".into(),
+            size_bytes: 42,
+            matched_rule: Some("has \"quotes\"".into()),
+            destination: Some("/out/has\nnewline.pdf".into()),
+            action: ActionKind::Move,
+            reason: "line one\nline two".into(),
+        }]);
+        let csv = backfill_report_to_csv(&report, false);
+        // Comma-containing path is wrapped.
+        assert!(csv.contains("\"/in/has,comma.pdf\""));
+        // Embedded quote is doubled inside the wrapping pair.
+        assert!(csv.contains("\"has \"\"quotes\"\"\""));
+        // Newline-containing field is wrapped.
+        assert!(csv.contains("\"/out/has\nnewline.pdf\""));
+        assert!(csv.contains("\"line one\nline two\""));
+    }
+
+    /// Bare alphanumeric fields stay unquoted — keeps the export
+    /// human-readable for the 95% common case.
+    #[test]
+    fn csv_bare_fields_stay_unquoted() {
+        let report = report_with(vec![PlannedAction {
+            source_path: "/in/clean.pdf".into(),
+            size_bytes: 7,
+            matched_rule: Some("plain_rule".into()),
+            destination: Some("/out/clean.pdf".into()),
+            action: ActionKind::Move,
+            reason: "matched rule plain_rule".into(),
+        }]);
+        let csv = backfill_report_to_csv(&report, false);
+        // No double-quotes appear in the row at all.
+        assert!(!csv.contains('"'));
+        // Comma-separated, in fixed column order.
+        assert!(csv.starts_with("/in/clean.pdf,7,plain_rule,/out/clean.pdf,move,"));
+    }
+
+    /// Action kind serialises to its kebab-case wire string in the
+    /// `action` column — matches the JSON serde output so the CSV
+    /// and JSON exports agree on the same vocabulary.
+    #[test]
+    fn csv_action_column_matches_kebab_case() {
+        let report = report_with(vec![
+            PlannedAction {
+                source_path: "/a".into(),
+                size_bytes: 0,
+                matched_rule: None,
+                destination: Some("/o/a".into()),
+                action: ActionKind::Move,
+                reason: "r".into(),
+            },
+            PlannedAction {
+                source_path: "/b".into(),
+                size_bytes: 0,
+                matched_rule: None,
+                destination: None,
+                action: ActionKind::Skip,
+                reason: "r".into(),
+            },
+            PlannedAction {
+                source_path: "/c".into(),
+                size_bytes: 0,
+                matched_rule: None,
+                destination: None,
+                action: ActionKind::NoMatch,
+                reason: "r".into(),
+            },
+        ]);
+        let csv = backfill_report_to_csv(&report, false);
+        let lines: Vec<_> = csv.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].ends_with(",move,r"));
+        assert!(lines[1].ends_with(",skip,r"));
+        assert!(lines[2].ends_with(",no-match,r"));
+    }
+
+    /// Missing matched_rule / destination render as empty (not the
+    /// literal string "None") so downstream parsers don't trip.
+    #[test]
+    fn csv_optional_fields_render_empty_not_none() {
+        let report = report_with(vec![PlannedAction {
+            source_path: "/in/unmatched.pdf".into(),
+            size_bytes: 1,
+            matched_rule: None,
+            destination: None,
+            action: ActionKind::Skip,
+            reason: "no metadata".into(),
+        }]);
+        let csv = backfill_report_to_csv(&report, false);
+        assert!(!csv.contains("None"));
+        // Three commas in a row indicate the two empty fields plus the
+        // delimiter before `action`.
+        assert!(csv.contains("/in/unmatched.pdf,1,,,skip,"));
     }
 
     // ─── execute_backfill ───────────────────────────────────────────

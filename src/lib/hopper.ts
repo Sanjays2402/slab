@@ -544,3 +544,25 @@ export const backfillSinceUnix = (windowHours: number | null): number | null => 
   }
   return Math.floor(Date.now() / 1000) - Math.floor(windowHours * 3600);
 };
+
+/** Export a `BackfillReport` to disk as RFC-4180 CSV. The frontend
+ *  gathers `path` from the @tauri-apps/plugin-dialog save-as picker;
+ *  the Rust side handles the actual write so arbitrary user-chosen
+ *  paths bypass the frontend FS scope. Returns the byte count
+ *  written, so the UI toast can say "Exported 42 rows (3.1 KB)"
+ *  without re-reading the file. */
+export const slabHopperExportBackfillCsv = (
+  report: BackfillReport,
+  path: string,
+): Promise<number> =>
+  invoke("slab_hopper_export_backfill_csv", { report, path });
+
+/** Suggest a default filename for the CSV export based on the
+ *  scanned folder + plan timestamp. Pure — keeps the panel free of
+ *  date math. Format: `backfill_<basename>_<YYYY-MM-DD>.csv`. */
+export const suggestBackfillCsvFilename = (report: BackfillReport): string => {
+  const stem = basename(report.folder).replace(/[^A-Za-z0-9_-]/g, "_") || "folder";
+  const d = new Date(report.generated_at * 1000);
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `backfill_${stem}_${iso}.csv`;
+};
