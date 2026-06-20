@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-19 23:14 PT by Cake (cron) — round-7 BATCH shipped: 5 Beacon Cache Inspector slices that promote the embedding index from an opaque (pdfs,chunks) tuple into a Notion-grade manageable surface (list, bulk-forget, per-model breakdown, stale-path detect, dedicated UI). Pushed + verified on feature branch (5be3a3d).
+Last updated: 2026-06-20 06:09 PT by Cake (cron) — round-8 BATCH shipped: 5 Doc-Inspector slices that promote a library document row from an opaque grid cell into a full editable surface (title override + freeform notes + star + starred-only filter + dedicated DocInspectorPanel drawer). Pushed + verified on feature branch (4fe82f9).
 
 ## Active branch & version
 
@@ -9,8 +9,255 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `5be3a3d` — "feat(beacon-cache): dedicated Beacon Cache Inspector panel".
+Latest commit: `4fe82f9` — "feat(library): dedicated Doc Inspector drawer ties slices 33-36 together".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
+
+### What round-8 (2026-06-20 06:09 PT) just shipped
+
+A demo-able overhaul of the doc-row surface. Before this tick a
+library_documents row had a `title` column but NO setter — so a
+filename like `scan_001.pdf` was stuck as-is — and zero per-doc
+context: no notes, no star, no inspector. The card menu let you
+open in Reader, OCR, auto-tag, manage tags, remove; nothing else.
+Now every Notion-grade per-doc affordance lands:
+
+- Slice 33: `LibraryDb::set_doc_title(doc_id, Option<&str>)` overrides
+  the displayed title without renaming the on-disk file. Trims,
+  None/empty clears back to NULL so the basename fallback resumes,
+  capped at MAX_DOC_TITLE_LEN (500 Unicode scalars). Errors on
+  unknown id or oversized text; length check runs BEFORE the
+  UPDATE so a rejected setter leaves the prior title untouched.
+  Returns the refreshed DocumentRecord with tags eager-loaded.
+  5 new tests + Tauri command + TS client. (7398b58)
+- Slice 34: schema bump v12 -> v13 adds nullable `notes TEXT` to
+  library_documents (pre-v13 rows silently pick up NULL).
+  `set_doc_notes(doc_id, Option<&str>)` is the writer, same trim/
+  empty-clears/cap shape as set_doc_title; cap is MAX_DOC_NOTES_LEN
+  (4000 Unicode scalars, sized for a paragraph or two of provenance
+  context). DocumentRecord widened end-to-end: backend struct, the
+  four ocr_queue SELECT mappers, the registry/query/collections
+  SELECT lists, the TypeScript mirror. 6 new tests (incl. schema_v13
+  pragma_table_info pin). (12eab28)
+- Slice 35: schema bump v13 -> v14 adds `starred INTEGER NOT NULL
+  DEFAULT 0` + partial index `idx_documents_starred WHERE
+  starred = 1`. Partial index is cheap because only a small
+  fraction of the library is ever starred. `set_doc_starred(
+  doc_id, bool)` is the writer; idempotent (SQLite reports rows
+  matched not rows changed). 5 new tests (incl. schema_v14 +
+  partial-index pin + upsert_existing_doc_preserves_starred — the
+  scanner's re-upsert pass must NOT wipe a user-set star).
+  (66a14fb)
+- Slice 36: queryable surface for the star flag. Three independent
+  levers: LibraryFilter.starred_only top-level flag (AND-combined
+  with everything, lives at the top so it overlays cleanly on ANY
+  saved filter including the clause tree), FilterClause::Starred /
+  NotStarred variants for the smart-collection rule builder, and
+  the LibraryPanel toolbar "Starred" toggle chip mirroring the
+  existing "Untagged" pattern. Pre-v3.55 saved smart collections
+  that didn't carry starred_only deserialise as `false`. 6 new
+  query.rs tests (incl. starred_filter_serde_round_trip with the
+  legacy-JSON-without-the-field deserialises-as-false pin).
+  (2fd3027)
+- Slice 37: Pure frontend — DocInspectorPanel.svelte (~600-LOC
+  Svelte 5 panel) that ties slices 33-35 into one drawer. NOT a
+  full-viewport modal like OcrQueuePanel / BeaconCachePanel;
+  a 460px slide-from-right drawer (Notion side-panel convention)
+  so the doc grid stays visible behind it. Sections: title
+  override input (placeholder shows basename fallback, save on
+  blur or Enter), notes textarea (save on blur or Cmd/Ctrl+Enter,
+  live counter that goes amber at 90% and red over the 4000-char
+  cap), read-only tag chips (with hint pointing at the card-menu
+  tag affordance), metadata block (path / pages / size / added /
+  last-seen / OCR-state with the error reason inline if failed),
+  footer with Open in Reader (primary) / Reveal on disk / Remove
+  from library (danger, two-step confirm). Star pill at the top-
+  left (gold #f7c948 when on). LibraryPanel wiring: imports the
+  three setters, gains inspectorDoc state + 4 handlers, adds
+  "Inspect…" and "Star/Unstar" context-menu entries between
+  "Open in Reader" and the OCR section, and decorates each card
+  head with a ★ glyph for starred docs and a ✎ glyph for docs
+  with notes. starredOnly side-effect: when the toggle is on and
+  the user unstars a doc, the row drops out of the grid via
+  refresh. (4fe82f9)
+
+Gates passed: cargo fmt clean, cargo test --lib pdf::library::
+359 passed / 0 failed (+22 from round-7's 337 baseline: 5
+set_doc_title + 6 set_doc_notes + 5 set_doc_starred + 6 query
+starred tests), cargo test --lib ai::embedding_index 30 passed
+/ 0 failed (round-7 baseline preserved), cargo clippy --lib -D
+warnings clean (11s warm), pnpm check 0 errors / 104 warnings
+(same as round-7 baseline; zero new from DocInspector or the
+LibraryPanel card-head chrome).
+
+DESIGN NOTES: Drawer NOT modal — the inspector wants context (you
+look at it WHILE you scan the grid), unlike OCR Queue which is a
+maintenance screen. Tags are read-only in the inspector — duplicating
+the picker chrome would either confuse the menu-Tags section or
+invite bugs; the hint sends users to the card menu. Notes save on
+blur because an autosave inspector has no Save button competing for
+footer real estate with Open/Reveal/Remove. No keyboard shortcut for
+"open inspector" — vim-mode + the card menu are sufficient discovery.
+
+## BUILD ENVIRONMENT — CRITICAL, read before any cargo command
+
+Internal disk is FULL (~2.9 GiB free of 228). Cargo target is redirected to an
+APFS sparse image at **/Volumes/SlabBuild** via `src-tauri/.cargo/config.toml`
+(gitignored). Verify mounted each tick: `df -h /Volumes/SlabBuild | tail -1`.
+If missing: `hdiutil attach "/Volumes/Sanjay SSD/SlabBuild.sparseimage"`.
+
+**The image has very slow fsync.** Proven tonight across many attempts:
+- `cargo test --lib`, `cargo check --lib`, `pnpm check` → WORK (slow but finish).
+- A FULL `cargo build` / `cargo tauri build` → WEDGES on the `tauri` crate's
+  final codegen (rustc goes to sleep state, no CPU, target size flat for min).
+**RULE: never run a full binary build in a tick.** It's release work, blocked by
+CI billing anyway. Gate with `cargo test --lib` + `cargo clippy --lib` + `pnpm
+check`. If cargo wedges >5 min with no rustc CPU: `pkill -f 'cargo'`, retry once.
+
+## CI STILL BLOCKED — needs Sanjay
+
+GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppImage)
+until fixed. Action: https://github.com/settings/billing → update payment / raise
+limit. Does NOT affect local dev or branch pushes.
+
+## Roadmap — round 8 (Doc Inspector) — ALL DONE
+
+Round 8 batched FIVE feature slices into one cron tick onto a
+fresh subsystem (per-doc detail — the library_documents row was
+just storage + ocr-state + tags; no inspector, no notes, no star,
+no rename).
+
+33. ~~**set_doc_title (rename docs in place)**~~ — DONE
+    (2026-06-20 06:09 PT, 7398b58, single commit). Backend setter
+    that overrides the displayed title without renaming the
+    on-disk file. Trim + None/empty clears to NULL (basename
+    fallback resumes), MAX_DOC_TITLE_LEN cap 500 with the length
+    check running BEFORE the UPDATE so a rejected setter leaves
+    the prior title untouched. Returns the refreshed
+    DocumentRecord with tags eager-loaded for one-round-trip card
+    refresh. 5 new tests + Tauri command + TS client.
+34. ~~**set_doc_notes (schema v13)**~~ — DONE (2026-06-20 06:09
+    PT, 12eab28, single commit). Schema bump 12 -> 13 adds
+    nullable `notes TEXT`. Setter same trim/empty-clears/cap
+    shape; cap is MAX_DOC_NOTES_LEN = 4000 (sized for a paragraph
+    or two of provenance context). DocumentRecord widened
+    end-to-end (the four ocr_queue SELECT mappers + registry +
+    query + collections SELECT lists + the TS mirror). 6 new
+    tests incl. schema_v13 pragma_table_info pin.
+35. ~~**set_doc_starred (schema v14)**~~ — DONE (2026-06-20 06:09
+    PT, 66a14fb, single commit). Schema bump 13 -> 14 adds
+    `starred INTEGER NOT NULL DEFAULT 0` + partial index
+    `idx_documents_starred WHERE starred = 1`. Setter is
+    idempotent (SQLite reports rows matched, not rows whose value
+    changed). 5 new tests incl. schema_v14 pin (with partial
+    index assertion) + upsert_existing_doc_preserves_starred (the
+    scanner's re-upsert pass MUST NOT wipe a user-set star — this
+    test would catch a regression if someone added `starred =
+    DEFAULT` to the UPDATE SET clause).
+36. ~~**starred_only filter + Starred clause + toolbar toggle**~~
+    — DONE (2026-06-20 06:09 PT, 2fd3027, single commit).
+    LibraryFilter.starred_only top-level AND-combined flag,
+    FilterClause::Starred / NotStarred for the recursive builder,
+    LibraryPanel toolbar "Starred" toggle chip mirroring the
+    existing Untagged chip pattern. Pre-v3.55 saved smart
+    collections that didn't carry the field deserialise as false.
+    6 new query.rs tests incl. starred_filter_serde_round_trip
+    legacy-JSON pin.
+37. ~~**Dedicated DocInspectorPanel UI**~~ — DONE (2026-06-20
+    06:09 PT, 4fe82f9, single commit). ~600-LOC Svelte 5 panel —
+    NOT a full-viewport modal but a 460px slide-from-right drawer
+    (Notion side-panel convention) so the doc grid stays visible
+    behind it. Sections: star pill, title override input
+    (placeholder shows basename fallback, save on blur or Enter),
+    notes textarea (save on blur or Cmd/Ctrl+Enter, live counter
+    amber at 90% / red over cap), read-only tag chips (hint
+    points at card-menu for editing), metadata block, footer
+    with Open in Reader / Reveal on disk / Remove from library
+    (danger, two-step confirm). LibraryPanel wiring: inspectorDoc
+    state + 4 handlers (open/close/updated/removed), "Inspect…"
+    and "Star/Unstar" context-menu entries, ★ glyph on starred
+    cards + ✎ glyph on cards with notes for at-a-glance triage.
+    Pure frontend slice — no new Tauri commands beyond the three
+    in slices 33-35.
+
+    With Round 8 done, the doc-row surface is end-to-end
+    demo-able: title override, freeform notes, star, starred-only
+    filter, dedicated inspector drawer. Next subsystem candidates:
+    plugin marketplace UI (the backend ships in marketplace/ but
+    PluginsPanel.svelte's Browse tab is the only surface — no
+    install history, no per-plugin detail), Hopper backfill
+    progress surface (the panel fires but doesn't show per-doc
+    progress live), smart-folders hub UI polish (the rail's
+    drag/pin chrome could be tightened), saved-views chrome
+    (the panel ships but has no quick-pin / drag-reorder).
+
+## Tick log
+
+- 2026-06-20 06:09 PT (Cake, cron): round-8 BATCH tick — FIVE
+  Doc-Inspector slices that promote the library_documents row
+  from an opaque (title-but-no-setter, no notes, no star, no
+  inspector) cell into a full editable surface (rename + notes +
+  star + filter + dedicated drawer). All DONE, pushed + verified
+  (local==origin 4fe82f9). Five commits, one per slice (each
+  backend slice bundles the matching Tauri command + TS client
+  per the established wire-layer convention; UI slice as the 5th
+  commit).
+  - Slice 33 set_doc_title (7398b58): override the displayed
+    title without renaming the on-disk file. Trim + None/empty
+    clears to NULL (basename fallback resumes), MAX_DOC_TITLE_LEN
+    cap 500 with the length check running BEFORE the UPDATE.
+    Returns the refreshed DocumentRecord with tags eager-loaded.
+    5 new tests + Tauri command + TS client.
+  - Slice 34 set_doc_notes (12eab28): schema v12 -> v13 adds
+    nullable `notes TEXT` (pre-v13 rows silently pick up NULL).
+    Setter same trim/empty-clears/cap shape; cap is
+    MAX_DOC_NOTES_LEN = 4000 (sized for a paragraph or two of
+    provenance context). DocumentRecord widened end-to-end (the
+    four ocr_queue SELECT mappers + registry/query/collections
+    SELECT lists + TS mirror). 6 new tests incl. schema_v13
+    pragma_table_info pin.
+  - Slice 35 set_doc_starred (66a14fb): schema v13 -> v14 adds
+    `starred INTEGER NOT NULL DEFAULT 0` + partial index
+    `idx_documents_starred WHERE starred = 1`. Setter is
+    idempotent. 5 new tests incl. schema_v14 + partial-index
+    pin + upsert_existing_doc_preserves_starred (the scanner's
+    re-upsert pass must NOT wipe a user-set star).
+  - Slice 36 starred filter (2fd3027): three independent levers
+    — LibraryFilter.starred_only top-level AND-combined flag,
+    FilterClause::Starred/NotStarred variants for the recursive
+    builder, LibraryPanel toolbar "Starred" toggle chip. Legacy
+    JSON without starred_only deserialises as false. 6 new
+    query.rs tests incl. serde round-trip with the legacy-JSON
+    pin.
+  - Slice 37 DocInspectorPanel (4fe82f9): ~600-LOC Svelte 5
+    panel — 460px slide-from-right drawer (Notion side-panel
+    convention, NOT full-viewport modal like OcrQueuePanel /
+    BeaconCachePanel — the inspector wants context, not focus).
+    Sections: star pill + title override + notes textarea
+    (with live counter) + read-only tag chips (with hint
+    pointing at card menu) + metadata block + footer (Open /
+    Reveal / Remove). LibraryPanel wiring: inspectorDoc state
+    + 4 handlers, "Inspect…" / "Star/Unstar" context-menu
+    entries, ★ on starred cards + ✎ on noted cards for
+    at-a-glance triage.
+  All gates green: cargo fmt clean, cargo test --lib pdf::library::
+  359 passed / 0 failed (+22 from round-7's 337 baseline: 5
+  set_doc_title + 6 set_doc_notes + 5 set_doc_starred + 6 query
+  starred), cargo test --lib ai::embedding_index 30 passed / 0
+  failed (round-7 baseline preserved), cargo clippy --lib -D
+  warnings clean (11s warm), pnpm check 0 errors / 104 warnings
+  (same as round-7 baseline; zero new from DocInspector or the
+  LibraryPanel card-head chrome). Pushed + verified (local==origin
+  4fe82f9). Process note: the DocumentRecord widening touched 7
+  SQL SELECT call sites + 5 row-constructor sites for `notes`
+  alone, then another 7 SELECTs + 5 constructors for `starred` —
+  used `replace_all=true` for the repeated SELECT pattern across
+  registry.rs / ocr_queue.rs to keep the slice clean. Beacon
+  Cache + Manual Collections + OCR Queue + Tag-Suggest surfaces
+  all stay feature-complete (no regressions on the 337 baseline);
+  the doc-row surface is now also end-to-end demo-able with this
+  batch. Next subsystem candidates: plugin marketplace UI,
+  Hopper backfill progress surface, smart-folders hub UI polish,
+  saved-views chrome.
 
 ### What round-7 (2026-06-19 23:14 PT) just shipped
 
