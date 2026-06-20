@@ -319,6 +319,28 @@ pub fn count_indexed_docs(conn: &Connection) -> Result<i64, LibraryError> {
     Ok(n)
 }
 
+/// Compact summary of the FTS5 library_fts index size. Powers the status
+/// footer at the bottom of the LibrarySearchPanel so the user can see how
+/// many documents are actually searchable + how many pages back the rank
+/// (a doc with very few pages indexed often means the scanner hit an
+/// extraction issue worth surfacing). v3.55.0 Atlas Index-Status.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IndexStats {
+    /// Distinct doc_ids present in library_fts.
+    pub docs: i64,
+    /// Total fts rows (one per indexed page) across every doc.
+    pub pages: i64,
+}
+
+/// Read both counts in two cheap COUNT queries off library_fts. Both
+/// degrade gracefully on an empty / unpopulated index, returning zeros.
+pub fn index_stats(conn: &Connection) -> Result<IndexStats, LibraryError> {
+    Ok(IndexStats {
+        docs: count_indexed_docs(conn)?,
+        pages: super::fts::total_indexed_pages(conn)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +718,45 @@ mod tests {
         let db = LibraryDb::open_in_memory().unwrap();
         seed(&db);
         assert_eq!(count_indexed_docs(db.conn()).unwrap(), 3);
+    }
+
+    // --- IndexStats (v3.55.0 Atlas) ---
+
+    #[test]
+    fn index_stats_on_empty_index_is_zeros() {
+        // A freshly-migrated library DB has zero indexed docs and zero
+        // pages; the status footer must render gracefully (no NULL,
+        // no divide-by-zero, no panic) in that state.
+        let db = LibraryDb::open_in_memory().unwrap();
+        let stats = index_stats(db.conn()).unwrap();
+        assert_eq!(stats.docs, 0);
+        assert_eq!(stats.pages, 0);
+    }
+
+    #[test]
+    fn index_stats_counts_seeded_set() {
+        // The seed inserts 3 docs with 1 + 2 + 1 indexed pages.
+        let db = LibraryDb::open_in_memory().unwrap();
+        seed(&db);
+        let stats = index_stats(db.conn()).unwrap();
+        assert_eq!(stats.docs, 3);
+        assert_eq!(stats.pages, 4);
+    }
+
+    #[test]
+    fn index_stats_serde_roundtrip_uses_snake_case_or_camel() {
+        // Tauri commands receive the IndexStats struct serialised. Pin
+        // the JSON shape so the TS client (camelCase via mapping) has
+        // a stable wire contract — keys here are docs/pages (no rename).
+        let s = IndexStats {
+            docs: 7,
+            pages: 142,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"docs\":7"));
+        assert!(json.contains("\"pages\":142"));
+        let back: IndexStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
     }
 
     #[test]

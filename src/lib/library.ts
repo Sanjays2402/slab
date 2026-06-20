@@ -313,6 +313,26 @@ export async function clearLibrarySearchHistory(): Promise<number> {
   return unwrap(res);
 }
 
+/**
+ * Snapshot of the FTS5 library index size. Powers the LibrarySearchPanel
+ * status footer so the user can see at-a-glance how many docs + pages
+ * are searchable. Two cheap COUNTs server-side; safe to call frequently.
+ * v3.55.0 Atlas Index-Status.
+ */
+export interface LibraryIndexStats {
+  /** Distinct doc_ids present in library_fts. */
+  docs: number;
+  /** Total fts rows (one per indexed page) across every doc. */
+  pages: number;
+}
+
+export async function libraryIndexStats(): Promise<LibraryIndexStats> {
+  const res = await invoke<CmdResult<{ docs: number; pages: number }>>(
+    "slab_library_index_stats",
+  );
+  return unwrap(res);
+}
+
 
 // ---------- Tags ----------
 

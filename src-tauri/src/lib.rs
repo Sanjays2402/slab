@@ -3793,6 +3793,20 @@ fn slab_library_recent_searches(
     result.into()
 }
 
+/// Snapshot of the FTS5 index size: distinct indexed docs + total pages.
+/// Powers the LibrarySearchPanel's status footer so the user can see at
+/// a glance how much of their library is actually searchable. Two cheap
+/// COUNTs; safe to call on every panel mount + after every scan.
+/// v3.55.0 Atlas Index-Status.
+#[tauri::command]
+fn slab_library_index_stats() -> CmdResult<pdf::library::search::IndexStats> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::search::index_stats(db.conn())
+    })();
+    result.into()
+}
+
 /// Wipe every row from `library_search_log`. Returns the count removed so
 /// the UI can decide whether to toast or stay quiet. Suggestion-cluster
 /// dismissals live in a sibling table and are NOT touched.
@@ -5679,6 +5693,7 @@ pub fn run() {
             slab_library_search_log_count,
             slab_library_recent_searches,
             slab_library_clear_search_history,
+            slab_library_index_stats,
             slab_library_tag_suggestions_for_doc,
             slab_library_tag_suggestions_bulk_for_untagged,
             slab_library_tag_suggestion_accept,
