@@ -123,7 +123,7 @@ pub fn query_documents(
     let conn = db.conn();
 
     let mut sql = String::from(
-        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
          FROM library_documents",
     );
     let mut where_clauses: Vec<String> = Vec::new();
@@ -225,6 +225,7 @@ pub fn query_documents(
                 ocr_state: row.get(10)?,
                 ocr_output_path: row.get(11)?,
                 ocr_error: row.get(12)?,
+                notes: row.get(13)?,
                 tags: Vec::new(),
             })
         })?

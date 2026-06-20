@@ -50,7 +50,7 @@ pub fn list_pending(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError>
     let conn = db.conn();
     let mut stmt = conn.prepare(
         "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
-                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
          FROM library_documents
          WHERE ocr_state IN (?1, ?2)
          ORDER BY added_at ASC, id ASC",
@@ -73,6 +73,7 @@ pub fn list_pending(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError>
                     ocr_state: row.get(10)?,
                     ocr_output_path: row.get(11)?,
                     ocr_error: row.get(12)?,
+                    notes: row.get(13)?,
                     tags: Vec::new(),
                 })
             },
@@ -105,7 +106,7 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
         let row = conn
             .query_row(
                 "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
-                        added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                        added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
                  FROM library_documents WHERE id = ?1",
                 rusqlite::params![doc_id],
                 |row| {
@@ -123,6 +124,7 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
                         ocr_state: row.get(10)?,
                         ocr_output_path: row.get(11)?,
                         ocr_error: row.get(12)?,
+                        notes: row.get(13)?,
                         tags: Vec::new(),
                     })
                 },
@@ -312,7 +314,7 @@ pub fn requeue_doc(db: &mut LibraryDb, doc_id: i64) -> Result<DocumentRecord, Li
     let conn = db.conn();
     let row = conn.query_row(
         "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
-                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
          FROM library_documents WHERE id = ?1",
         rusqlite::params![doc_id],
         |row| {
@@ -330,6 +332,7 @@ pub fn requeue_doc(db: &mut LibraryDb, doc_id: i64) -> Result<DocumentRecord, Li
                 ocr_state: row.get(10)?,
                 ocr_output_path: row.get(11)?,
                 ocr_error: row.get(12)?,
+                notes: row.get(13)?,
                 tags: Vec::new(),
             })
         },
@@ -359,7 +362,7 @@ pub fn list_failed(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError> 
     let conn = db.conn();
     let mut stmt = conn.prepare(
         "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
-                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
          FROM library_documents
          WHERE ocr_state = ?1
          ORDER BY last_seen_at DESC, id DESC",
@@ -380,6 +383,7 @@ pub fn list_failed(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError> 
                 ocr_state: row.get(10)?,
                 ocr_output_path: row.get(11)?,
                 ocr_error: row.get(12)?,
+                notes: row.get(13)?,
                 tags: Vec::new(),
             })
         })?

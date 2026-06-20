@@ -67,6 +67,10 @@ export interface DocumentRecord {
    * not on PATH"). Cleared back to null on a successful re-OCR. Surfaced by
    * the OCR Queue Panel's failure inbox. v3.52.0 Atlas OCR-Queue. */
   ocr_error: string | null;
+  /** Per-doc freeform notes shown in the Doc-Inspector drawer. Trimmed,
+   * `null` when unset. Cap is 4000 Unicode scalars at the backend.
+   * v3.55.0 Atlas Doc-Inspector. */
+  notes: string | null;
   tags: TagRecord[];
 }
 
@@ -473,6 +477,28 @@ export async function setDocumentTitle(
     {
       docId,
       title,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Set (or clear) the freeform `notes` on a library document. Pass `null` — or
+ * any string that trims to empty on the backend — to clear the column back to
+ * `null`. Returns the refreshed `DocumentRecord` (with tags eager-loaded) so
+ * the Doc-Inspector drawer can repaint without an extra `listDocuments`
+ * round-trip. The backend trims input and rejects oversized text (cap is
+ * 4000 Unicode scalars). v3.55.0 Atlas Doc-Inspector.
+ */
+export async function setDocumentNotes(
+  docId: number,
+  notes: string | null,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_notes",
+    {
+      docId,
+      notes,
     },
   );
   return unwrap(res);

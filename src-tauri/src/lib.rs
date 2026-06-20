@@ -4159,6 +4159,29 @@ fn slab_library_set_doc_title(
     result.into()
 }
 
+/// Set (or clear) the freeform `notes` on a library document. Pass `null` — or
+/// any string that trims to empty — to clear the column back to NULL so the
+/// inspector falls back to the empty-state placeholder. Returns the refreshed
+/// [`DocumentRecord`] (with tags eager-loaded) so the Doc-Inspector drawer can
+/// repaint without an extra `listDocuments` round-trip. The backend trims input
+/// and rejects oversized text (cap is `MAX_DOC_NOTES_LEN` Unicode scalars).
+/// v3.55.0 Atlas Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_notes(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    notes: Option<String>,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_notes(doc_id, notes.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Fold `source_id` into `target_id`: re-point every document link from the
 /// source tag to the target, coalescing duplicates by the newer `applied_at`,
 /// then delete the source tag. Returns the surviving target row. This is the
@@ -5922,6 +5945,7 @@ pub fn run() {
             slab_library_rename_tag,
             slab_library_set_tag_description,
             slab_library_set_doc_title,
+            slab_library_set_doc_notes,
             slab_library_merge_tags,
             slab_library_set_doc_tags,
             slab_library_bulk_apply_tag,

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 12;
+const SCHEMA_VERSION: u32 = 13;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -78,6 +78,12 @@ pub struct DocumentRecord {
     /// re-OCR. v3.52.0 Atlas OCR-Queue.
     #[serde(default)]
     pub ocr_error: Option<String>,
+    /// Per-doc freeform notes shown in the Doc-Inspector drawer. Trimmed,
+    /// `None` when unset (no override). Cap is [`MAX_DOC_NOTES_LEN`] Unicode
+    /// scalars so a runaway paste can't bloat the row. v3.55.0 Atlas
+    /// Doc-Inspector.
+    #[serde(default)]
+    pub notes: Option<String>,
     #[serde(default)]
     pub tags: Vec<TagRecord>,
 }
@@ -378,7 +384,19 @@ impl LibraryDb {
             // holds the most recent failure.
             conn.execute_batch("ALTER TABLE library_documents ADD COLUMN ocr_error TEXT;")?;
             conn.execute_batch("PRAGMA user_version = 12;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 12);
+        }
+        if version < 13 {
+            // v3.55.0 "Atlas Doc-Inspector" — per-doc freeform notes for the
+            // inspector drawer. Nullable so every pre-v13 row silently picks
+            // up `NULL` (no rewrite, no defaulting); the setter trims input
+            // and empty-after-trim clears the column back to NULL so it only
+            // ever holds "real" notes. Capped at MAX_DOC_NOTES_LEN at the
+            // application layer; the column is plain TEXT because SQLite
+            // doesn't enforce length and we want the validation message —
+            // not a constraint-violation rusqlite blob — on the wire.
+            conn.execute_batch("ALTER TABLE library_documents ADD COLUMN notes TEXT;")?;
+            conn.execute_batch("PRAGMA user_version = 13;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 13);
         }
         Ok(())
     }
@@ -621,7 +639,58 @@ impl LibraryDb {
         let mut doc = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
+                 FROM library_documents WHERE id = ?1",
+                params![doc_id],
+                document_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| LibraryError::Other(format!("document {doc_id} not found")))?;
+        doc.tags = self.tags_for_document(doc.id)?;
+        Ok(doc)
+    }
+
+    /// Set (or clear) the freeform `notes` on a library document. Pass `None`
+    /// — or any string that trims to empty — to clear the column back to
+    /// NULL so the inspector renders the empty-state placeholder. The
+    /// persisted text is **always trimmed**, capped at [`MAX_DOC_NOTES_LEN`]
+    /// Unicode scalars (counted in `chars` so emoji and CJK get a sane
+    /// budget). Errors on unknown id or oversized text; the length check
+    /// runs BEFORE the UPDATE so a rejected setter leaves the row's prior
+    /// notes untouched. Returns the refreshed [`DocumentRecord`] with tags
+    /// eager-loaded so the Doc-Inspector drawer can repaint without an
+    /// extra list_documents round-trip. v3.55.0 Atlas Doc-Inspector.
+    pub fn set_doc_notes(
+        &mut self,
+        doc_id: i64,
+        notes: Option<&str>,
+    ) -> Result<DocumentRecord, LibraryError> {
+        let normalized: Option<String> = match notes {
+            Some(n) => {
+                let trimmed = n.trim();
+                if trimmed.is_empty() {
+                    None
+                } else if !valid_doc_notes(trimmed) {
+                    return Err(LibraryError::Other(format!(
+                        "document notes too long (max {MAX_DOC_NOTES_LEN} chars)"
+                    )));
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            None => None,
+        };
+        let changed = self.conn.execute(
+            "UPDATE library_documents SET notes = ?1 WHERE id = ?2",
+            params![normalized, doc_id],
+        )?;
+        if changed == 0 {
+            return Err(LibraryError::Other(format!("document {doc_id} not found")));
+        }
+        let mut doc = self
+            .conn
+            .query_row(
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
                  FROM library_documents WHERE id = ?1",
                 params![doc_id],
                 document_from_row,
@@ -660,7 +729,7 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
                  FROM library_documents WHERE path = ?1",
                 params![path],
                 document_from_row,
@@ -1082,6 +1151,7 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRecord
         ocr_state: row.get(10)?,
         ocr_output_path: row.get(11)?,
         ocr_error: row.get(12)?,
+        notes: row.get(13)?,
         tags: Vec::new(),
     })
 }
@@ -1119,6 +1189,19 @@ pub(crate) const MAX_DOC_TITLE_LEN: usize = 500;
 /// Whether `t` (assumed already trimmed) fits the persisted-title budget.
 pub(crate) fn valid_doc_title(t: &str) -> bool {
     t.chars().count() <= MAX_DOC_TITLE_LEN
+}
+
+/// Maximum length of the freeform `notes` field on a document row, in Unicode
+/// scalar values. Sized for a paragraph or two of provenance context ("Got
+/// this from opposing counsel; redaction missing on page 14, see follow-up
+/// 2025-09-12") without letting a runaway paste balloon the row. Counted in
+/// chars (not bytes) so emoji and CJK get a sane budget.
+/// v3.55.0 Atlas Doc-Inspector.
+pub(crate) const MAX_DOC_NOTES_LEN: usize = 4000;
+
+/// Whether `n` (assumed already trimmed) fits the persisted-notes budget.
+pub(crate) fn valid_doc_notes(n: &str) -> bool {
+    n.chars().count() <= MAX_DOC_NOTES_LEN
 }
 
 /// Whether `c` is a CSS color value we're willing to persist on a tag row.
@@ -1319,6 +1402,26 @@ mod tests {
             .unwrap();
         assert_eq!(has_col, 1, "library_documents.ocr_error column missing");
         assert!(db.schema_version().unwrap() >= 12);
+    }
+
+    #[test]
+    fn schema_v13_has_notes_on_documents() {
+        // v3.55.0 Atlas Doc-Inspector — adds a nullable `notes` column to
+        // library_documents so the inspector drawer's freeform note travels
+        // with each row. `>=` not `==` so the next migration doesn't
+        // accidentally fail this assert.
+        let db = db();
+        let has_col: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library_documents') \
+                 WHERE name = 'notes'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1, "library_documents.notes column missing");
+        assert!(db.schema_version().unwrap() >= 13);
     }
 
     #[test]
@@ -1611,6 +1714,100 @@ mod tests {
         let mut db = db();
         assert!(
             db.set_doc_title(424242, Some("nope")).is_err(),
+            "unknown id should error"
+        );
+    }
+
+    #[test]
+    fn set_doc_notes_updates_and_returns_row_with_tags() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/n.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let t = db.add_tag("urgent", None).unwrap();
+        db.set_doc_tags(d.id, &[t.id]).unwrap();
+        // Default value is None — the column is nullable and pre-v13 rows
+        // silently picked up NULL.
+        assert!(d.notes.is_none());
+        let updated = db
+            .set_doc_notes(d.id, Some("Got this from opposing counsel"))
+            .unwrap();
+        assert_eq!(
+            updated.notes.as_deref(),
+            Some("Got this from opposing counsel")
+        );
+        // Tags survive the round-trip (eager-loaded).
+        assert_eq!(updated.tags.len(), 1);
+        assert_eq!(updated.tags[0].name, "urgent");
+        // Persisted: a fresh path lookup also sees the new notes.
+        let fresh = db.find_document_by_path("/tmp/n.pdf").unwrap().unwrap();
+        assert_eq!(
+            fresh.notes.as_deref(),
+            Some("Got this from opposing counsel")
+        );
+        // Other columns are untouched by a pure notes update.
+        assert_eq!(fresh.hash, "h");
+    }
+
+    #[test]
+    fn set_doc_notes_trims_whitespace() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/n.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let updated = db
+            .set_doc_notes(d.id, Some("   Inbound from email rule.\n  "))
+            .unwrap();
+        assert_eq!(updated.notes.as_deref(), Some("Inbound from email rule."));
+    }
+
+    #[test]
+    fn set_doc_notes_empty_or_none_clears_to_null() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/n.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        for clearer in ["", "   ", "\n\t  "] {
+            db.set_doc_notes(d.id, Some("seed note")).unwrap();
+            let cleared = db.set_doc_notes(d.id, Some(clearer)).unwrap();
+            assert!(cleared.notes.is_none(), "{clearer:?} should clear");
+        }
+        db.set_doc_notes(d.id, Some("seed note")).unwrap();
+        let cleared = db.set_doc_notes(d.id, None).unwrap();
+        assert!(cleared.notes.is_none());
+    }
+
+    #[test]
+    fn set_doc_notes_rejects_oversized_text_and_preserves_prior() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/n.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        db.set_doc_notes(d.id, Some("Original note.")).unwrap();
+        let oversize = "x".repeat(MAX_DOC_NOTES_LEN + 1);
+        assert!(
+            db.set_doc_notes(d.id, Some(&oversize)).is_err(),
+            "{} chars should be rejected",
+            MAX_DOC_NOTES_LEN + 1
+        );
+        // Length check runs BEFORE the UPDATE so the prior notes survive.
+        let fresh = db.find_document_by_path("/tmp/n.pdf").unwrap().unwrap();
+        assert_eq!(fresh.notes.as_deref(), Some("Original note."));
+        // Exact-cap input is accepted (boundary test).
+        let exact = "y".repeat(MAX_DOC_NOTES_LEN);
+        let accepted = db.set_doc_notes(d.id, Some(&exact)).unwrap();
+        assert_eq!(accepted.notes.as_deref(), Some(exact.as_str()));
+    }
+
+    #[test]
+    fn set_doc_notes_unknown_id_errors() {
+        let mut db = db();
+        assert!(
+            db.set_doc_notes(424242, Some("nope")).is_err(),
             "unknown id should error"
         );
     }
