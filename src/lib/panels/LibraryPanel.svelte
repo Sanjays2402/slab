@@ -53,7 +53,10 @@
     savedViewSave,
     savedViewList,
     savedViewDelete,
+    collectionList,
+    collectionAddDocs,
     type AutoTagRunResult,
+    type CollectionRecord,
     type DocumentRecord,
     type FilterClause,
     type FilterCombinator,
@@ -218,6 +221,14 @@
   // plus a free-text "new tag" entry. Null when closed.
   let bulkTagPickerOpen = $state(false);
   let bulkNewTagName = $state("");
+
+  // Bulk "add to collection" picker (v3.53.0 Atlas Collections — Slice 27).
+  // Lists every manual collection by name; click adds the N selected docs
+  // to that collection and toasts the result count. Pure frontend slice
+  // wrapping collectionAddDocs + collectionList — no new backend needed.
+  let bulkCollectionPickerOpen = $state(false);
+  let bulkCollections = $state<CollectionRecord[]>([]);
+  let bulkCollectionsLoading = $state(false);
 
   let selectedCount = $derived(selectedDocIds.size);
   let allVisibleSelected = $derived(
@@ -862,6 +873,53 @@
   function clearSelection() {
     selectedDocIds = new Set();
     bulkTagPickerOpen = false;
+    bulkCollectionPickerOpen = false;
+  }
+
+  // -------- Bulk "Add to collection" (v3.53.0 Slice 27) --------
+  // Lazy-load the collection list on first picker open (rare path; the
+  // backend list is single-query cheap but we still avoid the round-trip
+  // for users who never crack open the bulk bar).
+  async function openBulkCollectionPicker() {
+    // If the user closed the tag picker by opening this one, mirror the
+    // pattern from bulkTagPickerOpen and let the two be mutually exclusive.
+    bulkTagPickerOpen = false;
+    bulkCollectionPickerOpen = !bulkCollectionPickerOpen;
+    if (bulkCollectionPickerOpen) {
+      // Refresh on every open — single cheap query, and it catches new
+      // collections created since the last open without bespoke
+      // library-changed plumbing.
+      bulkCollectionsLoading = true;
+      try {
+        bulkCollections = await collectionList();
+      } catch (e) {
+        error = (e as Error).message;
+        bulkCollectionPickerOpen = false;
+      } finally {
+        bulkCollectionsLoading = false;
+      }
+    }
+  }
+
+  async function onBulkAddToCollection(target: CollectionRecord) {
+    if (selectedDocIds.size === 0 || bulkBusy) return;
+    bulkBusy = true;
+    try {
+      const ids = Array.from(selectedDocIds);
+      const added = await collectionAddDocs(target.id, ids);
+      const dupes = ids.length - added;
+      bulkSummary =
+        dupes > 0
+          ? `Added ${added} doc${added === 1 ? "" : "s"} to “${target.name}” (${dupes} already in)`
+          : `Added ${added} doc${added === 1 ? "" : "s"} to “${target.name}”`;
+      // Keep the picker open so the user can chain into a second
+      // collection without re-opening; the CollectionsSidebar self-heals
+      // its count badge via the library-changed emit on collectionAddDocs.
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      bulkBusy = false;
+    }
   }
 
   /** Apply `tagName` (existing or freshly typed) to every selected doc. */
@@ -2063,6 +2121,52 @@
                       title={`Remove "${t.name}" from the ${selectedCount} selected doc${selectedCount === 1 ? "" : "s"}`}
                       onclick={() => onBulkRemoveTag(t)}
                     >&minus;</button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <!-- v3.53.0 Atlas Collections — Slice 27 bulk add-to-collection -->
+      <div class="bulk-coll-wrap">
+        <button
+          class="bulk-apply"
+          disabled={selectedCount === 0 || bulkBusy}
+          onclick={openBulkCollectionPicker}
+          aria-expanded={bulkCollectionPickerOpen}
+          title="Add all selected documents to a collection"
+        >
+          Add to collection&hellip;
+        </button>
+        {#if bulkCollectionPickerOpen && selectedCount > 0}
+          <div class="bulk-picker" role="menu" tabindex="-1">
+            <div class="bulk-picker-section">Add to collection</div>
+            {#if bulkCollectionsLoading}
+              <div class="bulk-picker-empty">Loading collections&hellip;</div>
+            {:else if bulkCollections.length === 0}
+              <div class="bulk-picker-empty">
+                No collections yet — create one from the left rail first.
+              </div>
+            {:else}
+              <div class="bulk-picker-list">
+                {#each bulkCollections as c (c.id)}
+                  <div class="bulk-picker-row">
+                    <button
+                      class="bulk-picker-tag"
+                      disabled={bulkBusy}
+                      onclick={() => onBulkAddToCollection(c)}
+                      title={`Add ${selectedCount} doc${
+                        selectedCount === 1 ? "" : "s"
+                      } to "${c.name}"`}
+                    >
+                      <span
+                        class="dot small"
+                        style:background={c.color ?? "var(--text-3)"}
+                      ></span>
+                      <span class="bulk-picker-name">{c.name}</span>
+                      <span class="bulk-picker-count">{c.doc_count}</span>
+                    </button>
                   </div>
                 {/each}
               </div>
@@ -3294,6 +3398,21 @@
   }
   .bulk-actions { display: flex; align-items: center; gap: 8px; }
   .bulk-tag-wrap { position: relative; }
+  /* v3.53.0 Atlas Collections — Slice 27 bulk add-to-collection */
+  .bulk-coll-wrap { position: relative; }
+  .bulk-picker-empty {
+    padding: 10px 12px;
+    color: var(--text-3);
+    font-size: 12px;
+    font-style: italic;
+  }
+  .bulk-picker-count {
+    margin-left: auto;
+    padding-left: 8px;
+    color: var(--text-3);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
   .bulk-apply {
     background: var(--accent);
     border: 1px solid var(--accent);
