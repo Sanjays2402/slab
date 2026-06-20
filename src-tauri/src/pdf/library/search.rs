@@ -111,33 +111,129 @@ pub fn search(
 /// We do NOT pass user input to FTS5 verbatim — it has its own query
 /// syntax (`AND`, `OR`, `NOT`, `*` wildcards, column filters, quoted
 /// phrases) and unescaped input can blow up with `SQL logic error`. The
-/// safe approach is:
+/// strategy is to lex the input ourselves into well-formed token kinds
+/// then re-emit each as the FTS5 fragment it needs.
 ///
-/// 1. Strip FTS5 metacharacters (`"^*-:()`) from each token.
-/// 2. Wrap each non-empty token in double quotes (FTS5 phrase syntax).
-/// 3. Append `*` AFTER the closing quote on the LAST token to enable
-///    prefix-search-as-you-type (so `indemn` matches `indemnification`).
+/// Recognized token kinds:
+/// 1. **Bare word** — `indemnification` → quoted single phrase
+///    `"indemnification"`. Stripped of FTS5 metacharacters.
+/// 2. **Quoted phrase** — `"force majeure"` (curly or straight quotes,
+///    multi-word). Adjacent-token match: any doc page where the words
+///    appear in that exact order wins. Stripped of metacharacters but
+///    spaces survive. Inside-quote prefix-`*` is dropped (a phrase
+///    can't carry the prefix glob — FTS5 rejects it).
 ///
 /// Result for input `indemnification clause` → `"indemnification" "clause"*`.
+/// Result for input `"force majeure" clause` → `"force majeure" "clause"*`.
+/// An unterminated `"trailing` is treated as a phrase to end-of-input.
+///
+/// The LAST emitted bare-word token gets a trailing `*` so prefix-search
+/// works as the user types (`indemn` matches `indemnification`). Phrase
+/// tokens never get `*` — FTS5 does not support a phrase-with-prefix
+/// idiom and emitting one is a hard error.
 pub fn build_match_expr(query: &str) -> String {
-    let tokens: Vec<String> = query
-        .split_whitespace()
-        .map(|w| {
-            w.chars()
-                .filter(|c| !matches!(c, '"' | '^' | '*' | '-' | ':' | '(' | ')'))
-                .collect::<String>()
-        })
-        .filter(|w| !w.is_empty())
-        .collect();
-    if tokens.is_empty() {
+    let toks = tokenize(query);
+    if toks.is_empty() {
         return String::new();
     }
-    let mut parts: Vec<String> = tokens.iter().map(|t| format!("\"{}\"", t)).collect();
-    // Prefix-search on the last token.
-    if let Some(last) = parts.last_mut() {
-        last.push('*');
+    let mut parts: Vec<String> = Vec::with_capacity(toks.len());
+    let last_bare_idx = toks.iter().rposition(|t| matches!(t, Tok::Bare(_)));
+    for (i, t) in toks.iter().enumerate() {
+        match t {
+            Tok::Bare(w) => {
+                let mut s = format!("\"{}\"", w);
+                if Some(i) == last_bare_idx {
+                    s.push('*');
+                }
+                parts.push(s);
+            }
+            Tok::Phrase(p) => {
+                // Never prefix-glob a phrase — FTS5 rejects "a b"*.
+                parts.push(format!("\"{}\"", p));
+            }
+        }
     }
     parts.join(" ")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Tok {
+    Bare(String),
+    Phrase(String),
+}
+
+/// Strip every FTS5 metacharacter from a single-word token so it can't
+/// re-introduce operator syntax when we wrap it in quotes.
+fn scrub_word(w: &str) -> String {
+    w.chars()
+        .filter(|c| !matches!(c, '"' | '^' | '*' | '-' | ':' | '(' | ')'))
+        .collect()
+}
+
+/// Strip metacharacters but PRESERVE internal whitespace so multi-word
+/// phrases remain multi-word after sanitisation.
+fn scrub_phrase(p: &str) -> String {
+    p.chars()
+        .filter(|c| !matches!(c, '"' | '^' | '*' | ':' | '(' | ')'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Lex raw user input into a stream of Tok::Bare / Tok::Phrase. Empty
+/// tokens are dropped. Both curly (typed by macOS auto-correct) and
+/// straight quotes open + close phrases.
+fn tokenize(query: &str) -> Vec<Tok> {
+    let mut out: Vec<Tok> = Vec::new();
+    let mut chars = query.chars().peekable();
+    let mut buf = String::new();
+    while let Some(c) = chars.next() {
+        match c {
+            // Both straight and curly opening-quote forms a phrase.
+            '"' | '\u{201C}' | '\u{201D}' => {
+                // Flush any bare-word accumulator first.
+                if !buf.is_empty() {
+                    let w = scrub_word(&buf);
+                    if !w.is_empty() {
+                        out.push(Tok::Bare(w));
+                    }
+                    buf.clear();
+                }
+                // Read until the matching close-quote OR end of input.
+                let mut phrase = String::new();
+                while let Some(&nc) = chars.peek() {
+                    if matches!(nc, '"' | '\u{201C}' | '\u{201D}') {
+                        chars.next();
+                        break;
+                    }
+                    phrase.push(nc);
+                    chars.next();
+                }
+                let cleaned = scrub_phrase(&phrase);
+                if !cleaned.is_empty() {
+                    out.push(Tok::Phrase(cleaned));
+                }
+            }
+            c if c.is_whitespace() => {
+                if !buf.is_empty() {
+                    let w = scrub_word(&buf);
+                    if !w.is_empty() {
+                        out.push(Tok::Bare(w));
+                    }
+                    buf.clear();
+                }
+            }
+            _ => buf.push(c),
+        }
+    }
+    if !buf.is_empty() {
+        let w = scrub_word(&buf);
+        if !w.is_empty() {
+            out.push(Tok::Bare(w));
+        }
+    }
+    out
 }
 
 /// Helper for the indexer — also useful in tests. Currently unused outside
@@ -213,6 +309,122 @@ mod tests {
         assert_eq!(build_match_expr(""), "");
         assert_eq!(build_match_expr("   "), "");
         assert_eq!(build_match_expr("**"), "");
+    }
+
+    // --- Phrase-search (v3.53.0 Atlas) ---
+    //
+    // build_match_expr() lexes double-quoted segments as FTS5 phrase
+    // tokens so a user typing `"force majeure"` gets adjacent-word
+    // matching instead of two independent ANDed words. The MATCH grammar
+    // already supports `"a b"` as a phrase out-of-the-box — these tests
+    // pin the lexer's output shape so a future refactor can't silently
+    // demote phrases back to bag-of-words.
+
+    #[test]
+    fn build_match_expr_emits_quoted_phrase_as_phrase_token() {
+        // The phrase is emitted as one FTS5 phrase ("force majeure"),
+        // not two independent quoted words. Only the LAST bare word
+        // ever gets the prefix `*`; the phrase itself never does.
+        assert_eq!(
+            build_match_expr(r#""force majeure" clause"#),
+            "\"force majeure\" \"clause\"*"
+        );
+    }
+
+    #[test]
+    fn build_match_expr_phrase_alone_drops_prefix_glob() {
+        // A query that is JUST a phrase emits a single phrase token with
+        // no `*` — FTS5 rejects `"a b"*` as a syntax error and we never
+        // want a search to fall over because the lexer mis-attached a
+        // prefix glob to a phrase.
+        assert_eq!(
+            build_match_expr(r#""indemnification clause""#),
+            "\"indemnification clause\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_unterminated_phrase_runs_to_eol() {
+        // Missing closing quote is friendly: we treat everything up to
+        // end-of-input as the phrase. This matches Google's behaviour
+        // and avoids the user's keypress-mid-edit silently breaking.
+        assert_eq!(
+            build_match_expr(r#""trailing phrase"#),
+            "\"trailing phrase\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_handles_curly_quotes() {
+        // macOS auto-correct converts "" to "" mid-type. The lexer
+        // accepts both forms so users on macOS don't have to disable
+        // smart quotes to phrase-search.
+        let curly = "\u{201C}force majeure\u{201D}";
+        assert_eq!(build_match_expr(curly), "\"force majeure\"");
+    }
+
+    #[test]
+    fn build_match_expr_mixed_bare_and_phrase() {
+        // A phrase between bare words; only the LAST bare word collects
+        // the prefix-* glob (so `clau` would still match `clause`).
+        assert_eq!(
+            build_match_expr(r#"contract "force majeure" termination"#),
+            "\"contract\" \"force majeure\" \"termination\"*"
+        );
+    }
+
+    #[test]
+    fn build_match_expr_phrase_then_bare_glob_is_on_bare() {
+        // When the LAST token is a phrase, no `*` is emitted — phrase
+        // CAN'T carry a prefix glob and prefix-on-the-previous-bare-word
+        // would change the semantics of an explicitly-quoted query.
+        assert_eq!(
+            build_match_expr(r#"draft "force majeure""#),
+            "\"draft\" \"force majeure\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_strips_meta_inside_phrase() {
+        // Asterisk, colon, paren, caret would all be parsed by FTS5 if
+        // they survived. The lexer scrubs them but keeps internal spaces.
+        assert_eq!(build_match_expr(r#""foo* (bar):baz""#), "\"foo bar baz\"");
+    }
+
+    #[test]
+    fn build_match_expr_empty_quote_pair_emits_nothing() {
+        // `""` is a no-op — no phrase token, the rest of the query
+        // continues as normal.
+        assert_eq!(build_match_expr(r#""" hello"#), "\"hello\"*");
+        assert_eq!(build_match_expr(r#""""#), "");
+    }
+
+    #[test]
+    fn phrase_search_matches_adjacent_only() {
+        // End-to-end via the search() API: doc 1 has "indemnification clause"
+        // on one page (adjacent), doc 2 has "indemnification" and "clause"
+        // on different pages. The phrase query must match doc 1 ONLY.
+        // Without phrase support this was already true via multi-page AND;
+        // the test is here to pin the new lexer path doesn't regress it.
+        let db = LibraryDb::open_in_memory().unwrap();
+        seed(&db);
+        let hits = search(db.conn(), r#""indemnification clause""#, 10, None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].doc_id, 1);
+    }
+
+    #[test]
+    fn phrase_query_is_logged_as_typed() {
+        // The search-log row stores the user-typed query (with quotes) so
+        // the recent-searches chip strip re-runs an exact phrase when the
+        // user clicks it. The log gets the TRIMMED raw input — not the
+        // re-emitted MATCH expression — so quote characters survive.
+        let db = LibraryDb::open_in_memory().unwrap();
+        seed(&db);
+        let _ = search(db.conn(), r#""indemnification clause""#, 10, None).unwrap();
+        let rows = super::super::search_log::recent_queries(&db, 5).unwrap();
+        let last = rows.first().expect("phrase query should be logged");
+        assert_eq!(last.query, r#""indemnification clause""#);
     }
 
     #[test]

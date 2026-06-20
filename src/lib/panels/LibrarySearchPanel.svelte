@@ -376,6 +376,10 @@
           <li><kbd>Enter</kbd> — run search immediately</li>
           <li><kbd>Esc</kbd> — clear</li>
           <li>Last word becomes a prefix match automatically</li>
+          <li>
+            Wrap a phrase in <kbd>"</kbd>quotes<kbd>"</kbd> to match adjacent
+            words only
+          </li>
         </ul>
       </div>
     {:else if !loading && hits.length === 0}
