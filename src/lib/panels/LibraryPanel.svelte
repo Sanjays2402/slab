@@ -49,6 +49,9 @@
     recentlyUsedTags,
     tagUsageCounts,
     deleteUnusedTags,
+    savedViewSave,
+    savedViewList,
+    savedViewDelete,
     type AutoTagRunResult,
     type DocumentRecord,
     type FilterClause,
@@ -60,6 +63,7 @@
     type OcrState,
     type TagRecord,
     type TagMatch,
+    type SavedViewRecord,
   } from "$lib/library";
   import { basename } from "$lib/types";
   import { formatRelTime } from "$lib/recent";
@@ -156,6 +160,33 @@
   // and shouldn't surface a Clear button on its own — clearTagFilter resets it
   // anyway for a clean slate.
   let tagFilterActive = $derived(activeTagIds.size > 0 || untaggedOnly);
+  // v3.50.0 Atlas Saved Views — named LibraryFilter snapshots the user can
+  // pin and one-click restore. Distinct from collections (which own a doc
+  // list) and personal presets (which materialize INTO a smart collection):
+  // a view simply RE-RUNS the saved filter live. Loaded alongside folders
+  // + tags + counts in refreshAll so a save / delete / rename round-trip
+  // self-heals via the existing library-changed reactive path.
+  let savedViews = $state<SavedViewRecord[]>([]);
+  // True while a save / delete round-trip is in flight, so the rail-head
+  // affordances disable themselves to prevent double-fire.
+  let savedViewBusy = $state(false);
+  // Tracks the id of the most recently restored view so the rail can show
+  // it as `active` — purely cosmetic, cleared whenever the user manually
+  // edits any filter dimension (since that diverges from the saved snapshot).
+  let activeSavedViewId = $state<number | null>(null);
+  // The "Save current filter" inline form. `null` when closed.
+  let saveViewDraftName = $state<string | null>(null);
+  let saveViewError = $state<string | null>(null);
+  // The rail's "Save current filter" button is meaningful only when SOME
+  // filter dimension is non-default — saving an empty filter would just be
+  // "show everything", which is the default view and not worth a button.
+  let filterIsNonDefault = $derived(
+    activeFolder !== "all" ||
+      activeTagIds.size > 0 ||
+      untaggedOnly ||
+      query.trim().length > 0 ||
+      sort !== "added_desc",
+  );
   let loading = $state(false);
   let scanning = $state(false);
   let error = $state<string | null>(null);
@@ -409,14 +440,16 @@
     loading = true;
     error = null;
     try {
-      const [f, t, c] = await Promise.all([
+      const [f, t, c, v] = await Promise.all([
         listFolders(),
         listTags(),
         tagUsageCounts(),
+        savedViewList(),
       ]);
       folders = f;
       tags = t;
       tagCounts = c;
+      savedViews = v;
       await refreshDocs();
     } catch (e) {
       error = String(e);
@@ -906,6 +939,211 @@
     tagMatch = "all";
   }
 
+  // ---------- Saved views (v3.50.0 Atlas Saved Views) ----------
+  //
+  // The rail's "Save current filter" affordance snapshots the entire
+  // filter (folder + tags + match mode + untagged toggle + sort) under
+  // a user-given name. One click on a saved view later restores all
+  // those dimensions in a single batch so the existing reactive $effect
+  // re-queries exactly once.
+  //
+  // We deliberately DO NOT round-trip through the backend's stored
+  // filter on restore — the SavedViewRecord we already have in memory
+  // carries the decoded LibraryFilter, and the rail state is derived
+  // from individual reactive primitives ($state) not a single Filter
+  // object. So restoration is a small fan-out: unpack the saved fields
+  // into the matching $state cells.
+
+  function buildCurrentFilter(): LibraryFilter {
+    // Mirror refreshDocs()'s filter construction so what we save is what
+    // gets queried on restore. The untaggedOnly branch produces a clause
+    // tree (the only way the backend lets us combine untagged with other
+    // filters); the simple branch uses the flat folder/tag/title shape.
+    const folderId = activeFolder === "all" ? null : activeFolder;
+    const title = query.trim() ? query.trim() : null;
+    if (untaggedOnly) {
+      const clauses: FilterClause[] = [{ type: "untagged" }];
+      if (folderId != null) clauses.push({ type: "folder", id: folderId });
+      for (const id of activeTagIds) clauses.push({ type: "tag", id });
+      if (title) clauses.push({ type: "title_contains", value: title });
+      const combinator: FilterCombinator = "and";
+      return { sort, clauses: { combinator, clauses } };
+    }
+    return {
+      folder_id: folderId,
+      tag_ids: Array.from(activeTagIds),
+      tag_match: tagMatch,
+      title_substring: title,
+      sort,
+    };
+  }
+
+  function openSaveViewForm() {
+    saveViewError = null;
+    // Seed with a plausible name: the active folder or tag name when
+    // there's an obvious anchor, otherwise empty so the user types.
+    let seed = "";
+    if (activeFolder !== "all") {
+      const f = folders.find((x) => x.id === activeFolder);
+      if (f) seed = folderShortName(f.path);
+    } else if (activeTagIds.size === 1) {
+      const onlyId = [...activeTagIds][0];
+      const t = tags.find((x) => x.id === onlyId);
+      if (t) seed = t.name;
+    } else if (untaggedOnly) {
+      seed = "Untagged";
+    }
+    saveViewDraftName = seed;
+  }
+
+  function cancelSaveView() {
+    saveViewDraftName = null;
+    saveViewError = null;
+  }
+
+  async function commitSaveView() {
+    if (saveViewDraftName === null || savedViewBusy) return;
+    const name = saveViewDraftName.trim();
+    if (name.length === 0) {
+      saveViewError = "name required";
+      return;
+    }
+    savedViewBusy = true;
+    saveViewError = null;
+    try {
+      const saved = await savedViewSave({
+        name,
+        filter: buildCurrentFilter(),
+      });
+      savedViews = [...savedViews, saved];
+      activeSavedViewId = saved.id;
+      saveViewDraftName = null;
+    } catch (e) {
+      // UNIQUE name collisions surface here. Keep the form open with the
+      // backend reason inline so the user can retype + retry.
+      saveViewError = String(e).replace(/^Error:\s*/, "");
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
+  function restoreSavedView(view: SavedViewRecord) {
+    // Unpack the saved LibraryFilter into the individual rail $state
+    // cells. We treat the clause-tree shape (used when untaggedOnly was
+    // on at save time) as a thin envelope: pull `untagged` + `folder` +
+    // every `tag` + `title_contains` clause back out, ignoring anything
+    // exotic (a user couldn't have built it from this UI, so it's
+    // forward-compat noise we don't need to reproduce in the rail).
+    activeCollection = null;
+    if (view.filter.clauses) {
+      let untagged = false;
+      let folderId: number | "all" = "all";
+      const tagIds = new Set<number>();
+      let title = "";
+      for (const c of view.filter.clauses.clauses) {
+        if (c.type === "untagged") untagged = true;
+        else if (c.type === "folder") folderId = c.id;
+        else if (c.type === "tag") tagIds.add(c.id);
+        else if (c.type === "title_contains") title = c.value;
+      }
+      untaggedOnly = untagged;
+      activeFolder = folderId;
+      activeTagIds = tagIds;
+      tagMatch = "all"; // clause tree always uses AND combinator
+      query = title;
+    } else {
+      untaggedOnly = false;
+      activeFolder = view.filter.folder_id ?? "all";
+      activeTagIds = new Set(view.filter.tag_ids ?? []);
+      tagMatch = view.filter.tag_match ?? "all";
+      query = view.filter.title_substring ?? "";
+    }
+    sort = view.filter.sort ?? "added_desc";
+    activeSavedViewId = view.id;
+    // The reactive $effect on (activeFolder/activeTagIds/tagMatch/sort/
+    // untaggedOnly) re-queries automatically; we don't call refreshDocs().
+  }
+
+  async function onDeleteSavedView(view: SavedViewRecord) {
+    if (savedViewBusy) return;
+    const ok = window.confirm(
+      `Delete saved view "${view.name}"? The underlying docs are not affected.`,
+    );
+    if (!ok) return;
+    savedViewBusy = true;
+    try {
+      await savedViewDelete(view.id);
+      savedViews = savedViews.filter((v) => v.id !== view.id);
+      if (activeSavedViewId === view.id) activeSavedViewId = null;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
+  // Clear the "active saved view" highlight as soon as the user diverges
+  // from the saved snapshot — the rail row should only glow while the
+  // current filter actually matches what's pinned. Cheap structural check.
+  $effect(() => {
+    if (activeSavedViewId === null) return;
+    const v = savedViews.find((x) => x.id === activeSavedViewId);
+    if (!v) {
+      activeSavedViewId = null;
+      return;
+    }
+    const f = v.filter;
+    const cur = {
+      folder: activeFolder === "all" ? null : activeFolder,
+      tags: Array.from(activeTagIds).sort((a, b) => a - b),
+      match: tagMatch,
+      untagged: untaggedOnly,
+      sort,
+      query: query.trim(),
+    };
+    // Decode saved filter into the same comparable shape — branch on
+    // whether it stored a clause tree or the flat fields.
+    let saved: typeof cur;
+    if (f.clauses) {
+      let untagged = false;
+      let folder: number | null = null;
+      const tagIds: number[] = [];
+      let title = "";
+      for (const c of f.clauses.clauses) {
+        if (c.type === "untagged") untagged = true;
+        else if (c.type === "folder") folder = c.id;
+        else if (c.type === "tag") tagIds.push(c.id);
+        else if (c.type === "title_contains") title = c.value;
+      }
+      saved = {
+        folder,
+        tags: tagIds.sort((a, b) => a - b),
+        match: "all",
+        untagged,
+        sort: f.sort ?? "added_desc",
+        query: title,
+      };
+    } else {
+      saved = {
+        folder: f.folder_id ?? null,
+        tags: [...(f.tag_ids ?? [])].sort((a, b) => a - b),
+        match: f.tag_match ?? "all",
+        untagged: false,
+        sort: f.sort ?? "added_desc",
+        query: f.title_substring ?? "",
+      };
+    }
+    const same =
+      cur.folder === saved.folder &&
+      cur.match === saved.match &&
+      cur.untagged === saved.untagged &&
+      cur.sort === saved.sort &&
+      cur.query === saved.query &&
+      cur.tags.length === saved.tags.length &&
+      cur.tags.every((id, i) => id === saved.tags[i]);
+    if (!same) activeSavedViewId = null;
+  });
+
   async function onCreateTopLevelTag() {
     pendingDocForTag = null;
     newTagName = "";
@@ -1344,6 +1582,76 @@
         {/each}
         {#if folders.length === 0 && initialized}
           <div class="rail-empty">No folders yet</div>
+        {/if}
+      </div>
+
+      <div class="rail-section">
+        <div class="rail-head">
+          <span class="rail-title">Saved views</span>
+          {#if filterIsNonDefault && saveViewDraftName === null}
+            <button
+              class="rail-clear"
+              title="Pin the current filter (folder + tags + match mode + untagged + sort) as a saved view"
+              aria-label="Save current filter as view"
+              disabled={savedViewBusy}
+              onclick={openSaveViewForm}
+            >Save filter</button>
+          {/if}
+          <span class="rail-count">{savedViews.length}</span>
+        </div>
+        {#if saveViewDraftName !== null}
+          <div class="rail-rename">
+            <input
+              class="rail-rename-input"
+              class:invalid={saveViewError !== null}
+              value={saveViewDraftName}
+              aria-label="Saved view name"
+              placeholder="View name"
+              use:focusSelect
+              oninput={(e) => {
+                saveViewDraftName = e.currentTarget.value;
+                saveViewError = null;
+              }}
+              onkeydown={(e) => {
+                if (e.key === "Enter") commitSaveView();
+                else if (e.key === "Escape") cancelSaveView();
+              }}
+            />
+            {#if saveViewError}
+              <span class="rail-rename-error" title={saveViewError}
+                >{saveViewError}</span
+              >
+            {/if}
+          </div>
+        {/if}
+        {#each savedViews as v (v.id)}
+          <div class="rail-row-wrap">
+            <button
+              class="rail-row"
+              class:active={activeSavedViewId === v.id}
+              title="Restore this saved filter"
+              onclick={() => restoreSavedView(v)}
+            >
+              <span class="rail-icon">◆</span>
+              <span class="rail-label">{v.name}</span>
+            </button>
+            <button
+              class="rail-row-x"
+              title="Delete saved view {v.name}"
+              aria-label="Delete saved view"
+              disabled={savedViewBusy}
+              onclick={() => onDeleteSavedView(v)}
+            >×</button>
+          </div>
+        {/each}
+        {#if savedViews.length === 0 && saveViewDraftName === null && initialized}
+          <div class="rail-empty">
+            {#if filterIsNonDefault}
+              No saved views yet
+            {:else}
+              Filter the library, then pin it as a view
+            {/if}
+          </div>
         {/if}
       </div>
 
