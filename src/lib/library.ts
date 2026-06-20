@@ -827,6 +827,21 @@ export async function collectionSetColor(
   return unwrap(res);
 }
 
+/**
+ * Persist a new rail order for manual collections. Pass the ids in the
+ * order they should appear top-to-bottom. Returns the count of rows whose
+ * sort_order actually changed (so the caller can suppress a refresh when
+ * nothing moved). Unknown ids are silently skipped — a stale id from a
+ * list-vs-reorder race won't crash the UI. v3.53.0 Atlas Collections —
+ * Slice 25.
+ */
+export async function collectionReorder(orderedIds: number[]): Promise<number> {
+  const res = await invoke<CmdResult<number>>("slab_collection_reorder", {
+    orderedIds,
+  });
+  return unwrap(res);
+}
+
 export async function collectionAddDocs(
   collectionId: number,
   docIds: number[],

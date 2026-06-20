@@ -18,6 +18,7 @@
     collectionDelete,
     collectionRename,
     collectionSetColor,
+    collectionReorder,
     collectionListDocs,
     collectionAddDocs,
     smartCollectionList,
@@ -209,6 +210,67 @@
       editColorError = (e as Error).message;
     } finally {
       editColorBusy = false;
+    }
+  }
+
+  // -------- Drag-to-reorder (v3.53.0 Atlas Collections — Slice 25) --------
+  // HTML5 native drag with a dedicated payload type so the existing
+  // document-drop handler (which keys off application/x-slab-doc-ids)
+  // ignores reorder drags entirely. dragSourceId tracks the lifted row;
+  // dragTargetId paints the insertion-line affordance on hover.
+  let dragSourceId = $state<number | null>(null);
+  let dragTargetId = $state<number | null>(null);
+  let reorderBusy = $state(false);
+
+  function onReorderDragStart(e: DragEvent, c: CollectionRecord) {
+    if (!e.dataTransfer) return;
+    dragSourceId = c.id;
+    dragTargetId = null;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-slab-collection-id", String(c.id));
+  }
+  function onReorderDragOver(e: DragEvent, c: CollectionRecord) {
+    if (dragSourceId === null) return;
+    if (!e.dataTransfer?.types.includes("application/x-slab-collection-id")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    dragTargetId = c.id;
+  }
+  function onReorderDragLeave(c: CollectionRecord) {
+    if (dragTargetId === c.id) dragTargetId = null;
+  }
+  function onReorderDragEnd() {
+    dragSourceId = null;
+    dragTargetId = null;
+  }
+  async function onReorderDrop(e: DragEvent, target: CollectionRecord) {
+    e.preventDefault();
+    const src = dragSourceId;
+    dragSourceId = null;
+    dragTargetId = null;
+    if (src === null || src === target.id) return;
+    const sourceIdx = collections.findIndex((c) => c.id === src);
+    const targetIdx = collections.findIndex((c) => c.id === target.id);
+    if (sourceIdx < 0 || targetIdx < 0) return;
+    // Lift the source out, splice it in before the target (top-side drop).
+    // "Drop X on Y" means "X now sits where Y was" with everything below
+    // it shifted down — stable, predictable.
+    const next = collections.slice();
+    const [moved] = next.splice(sourceIdx, 1);
+    const insertAt = sourceIdx < targetIdx ? targetIdx - 1 : targetIdx;
+    next.splice(insertAt, 0, moved);
+    // Optimistic UI: swap the rail to the new order the instant the
+    // mouse releases. Persist in the background; rollback on failure.
+    const prev = collections;
+    collections = next;
+    reorderBusy = true;
+    try {
+      await collectionReorder(next.map((c) => c.id));
+    } catch (err) {
+      collections = prev;
+      error = (err as Error).message;
+    } finally {
+      reorderBusy = false;
     }
   }
 
@@ -450,12 +512,26 @@
   {#if loading && collections.length === 0 && smart.length === 0}
     <div class="cs-empty">Loading…</div>
   {:else}
+    <!-- v3.53.0 Atlas Collections — Slice 25: role="list" wrapper so each
+         draggable .cs-row-wrap inside can carry role="listitem" without
+         tripping the a11y_no_static_element_interactions warning that
+         dragstart/drop on a bare <div> raises. -->
+    <div class="cs-list" role="list">
     {#each collections as c (c.id)}
       <div
         class="cs-row-wrap"
+        role="listitem"
         class:active={activeId === `c:${c.id}`}
         class:drag-over={dragOverId === c.id}
+        class:reorder-target={dragTargetId === c.id && dragSourceId !== c.id}
+        class:reorder-source={dragSourceId === c.id}
         class:renaming={renamingId === c.id}
+        draggable={renamingId !== c.id && !reorderBusy}
+        ondragstart={(e) => onReorderDragStart(e, c)}
+        ondragover={(e) => onReorderDragOver(e, c)}
+        ondragleave={() => onReorderDragLeave(c)}
+        ondragend={onReorderDragEnd}
+        ondrop={(e) => onReorderDrop(e, c)}
       >
         {#if renamingId === c.id}
           <form
@@ -524,6 +600,7 @@
         <div class="cs-rename-err" role="alert">{renameError}</div>
       {/if}
     {/each}
+    </div>
 
     <div class="cs-sub-row">
       <span class="cs-sub">Smart</span>
@@ -884,6 +961,29 @@
   .cs-row-wrap.renaming {
     background: color-mix(in oklab, var(--accent) 8%, transparent);
     border-radius: 6px;
+  }
+  /* v3.53.0 Atlas Collections — Slice 25 drag-to-reorder indicators */
+  .cs-row-wrap {
+    transition: background 120ms ease, opacity 120ms ease;
+  }
+  .cs-row-wrap.reorder-source {
+    opacity: 0.35;
+  }
+  .cs-row-wrap.reorder-target {
+    /* Insertion-line affordance above the target row, mirroring the
+       Notion/Linear pattern for drag-to-reorder lists. */
+    position: relative;
+  }
+  .cs-row-wrap.reorder-target::before {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: 6px;
+    right: 6px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 1px;
+    pointer-events: none;
   }
   /* v3.53.0 Atlas Collections — Slice 24 color-dot affordance & modal */
   .cs-color-dot {

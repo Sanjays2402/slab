@@ -248,6 +248,43 @@ pub fn set_collection_color(
     get_collection(db, id)
 }
 
+/// Rewrite the `sort_order` of every collection in `ordered_ids` so the
+/// rail displays them in the supplied sequence on next list. Atomic.
+///
+/// Semantics:
+/// - Any id in `ordered_ids` that doesn't exist in the table is silently
+///   skipped (a stale id from a list-vs-reorder race shouldn't crash the
+///   UI). Returns the count of rows whose sort_order actually moved.
+/// - Any collection in the table NOT named in `ordered_ids` keeps its
+///   existing sort_order (the rail can reorder a subset without
+///   reshuffling the rest — though the rail today reorders the full
+///   list).
+/// - The new sort_order values use 100, 200, 300, … so a future
+///   single-row reorder can splice between two existing rows without a
+///   full rewrite (room to grow without rounding to fractions).
+/// - Duplicate ids in `ordered_ids` are accepted but their last
+///   appearance wins (we just keep stomping the UPDATE — final state
+///   matches whoever came last). No error: the UI never produces dups,
+///   but tolerating them keeps the wire contract forgiving.
+///
+/// v3.53.0 Atlas Collections — Slice 25.
+pub fn reorder_collections(db: &mut LibraryDb, ordered_ids: &[i64]) -> Result<usize, LibraryError> {
+    let tx = db.conn_mut().transaction()?;
+    let mut moved = 0usize;
+    {
+        let mut stmt = tx.prepare(
+            "UPDATE library_collections SET sort_order = ?1 WHERE id = ?2 AND sort_order != ?1",
+        )?;
+        for (idx, id) in ordered_ids.iter().enumerate() {
+            // Step by 100 so a future precision-insert has room.
+            let new_order = ((idx as i64) + 1) * 100;
+            moved += stmt.execute(params![new_order, *id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(moved)
+}
+
 pub fn add_docs(
     db: &mut LibraryDb,
     collection_id: i64,
@@ -740,6 +777,107 @@ mod tests {
         assert_eq!(updated.name, "Onboarding");
         assert_eq!(updated.icon.as_deref(), Some("folder"));
         assert_eq!(updated.doc_count, 1);
+    }
+
+    // -------- Slice 25: reorder_collections --------
+
+    #[test]
+    fn reorder_collections_rewrites_sort_order_to_new_sequence() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "A", None, None).unwrap();
+        let b = create_collection(&mut db, "B", None, None).unwrap();
+        let c = create_collection(&mut db, "C", None, None).unwrap();
+        // Default order is creation order: A, B, C.
+        let listed: Vec<i64> = list_collections(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(listed, vec![a.id, b.id, c.id]);
+        // Reorder to C, A, B.
+        let moved = reorder_collections(&mut db, &[c.id, a.id, b.id]).unwrap();
+        // All three rows moved off their old defaults.
+        assert_eq!(moved, 3);
+        let after: Vec<i64> = list_collections(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(after, vec![c.id, a.id, b.id]);
+    }
+
+    #[test]
+    fn reorder_collections_returns_count_of_actual_moves() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "A", None, None).unwrap();
+        let b = create_collection(&mut db, "B", None, None).unwrap();
+        // First reorder: both rows move from defaults 0/1 -> 100/200.
+        assert_eq!(reorder_collections(&mut db, &[a.id, b.id]).unwrap(), 2);
+        // Same reorder again: zero moves because sort_order is already 100/200.
+        assert_eq!(reorder_collections(&mut db, &[a.id, b.id]).unwrap(), 0);
+    }
+
+    #[test]
+    fn reorder_collections_uses_stepped_sort_order_for_future_inserts() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "A", None, None).unwrap();
+        let b = create_collection(&mut db, "B", None, None).unwrap();
+        reorder_collections(&mut db, &[a.id, b.id]).unwrap();
+        // Step is 100 so a later splice can insert at 150 without rounding.
+        let so: Vec<i64> = list_collections(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.sort_order)
+            .collect();
+        assert_eq!(so, vec![100, 200]);
+    }
+
+    #[test]
+    fn reorder_collections_silently_skips_unknown_ids() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "A", None, None).unwrap();
+        let b = create_collection(&mut db, "B", None, None).unwrap();
+        // Throwing a bogus id in the middle shouldn't crash and shouldn't
+        // hurt the surviving rows — the survivors land at positions 1 and 3
+        // (100 and 300), with the unknown id at position 2 (skipped).
+        let moved = reorder_collections(&mut db, &[a.id, 999_999, b.id]).unwrap();
+        assert_eq!(moved, 2);
+        let so: Vec<(i64, i64)> = list_collections(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.id, c.sort_order))
+            .collect();
+        assert_eq!(so, vec![(a.id, 100), (b.id, 300)]);
+    }
+
+    #[test]
+    fn reorder_collections_leaves_unnamed_rows_alone() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "A", None, None).unwrap();
+        let b = create_collection(&mut db, "B", None, None).unwrap();
+        let c = create_collection(&mut db, "C", None, None).unwrap();
+        // Pin original defaults so we can detect drift on c.
+        let original_c = get_collection(&db, c.id).unwrap();
+        // Reorder a subset (just b then a, c untouched).
+        reorder_collections(&mut db, &[b.id, a.id]).unwrap();
+        let after_c = get_collection(&db, c.id).unwrap();
+        assert_eq!(after_c.sort_order, original_c.sort_order);
+        // b lands at 100, a at 200, c keeps its old default (2 from creation).
+        let so: Vec<(i64, i64)> = list_collections(&db)
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.id, c.sort_order))
+            .collect();
+        // List is ordered by sort_order ASC; c had sort_order=2 (still in
+        // the original sequence), and b=100, a=200. So display is c,b,a.
+        assert_eq!(so, vec![(c.id, 2), (b.id, 100), (a.id, 200)]);
+    }
+
+    #[test]
+    fn reorder_collections_empty_slice_is_noop() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let _a = create_collection(&mut db, "A", None, None).unwrap();
+        assert_eq!(reorder_collections(&mut db, &[]).unwrap(), 0);
     }
 
     #[test]
