@@ -183,6 +183,7 @@ pub struct BackfillRun {
 /// non-recursive — the root is "depth 0"). The UI surfaces depth-1 or
 /// depth-3 caps as guardrails for users who fat-finger their root.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct PlanOptions {
     /// Walk sub-folders too. Default `false` preserves single-level
     /// semantics. When `true`, hidden directories (starting with `.`)
@@ -248,12 +249,13 @@ pub fn plan_backfill_with_options(
             action: ActionKind::Skip,
             reason: format!("could not read folder: {e}"),
         });
+        let per_rule_counts = tally_rule_counts(&planned);
         return BackfillReport {
             folder: folder_str,
             scanned: 0,
             planned,
             generated_at: now,
-            per_rule_counts: tally_rule_counts(&[]),
+            per_rule_counts,
         };
     }
 

@@ -65,8 +65,7 @@ pub trait RunEmitter: Send + Sync + 'static {
     /// impl is a no-op so existing test emitters don't need to change.
     /// The production `tauri::AppHandle` impl forwards to
     /// `hopper://backfill-progress`.
-    fn emit_backfill_progress(&self, _run_id: i64, _progress: &super::backfill::BackfillProgress) {
-    }
+    fn emit_backfill_progress(&self, _run_id: i64, _progress: &super::backfill::BackfillProgress) {}
 }
 
 /// No-op emitter — used in tests and when the service is constructed
