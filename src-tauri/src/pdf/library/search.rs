@@ -274,8 +274,10 @@ fn tokenize(query: &str) -> Vec<Tok> {
                 if !buf.is_empty() {
                     let w = scrub_word(&buf);
                     if !w.is_empty() {
+                        // We don't reset pending_neg here — the trailing
+                        // `pending_neg = false` after this `if` handles
+                        // both the emit-a-token and emit-nothing paths.
                         out.push(if pending_neg {
-                            pending_neg = false;
                             Tok::Exclude(w)
                         } else {
                             Tok::Bare(w)
@@ -283,7 +285,9 @@ fn tokenize(query: &str) -> Vec<Tok> {
                     }
                     buf.clear();
                 }
-                // A lone `-` before whitespace is just a dash — drop it.
+                // Always reset the negative flag at a word boundary:
+                // a lone `-` before whitespace is just a dash, and a
+                // `-word` that emitted as Exclude has consumed its flag.
                 pending_neg = false;
             }
             // `-` at the very START of a token flips it negative.
@@ -470,20 +474,28 @@ mod tests {
 
     #[test]
     fn build_match_expr_phrase_then_bare_glob_is_on_bare() {
-        // When the LAST token is a phrase, no `*` is emitted — phrase
-        // CAN'T carry a prefix glob and prefix-on-the-previous-bare-word
-        // would change the semantics of an explicitly-quoted query.
+        // The LAST emitted bare-word token always picks up the prefix `*`
+        // regardless of whether a phrase follows it — a user typing
+        // `dra "force majeure"` is mid-typing `dra` and wants `dra*` to
+        // match `draft`/`drama`/etc. The phrase itself never gets `*`
+        // (FTS5 rejects "a b"*), so the last bare word is the only
+        // candidate for the prefix glob.
         assert_eq!(
             build_match_expr(r#"draft "force majeure""#),
-            "\"draft\" \"force majeure\""
+            "\"draft\"* \"force majeure\""
         );
     }
 
     #[test]
     fn build_match_expr_strips_meta_inside_phrase() {
         // Asterisk, colon, paren, caret would all be parsed by FTS5 if
-        // they survived. The lexer scrubs them but keeps internal spaces.
-        assert_eq!(build_match_expr(r#""foo* (bar):baz""#), "\"foo bar baz\"");
+        // they survived. scrub_phrase strips them; adjacent non-space
+        // metacharacters collapse the surrounding tokens together
+        // (`(bar):baz` -> `barbaz`) because we don't synthesise word
+        // boundaries from disappeared punctuation. The result is still
+        // a valid FTS5 phrase that hits any page containing exactly
+        // those tokens in order.
+        assert_eq!(build_match_expr(r#""foo* (bar):baz""#), "\"foo barbaz\"");
     }
 
     #[test]
