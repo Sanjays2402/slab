@@ -153,9 +153,14 @@
   let query = $state("");
   let sort = $state<LibrarySortBy>("added_desc");
   // v3.40.0 Atlas Untagged-Filter — when on, restrict the grid to docs
-  // that carry no tags (the "cleanup queue"). Composes with the active
-  // folder / tag / search filters via the clause tree.
+  // with no tags at all (no `library_doc_tags` rows). Cleared when a
+  // collection is selected (collections fully own their doc list).
   let untaggedOnly = $state(false);
+  // v3.55.0 Atlas Doc-Inspector — when on, restrict the grid to docs the
+  // user has starred. AND-combined with every other filter; persists for
+  // the session but resets when a collection or smart collection is loaded
+  // (those load their own filter or doc list).
+  let starredOnly = $state(false);
   // v3.49.0 Atlas Tag-Filter-Clear — true when any tag-rail filter is engaged
   // (>=1 tag selected, or the untagged-only toggle is on). Drives the rail-head
   // "Clear" affordance, which resets the whole tag filter in one click. The
@@ -500,7 +505,11 @@
       for (const id of activeTagIds) clauses.push({ type: "tag", id });
       if (title) clauses.push({ type: "title_contains", value: title });
       const combinator: FilterCombinator = "and";
-      filter = { sort, clauses: { combinator, clauses } };
+      filter = {
+        sort,
+        clauses: { combinator, clauses },
+        starred_only: starredOnly,
+      };
     } else {
       filter = {
         folder_id: folderId,
@@ -511,6 +520,10 @@
         tag_match: tagMatch,
         title_substring: title,
         sort,
+        // v3.55.0 Atlas Doc-Inspector: AND-combined with every other
+        // constraint; backend treats missing as false so omitting it is
+        // safe but being explicit keeps the wire shape self-describing.
+        starred_only: starredOnly,
       };
     }
     try {
@@ -549,6 +562,7 @@
     tagMatch;
     sort;
     untaggedOnly;
+    starredOnly;
     void refreshDocs();
   });
 
@@ -1628,6 +1642,16 @@
     >
       <span class="glyph" aria-hidden="true">&#x2298;</span>
       Untagged
+    </button>
+    <button
+      class="untagged-toggle"
+      class:active={starredOnly}
+      onclick={() => (starredOnly = !starredOnly)}
+      aria-pressed={starredOnly}
+      title="Show only starred documents"
+    >
+      <span class="glyph" aria-hidden="true">&#x2605;</span>
+      Starred
     </button>
     <button
       class="untagged-toggle select-toggle"

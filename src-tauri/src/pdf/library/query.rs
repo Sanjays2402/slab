@@ -38,6 +38,13 @@ pub struct LibraryFilter {
     /// working byte-for-byte. Forward + backward compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clauses: Option<FilterGroup>,
+    /// v3.55.0 Atlas Doc-Inspector: when `true`, only starred documents
+    /// match. AND-combined with every other constraint (flat tag_ids /
+    /// folder / title_substring or the clause tree). Defaults to `false`
+    /// so every pre-v3.55 stored filter — which never carried this field
+    /// — keeps its historical behaviour byte-for-byte.
+    #[serde(default)]
+    pub starred_only: bool,
 }
 
 /// Combinator for the flat `tag_ids` list. `All` (the default) keeps the
@@ -84,6 +91,10 @@ pub enum FilterClause {
     Untagged,
     /// Document has at least one tag.
     Tagged,
+    /// Document is starred (v3.55.0 Atlas Doc-Inspector).
+    Starred,
+    /// Document is NOT starred (v3.55.0 Atlas Doc-Inspector).
+    NotStarred,
     /// Nested group — enables `(A OR B) AND NOT C` style rules.
     Group(FilterGroup),
 }
@@ -192,6 +203,15 @@ pub fn query_documents(
                 }
             }
         }
+    }
+
+    // starred_only is AND-combined with everything (flat or clause-tree).
+    // Lives at the top level so it's always re-asserted even when the user
+    // saved a clause-tree-only smart collection — useful as a "starred view"
+    // shortcut atop ANY existing filter without rewriting the tree. v3.55.0
+    // Atlas Doc-Inspector.
+    if filter.starred_only {
+        where_clauses.push("starred = 1".into());
     }
 
     if !where_clauses.is_empty() {
@@ -343,6 +363,8 @@ fn build_clause_sql(clause: &FilterClause, params: &mut Vec<Box<dyn ToSql>>) -> 
         }
         FilterClause::Untagged => "id NOT IN (SELECT doc_id FROM library_doc_tags)".into(),
         FilterClause::Tagged => "id IN (SELECT doc_id FROM library_doc_tags)".into(),
+        FilterClause::Starred => "starred = 1".into(),
+        FilterClause::NotStarred => "starred = 0".into(),
         FilterClause::Group(g) => build_group_sql(g, params),
     }
 }
@@ -954,5 +976,173 @@ mod tests {
         // Unit variants serialize as `{"type":"untagged"}` (internally tagged).
         assert!(s.contains("\"type\":\"untagged\""));
         assert!(s.contains("\"type\":\"tagged\""));
+    }
+
+    // ─── v3.55.0 Atlas Doc-Inspector — starred_only + Starred clause ───
+
+    fn star_doc(db: &mut LibraryDb, path: &str) -> i64 {
+        let f = db.add_folder("/sf").ok();
+        let id = db
+            .upsert_document(f.map(|x| x.id), path, None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(id, true).unwrap();
+        id
+    }
+
+    fn unstar_doc(db: &mut LibraryDb, path: &str) -> i64 {
+        let f = db.add_folder("/sf").ok();
+        db.upsert_document(f.map(|x| x.id), path, None, "h", 1, 1, None, None)
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn starred_only_returns_only_starred_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        star_doc(&mut db, "/sf/a.pdf");
+        unstar_doc(&mut db, "/sf/b.pdf");
+        star_doc(&mut db, "/sf/c.pdf");
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                starred_only: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.starred));
+    }
+
+    #[test]
+    fn starred_only_false_is_a_noop() {
+        // Default LibraryFilter (starred_only=false) returns starred AND
+        // unstarred — the field is opt-in, never reduces results when off.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        star_doc(&mut db, "/sf/a.pdf");
+        unstar_doc(&mut db, "/sf/b.pdf");
+        let rows = query_documents(&db, &LibraryFilter::default()).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn starred_only_combines_with_tag_filter() {
+        // starred_only is AND-combined with tag filtering — a starred doc
+        // without the requested tag is still excluded.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let t = db.add_tag("urgent", None).unwrap();
+        let f = db.add_folder("/sf").unwrap();
+        let a = db
+            .upsert_document(Some(f.id), "/sf/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(a, true).unwrap();
+        db.set_doc_tags(a, &[t.id]).unwrap();
+        // Starred but no matching tag.
+        let b = db
+            .upsert_document(Some(f.id), "/sf/b.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(b, true).unwrap();
+        // Untagged starred + tag filter -> only `a` matches.
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![t.id],
+                starred_only: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/sf/a.pdf");
+    }
+
+    #[test]
+    fn starred_clause_in_or_group() {
+        // `starred OR tag:urgent` returns docs that are starred OR carry
+        // the tag — the Starred/NotStarred clause variants slot into the
+        // clause tree like any other predicate.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let t = db.add_tag("urgent", None).unwrap();
+        let f = db.add_folder("/sf").unwrap();
+        // a: starred only
+        let a = db
+            .upsert_document(Some(f.id), "/sf/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(a, true).unwrap();
+        // b: tagged only
+        let b = db
+            .upsert_document(Some(f.id), "/sf/b.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_tags(b, &[t.id]).unwrap();
+        // c: neither — should NOT match.
+        db.upsert_document(Some(f.id), "/sf/c.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                clauses: Some(FilterGroup {
+                    combinator: FilterCombinator::Or,
+                    clauses: vec![FilterClause::Starred, FilterClause::Tag { id: t.id }],
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        let mut paths: Vec<_> = rows.iter().map(|r| r.path.clone()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["/sf/a.pdf", "/sf/b.pdf"]);
+    }
+
+    #[test]
+    fn not_starred_clause_filters_out_starred_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        star_doc(&mut db, "/sf/a.pdf");
+        unstar_doc(&mut db, "/sf/b.pdf");
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                clauses: Some(FilterGroup {
+                    combinator: FilterCombinator::And,
+                    clauses: vec![FilterClause::NotStarred],
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/sf/b.pdf");
+    }
+
+    #[test]
+    fn starred_filter_serde_round_trip() {
+        // starred_only + Starred clause both survive a JSON round-trip
+        // so pre-v3.55 saved smart collections that didn't carry the field
+        // still parse, and a v3.55+ one with the field re-serialises to
+        // exactly the same shape.
+        let f = LibraryFilter {
+            starred_only: true,
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::Or,
+                clauses: vec![FilterClause::Starred, FilterClause::NotStarred],
+            }),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert!(back.starred_only);
+        assert_eq!(f.clauses, back.clauses);
+        assert!(s.contains("\"starred_only\":true"));
+        assert!(s.contains("\"type\":\"starred\""));
+        assert!(s.contains("\"type\":\"not_starred\""));
+        // A pre-v3.55 filter that omits the field deserialises as false.
+        let legacy = r#"{"folder_id":null,"tag_ids":[],"title_substring":null,"limit":null,"sort":"added_desc"}"#;
+        let parsed: LibraryFilter = serde_json::from_str(legacy).unwrap();
+        assert!(!parsed.starred_only);
     }
 }

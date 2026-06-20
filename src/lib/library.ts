@@ -118,6 +118,8 @@ export type FilterClause =
   | { type: "title_not_contains"; value: string }
   | { type: "untagged" }
   | { type: "tagged" }
+  | { type: "starred" }
+  | { type: "not_starred" }
   | { type: "group"; combinator: FilterCombinator; clauses: FilterClause[] };
 
 /** Mirror of `pdf::library::query::FilterGroup`. */
@@ -148,6 +150,13 @@ export interface LibraryFilter {
    * so the JSON matches `FilterClause::Group(FilterGroup)`.
    */
   clauses?: FilterGroup | null;
+  /**
+   * v3.55.0 Atlas Doc-Inspector: when `true`, only starred documents
+   * match. AND-combined with every other constraint (flat fields OR
+   * clause tree). Defaults to `false`; omit on the wire for legacy
+   * compatibility — the backend reads a missing field as `false`.
+   */
+  starred_only?: boolean;
 }
 
 /**
