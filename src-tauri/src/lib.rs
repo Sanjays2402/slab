@@ -24,7 +24,7 @@ use ai::config::{
 use ai::diff_summary::{beacon_diff_summary as do_beacon_diff_summary, BeaconDiffSummary};
 use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
-    IndexReport, IndexStats, SearchHit,
+    IndexReport, IndexStats, IndexedPdfRecord, SearchHit,
 };
 use ai::glossary::{
     build_glossary_from_path as do_beacon_build_glossary, GlossaryOpts, GlossaryReport,
@@ -2951,6 +2951,23 @@ fn slab_beacon_index_forget(pdf_hash: String) -> CmdResult<()> {
     index.forget(&pdf_hash).into()
 }
 
+// ---------- Beacon Cache Inspector (v3.54.0 round-7) ----------
+
+/// List every PDF currently in the embedding index, newest first, with
+/// per-row chunk count joined in. Powers the inspector's main table.
+#[tauri::command]
+fn slab_beacon_index_list() -> CmdResult<Vec<IndexedPdfRecord>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.list_indexed().into()
+}
+
 // ---------- Beacon PII Highlighter (Slice 8) ----------
 
 impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
@@ -5753,6 +5770,7 @@ pub fn run() {
             slab_beacon_search,
             slab_beacon_index_stats,
             slab_beacon_index_forget,
+            slab_beacon_index_list,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
