@@ -6105,6 +6105,8 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_test_rules,
             crate::pdf::hopper::cmds::slab_hopper_plan_backfill,
             crate::pdf::hopper::cmds::slab_hopper_execute_backfill,
+            crate::pdf::hopper::cmds::slab_hopper_execute_backfill_async,
+            crate::pdf::hopper::cmds::slab_hopper_cancel_backfill,
             crate::pdf::hopper::cmds::slab_hopper_list_backfill_runs,
         ])
         .run(tauri::generate_context!())

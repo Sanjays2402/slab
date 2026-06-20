@@ -279,13 +279,20 @@ pub fn slab_hopper_test_rules(
 
 /// `slab_hopper_plan_backfill` — dry-run the rule chain against an
 /// existing folder. Resolves the watch by id, loads its current rules,
-/// walks the folder (non-recursive), returns a [`BackfillReport`]. The
-/// frontend renders this report as a table; nothing is moved.
+/// walks the folder, returns a [`BackfillReport`]. The frontend renders
+/// this report as a table; nothing is moved.
+///
+/// `opts` (v3.39 round-10) controls whether sub-folders are swept.
+/// `None` preserves the v3.22 single-level default so pre-v3.39
+/// callers stay behaviourally identical. Recursive scans honour the
+/// `max_depth` cap when set; an unset `max_depth` walks the whole
+/// tree.
 #[tauri::command]
 pub fn slab_hopper_plan_backfill(
     svc: tauri::State<'_, HopperService>,
     watch_id: i64,
     folder: Option<String>,
+    opts: Option<super::backfill::PlanOptions>,
 ) -> CmdResult<super::backfill::BackfillReport> {
     let (watch, rules) = {
         let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -302,7 +309,13 @@ pub fn slab_hopper_plan_backfill(
     // call pattern. The UI also accepts an arbitrary folder picker for
     // "test against a sample folder" workflows.
     let target = folder.unwrap_or_else(|| watch.source_dir.clone());
-    let report = super::backfill::plan_backfill(std::path::Path::new(&target), &watch, &rules);
+    let opts = opts.unwrap_or_default();
+    let report = super::backfill::plan_backfill_with_options(
+        std::path::Path::new(&target),
+        &watch,
+        &rules,
+        &opts,
+    );
     Ok(report)
 }
 
@@ -325,6 +338,80 @@ pub fn slab_hopper_execute_backfill(
         }
     }
     Ok(run)
+}
+
+/// `slab_hopper_execute_backfill_async` — streaming variant. The
+/// long-running [`super::backfill::execute_backfill_streaming`] loop
+/// runs on a `spawn_blocking` worker so it doesn't block the tokio
+/// reactor. Per-file progress is broadcast on
+/// `hopper://backfill-progress` via the service's [`super::watcher::RunEmitter`].
+/// The user's Cancel button calls
+/// [`slab_hopper_cancel_backfill`] which flips the matching token in
+/// [`super::watcher::HopperService::backfill_cancels`].
+///
+/// `run_id` is a frontend-generated unique key (typically `Date.now()`)
+/// that ties the executor + cancel + event subscription together. The
+/// command awaits the worker so the resolved value still carries the
+/// final [`super::backfill::BackfillRun`] — UI code that prefers the
+/// imperative shape can use that and ignore the event stream.
+#[tauri::command]
+pub async fn slab_hopper_execute_backfill_async(
+    svc: tauri::State<'_, HopperService>,
+    report: super::backfill::BackfillReport,
+    run_id: i64,
+) -> CmdResult<super::backfill::BackfillRun> {
+    // Register the cancel-token BEFORE the worker spawns — guarantees
+    // that a Cancel arriving before the worker's first poll is honoured.
+    let cancel = svc.register_backfill_cancel(run_id);
+
+    // Clone Arc handles into the worker. The `svc` State borrow can't
+    // cross the spawn_blocking boundary, so we pluck what we need.
+    let log = svc.log.clone();
+    let emitter = svc.emitter.clone();
+    let cancels = svc.backfill_cancels.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let emitter_ref = emitter.as_ref();
+        let run = super::backfill::execute_backfill_streaming(&report, &cancel, |progress| {
+            emitter_ref.emit_backfill_progress(run_id, progress);
+        });
+
+        // Persist the run (best-effort, same policy as the sync path —
+        // never let a DB hiccup discard the user's completed work).
+        {
+            let mut log_guard = log.lock().unwrap_or_else(|p| p.into_inner());
+            if let Err(e) = log_guard.record_backfill_run(&run) {
+                eprintln!("hopper: failed to persist backfill run: {e}");
+            }
+        }
+
+        // Drop the cancel registration inline so the map stays bounded
+        // even if the awaiting caller is dropped before the JoinHandle
+        // resolves.
+        {
+            let mut map = cancels.lock().unwrap_or_else(|p| p.into_inner());
+            map.remove(&run_id);
+        }
+
+        run
+    })
+    .await
+    .map_err(|e| format!("backfill task join: {e}"))?;
+
+    Ok(result)
+}
+
+/// `slab_hopper_cancel_backfill` — flip the cancel token for an
+/// in-flight streaming backfill. Returns `true` if the run was still
+/// in flight (token was found + flipped), `false` if the run had
+/// already completed (no token registered). The frontend treats both
+/// outcomes as success — \"the user got what they wanted\".
+#[tauri::command]
+pub fn slab_hopper_cancel_backfill(
+    svc: tauri::State<'_, HopperService>,
+    run_id: i64,
+) -> CmdResult<bool> {
+    Ok(svc.cancel_backfill(run_id))
 }
 
 /// `slab_hopper_list_backfill_runs` — tail of historical backfills,

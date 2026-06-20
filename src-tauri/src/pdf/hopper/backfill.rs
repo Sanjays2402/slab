@@ -35,6 +35,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -141,69 +143,100 @@ pub struct BackfillRun {
 
 // ─── Public API ───────────────────────────────────────────────────────
 
-/// Walk `folder` non-recursively, evaluate each `*.pdf` against the
-/// rule chain, return a [`BackfillReport`]. **Pure function** — never
-/// touches anything outside `folder` (read-only there too).
+/// Tunables for [`plan_backfill_with_options`]. Default values match
+/// the original v3.22 [`plan_backfill`] behaviour (single-level scan)
+/// so widening the contract is fully back-compat.
+///
+/// `recursive = true` is the v3.39 round-10 follow-on: paralegals
+/// routinely have a discovery dump shaped like `discovery/2024-Q1/`,
+/// `discovery/2024-Q2/`, … and they want to point Hopper at
+/// `discovery/` once and have every sub-folder swept. Hazel can't do
+/// PDF-aware predicates *and* recurse; Acrobat batch actions can't
+/// recurse at all.
+///
+/// `max_depth = None` means "no cap, walk forever". `Some(n)` caps the
+/// recursion at `n` levels below `folder` (0 = same as
+/// non-recursive — the root is "depth 0"). The UI surfaces depth-1 or
+/// depth-3 caps as guardrails for users who fat-finger their root.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanOptions {
+    /// Walk sub-folders too. Default `false` preserves single-level
+    /// semantics. When `true`, hidden directories (starting with `.`)
+    /// are still skipped — same hostility-to-Spotlight-noise rule that
+    /// already applies to hidden files.
+    pub recursive: bool,
+    /// Cap on recursion depth — `None` for unbounded, `Some(0)` matches
+    /// `recursive = false` exactly. Ignored when `recursive = false`.
+    pub max_depth: Option<u32>,
+}
+
+/// Back-compat wrapper for [`plan_backfill_with_options`] using the
+/// default (non-recursive) `PlanOptions`. Every pre-v3.39 caller stays
+/// behaviourally identical — no UI changes required to adopt the
+/// widened module.
+pub fn plan_backfill(folder: &Path, base_watch: &Watch, rules: &[Rule]) -> BackfillReport {
+    plan_backfill_with_options(folder, base_watch, rules, &PlanOptions::default())
+}
+
+/// Walk `folder` (optionally recursive per `opts`), evaluate each
+/// `*.pdf` against the rule chain, return a [`BackfillReport`]. **Pure
+/// function** — never touches anything outside `folder` (read-only
+/// there too).
 ///
 /// `base_watch.output_dir` and `base_watch.rename_pattern` form the
-/// fallback when no rule matches. Hidden files (starting with `.`) are
-/// skipped silently — they're rarely user PDFs and including them
-/// surfs into macOS Spotlight noise.
-pub fn plan_backfill(folder: &Path, base_watch: &Watch, rules: &[Rule]) -> BackfillReport {
+/// fallback when no rule matches. Hidden files (starting with `.`) and
+/// hidden directories are skipped silently — they're rarely user PDFs
+/// and including them surfs into macOS Spotlight noise.
+///
+/// Plan order is deterministic across runs on the same filesystem
+/// (collected, then sorted alphabetically by full path) so the UI's
+/// "did this plan change?" diff is stable and tests can assert order.
+pub fn plan_backfill_with_options(
+    folder: &Path,
+    base_watch: &Watch,
+    rules: &[Rule],
+    opts: &PlanOptions,
+) -> BackfillReport {
     let now = unix_now();
     let folder_str = folder.display().to_string();
 
     let mut planned: Vec<PlannedAction> = Vec::new();
+    let mut pdf_paths: Vec<PathBuf> = Vec::new();
 
-    // Single-level scan — recursive is a future option (the UI will
-    // surface a "include sub-folders" checkbox in a follow-up tick).
-    let read_dir = match fs::read_dir(folder) {
-        Ok(r) => r,
-        Err(e) => {
-            // Whole folder unreadable — emit a single Skip row so the
-            // UI has something to render instead of an empty table.
-            planned.push(PlannedAction {
-                source_path: folder_str.clone(),
-                size_bytes: 0,
-                matched_rule: None,
-                destination: None,
-                action: ActionKind::Skip,
-                reason: format!("could not read folder: {e}"),
-            });
-            return BackfillReport {
-                folder: folder_str,
-                scanned: 0,
-                planned,
-                generated_at: now,
-            };
-        }
+    // Treat `folder` as depth-0; recurse via a small explicit stack so
+    // we keep the stable, predictable iteration order without paying
+    // for an extra crate (walkdir would pull in a transitive dep just
+    // for this single call site).
+    let max_depth = if opts.recursive {
+        opts.max_depth.unwrap_or(u32::MAX)
+    } else {
+        0
     };
 
-    // Collect first so we can sort by filename — deterministic plans
-    // help the UI's "did this change?" diff and let the test suite
-    // assert order without flaking on inode iteration.
-    let mut entries: Vec<PathBuf> = read_dir
-        .filter_map(|e| e.ok().map(|d| d.path()))
-        .filter(|p| {
-            // PDFs only, non-hidden, files only.
-            if !p.is_file() {
-                return false;
-            }
-            let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-                return false;
-            };
-            if name.starts_with('.') {
-                return false;
-            }
-            p.extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("pdf"))
-                .unwrap_or(false)
-        })
-        .collect();
-    entries.sort();
+    if let Err(e) = collect_pdfs(folder, 0, max_depth, &mut pdf_paths) {
+        // Whole folder unreadable — emit a single Skip row so the UI
+        // has something to render instead of an empty table.
+        planned.push(PlannedAction {
+            source_path: folder_str.clone(),
+            size_bytes: 0,
+            matched_rule: None,
+            destination: None,
+            action: ActionKind::Skip,
+            reason: format!("could not read folder: {e}"),
+        });
+        return BackfillReport {
+            folder: folder_str,
+            scanned: 0,
+            planned,
+            generated_at: now,
+        };
+    }
 
-    for path in entries {
+    // Deterministic order — sort the full set after the walk completes
+    // so the report is the same regardless of inode iteration quirks.
+    pdf_paths.sort();
+
+    for path in pdf_paths {
         planned.push(plan_one(&path, base_watch, rules));
     }
 
@@ -214,6 +247,48 @@ pub fn plan_backfill(folder: &Path, base_watch: &Watch, rules: &[Rule]) -> Backf
         planned,
         generated_at: now,
     }
+}
+
+/// Walk `folder` and push every `*.pdf` into `out`. `current_depth`
+/// counts levels below the original root; `max_depth` is the inclusive
+/// cap (== 0 → root only, == u32::MAX → unbounded). Hidden entries
+/// (files or dirs starting with `.`) are skipped silently.
+///
+/// Returns `Err` only if the root `folder` itself can't be read —
+/// individual sub-folders that fail are skipped silently (a permission-
+/// denied sub-folder shouldn't kill the whole backfill plan).
+fn collect_pdfs(
+    folder: &Path,
+    current_depth: u32,
+    max_depth: u32,
+    out: &mut Vec<PathBuf>,
+) -> std::io::Result<()> {
+    let read_dir = fs::read_dir(folder)?;
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_file() {
+            let is_pdf = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("pdf"))
+                .unwrap_or(false);
+            if is_pdf {
+                out.push(path);
+            }
+        } else if path.is_dir() && current_depth < max_depth {
+            // Sub-folder read errors are swallowed: a single locked
+            // sub-folder shouldn't blow up the whole report. The UI
+            // can still flag missing files later via per-file reasons.
+            let _ = collect_pdfs(&path, current_depth + 1, max_depth, out);
+        }
+    }
+    Ok(())
 }
 
 /// Commit a previously-generated [`BackfillReport`]. Idempotent:
@@ -227,20 +302,163 @@ pub fn plan_backfill(folder: &Path, base_watch: &Watch, rules: &[Rule]) -> Backf
 /// Re-running with the same report twice is safe — the second run will
 /// emit `Skipped` for everything because the sources are gone.
 pub fn execute_backfill(report: &BackfillReport) -> BackfillRun {
+    // Delegate to the streaming variant with a no-op progress sink +
+    // an always-armed CancelFlag that's never tripped. Keeps the two
+    // entry points behaviour-identical so a regression in
+    // execute_backfill_streaming surfaces here too.
+    execute_backfill_streaming(report, &CancelFlag::new(), |_| {})
+}
+
+/// Per-file progress event emitted by [`execute_backfill_streaming`]
+/// after each file is processed. The Tauri command bridge converts
+/// these into `hopper://backfill-progress` events the UI consumes for
+/// live progress bars, scrolling tail, and Cancel button enablement.
+///
+/// Field order mirrors what the UI displays so a JSON dump is easy to
+/// eyeball during debugging.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackfillProgress {
+    /// 1-indexed position of the file just finished (`processed == total`
+    /// signals \"loop complete\"). 0 only if the report is empty — the
+    /// streaming fn still emits one tail-end frame with processed=0 so
+    /// the UI can transition out of \"applying\" state cleanly.
+    pub processed: usize,
+    /// Total file count from `report.planned.len()` — constant for the
+    /// duration of one run. Snapshot so the UI doesn't need to read it
+    /// out of `report` every frame.
+    pub total: usize,
+    /// Running tallies updated *after* this file's outcome is recorded.
+    pub applied: usize,
+    pub skipped: usize,
+    pub errored: usize,
+    /// The outcome the loop just produced — `None` only on the final
+    /// \"loop complete\" frame for an empty report (no file was
+    /// processed). Lets the UI append to a scrolling tail without
+    /// having to diff the full per_file vector.
+    pub current: Option<BackfillOutcome>,
+}
+
+/// Tauri-event payload — the wire envelope the `tauri::AppHandle`
+/// `RunEmitter` impl publishes on `hopper://backfill-progress`. The
+/// `run_id` lets the frontend route events to the right component
+/// instance when multiple backfills are in flight (today the UI gates
+/// to one at a time, but the wire contract scales).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackfillProgressEvent {
+    pub run_id: i64,
+    pub progress: BackfillProgress,
+}
+
+/// Atomic flag the Tauri layer flips to ask
+/// [`execute_backfill_streaming`] to short-circuit the remaining
+/// files. Checked *before* each apply — once tripped, every remaining
+/// file emits `OutcomeStatus::Skipped` with the canned
+/// [`CANCELLED_REASON`] so the user sees explicit cancel feedback.
+///
+/// Cheap to clone (Arc inside) — the service registers one per
+/// in-flight run keyed by run_id so cancel commands can find it.
+#[derive(Clone, Debug, Default)]
+pub struct CancelFlag {
+    inner: Arc<AtomicBool>,
+}
+
+/// Reason string stamped onto rows skipped because the user clicked
+/// Cancel. Kept as a module constant so tests can pin the exact text
+/// and the UI can highlight cancelled rows in a dimmed style.
+pub const CANCELLED_REASON: &str = "cancelled by user";
+
+impl CancelFlag {
+    /// Construct a fresh flag in the \"not cancelled\" state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Flip the flag — subsequent
+    /// [`execute_backfill_streaming`] iterations short-circuit. Safe
+    /// to call from any thread; multiple calls are idempotent.
+    pub fn cancel(&self) {
+        self.inner.store(true, Ordering::SeqCst);
+    }
+
+    /// Read the current flag value. Pure read, no side effect.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.load(Ordering::SeqCst)
+    }
+}
+
+/// Streaming variant of [`execute_backfill`] — same semantics, but
+/// invokes `on_progress` after every file with a [`BackfillProgress`]
+/// snapshot so the UI can render a live progress bar + scrolling
+/// outcome tail.
+///
+/// Honours `cancel`:
+///
+/// - Checked *before* each apply; once tripped, the remaining files
+///   emit `OutcomeStatus::Skipped` with [`CANCELLED_REASON`].
+/// - Progress callbacks fire for every file including the cancelled
+///   tail (so the UI can keep its progress bar moving and let the
+///   user watch the loop wind down cleanly).
+/// - A trailing `processed = total` frame always fires once the loop
+///   exits — including for empty reports, where it carries
+///   `processed = 0, current = None` so the UI can transition out of
+///   \"applying\" state in exactly one place.
+///
+/// `on_progress` is a `FnMut` (not `Fn`) so the Tauri caller can
+/// mutate per-frame buffers without an interior-mutability dance.
+pub fn execute_backfill_streaming(
+    report: &BackfillReport,
+    cancel: &CancelFlag,
+    mut on_progress: impl FnMut(&BackfillProgress),
+) -> BackfillRun {
     let started = unix_now();
-    let mut per_file = Vec::with_capacity(report.planned.len());
+    let total = report.planned.len();
+    let mut per_file: Vec<BackfillOutcome> = Vec::with_capacity(total);
     let mut applied = 0usize;
     let mut skipped = 0usize;
     let mut errored = 0usize;
 
-    for plan in &report.planned {
-        let outcome = apply_one(plan);
+    for (i, plan) in report.planned.iter().enumerate() {
+        let outcome = if cancel.is_cancelled() {
+            BackfillOutcome {
+                source_path: plan.source_path.clone(),
+                destination: None,
+                status: OutcomeStatus::Skipped,
+                error: Some(CANCELLED_REASON.to_string()),
+            }
+        } else {
+            apply_one(plan)
+        };
+
         match outcome.status {
             OutcomeStatus::Moved => applied += 1,
             OutcomeStatus::Skipped => skipped += 1,
             OutcomeStatus::Failed => errored += 1,
         }
-        per_file.push(outcome);
+        per_file.push(outcome.clone());
+
+        on_progress(&BackfillProgress {
+            processed: i + 1,
+            total,
+            applied,
+            skipped,
+            errored,
+            current: Some(outcome),
+        });
+    }
+
+    // Always emit a final \"loop complete\" frame for an empty report
+    // so the UI has exactly one transition point out of \"applying\".
+    // For non-empty reports the last per-file frame already has
+    // processed == total, so this is a no-op.
+    if total == 0 {
+        on_progress(&BackfillProgress {
+            processed: 0,
+            total: 0,
+            applied: 0,
+            skipped: 0,
+            errored: 0,
+            current: None,
+        });
     }
 
     BackfillRun {
@@ -623,6 +841,168 @@ mod tests {
         assert!(names1[2].ends_with("zebra.pdf"));
     }
 
+    // ─── plan_backfill_with_options (v3.39 round-10 recursive) ──────
+
+    /// Default options must produce the EXACT same report as the legacy
+    /// [`plan_backfill`]. Pins the back-compat promise so a future
+    /// PlanOptions tweak can't quietly change pre-v3.39 behaviour.
+    #[test]
+    fn plan_options_default_matches_legacy_plan_backfill() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_pdfs(dir.path(), &["a.pdf", "b.pdf"]);
+        let legacy = plan_backfill(dir.path(), &base_watch(dir.path()), &[]);
+        let widened = plan_backfill_with_options(
+            dir.path(),
+            &base_watch(dir.path()),
+            &[],
+            &PlanOptions::default(),
+        );
+        // generated_at can differ by a second under bad luck; compare
+        // everything else.
+        assert_eq!(legacy.folder, widened.folder);
+        assert_eq!(legacy.scanned, widened.scanned);
+        assert_eq!(legacy.planned, widened.planned);
+    }
+
+    /// Recursive scan picks up PDFs in sub-folders; non-recursive does
+    /// not. Pins the headline contract of the new option.
+    #[test]
+    fn plan_options_recursive_walks_subfolders() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_pdfs(dir.path(), &["top.pdf"]);
+        create_dir_all(dir.path().join("sub")).unwrap();
+        seed_pdfs(&dir.path().join("sub"), &["nested.pdf"]);
+        create_dir_all(dir.path().join("sub/inner")).unwrap();
+        seed_pdfs(&dir.path().join("sub/inner"), &["deep.pdf"]);
+
+        let flat = plan_backfill(dir.path(), &base_watch(dir.path()), &[]);
+        assert_eq!(flat.scanned, 1, "non-recursive sees only top.pdf");
+        let recursive = plan_backfill_with_options(
+            dir.path(),
+            &base_watch(dir.path()),
+            &[],
+            &PlanOptions {
+                recursive: true,
+                max_depth: None,
+            },
+        );
+        assert_eq!(recursive.scanned, 3, "recursive sees all 3 PDFs");
+        let names: Vec<_> = recursive
+            .planned
+            .iter()
+            .map(|p| {
+                Path::new(&p.source_path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        // Deterministic alphabetical-by-full-path order.
+        assert!(names.contains(&"top.pdf".to_string()));
+        assert!(names.contains(&"nested.pdf".to_string()));
+        assert!(names.contains(&"deep.pdf".to_string()));
+    }
+
+    /// `max_depth = Some(1)` walks one level below the root but stops
+    /// before deeper sub-trees. Validates the depth cap guardrail the
+    /// UI surfaces for users who fat-finger their root.
+    #[test]
+    fn plan_options_max_depth_caps_recursion() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_pdfs(dir.path(), &["root.pdf"]);
+        create_dir_all(dir.path().join("L1")).unwrap();
+        seed_pdfs(&dir.path().join("L1"), &["one.pdf"]);
+        create_dir_all(dir.path().join("L1/L2")).unwrap();
+        seed_pdfs(&dir.path().join("L1/L2"), &["two.pdf"]);
+
+        let cap1 = plan_backfill_with_options(
+            dir.path(),
+            &base_watch(dir.path()),
+            &[],
+            &PlanOptions {
+                recursive: true,
+                max_depth: Some(1),
+            },
+        );
+        assert_eq!(cap1.scanned, 2, "root + L1 only");
+
+        let unbounded = plan_backfill_with_options(
+            dir.path(),
+            &base_watch(dir.path()),
+            &[],
+            &PlanOptions {
+                recursive: true,
+                max_depth: None,
+            },
+        );
+        assert_eq!(unbounded.scanned, 3, "root + L1 + L2");
+    }
+
+    /// `max_depth = Some(0)` with `recursive = true` is functionally
+    /// identical to `recursive = false`. Pins the edge case so a
+    /// future refactor can't quietly drift.
+    #[test]
+    fn plan_options_max_depth_zero_matches_non_recursive() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_pdfs(dir.path(), &["root.pdf"]);
+        create_dir_all(dir.path().join("sub")).unwrap();
+        seed_pdfs(&dir.path().join("sub"), &["nested.pdf"]);
+
+        let rec_zero = plan_backfill_with_options(
+            dir.path(),
+            &base_watch(dir.path()),
+            &[],
+            &PlanOptions {
+                recursive: true,
+                max_depth: Some(0),
+            },
+        );
+        let non_rec = plan_backfill(dir.path(), &base_watch(dir.path()), &[]);
+        assert_eq!(rec_zero.scanned, 1);
+        assert_eq!(rec_zero.scanned, non_rec.scanned);
+    }
+
+    /// Recursive walk still skips hidden sub-directories (matches the
+    /// existing hidden-file rule). Spotlight noise stays out.
+    #[test]
+    fn plan_options_recursive_skips_hidden_subdirs() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_pdfs(dir.path(), &["visible.pdf"]);
+        create_dir_all(dir.path().join(".hidden_dir")).unwrap();
+        seed_pdfs(&dir.path().join(".hidden_dir"), &["secret.pdf"]);
+
+        let report = plan_backfill_with_options(
+            dir.path(),
+            &base_watch(dir.path()),
+            &[],
+            &PlanOptions {
+                recursive: true,
+                max_depth: None,
+            },
+        );
+        assert_eq!(report.scanned, 1);
+        assert!(report.planned[0].source_path.ends_with("visible.pdf"));
+    }
+
+    /// PlanOptions round-trips through serde — the Tauri command takes
+    /// the shape directly from the frontend so a field rename here
+    /// must surface in compilation.
+    #[test]
+    fn plan_options_round_trips_through_json() {
+        let opts = PlanOptions {
+            recursive: true,
+            max_depth: Some(3),
+        };
+        let j = serde_json::to_string(&opts).unwrap();
+        let back: PlanOptions = serde_json::from_str(&j).unwrap();
+        assert_eq!(opts, back);
+        // Default (false / None) also round-trips with serde defaults
+        // so the field is optional on the wire.
+        let default_back: PlanOptions = serde_json::from_str("{}").unwrap();
+        assert_eq!(default_back, PlanOptions::default());
+    }
+
     // ─── execute_backfill ───────────────────────────────────────────
 
     #[test]
@@ -723,5 +1103,183 @@ mod tests {
         let j = serde_json::to_string(&r).unwrap();
         let back: BackfillRun = serde_json::from_str(&j).unwrap();
         assert_eq!(r, back);
+    }
+
+    // ─── execute_backfill_streaming + CancelFlag (v3.39 round-10) ───
+
+    /// Smoke test: every file produces exactly one progress frame,
+    /// the running tallies match the final run, and the last frame
+    /// has processed == total. Pins the contract the UI relies on.
+    #[test]
+    fn streaming_emits_one_progress_per_file_and_final_frame() {
+        let src = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["a.pdf", "b.pdf", "c.pdf"]);
+        let report = plan_backfill(src.path(), &base_watch(out.path()), &[]);
+        assert_eq!(report.scanned, 3);
+
+        let mut frames: Vec<BackfillProgress> = Vec::new();
+        let cancel = CancelFlag::new();
+        let run = execute_backfill_streaming(&report, &cancel, |p| frames.push(p.clone()));
+
+        assert_eq!(frames.len(), 3, "one frame per planned file");
+        assert_eq!(frames[0].processed, 1);
+        assert_eq!(frames[1].processed, 2);
+        assert_eq!(frames[2].processed, 3);
+        for f in &frames {
+            assert_eq!(f.total, 3);
+        }
+        assert_eq!(frames.last().unwrap().applied, 3);
+        assert_eq!(run.applied, 3);
+        assert_eq!(run.per_file.len(), 3);
+    }
+
+    /// Empty report still emits exactly ONE trailing frame so the UI
+    /// has a single transition point out of "applying" — without
+    /// this, an empty backfill would be silent and the spinner would
+    /// hang until the next state event.
+    #[test]
+    fn streaming_empty_report_still_emits_one_completion_frame() {
+        let report = BackfillReport {
+            folder: "/x".into(),
+            scanned: 0,
+            generated_at: 0,
+            planned: vec![],
+        };
+        let mut frames: Vec<BackfillProgress> = Vec::new();
+        let cancel = CancelFlag::new();
+        let run = execute_backfill_streaming(&report, &cancel, |p| frames.push(p.clone()));
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].processed, 0);
+        assert_eq!(frames[0].total, 0);
+        assert!(frames[0].current.is_none());
+        assert_eq!(run.applied, 0);
+    }
+
+    /// Cancelling mid-run: all files queued *after* the flag flips
+    /// are stamped Skipped with CANCELLED_REASON; the files that
+    /// already ran keep their real outcome. Progress callbacks keep
+    /// firing for the cancelled tail so the UI can finish its
+    /// progress bar gracefully.
+    #[test]
+    fn streaming_cancel_stamps_remaining_files_skipped() {
+        let src = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["a.pdf", "b.pdf", "c.pdf", "d.pdf"]);
+        let report = plan_backfill(src.path(), &base_watch(out.path()), &[]);
+
+        let mut frames: Vec<BackfillProgress> = Vec::new();
+        let cancel = CancelFlag::new();
+        let run = execute_backfill_streaming(&report, &cancel, |p| {
+            frames.push(p.clone());
+            // Trip the flag after the second file completes.
+            if p.processed == 2 {
+                cancel.cancel();
+            }
+        });
+
+        assert_eq!(frames.len(), 4);
+        // First two ran for real.
+        assert_eq!(frames[0].applied, 1);
+        assert_eq!(frames[1].applied, 2);
+        // Tail was short-circuited.
+        assert_eq!(frames[3].applied, 2);
+        assert_eq!(frames[3].skipped, 2);
+        assert_eq!(run.applied, 2);
+        assert_eq!(run.skipped, 2);
+        for o in &run.per_file[2..] {
+            assert_eq!(o.status, OutcomeStatus::Skipped);
+            assert_eq!(o.error.as_deref(), Some(CANCELLED_REASON));
+        }
+    }
+
+    /// CancelFlag flipped *before* the first file → entire report is
+    /// skipped with CANCELLED_REASON. Edge case in case the user
+    /// hits Cancel during the spawn_blocking handoff.
+    #[test]
+    fn streaming_cancel_flipped_before_start_skips_everything() {
+        let src = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["a.pdf", "b.pdf"]);
+        let report = plan_backfill(src.path(), &base_watch(out.path()), &[]);
+
+        let mut frames: Vec<BackfillProgress> = Vec::new();
+        let cancel = CancelFlag::new();
+        cancel.cancel();
+        let run = execute_backfill_streaming(&report, &cancel, |p| frames.push(p.clone()));
+
+        assert_eq!(run.applied, 0);
+        assert_eq!(run.skipped, 2);
+        assert_eq!(frames.len(), 2);
+        // Originals must still be on disk — cancel must not move them.
+        assert!(src.path().join("a.pdf").exists());
+        assert!(src.path().join("b.pdf").exists());
+    }
+
+    /// `execute_backfill` (the non-streaming entry point) must stay
+    /// behaviour-identical to `execute_backfill_streaming` with a
+    /// no-op sink + untripped flag. This pins the delegation so a
+    /// future refactor can't quietly fork the two paths.
+    #[test]
+    fn execute_backfill_matches_streaming_with_noop_progress() {
+        let src = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        seed_pdfs(src.path(), &["one.pdf", "two.pdf"]);
+        let report_a = plan_backfill(src.path(), &base_watch(out.path()), &[]);
+        let run_a = execute_backfill(&report_a);
+        // Reset by recreating the source files (the first run moved them).
+        seed_pdfs(src.path(), &["one.pdf", "two.pdf"]);
+        // Drain the output dir so destinations don't disambiguate.
+        for entry in fs::read_dir(out.path()).unwrap() {
+            fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        let report_b = plan_backfill(src.path(), &base_watch(out.path()), &[]);
+        let run_b = execute_backfill_streaming(&report_b, &CancelFlag::new(), |_| {});
+
+        assert_eq!(run_a.applied, run_b.applied);
+        assert_eq!(run_a.skipped, run_b.skipped);
+        assert_eq!(run_a.errored, run_b.errored);
+        assert_eq!(run_a.per_file.len(), run_b.per_file.len());
+    }
+
+    /// BackfillProgress wire-format pin — the UI counts on these
+    /// field names + types being stable. Tripping this test means
+    /// a frontend change is required in the same commit.
+    #[test]
+    fn backfill_progress_round_trips_through_json() {
+        let p = BackfillProgress {
+            processed: 5,
+            total: 10,
+            applied: 3,
+            skipped: 1,
+            errored: 1,
+            current: Some(BackfillOutcome {
+                source_path: "/in/x.pdf".into(),
+                destination: Some("/out/x.pdf".into()),
+                status: OutcomeStatus::Moved,
+                error: None,
+            }),
+        };
+        let j = serde_json::to_string(&p).unwrap();
+        let back: BackfillProgress = serde_json::from_str(&j).unwrap();
+        assert_eq!(p, back);
+        // Snake_case field-name pin so a renamer can't silently break
+        // the wire contract.
+        assert!(j.contains("\"processed\":5"));
+        assert!(j.contains("\"current\":"));
+    }
+
+    /// CancelFlag is cheap to share across threads — verify it
+    /// crosses a `move ||` closure and the flip is observed.
+    #[test]
+    fn cancel_flag_is_clone_and_shared_across_threads() {
+        let flag = CancelFlag::new();
+        let f2 = flag.clone();
+        let h = std::thread::spawn(move || {
+            f2.cancel();
+        });
+        h.join().unwrap();
+        assert!(flag.is_cancelled());
     }
 }
