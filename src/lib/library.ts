@@ -1302,6 +1302,21 @@ export async function savedViewSetPinned(
   return unwrap(res);
 }
 
+/**
+ * Re-stamp `sort_order` for the supplied view ids: each id's zero-based
+ * position becomes its new sort_order. Runs in a single SQLite transaction
+ * so partial failures can't leave the rail mid-shuffle. Empty input is a
+ * zero no-op. Rejects duplicate or unknown ids (no rows mutated on
+ * rejection). The pinned flag is NOT touched — the rail's pinned-first
+ * sort order keeps working transparently. v3.56.0 Atlas Saved-Views-Polish.
+ */
+export async function savedViewReorder(order: number[]): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_saved_view_reorder", {
+    order,
+  });
+  unwrap(res);
+}
+
 // -----------------------------------------------------------------
 // v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
 // list with persisted display order and pin flags.

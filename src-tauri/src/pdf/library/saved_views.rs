@@ -261,6 +261,70 @@ pub fn set_view_pinned(
     get_view(db, id)
 }
 
+/// Atomically re-stamp `sort_order` for every view in the order the caller
+/// supplied. The caller passes the full list of view ids; each id's
+/// zero-based position becomes its new sort_order. Runs inside a single
+/// transaction so either every row is restamped or none are — a partial
+/// failure can't leave the rail mid-shuffle. Mirrors the
+/// `smart_folders::set_order` and `set_collection_order` patterns we
+/// already ship.
+///
+/// Errors if any id in the input is not in the table (caught BEFORE the
+/// UPDATE loop runs, so the txn is rolled back without touching a single
+/// row). Duplicate ids in the input are also rejected — a duplicate would
+/// mean the UI thinks the same view is in two slots, which is never what
+/// the caller intends. Empty input is a zero no-op (succeeds without
+/// touching the table).
+///
+/// NOTE: this re-stamps every row by `id` directly; it intentionally does
+/// NOT mutate the `pinned` flag (mirrors the smart_folders pattern — the
+/// rail's pinned-first sort is preserved because pinned DESC stays the
+/// dominant key in `list_views`).
+pub fn reorder_views(db: &mut LibraryDb, order: &[i64]) -> Result<(), LibraryError> {
+    if order.is_empty() {
+        return Ok(());
+    }
+    // Reject duplicate ids up front — calling UPDATE twice for the same
+    // id would silently keep only the second sort_order, hiding the bug.
+    let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for &id in order {
+        if !seen.insert(id) {
+            return Err(LibraryError::Other(format!(
+                "duplicate view id {id} in reorder list"
+            )));
+        }
+    }
+    // Verify every id exists BEFORE we open the write txn — a missing id
+    // mid-loop would leave the txn open and we'd have to remember to roll
+    // back. Cheaper to validate up front against the current id set.
+    let existing: std::collections::HashSet<i64> = {
+        let conn = db.conn();
+        let mut stmt = conn.prepare("SELECT id FROM library_saved_views")?;
+        let rows: Vec<i64> = stmt
+            .query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.into_iter().collect()
+    };
+    for &id in order {
+        if !existing.contains(&id) {
+            return Err(LibraryError::Other(format!(
+                "unknown view id {id} in reorder list"
+            )));
+        }
+    }
+    let conn = db.conn_mut();
+    let tx = conn.transaction()?;
+    {
+        let mut stmt =
+            tx.prepare("UPDATE library_saved_views SET sort_order = ?1 WHERE id = ?2")?;
+        for (position, &id) in order.iter().enumerate() {
+            stmt.execute(rusqlite::params![position as i64, id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 // -----------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------
@@ -713,5 +777,136 @@ mod tests {
         }"#;
         let parsed: SavedViewRecord = serde_json::from_str(legacy).unwrap();
         assert!(!parsed.pinned);
+    }
+
+    // -----------------------------------------------------------------
+    // v3.56.0 Atlas Saved-Views-Polish — slice 41: reorder_views
+    // -----------------------------------------------------------------
+
+    fn make_three(db: &mut LibraryDb) -> [SavedViewRecord; 3] {
+        let a = save_view(db, &spec("A", flat_filter())).unwrap();
+        let b = save_view(db, &spec("B", flat_filter())).unwrap();
+        let c = save_view(db, &spec("C", flat_filter())).unwrap();
+        [a, b, c]
+    }
+
+    #[test]
+    fn reorder_views_restamps_sort_order_by_position() {
+        let mut db = db();
+        let [a, b, c] = make_three(&mut db);
+        // Send the reverse order; sort_order must now be C=0, B=1, A=2 so
+        // the list surfaces as C, B, A.
+        reorder_views(&mut db, &[c.id, b.id, a.id]).unwrap();
+        let listed = list_views(&db).unwrap();
+        let names: Vec<_> = listed.iter().map(|v| v.name.clone()).collect();
+        assert_eq!(names, vec!["C", "B", "A"]);
+        // The new sort_order values match the input positions exactly.
+        let order_for = |id: i64| listed.iter().find(|v| v.id == id).unwrap().sort_order;
+        assert_eq!(order_for(c.id), 0);
+        assert_eq!(order_for(b.id), 1);
+        assert_eq!(order_for(a.id), 2);
+    }
+
+    #[test]
+    fn reorder_views_empty_is_noop() {
+        let mut db = db();
+        let [_a, _b, _c] = make_three(&mut db);
+        let before: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.sort_order))
+            .collect();
+        reorder_views(&mut db, &[]).unwrap();
+        let after: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.sort_order))
+            .collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn reorder_views_duplicate_id_is_rejected_no_rows_touched() {
+        let mut db = db();
+        let [a, b, _c] = make_three(&mut db);
+        let before: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.sort_order))
+            .collect();
+        let err = reorder_views(&mut db, &[a.id, b.id, a.id]).unwrap_err();
+        assert!(format!("{err}").contains("duplicate"));
+        // Atomic — every row's sort_order is exactly what it was before.
+        let after: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.sort_order))
+            .collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn reorder_views_unknown_id_is_rejected_no_rows_touched() {
+        let mut db = db();
+        let [a, b, _c] = make_three(&mut db);
+        let before: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.sort_order))
+            .collect();
+        let err = reorder_views(&mut db, &[a.id, 9999, b.id]).unwrap_err();
+        assert!(format!("{err}").contains("unknown"));
+        // Validation runs BEFORE the txn opens — no row mutated.
+        let after: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.id, v.sort_order))
+            .collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn reorder_views_does_not_mutate_pinned_or_filter() {
+        let mut db = db();
+        let [a, b, c] = make_three(&mut db);
+        // Pin B before reordering.
+        set_view_pinned(&mut db, b.id, true).unwrap();
+        reorder_views(&mut db, &[c.id, b.id, a.id]).unwrap();
+        // B's pin survives the reorder — the rail's "pinned-first" still
+        // surfaces B above the others even though we shuffled sort_order.
+        let listed = list_views(&db).unwrap();
+        let b_after = listed.iter().find(|v| v.id == b.id).unwrap();
+        assert!(b_after.pinned, "reorder must not clear the pin flag");
+        // Filter shape on every row is byte-for-byte unchanged.
+        for v in &listed {
+            let restored = serde_json::to_string(&v.filter).unwrap();
+            let target = serde_json::to_string(&flat_filter()).unwrap();
+            assert_eq!(restored, target);
+        }
+        // And because pinned DESC dominates, B is FIRST regardless of the
+        // sort_order shuffle we just applied.
+        assert_eq!(listed[0].id, b.id);
+    }
+
+    #[test]
+    fn reorder_views_subset_only_restamps_named_rows() {
+        // The reorder is positional by id — sending a SUBSET of rows is
+        // permitted (and useful when the rail wants to bubble a few items
+        // to the top without touching the tail). Unmentioned rows keep
+        // their pre-reorder sort_order, which can mean they end up
+        // intermingled with the reordered ones — that's intentional, the
+        // UI is expected to send the full list when it wants strict order.
+        // This test pins down the documented "only restamps named ids"
+        // behaviour so a future change can't regress it.
+        let mut db = db();
+        let [a, b, c] = make_three(&mut db);
+        let pre_c_order = c.sort_order;
+        reorder_views(&mut db, &[b.id, a.id]).unwrap();
+        let listed = list_views(&db).unwrap();
+        let order_for = |id: i64| listed.iter().find(|v| v.id == id).unwrap().sort_order;
+        assert_eq!(order_for(b.id), 0);
+        assert_eq!(order_for(a.id), 1);
+        // C wasn't named, so its sort_order is unchanged.
+        assert_eq!(order_for(c.id), pre_c_order);
     }
 }
