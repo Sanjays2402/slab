@@ -418,15 +418,22 @@ pub fn slab_hopper_cancel_backfill(
 /// newest first. Pass `folder = Some(p)` to filter to a single watched
 /// directory (Rules Editor's "Recent backfills" strip), `None` for the
 /// global Hopper panel's history.
+///
+/// `since_unix` (v3.39 round-10) filters to runs that *finished* at or
+/// after the given unix-seconds timestamp. `None` disables the
+/// temporal filter (matches all previous behaviour). Combines AND with
+/// the folder filter. Powers the panel's "Last 24h / Last 7d / All"
+/// history chips — filtering happens in SQL so the wire stays slim.
 #[tauri::command]
 pub fn slab_hopper_list_backfill_runs(
     svc: tauri::State<'_, HopperService>,
     folder: Option<String>,
+    since_unix: Option<i64>,
     limit: Option<i64>,
 ) -> CmdResult<Vec<super::backfill::BackfillRun>> {
     let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
-    log.list_backfill_runs(folder.as_deref(), limit.unwrap_or(20))
-        .map_err(|e| format!("log list_backfill_runs: {e}"))
+    log.list_backfill_runs_since(folder.as_deref(), since_unix, limit.unwrap_or(20))
+        .map_err(|e| format!("log list_backfill_runs_since: {e}"))
 }
 
 // ---------------------------------------------------------------------

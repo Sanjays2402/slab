@@ -521,12 +521,26 @@ export const listenBackfillProgress = async (
 };
 
 /** History tail of past backfills, newest first. Pass `folder` to
- *  filter to one watched directory. */
+ *  filter to one watched directory. `sinceUnix` (v3.39 round-10)
+ *  filters to runs that *finished* at or after the given unix-seconds
+ *  timestamp — powers the "Last 24h / Last 7d / All" history chips
+ *  by computing a JS-side cutoff and letting SQL do the row filter. */
 export const slabHopperListBackfillRuns = (
   folder?: string,
   limit?: number,
+  sinceUnix?: number,
 ): Promise<BackfillRun[]> =>
   invoke("slab_hopper_list_backfill_runs", {
     folder: folder ?? null,
+    sinceUnix: sinceUnix ?? null,
     limit: limit ?? null,
   });
+
+/** Compute the unix-seconds cutoff for a "Last N hours" chip. Pure
+ *  helper, used by HopperBackfillPanel's history filter. */
+export const backfillSinceUnix = (windowHours: number | null): number | null => {
+  if (windowHours === null || !Number.isFinite(windowHours) || windowHours <= 0) {
+    return null;
+  }
+  return Math.floor(Date.now() / 1000) - Math.floor(windowHours * 3600);
+};
