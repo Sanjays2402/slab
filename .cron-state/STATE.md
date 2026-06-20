@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-19 19:47 PT by Cake (cron) — roadmap #10 "Saved tag-filter views" shipped (2cf2a49 backend + 7c83eee UI), pushed + verified on feature branch.
+Last updated: 2026-06-19 19:58 PT by Cake (cron) — roadmap #12 "Tag descriptions/notes" shipped (43d3258 backend + 3e92aaf UI), pushed + verified on feature branch. Round-3 roadmap is now COMPLETE — next tick seeds a fresh roadmap for a different subsystem.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `7c83eee` — "feat(library): pin and one-click restore saved tag-filter views in the rail".
+Latest commit: `3e92aaf` — "feat(library): inline notes editor + tooltip surfacing for tag descriptions".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -274,12 +274,60 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
     build budget", needs no slow cargo gate, and is genuinely useful now the
     rail has many tags. Next undone: #10 saved tag-filter views, #12 tag
     descriptions/notes.
-12. **Tag descriptions / notes** — an optional freeform note per tag (schema
-    add: nullable `description` on library_tags), surfaced as a tooltip on
-    the rail row + editable from the existing tag edit affordances. Backend
-    set_tag_description + valid-length guard + tests; TS + a small textarea
-    in the tag context menu. Schema bump (remember the >= version-pin assert
-    convention so the migration doesn't trip an equality test).
+12. ~~**Tag descriptions / notes**~~ — DONE (2026-06-19 19:58 PT, 43d3258
+    backend + 3e92aaf UI). Schema v10->v11: nullable `description` column
+    on library_tags so every pre-v11 tag silently picks up NULL (no
+    rewrite). `registry::set_tag_description(tag_id, Option<&str>)`:
+    trims input, trimmed-empty equivalent to None and clears column back
+    to NULL (column only ever holds "real" notes); length cap is
+    MAX_TAG_DESCRIPTION_LEN = 500 *Unicode scalars* not bytes (emoji + CJK
+    get a sane budget); valid_tag_description guard runs BEFORE the
+    UPDATE so a rejected oversize leaves the row's old description
+    untouched; unknown id errors. TagRecord widened with
+    `description: Option<String>`; every SELECT that returns a tag row
+    (find_tag_by_name/id, list_tags, tags_for_document,
+    recently_used_tags, query_documents tag join) was widened to carry
+    the new column so the field travels everywhere. One Tauri command
+    (slab_library_set_tag_description) emits library-changed. 13 new
+    tests: v11 column test (with >= version-pin convention to dodge the
+    equality-trap that bit v3.39->bulk-tag), starts-with-no-description,
+    update-returns-row, trims-whitespace, empty/None-clears, accepts-max,
+    rejects-oversized-row-untouched, counts-chars-not-bytes (multibyte
+    CJK fits at max scalars), unknown-id-errors, persists-across-list-
+    tags+recently-used+tags-for-document, rename-tag-preserves-description,
+    set-tag-color-preserves-description (the last two cover column drift
+    if a neighbouring update regresses). UI: TS setTagDescription bundled
+    with the backend commit (wire layer convention); LibraryPanel adds
+    a paragraph-glyph button per rail row beside pencil/dot/x (.has-notes
+    accent tint when the tag actually carries a note); title attr on the
+    tag rail row AND every doc-card chip surfaces the description as a
+    tooltip (cheap — TagRecord already travels with both); edit-notes
+    modal reuses the modal-backdrop chrome, header has the tag dot +
+    name, textarea seeded from current description (empty string when
+    unset; backend treats empty as clear, no sentinel needed), maxlength
+    mirrors the 500-char backend cap, character counter tints red near
+    the limit, Cmd/Ctrl+Enter submits, button label flips Save/Clear
+    based on trimmed-empty draft (explicit destructive action instead
+    of silent), success swaps the updated row into the rail + every doc
+    card that carries it (no refetch), rejection keeps the modal open
+    with the backend reason inline + the input stays in error state.
+    Gates: cargo fmt clean, cargo test --lib pdf::library:: 265 passed/
+    0 failed (13 new), cargo clippy --lib -D warnings clean (9.27s warm),
+    pnpm check 0 errors (LibraryPanel still only the 2 pre-existing
+    autofocus + webkit warnings, none new). Pushed + verified
+    (local==origin 3e92aaf). Two commits: TS client (library.ts) bundled
+    with the backend per the established convention (it's the wire layer
+    and useless without the Tauri commands), UI as the second commit.
+
+    This COMPLETES the round-3 roadmap (#10 saved views, #11 clear-all,
+    #12 tag descriptions all done) — and with that, the entire tag and
+    tag-filter surface is feature-complete: suggest, untagged filter,
+    bulk apply, color, rename, recently-used, merge, usage counts,
+    unused cleanup, AND/OR combinator, saved views, clear-all, and now
+    descriptions. Next tick should seed a FRESH roadmap for a different
+    subsystem (good candidates: smart-folders hub UI, OCR queue panel,
+    collections, doc-detail metadata editor, full-text search) rather
+    than mine the tag surface for more increments.
 
 ## House style (match existing code)
 
@@ -516,4 +564,40 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
   round-3 roadmap item — next tick should ship #12 and then either seed
   a fresh round-4 roadmap or surface that the tag-and-filter surface is
   feature-complete enough that we should move to a different subsystem).
+- 2026-06-19 19:58 PT (Cake, cron): round-3 roadmap #12 "Tag
+  descriptions/notes" shipped (43d3258 backend + 3e92aaf UI, two
+  commits) — the LAST round-3 item, the entire tag + tag-filter
+  surface is now feature-complete. RECOVERY NOTE: the working tree
+  was already dirty when this tick acquired the lock at 19:55:27 —
+  files modified 19:52-19:54 from a previous tick that built a
+  complete, high-quality vertical slice for #12 and then exited
+  without committing, pushing, logging, or updating STATE.md (no
+  session file for that tick, no log entry). The diff was the FULL
+  intended slice (schema v11, set_tag_description + valid guard,
+  TagRecord widened end-to-end, 13 tests, TS client, rail glyph +
+  modal + tooltip surfacing); rather than scrap it I gated it and
+  shipped it. All three gates green: cargo fmt clean, cargo test
+  --lib pdf::library:: 265 passed/0 failed (13 new on top of 252 at
+  7c83eee — matches the in-flight test count exactly), clippy --lib
+  -D warnings clean (9.27s warm — build cache from 19:47 still
+  hot 11 min later), pnpm check 0 errors (LibraryPanel still only
+  the 2 pre-existing autofocus + webkit warnings, none new). Commit
+  grouping reaffirmed for the 3rd time: TS client (library.ts)
+  bundled with the BACKEND commit (43d3258) — it's the wire layer
+  for the new Tauri command and useless without it; UI (LibraryPanel
+  + new modal CSS) as the 2nd commit (3e92aaf). Pushed + verified
+  (local==origin 3e92aaf). Schema bumped 10->11; the >= column-pin
+  convention from the v9->v10 tick already preempted any equality-
+  trap, so no test relaxations needed this time. With #12 done, the
+  tag rail now surfaces: suggest, untagged filter, bulk apply, color,
+  rename, recently-used, merge, usage counts, unused cleanup, AND/OR,
+  saved views, clear-all, AND notes. Next tick should seed a FRESH
+  roadmap for a different subsystem (good candidates listed in #12's
+  closing note) rather than mine the tag surface for more increments.
+  Lesson worth retaining about the recovered slice: a prior tick can
+  produce real shippable work and still leave nothing on origin if
+  it doesn't run the commit/push/log sequence — this tick's first
+  action of `git status --short` caught it, but cron resilience
+  improves if every tick treats a dirty tree as a recovery
+  opportunity rather than a state to clean up.
 
