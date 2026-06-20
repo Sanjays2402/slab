@@ -111,6 +111,18 @@ pub struct IndexedPdfRecord {
     pub chunks: u32,
 }
 
+/// Aggregate row from [`EmbeddingIndex::stats_by_model`]. The Beacon
+/// Cache Inspector renders one tile per bucket so a user with a stale
+/// `nomic-embed` cache next to a fresh `mxbai-embed-large` cache sees
+/// both side-by-side and can prune the loser. v3.54.0 Atlas
+/// Beacon-Cache — Slice 30.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelBucket {
+    pub embed_model: String,
+    pub pdfs: u32,
+    pub chunks: u32,
+}
+
 /// Result of an indexing call.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexReport {
@@ -250,6 +262,36 @@ impl EmbeddingIndex {
                     embed_model: r.get(3)?,
                     indexed_at: r.get(4)?,
                     chunks: r.get::<_, i64>(5)? as u32,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Per-`embed_model` bucket counts in one GROUP BY round-trip. The
+    /// inspector dashboard renders one tile per bucket so a user can
+    /// see at a glance whether the cache has gone mixed-model (Beacon
+    /// search's existing dim-mismatch skip would silently drop the
+    /// loser's chunks at query time). Empty index returns an empty
+    /// Vec; a single-model index returns a one-element Vec. Sorted by
+    /// chunk count DESC, model name ASC tie-break. v3.54.0 Atlas
+    /// Beacon-Cache — Slice 30.
+    pub fn stats_by_model(&self) -> Result<Vec<ModelBucket>, IndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT pdfs.embed_model,
+                    COUNT(DISTINCT pdfs.hash) AS pdf_count,
+                    COALESCE(COUNT(chunks.id), 0) AS chunk_count
+             FROM pdfs
+             LEFT JOIN chunks ON chunks.pdf_hash = pdfs.hash
+             GROUP BY pdfs.embed_model
+             ORDER BY chunk_count DESC, pdfs.embed_model ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ModelBucket {
+                    embed_model: r.get(0)?,
+                    pdfs: r.get::<_, i64>(1)? as u32,
+                    chunks: r.get::<_, i64>(2)? as u32,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1023,5 +1065,53 @@ mod tests {
         seed_pdfs(&mut idx, 1, 1, "m", dir.path());
         assert_eq!(idx.forget_many(&[]).unwrap(), 0);
         assert_eq!(idx.list_indexed().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stats_by_model_buckets_per_embed_model() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 2, 3, "nomic-embed", dir_a.path());
+        seed_pdfs(&mut idx, 3, 1, "mxbai-large", dir_b.path());
+        let buckets = idx.stats_by_model().unwrap();
+        assert_eq!(buckets.len(), 2);
+        // Ordering: chunks DESC (6 vs 3), then model ASC tie-break.
+        assert_eq!(buckets[0].embed_model, "nomic-embed");
+        assert_eq!(buckets[0].pdfs, 2);
+        assert_eq!(buckets[0].chunks, 6);
+        assert_eq!(buckets[1].embed_model, "mxbai-large");
+        assert_eq!(buckets[1].pdfs, 3);
+        assert_eq!(buckets[1].chunks, 3);
+    }
+
+    #[test]
+    fn stats_by_model_empty_index_returns_empty_vec() {
+        let idx = EmbeddingIndex::open_in_memory().unwrap();
+        assert!(idx.stats_by_model().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stats_by_model_single_model_returns_one_bucket() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 3, 2, "only-model", dir.path());
+        let buckets = idx.stats_by_model().unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].embed_model, "only-model");
+        assert_eq!(buckets[0].pdfs, 3);
+        assert_eq!(buckets[0].chunks, 6);
+    }
+
+    #[test]
+    fn stats_by_model_roundtrips_through_serde_snake_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        let buckets = idx.stats_by_model().unwrap();
+        let json = serde_json::to_string(&buckets).unwrap();
+        assert!(json.contains("\"embed_model\""));
+        let back: Vec<ModelBucket> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, buckets);
     }
 }

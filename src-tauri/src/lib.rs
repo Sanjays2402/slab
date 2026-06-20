@@ -24,7 +24,7 @@ use ai::config::{
 use ai::diff_summary::{beacon_diff_summary as do_beacon_diff_summary, BeaconDiffSummary};
 use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
-    IndexReport, IndexStats, IndexedPdfRecord, SearchHit,
+    IndexReport, IndexStats, IndexedPdfRecord, ModelBucket, SearchHit,
 };
 use ai::glossary::{
     build_glossary_from_path as do_beacon_build_glossary, GlossaryOpts, GlossaryReport,
@@ -2984,6 +2984,22 @@ fn slab_beacon_index_forget_many(pdf_hashes: Vec<String>) -> CmdResult<usize> {
     index.forget_many(&pdf_hashes).into()
 }
 
+/// Per-embed-model bucket counts in one round-trip. The inspector
+/// renders one tile per bucket and surfaces a "mixed model" warning
+/// when len() > 1.
+#[tauri::command]
+fn slab_beacon_index_stats_by_model() -> CmdResult<Vec<ModelBucket>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.stats_by_model().into()
+}
+
 // ---------- Beacon PII Highlighter (Slice 8) ----------
 
 impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
@@ -5788,6 +5804,7 @@ pub fn run() {
             slab_beacon_index_forget,
             slab_beacon_index_list,
             slab_beacon_index_forget_many,
+            slab_beacon_index_stats_by_model,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,

@@ -36,6 +36,18 @@ export interface IndexedPdfRecord {
 }
 
 /**
+ * Mirror of `ai::embedding_index::ModelBucket`. Per-`embed_model`
+ * aggregate the inspector's dashboard renders as tiles. Sorted by
+ * chunk count DESC, model name ASC tie-break. v3.54.0 Atlas
+ * Beacon-Cache — Slice 30.
+ */
+export interface ModelBucket {
+  embed_model: string;
+  pdfs: number;
+  chunks: number;
+}
+
+/**
  * List every PDF currently in the embedding index, newest first.
  * Powers the inspector's main table — one round-trip even on a 10k-PDF
  * index because the chunk count is joined in.
@@ -58,6 +70,20 @@ export async function beaconIndexForgetMany(
   const res = await invoke<CmdResult<number>>(
     "slab_beacon_index_forget_many",
     { pdfHashes },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Per-embed-model bucket counts in one round-trip. The inspector
+ * dashboard renders one tile per bucket and surfaces a "mixed model"
+ * warning when `buckets.length > 1` — at query time Beacon's
+ * dim-mismatch skip silently drops the loser's chunks, so making the
+ * split visible matters.
+ */
+export async function beaconIndexStatsByModel(): Promise<ModelBucket[]> {
+  const res = await invoke<CmdResult<ModelBucket[]>>(
+    "slab_beacon_index_stats_by_model",
   );
   return unwrap(res);
 }
