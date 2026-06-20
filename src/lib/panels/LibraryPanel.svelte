@@ -56,6 +56,11 @@
     savedViewSave,
     savedViewList,
     savedViewDelete,
+    savedViewRename,
+    savedViewUpdateFilter,
+    savedViewDuplicate,
+    savedViewSetPinned,
+    savedViewReorder,
     collectionList,
     collectionAddDocs,
     type AutoTagRunResult,
@@ -187,6 +192,17 @@
   // it as `active` — purely cosmetic, cleared whenever the user manually
   // edits any filter dimension (since that diverges from the saved snapshot).
   let activeSavedViewId = $state<number | null>(null);
+  // v3.56.0 Atlas Saved-Views-Polish — per-row overflow menu state.
+  // Holds the id of the view whose ⋯ menu is currently open, or null.
+  // Declared up here (not next to the handler block below) so the
+  // window-click-outside handler can reference it before it'd otherwise
+  // be in scope at function-declaration time.
+  let savedViewMenuId = $state<number | null>(null);
+  // Inline-rename draft state for the per-row rename verb. Scoped to a
+  // single view id; null when no rename is in progress.
+  let savedViewRenameId = $state<number | null>(null);
+  let savedViewRenameDraft = $state("");
+  let savedViewRenameError = $state<string | null>(null);
   // The "Save current filter" inline form. `null` when closed.
   let saveViewDraftName = $state<string | null>(null);
   let saveViewError = $state<string | null>(null);
@@ -465,6 +481,10 @@
     // on a different card replaces it; this just handles the
     // "click outside" case.
     menu = null;
+    // Same dismiss-on-outside semantics for the saved-views per-row menu
+    // (v3.56.0 Atlas Saved-Views-Polish). The button itself stops
+    // propagation, so its own click doesn't fire this listener.
+    savedViewMenuId = null;
   }
 
   // ---------- Data loaders ----------
@@ -1176,6 +1196,167 @@
     }
   }
 
+  // ---------- Saved views v3.56.0 Atlas Saved-Views-Polish ----------
+  //
+  // Four new verbs added on top of the v3.50 CRUD:
+  //   - update filter in place (re-pin the rail onto an existing view)
+  //   - duplicate (fork the filter as "<name> (copy)" — Notion convention)
+  //   - pin / unpin (anchor to top of rail, surfaces with a ★ glyph)
+  //   - reorder (drag-handle target — full-list atomic re-stamp)
+  //
+  // The rail row gains a left-side pin glyph (gold when on, ghost otherwise)
+  // and a right-side ⋯ menu surfacing Duplicate / Rename / Edit-here /
+  // Delete. The body of the row stays a one-click restore (unchanged).
+
+  /** Re-pin the active view onto the CURRENT filter shape. Visible only
+   *  when there's a non-default current filter and a view is active. */
+  async function onUpdateActiveSavedView() {
+    if (activeSavedViewId === null || savedViewBusy) return;
+    const view = savedViews.find((v) => v.id === activeSavedViewId);
+    if (!view) return;
+    const ok = window.confirm(
+      `Update "${view.name}" with the current filter? The pinned shape will be replaced.`,
+    );
+    if (!ok) return;
+    savedViewBusy = true;
+    try {
+      const updated = await savedViewUpdateFilter(view.id, buildCurrentFilter());
+      savedViews = savedViews.map((v) => (v.id === updated.id ? updated : v));
+      // activeSavedViewId stays — the row matches the current rail again.
+    } catch (e) {
+      error = String(e);
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
+  async function onDuplicateSavedView(view: SavedViewRecord) {
+    if (savedViewBusy) return;
+    savedViewBusy = true;
+    try {
+      const dup = await savedViewDuplicate(view.id);
+      // Insert by sort_order so the list rebuilds in pinned-first order.
+      savedViews = [...savedViews, dup].sort(savedViewCompare);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
+  async function onTogglePinSavedView(view: SavedViewRecord) {
+    if (savedViewBusy) return;
+    savedViewBusy = true;
+    try {
+      const updated = await savedViewSetPinned(view.id, !view.pinned);
+      savedViews = savedViews
+        .map((v) => (v.id === updated.id ? updated : v))
+        .sort(savedViewCompare);
+    } catch (e) {
+      error = String(e);
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
+  /** Bubble a view up/down by one slot in its current group (pinned vs
+   *  unpinned). Reorder is restricted to within-group because pinned-first
+   *  is the dominant sort key — letting an unpinned view "swap" with a
+   *  pinned one above it would just be confusing. */
+  async function onBumpSavedView(view: SavedViewRecord, dir: -1 | 1) {
+    if (savedViewBusy) return;
+    // Build the sorted slice of the same pin-group, find the view's slot,
+    // swap with the neighbour in `dir` direction, send the WHOLE list as
+    // the new order so the backend re-stamps every sort_order in one txn.
+    const group = savedViews.filter((v) => !!v.pinned === !!view.pinned);
+    const idx = group.findIndex((v) => v.id === view.id);
+    const swap = idx + dir;
+    if (idx < 0 || swap < 0 || swap >= group.length) return;
+    [group[idx], group[swap]] = [group[swap], group[idx]];
+    // Re-merge the two groups in the canonical pinned-first order and send.
+    const ordered = [
+      ...savedViews.filter((v) => v.pinned).map((v) => v.id),
+      ...savedViews.filter((v) => !v.pinned).map((v) => v.id),
+    ];
+    // Replace the matching group's slice in `ordered` with the swapped
+    // slice we just built. The two groups don't overlap so it's safe.
+    const groupIds = group.map((v) => v.id);
+    if (view.pinned) {
+      ordered.splice(0, groupIds.length, ...groupIds);
+    } else {
+      const pinnedCount = savedViews.filter((v) => v.pinned).length;
+      ordered.splice(pinnedCount, groupIds.length, ...groupIds);
+    }
+    savedViewBusy = true;
+    try {
+      await savedViewReorder(ordered);
+      // Refresh from the backend so sort_order on the local copies matches
+      // the new persisted order; cheaper than computing the new values
+      // locally and easier to keep correct.
+      savedViews = await savedViewList();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
+  /** Local sort to keep the rail list in canonical pinned-first order
+   *  after in-memory mutations, without an extra round-trip. Matches the
+   *  backend `list_views` ORDER BY. */
+  function savedViewCompare(a: SavedViewRecord, b: SavedViewRecord): number {
+    const ap = a.pinned ? 1 : 0;
+    const bp = b.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+    return a.name.localeCompare(b.name);
+  }
+
+  function openSavedViewRename(view: SavedViewRecord) {
+    savedViewMenuId = null;
+    savedViewRenameId = view.id;
+    savedViewRenameDraft = view.name;
+    savedViewRenameError = null;
+  }
+
+  function cancelSavedViewRename() {
+    savedViewRenameId = null;
+    savedViewRenameDraft = "";
+    savedViewRenameError = null;
+  }
+
+  async function commitSavedViewRename() {
+    if (savedViewRenameId === null || savedViewBusy) return;
+    const id = savedViewRenameId;
+    const newName = savedViewRenameDraft.trim();
+    if (newName.length === 0) {
+      savedViewRenameError = "name required";
+      return;
+    }
+    const existing = savedViews.find((v) => v.id === id);
+    if (!existing) {
+      cancelSavedViewRename();
+      return;
+    }
+    if (existing.name === newName) {
+      cancelSavedViewRename();
+      return;
+    }
+    savedViewBusy = true;
+    savedViewRenameError = null;
+    try {
+      const updated = await savedViewRename(id, newName);
+      savedViews = savedViews
+        .map((v) => (v.id === updated.id ? updated : v))
+        .sort(savedViewCompare);
+      cancelSavedViewRename();
+    } catch (e) {
+      savedViewRenameError = String(e).replace(/^Error:\s*/, "");
+    } finally {
+      savedViewBusy = false;
+    }
+  }
+
   // Clear the "active saved view" highlight as soon as the user diverges
   // from the saved snapshot — the rail row should only glow while the
   // current filter actually matches what's pinned. Cheap structural check.
@@ -1793,6 +1974,15 @@
               onclick={openSaveViewForm}
             >Save filter</button>
           {/if}
+          {#if activeSavedViewId !== null && filterIsNonDefault && saveViewDraftName === null}
+            <button
+              class="rail-clear"
+              title="Replace the active saved view with the current filter shape"
+              aria-label="Update active saved view with current filter"
+              disabled={savedViewBusy}
+              onclick={onUpdateActiveSavedView}
+            >Update</button>
+          {/if}
           <span class="rail-count">{savedViews.length}</span>
         </div>
         {#if saveViewDraftName !== null}
@@ -1821,24 +2011,123 @@
           </div>
         {/if}
         {#each savedViews as v (v.id)}
-          <div class="rail-row-wrap">
-            <button
-              class="rail-row"
-              class:active={activeSavedViewId === v.id}
-              title="Restore this saved filter"
-              onclick={() => restoreSavedView(v)}
-            >
-              <span class="rail-icon">◆</span>
-              <span class="rail-label">{v.name}</span>
-            </button>
-            <button
-              class="rail-row-x"
-              title="Delete saved view {v.name}"
-              aria-label="Delete saved view"
-              disabled={savedViewBusy}
-              onclick={() => onDeleteSavedView(v)}
-            >×</button>
-          </div>
+          {#if savedViewRenameId === v.id}
+            <div class="rail-rename">
+              <input
+                class="rail-rename-input"
+                class:invalid={savedViewRenameError !== null}
+                value={savedViewRenameDraft}
+                aria-label="Rename saved view"
+                use:focusSelect
+                oninput={(e) => {
+                  savedViewRenameDraft = e.currentTarget.value;
+                  savedViewRenameError = null;
+                }}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") commitSavedViewRename();
+                  else if (e.key === "Escape") cancelSavedViewRename();
+                }}
+                onblur={() => commitSavedViewRename()}
+              />
+              {#if savedViewRenameError}
+                <span class="rail-rename-error" title={savedViewRenameError}
+                  >{savedViewRenameError}</span
+                >
+              {/if}
+            </div>
+          {:else}
+            <div class="rail-row-wrap rail-row-view">
+              <button
+                class="rail-pin"
+                class:on={v.pinned}
+                title={v.pinned
+                  ? `Unpin "${v.name}" (drop from the top of the rail)`
+                  : `Pin "${v.name}" to the top of the rail`}
+                aria-label="Toggle pin"
+                disabled={savedViewBusy}
+                onclick={() => onTogglePinSavedView(v)}
+              >★</button>
+              <button
+                class="rail-row"
+                class:active={activeSavedViewId === v.id}
+                title="Restore this saved filter"
+                onclick={() => restoreSavedView(v)}
+              >
+                <span class="rail-icon">◆</span>
+                <span class="rail-label">{v.name}</span>
+              </button>
+              <button
+                class="rail-row-menu"
+                title="Saved-view actions"
+                aria-label="Open saved-view menu"
+                aria-expanded={savedViewMenuId === v.id}
+                disabled={savedViewBusy}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  savedViewMenuId = savedViewMenuId === v.id ? null : v.id;
+                }}
+              >⋯</button>
+              {#if savedViewMenuId === v.id}
+                <div class="rail-row-popover" role="menu">
+                  <button
+                    role="menuitem"
+                    onclick={() => {
+                      savedViewMenuId = null;
+                      onTogglePinSavedView(v);
+                    }}
+                  >{v.pinned ? "Unpin" : "Pin to top"}</button>
+                  <button
+                    role="menuitem"
+                    onclick={() => {
+                      savedViewMenuId = null;
+                      openSavedViewRename(v);
+                    }}
+                  >Rename…</button>
+                  <button
+                    role="menuitem"
+                    onclick={() => {
+                      savedViewMenuId = null;
+                      onDuplicateSavedView(v);
+                    }}
+                  >Duplicate</button>
+                  {#if (() => {
+                    const group = savedViews.filter((x) => !!x.pinned === !!v.pinned);
+                    return group.findIndex((x) => x.id === v.id) > 0;
+                  })()}
+                    <button
+                      role="menuitem"
+                      onclick={() => {
+                        savedViewMenuId = null;
+                        onBumpSavedView(v, -1);
+                      }}
+                    >Move up</button>
+                  {/if}
+                  {#if (() => {
+                    const group = savedViews.filter((x) => !!x.pinned === !!v.pinned);
+                    const i = group.findIndex((x) => x.id === v.id);
+                    return i >= 0 && i < group.length - 1;
+                  })()}
+                    <button
+                      role="menuitem"
+                      onclick={() => {
+                        savedViewMenuId = null;
+                        onBumpSavedView(v, 1);
+                      }}
+                    >Move down</button>
+                  {/if}
+                  <hr />
+                  <button
+                    role="menuitem"
+                    class="danger"
+                    onclick={() => {
+                      savedViewMenuId = null;
+                      onDeleteSavedView(v);
+                    }}
+                  >Delete view</button>
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/each}
         {#if savedViews.length === 0 && saveViewDraftName === null && initialized}
           <div class="rail-empty">
@@ -2864,6 +3153,75 @@
   }
   .rail-row-wrap:hover .rail-row-x { opacity: 1; }
   .rail-row-x:hover { color: var(--accent); }
+
+  /* Saved-views rail (v3.56.0 Atlas Saved-Views-Polish) — pin glyph +
+     overflow menu, kept apart from the generic rail-row-x class so the
+     other rails (folders, tags) stay untouched. The wrap is
+     position:relative so the popover anchors to it. */
+  .rail-row-view {
+    position: relative;
+  }
+  .rail-pin {
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    padding: 0 4px 0 8px;
+    font-size: 11px;
+    cursor: pointer;
+    opacity: 0;
+    line-height: 1;
+  }
+  .rail-row-view:hover .rail-pin { opacity: 0.5; }
+  .rail-pin.on,
+  .rail-row-view:hover .rail-pin.on { opacity: 1; color: #f7c948; }
+  .rail-pin:hover:not(:disabled) { color: var(--text); }
+  .rail-pin.on:hover:not(:disabled) { color: #ffd966; }
+  .rail-row-menu {
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    padding: 0 8px;
+    cursor: pointer;
+    opacity: 0;
+    font-size: 16px;
+    letter-spacing: 1px;
+    line-height: 1;
+  }
+  .rail-row-view:hover .rail-row-menu { opacity: 1; }
+  .rail-row-menu:hover:not(:disabled) { color: var(--text); }
+  .rail-row-menu[aria-expanded="true"] { opacity: 1; color: var(--text); }
+  .rail-row-popover {
+    position: absolute;
+    top: 100%;
+    right: 4px;
+    z-index: 20;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-width: 160px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  .rail-row-popover button {
+    background: transparent;
+    border: 0;
+    color: var(--text-2);
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .rail-row-popover button:hover { background: var(--bg-3); color: var(--text); }
+  .rail-row-popover button.danger { color: var(--danger, #ec6b6b); }
+  .rail-row-popover button.danger:hover { background: rgba(236, 107, 107, 0.12); }
+  .rail-row-popover hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 4px 0;
+  }
   /* Inline tag rename (v3.43.0 Atlas Tag-Rename) */
   .rail-rename {
     flex: 1;
