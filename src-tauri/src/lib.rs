@@ -3427,6 +3427,22 @@ fn slab_collection_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
 }
 
 #[tauri::command]
+fn slab_collection_set_color(
+    app: tauri::AppHandle,
+    id: i64,
+    color: Option<String>,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::set_collection_color(&mut db, id, color.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
 fn slab_collection_add_docs(
     app: tauri::AppHandle,
     collection_id: i64,
@@ -5730,6 +5746,7 @@ pub fn run() {
             slab_collection_list,
             slab_collection_rename,
             slab_collection_delete,
+            slab_collection_set_color,
             slab_collection_add_docs,
             slab_collection_remove_docs,
             slab_collection_list_docs,

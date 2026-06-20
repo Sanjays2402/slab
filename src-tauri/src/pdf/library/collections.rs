@@ -205,6 +205,49 @@ pub fn delete_collection(db: &mut LibraryDb, id: i64) -> Result<(), LibraryError
     Ok(())
 }
 
+/// Update a collection's color (or clear it back to NULL with `None`).
+/// Returns the updated row.
+///
+/// Input is trimmed; trimmed-empty is treated as `None` so the column only
+/// ever holds a "real" color. Non-None values are checked by the shared
+/// [`valid_tag_color`] guard (same CSS shape allowlist tags use — `#hex`
+/// and functional `hsl()/hsla()/rgb()/rgba()`) so a stored value can never
+/// carry CSS that breaks out of the property it's dropped into. Unknown id
+/// errors. The guard runs BEFORE the UPDATE so a rejected color leaves the
+/// row's prior color untouched.
+/// v3.53.0 Atlas Collections — Slice 24.
+pub fn set_collection_color(
+    db: &mut LibraryDb,
+    id: i64,
+    color: Option<&str>,
+) -> Result<CollectionRecord, LibraryError> {
+    // Normalize: treat whitespace-only as a clear, validate real values.
+    let normalized: Option<String> = match color {
+        None => None,
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                if !super::registry::valid_tag_color(trimmed) {
+                    return Err(LibraryError::Other(format!(
+                        "invalid collection color: {trimmed:?}"
+                    )));
+                }
+                Some(trimmed.to_string())
+            }
+        }
+    };
+    // Ensure the row exists up front so a bad id reports a clean error
+    // instead of a silent 0-row UPDATE.
+    let _current = get_collection(db, id)?;
+    db.conn_mut().execute(
+        "UPDATE library_collections SET color = ?1 WHERE id = ?2",
+        params![normalized, id],
+    )?;
+    get_collection(db, id)
+}
+
 pub fn add_docs(
     db: &mut LibraryDb,
     collection_id: i64,
@@ -609,6 +652,94 @@ mod tests {
         let too_long: String = "x".repeat(MAX_COLLECTION_NAME_LEN + 1);
         assert!(rename_collection(&mut db, c.id, &too_long).is_err());
         assert_eq!(get_collection(&db, c.id).unwrap().name, at_max);
+    }
+
+    // -------- Slice 24: set_collection_color --------
+
+    #[test]
+    fn set_collection_color_updates_and_returns_row() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Tax 2026", None, Some("#aabbcc")).unwrap();
+        let updated = set_collection_color(&mut db, c.id, Some("#6ab7ff")).unwrap();
+        assert_eq!(updated.color.as_deref(), Some("#6ab7ff"));
+        assert_eq!(
+            get_collection(&db, c.id).unwrap().color.as_deref(),
+            Some("#6ab7ff")
+        );
+        // Other fields preserved.
+        assert_eq!(updated.name, "Tax 2026");
+    }
+
+    #[test]
+    fn set_collection_color_trims_whitespace() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "x", None, None).unwrap();
+        let updated = set_collection_color(&mut db, c.id, Some("  #7ee787  ")).unwrap();
+        assert_eq!(updated.color.as_deref(), Some("#7ee787"));
+    }
+
+    #[test]
+    fn set_collection_color_none_clears() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "x", None, Some("#aabbcc")).unwrap();
+        let cleared = set_collection_color(&mut db, c.id, None).unwrap();
+        assert!(cleared.color.is_none());
+        // An all-whitespace value is treated as a clear (column never holds
+        // "real but empty" trash).
+        set_collection_color(&mut db, c.id, Some("#7ee787")).unwrap();
+        let cleared2 = set_collection_color(&mut db, c.id, Some("   ")).unwrap();
+        assert!(cleared2.color.is_none());
+    }
+
+    #[test]
+    fn set_collection_color_accepts_hsl_from_pastel_for() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "x", None, None).unwrap();
+        // The same shape pastel_for emits for tags; we accept it for collections too.
+        let updated = set_collection_color(&mut db, c.id, Some("hsl(123, 60%, 80%)")).unwrap();
+        assert_eq!(updated.color.as_deref(), Some("hsl(123, 60%, 80%)"));
+    }
+
+    #[test]
+    fn set_collection_color_rejects_invalid_color_row_untouched() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "x", None, Some("#aabbcc")).unwrap();
+        for bad in [
+            "red",
+            "javascript:alert(1)",
+            "url(http://evil)",
+            "#gg",
+            "#1234567", // 7 chars not in {3,4,6,8}
+            "hsl(120, 50%, 50%); color: red",
+        ] {
+            assert!(
+                set_collection_color(&mut db, c.id, Some(bad)).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+        // Original color is intact — guard runs BEFORE the UPDATE.
+        assert_eq!(
+            get_collection(&db, c.id).unwrap().color.as_deref(),
+            Some("#aabbcc")
+        );
+    }
+
+    #[test]
+    fn set_collection_color_rejects_unknown_id() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        assert!(set_collection_color(&mut db, 999_999, Some("#aabbcc")).is_err());
+    }
+
+    #[test]
+    fn set_collection_color_preserves_name_and_count() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Onboarding", Some("folder"), None).unwrap();
+        let d1 = make_doc(&mut db, "intro");
+        add_docs(&mut db, c.id, &[d1]).unwrap();
+        let updated = set_collection_color(&mut db, c.id, Some("#7ee787")).unwrap();
+        assert_eq!(updated.name, "Onboarding");
+        assert_eq!(updated.icon.as_deref(), Some("folder"));
+        assert_eq!(updated.doc_count, 1);
     }
 
     #[test]

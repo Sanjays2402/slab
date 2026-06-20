@@ -17,6 +17,7 @@
     collectionCreate,
     collectionDelete,
     collectionRename,
+    collectionSetColor,
     collectionListDocs,
     collectionAddDocs,
     smartCollectionList,
@@ -161,6 +162,53 @@
       renameError = (e as Error).message;
     } finally {
       renameBusy = false;
+    }
+  }
+
+  // -------- Color editor (v3.53.0 Atlas Collections — Slice 24) --------
+  const COLLECTION_PALETTE = [
+    "#ff7a59",
+    "#6ab7ff",
+    "#7ee787",
+    "#f5c518",
+    "#c084fc",
+    "#f47272",
+    "#79c0ff",
+    "#a4a4b0",
+  ];
+  let editColorCollection = $state<CollectionRecord | null>(null);
+  let editColorValue = $state<string | null>(null);
+  let editColorBusy = $state(false);
+  let editColorError = $state<string | null>(null);
+
+  function openEditColor(c: CollectionRecord, ev: MouseEvent) {
+    ev.stopPropagation();
+    editColorCollection = c;
+    editColorValue = c.color ?? null;
+    editColorError = null;
+  }
+  function closeEditColor() {
+    editColorCollection = null;
+    editColorValue = null;
+    editColorError = null;
+  }
+  async function commitEditColor() {
+    const target = editColorCollection;
+    if (!target) return;
+    editColorBusy = true;
+    try {
+      const updated: CollectionRecord = await collectionSetColor(
+        target.id,
+        editColorValue,
+      );
+      collections = collections.map((row): CollectionRecord =>
+        row.id === target.id ? updated : row,
+      );
+      closeEditColor();
+    } catch (e) {
+      editColorError = (e as Error).message;
+    } finally {
+      editColorBusy = false;
     }
   }
 
@@ -440,7 +488,15 @@
           </form>
         {:else}
           <button
-            class="cs-row"
+            class="cs-color-dot"
+            aria-label="Edit color for {c.name}"
+            title="Edit color"
+            onclick={(e) => openEditColor(c, e)}
+          >
+            <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
+          </button>
+          <button
+            class="cs-row no-dot"
             class:active={activeId === `c:${c.id}`}
             onclick={() => pickCollection(c)}
             ondragover={(e) => onDocDragOver(e, c)}
@@ -448,7 +504,6 @@
             ondrop={(e) => onDocDrop(e, c)}
             title={c.name}
           >
-            <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
             <span class="cs-label">{c.name}</span>
             <span class="cs-count" class:pulse={pulsing.has(c.id)}>{c.doc_count}</span>
           </button>
@@ -582,6 +637,61 @@
   open={ocrQueueOpen}
   onClose={() => (ocrQueueOpen = false)}
 />
+
+<!-- v3.53.0 Atlas Collections — Slice 24 color editor modal -->
+{#if editColorCollection}
+  <div
+    class="cs-modal-backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={closeEditColor}
+    onkeydown={(e) => {
+      if (e.key === "Escape") closeEditColor();
+    }}
+  >
+    <div
+      class="cs-modal"
+      role="dialog"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <div class="cs-modal-title">Collection color</div>
+      <div class="cs-color-preview">
+        <span class="cs-dot preview" style:background={editColorValue ?? "var(--text-3)"}></span>
+        <span class="cs-color-preview-name">{editColorCollection.name}</span>
+      </div>
+      <div class="cs-palette">
+        {#each COLLECTION_PALETTE as c (c)}
+          <button
+            class="cs-swatch"
+            class:active={editColorValue === c}
+            style:background={c}
+            aria-label="Pick color {c}"
+            onclick={() => (editColorValue = c)}
+          ></button>
+        {/each}
+        <button
+          class="cs-swatch default-swatch"
+          class:active={editColorValue === null}
+          title="Default (automatic)"
+          aria-label="Use default color"
+          onclick={() => (editColorValue = null)}
+        >&#8856;</button>
+      </div>
+      {#if editColorError}
+        <div class="cs-modal-error" role="alert">{editColorError}</div>
+      {/if}
+      <div class="cs-modal-actions">
+        <button class="ghost" onclick={closeEditColor}>Cancel</button>
+        <button class="primary" onclick={commitEditColor} disabled={editColorBusy}>
+          {editColorBusy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .cs-rail {
@@ -774,6 +884,151 @@
   .cs-row-wrap.renaming {
     background: color-mix(in oklab, var(--accent) 8%, transparent);
     border-radius: 6px;
+  }
+  /* v3.53.0 Atlas Collections — Slice 24 color-dot affordance & modal */
+  .cs-color-dot {
+    background: transparent;
+    border: none;
+    padding: 6px 2px 6px 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 6px;
+    transition: background 120ms ease, transform 120ms ease;
+  }
+  .cs-color-dot:hover {
+    background: var(--surface-2);
+    transform: scale(1.08);
+  }
+  .cs-row.no-dot {
+    padding-left: 4px;
+  }
+  .cs-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: default;
+  }
+  .cs-modal {
+    background: var(--panel-bg, rgba(22, 24, 33, 0.98));
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+    padding: 18px 18px 14px;
+    width: min(360px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: cs-pop-in 160ms ease-out;
+  }
+  @keyframes cs-pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .cs-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .cs-color-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--surface-2);
+    border-radius: 8px;
+  }
+  .cs-dot.preview {
+    width: 14px;
+    height: 14px;
+  }
+  .cs-color-preview-name {
+    color: var(--text-1);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cs-palette {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .cs-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    transition: transform 120ms ease, border-color 120ms ease;
+  }
+  .cs-swatch:hover {
+    transform: scale(1.1);
+  }
+  .cs-swatch.active {
+    border-color: var(--text-1);
+  }
+  .cs-swatch.default-swatch {
+    background: transparent;
+    border: 1.5px dashed var(--text-3);
+    color: var(--text-2);
+    font-size: 14px;
+    line-height: 24px;
+    text-align: center;
+  }
+  .cs-swatch.default-swatch.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .cs-modal-error {
+    color: var(--danger, #f87171);
+    font-size: 12px;
+  }
+  .cs-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .cs-modal-actions .ghost {
+    background: transparent;
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.1));
+    color: var(--text-2);
+    padding: 6px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .cs-modal-actions .ghost:hover {
+    color: var(--text-1);
+    background: var(--surface-2);
+  }
+  .cs-modal-actions .primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .cs-modal-actions .primary:disabled {
+    opacity: 0.6;
+    cursor: progress;
   }
   .cs-sub {
     padding: 12px 8px 4px;

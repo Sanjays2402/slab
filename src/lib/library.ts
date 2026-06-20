@@ -811,6 +811,22 @@ export async function collectionDelete(id: number): Promise<void> {
   unwrap(res);
 }
 
+/**
+ * Update a collection's color (or clear it back to `null`). Returns the
+ * updated row so the caller can swap it into the rail in place without a
+ * round-trip. Pass `null` to clear. v3.53.0 Atlas Collections — Slice 24.
+ */
+export async function collectionSetColor(
+  id: number,
+  color: string | null,
+): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>("slab_collection_set_color", {
+    id,
+    color,
+  });
+  return unwrap(res);
+}
+
 export async function collectionAddDocs(
   collectionId: number,
   docIds: number[],
