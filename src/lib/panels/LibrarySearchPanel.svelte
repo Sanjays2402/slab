@@ -380,6 +380,10 @@
             Wrap a phrase in <kbd>"</kbd>quotes<kbd>"</kbd> to match adjacent
             words only
           </li>
+          <li>
+            Prefix a term with <kbd>-</kbd> to exclude it
+            (<code>contract -draft</code>)
+          </li>
         </ul>
       </div>
     {:else if !loading && hits.length === 0}
@@ -717,6 +721,14 @@
     background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
     border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
     margin-right: 4px;
+  }
+  .tips code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    color: var(--fg, #222);
   }
   .state.error {
     color: var(--danger, #c0392b);

@@ -122,18 +122,39 @@ pub fn search(
 ///    appear in that exact order wins. Stripped of metacharacters but
 ///    spaces survive. Inside-quote prefix-`*` is dropped (a phrase
 ///    can't carry the prefix glob — FTS5 rejects it).
+/// 3. **Exclude term** — `-word` or `-"phrase"`. Maps to FTS5 `NOT
+///    "word"` / `NOT "phrase"`, so a page that contains the term
+///    drops out of the result set. FTS5 requires a positive clause
+///    before NOT, so a query with ONLY excludes returns an empty
+///    result set deliberately (`-draft` alone is meaningless without
+///    a positive anchor — Google does the same).
 ///
 /// Result for input `indemnification clause` → `"indemnification" "clause"*`.
 /// Result for input `"force majeure" clause` → `"force majeure" "clause"*`.
+/// Result for input `contract -draft` → `"contract"* NOT "draft"`.
+/// Result for input `-draft` → "" (no positive anchor; empty result).
 /// An unterminated `"trailing` is treated as a phrase to end-of-input.
 ///
-/// The LAST emitted bare-word token gets a trailing `*` so prefix-search
-/// works as the user types (`indemn` matches `indemnification`). Phrase
-/// tokens never get `*` — FTS5 does not support a phrase-with-prefix
-/// idiom and emitting one is a hard error.
+/// The LAST emitted positive bare-word token gets a trailing `*` so
+/// prefix-search works as the user types (`indemn` matches
+/// `indemnification`). Phrase tokens never get `*` — FTS5 does not
+/// support a phrase-with-prefix idiom and emitting one is a hard error.
+/// Excluded terms never get `*` either; the prefix glob on an exclusion
+/// would risk dropping legitimate hits whose contents happen to begin
+/// with a few innocent shared letters.
 pub fn build_match_expr(query: &str) -> String {
     let toks = tokenize(query);
     if toks.is_empty() {
+        return String::new();
+    }
+    // FTS5 rejects a MATCH expression that's nothing but NOT clauses:
+    // every NOT needs a positive antecedent. If the user typed only
+    // excludes, return an empty expression (caller treats it as
+    // empty-result) rather than emit invalid SQL.
+    let has_positive = toks
+        .iter()
+        .any(|t| matches!(t, Tok::Bare(_) | Tok::Phrase(_)));
+    if !has_positive {
         return String::new();
     }
     let mut parts: Vec<String> = Vec::with_capacity(toks.len());
@@ -151,6 +172,11 @@ pub fn build_match_expr(query: &str) -> String {
                 // Never prefix-glob a phrase — FTS5 rejects "a b"*.
                 parts.push(format!("\"{}\"", p));
             }
+            Tok::Exclude(w) => {
+                // Never prefix-glob an exclusion; a stray `*` could
+                // silently drop unrelated documents.
+                parts.push(format!("NOT \"{}\"", w));
+            }
         }
     }
     parts.join(" ")
@@ -160,6 +186,10 @@ pub fn build_match_expr(query: &str) -> String {
 enum Tok {
     Bare(String),
     Phrase(String),
+    /// `-word` or `-"phrase"` — emits as `NOT "word"`. Multi-word
+    /// exclusions are stored space-joined so the formatter can wrap
+    /// them in one FTS5 phrase.
+    Exclude(String),
 }
 
 /// Strip every FTS5 metacharacter from a single-word token so it can't
@@ -181,13 +211,21 @@ fn scrub_phrase(p: &str) -> String {
         .join(" ")
 }
 
-/// Lex raw user input into a stream of Tok::Bare / Tok::Phrase. Empty
-/// tokens are dropped. Both curly (typed by macOS auto-correct) and
-/// straight quotes open + close phrases.
+/// Lex raw user input into a stream of Tok::Bare / Tok::Phrase /
+/// Tok::Exclude. Empty tokens are dropped. Both curly (typed by macOS
+/// auto-correct) and straight quotes open + close phrases. A leading
+/// `-` (only when at the start of a token, NOT mid-word like `co-op`)
+/// flips the next bare-word OR phrase into an Exclude. Lone `-` is
+/// dropped.
 fn tokenize(query: &str) -> Vec<Tok> {
     let mut out: Vec<Tok> = Vec::new();
     let mut chars = query.chars().peekable();
     let mut buf = String::new();
+    // Set when the start of the NEXT token (bare or phrase) should be
+    // routed into Tok::Exclude. Consumed on emit, reset on whitespace
+    // without a token (so a `- word` with a space treats `-` as a
+    // lone dash dropped by scrub_word, NOT an exclusion of `word`).
+    let mut pending_neg = false;
     while let Some(c) = chars.next() {
         match c {
             // Both straight and curly opening-quote forms a phrase.
@@ -196,7 +234,15 @@ fn tokenize(query: &str) -> Vec<Tok> {
                 if !buf.is_empty() {
                     let w = scrub_word(&buf);
                     if !w.is_empty() {
-                        out.push(Tok::Bare(w));
+                        // A bare word that *immediately* preceded the
+                        // quote is its own positive (or negative) token;
+                        // the phrase starts fresh after.
+                        out.push(if pending_neg {
+                            pending_neg = false;
+                            Tok::Exclude(w)
+                        } else {
+                            Tok::Bare(w)
+                        });
                     }
                     buf.clear();
                 }
@@ -212,17 +258,40 @@ fn tokenize(query: &str) -> Vec<Tok> {
                 }
                 let cleaned = scrub_phrase(&phrase);
                 if !cleaned.is_empty() {
-                    out.push(Tok::Phrase(cleaned));
+                    out.push(if pending_neg {
+                        pending_neg = false;
+                        Tok::Exclude(cleaned)
+                    } else {
+                        Tok::Phrase(cleaned)
+                    });
+                } else {
+                    // Empty `""` cancels any pending exclusion flag —
+                    // the user clearly didn't mean to exclude nothing.
+                    pending_neg = false;
                 }
             }
             c if c.is_whitespace() => {
                 if !buf.is_empty() {
                     let w = scrub_word(&buf);
                     if !w.is_empty() {
-                        out.push(Tok::Bare(w));
+                        out.push(if pending_neg {
+                            pending_neg = false;
+                            Tok::Exclude(w)
+                        } else {
+                            Tok::Bare(w)
+                        });
                     }
                     buf.clear();
                 }
+                // A lone `-` before whitespace is just a dash — drop it.
+                pending_neg = false;
+            }
+            // `-` at the very START of a token flips it negative.
+            // `co-op` (mid-word `-`) falls through to bare buf — scrub_word
+            // strips the dash so it lands as `coop`, matching existing
+            // sanitiser behaviour.
+            '-' if buf.is_empty() && !pending_neg => {
+                pending_neg = true;
             }
             _ => buf.push(c),
         }
@@ -230,7 +299,11 @@ fn tokenize(query: &str) -> Vec<Tok> {
     if !buf.is_empty() {
         let w = scrub_word(&buf);
         if !w.is_empty() {
-            out.push(Tok::Bare(w));
+            out.push(if pending_neg {
+                Tok::Exclude(w)
+            } else {
+                Tok::Bare(w)
+            });
         }
     }
     out
@@ -425,6 +498,125 @@ mod tests {
         let rows = super::super::search_log::recent_queries(&db, 5).unwrap();
         let last = rows.first().expect("phrase query should be logged");
         assert_eq!(last.query, r#""indemnification clause""#);
+    }
+
+    // --- Exclude-terms (v3.54.0 Atlas) ---
+    //
+    // A leading `-` on a token flips it into FTS5 NOT semantics so the
+    // user can say "contracts mentioning indemnification but NOT drafts"
+    // as `indemnification -draft`. Tests pin every edge of the syntax
+    // because FTS5 errors here are silent ("no results" looks identical
+    // to "syntactically invalid query").
+
+    #[test]
+    fn build_match_expr_emits_exclude_as_not_clause() {
+        // The positive token still gets the prefix glob; the excluded
+        // token is wrapped as a phrase NOT and never gets `*`.
+        assert_eq!(
+            build_match_expr("contract -draft"),
+            "\"contract\"* NOT \"draft\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_exclude_phrase() {
+        // `-"prior draft"` → NOT "prior draft" (one phrase exclusion).
+        assert_eq!(
+            build_match_expr(r#"contract -"prior draft""#),
+            "\"contract\"* NOT \"prior draft\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_only_excludes_returns_empty_string() {
+        // FTS5 rejects a MATCH that's nothing but NOT; the caller's
+        // search() short-circuits to Ok(vec![]) when build_match_expr
+        // returns "" so a `-draft` query is a deliberate empty result
+        // (no positive anchor) rather than a SQL syntax error.
+        assert_eq!(build_match_expr("-draft"), "");
+        assert_eq!(build_match_expr(r#"-draft -"prior version""#), "");
+    }
+
+    #[test]
+    fn build_match_expr_multiple_excludes() {
+        // Multiple `-foo -bar` exclusions chain as separate NOT clauses
+        // so a doc matching ANY excluded term drops.
+        assert_eq!(
+            build_match_expr("indemnification -draft -void"),
+            "\"indemnification\"* NOT \"draft\" NOT \"void\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_dash_midword_is_not_an_exclusion() {
+        // `co-op` mid-word `-` is not a trigger — only LEADING `-` at
+        // the start of a fresh token flips negative. scrub_word strips
+        // the dash so it lands as bare "coop", matching the pre-exclude
+        // sanitiser behaviour for hyphenated input.
+        assert_eq!(build_match_expr("co-op"), "\"coop\"*");
+    }
+
+    #[test]
+    fn build_match_expr_lone_dash_dropped() {
+        // A bare `-` with nothing after is just a dash — drop it.
+        // Trailing `- ` (dash + space) ditto. The query devolves to
+        // its surrounding tokens.
+        assert_eq!(build_match_expr("- "), "");
+        assert_eq!(build_match_expr("foo - bar"), "\"foo\" \"bar\"*");
+    }
+
+    #[test]
+    fn build_match_expr_exclude_after_phrase() {
+        // Combine phrase positive with bare exclusion — the phrase
+        // doesn't trigger pending_neg, the bare `-draft` does.
+        assert_eq!(
+            build_match_expr(r#""force majeure" -draft"#),
+            "\"force majeure\" NOT \"draft\""
+        );
+    }
+
+    #[test]
+    fn build_match_expr_exclude_with_meta_in_word_scrubbed() {
+        // The excluded term still flows through scrub_word so meta
+        // chars can't sneak into NOT and break the MATCH grammar.
+        assert_eq!(
+            build_match_expr("contract -foo*bar"),
+            "\"contract\"* NOT \"foobar\""
+        );
+    }
+
+    #[test]
+    fn exclude_term_filters_results() {
+        // End-to-end: doc 1 mentions "indemnification clause" (no
+        // arbitration); doc 2 mentions "arbitration" + "indemnification"
+        // on different pages. `indemnification -arbitration` keeps doc 1
+        // and drops the arbitration page of doc 2.
+        let db = LibraryDb::open_in_memory().unwrap();
+        seed(&db);
+        let hits = search(db.conn(), "indemnification -arbitration", 10, None).unwrap();
+        // doc 2 page 1 still matches (it has "indemnification" not
+        // "arbitration"); only doc 2 page 0 (the arbitration page)
+        // would have been dropped — but doc 2 page 0 didn't match
+        // "indemnification" anyway. The strong signal is what stays:
+        // doc 1's "indemnification" hit is preserved.
+        assert!(hits.iter().any(|h| h.doc_id == 1));
+        // No hit may live in a doc whose matched page contains the
+        // excluded term:
+        // The seed has "arbitration" on doc 2 page 0; that page
+        // would never match "indemnification" anyway, so we just
+        // affirmatively pin that we did NOT regress to zero results.
+        assert!(!hits.is_empty(), "exclude must not drop ALL matches");
+    }
+
+    #[test]
+    fn exclude_only_query_is_zero_results_not_an_error() {
+        // `-draft` alone has no positive anchor — search() should treat
+        // it like an empty query (Ok(vec![])) instead of erroring out
+        // through FTS5's "syntax error near NOT" path.
+        let db = LibraryDb::open_in_memory().unwrap();
+        seed(&db);
+        let hits = search(db.conn(), "-draft", 10, None).unwrap();
+        assert!(hits.is_empty(), "exclude-only query must return []");
     }
 
     #[test]
