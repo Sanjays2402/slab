@@ -87,3 +87,27 @@ export async function beaconIndexStatsByModel(): Promise<ModelBucket[]> {
   );
   return unwrap(res);
 }
+
+/**
+ * Every indexed PDF whose `pdf_path` no longer points at a readable
+ * file (renamed, deleted, on an unmounted volume). The inspector wraps
+ * this in a "Forget all N stale" affordance.
+ */
+export async function beaconIndexFindStale(): Promise<IndexedPdfRecord[]> {
+  const res = await invoke<CmdResult<IndexedPdfRecord[]>>(
+    "slab_beacon_index_find_stale",
+  );
+  return unwrap(res);
+}
+
+/**
+ * Bulk-forget every stale PDF in one transaction. Returns the count
+ * actually removed. The missing-on-disk scan runs once up front so a
+ * freshly-restored file isn't accidentally dropped.
+ */
+export async function beaconIndexForgetStale(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_beacon_index_forget_stale",
+  );
+  return unwrap(res);
+}

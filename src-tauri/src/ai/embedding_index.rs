@@ -298,6 +298,34 @@ impl EmbeddingIndex {
         Ok(rows)
     }
 
+    /// Walk every indexed PDF and return the subset whose `path` no
+    /// longer points at a readable file (renamed, deleted, on an
+    /// unmounted volume). The inspector turns this into a "Forget all
+    /// N stale" affordance. Symlinks are followed by `metadata()`; a
+    /// broken symlink reports as missing (which is the right call —
+    /// the embed_index can't search what it can't read). Same shape as
+    /// [`list_indexed`] so the inspector renders both with one
+    /// component. v3.54.0 Atlas Beacon-Cache — Slice 31.
+    pub fn find_stale(&self) -> Result<Vec<IndexedPdfRecord>, IndexError> {
+        let all = self.list_indexed()?;
+        let stale: Vec<IndexedPdfRecord> = all
+            .into_iter()
+            .filter(|r| !Path::new(&r.pdf_path).exists())
+            .collect();
+        Ok(stale)
+    }
+
+    /// Bulk-forget every stale PDF in one transaction. Returns the
+    /// count actually removed. A path that became readable between
+    /// the `find_stale` scan and the delete is left alone (the missing
+    /// check runs once up front so we never delete a freshly-restored
+    /// file). v3.54.0 Atlas Beacon-Cache — Slice 31 companion.
+    pub fn forget_stale(&mut self) -> Result<usize, IndexError> {
+        let stale = self.find_stale()?;
+        let hashes: Vec<String> = stale.into_iter().map(|r| r.pdf_hash).collect();
+        self.forget_many(&hashes)
+    }
+
     /// Insert chunks + embeddings for a PDF. Replaces any prior rows
     /// for the same hash (idempotent re-index).
     pub fn write_pdf(
@@ -1113,5 +1141,68 @@ mod tests {
         assert!(json.contains("\"embed_model\""));
         let back: Vec<ModelBucket> = serde_json::from_str(&json).unwrap();
         assert_eq!(back, buckets);
+    }
+
+    #[test]
+    fn find_stale_returns_only_missing_path_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 3, 1, "m", dir.path());
+        // Delete one of the underlying files to simulate a missing PDF.
+        let kept_listed = idx.list_indexed().unwrap();
+        let victim = kept_listed
+            .iter()
+            .find(|r| r.pdf_hash == hashes[0])
+            .unwrap()
+            .clone();
+        std::fs::remove_file(&victim.pdf_path).unwrap();
+        let stale = idx.find_stale().unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].pdf_hash, hashes[0]);
+        // The two PDFs whose files still exist are NOT in the stale list.
+        let stale_hashes: std::collections::HashSet<_> =
+            stale.iter().map(|r| r.pdf_hash.clone()).collect();
+        assert!(!stale_hashes.contains(&hashes[1]));
+        assert!(!stale_hashes.contains(&hashes[2]));
+    }
+
+    #[test]
+    fn find_stale_on_clean_index_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 2, 1, "m", dir.path());
+        let stale = idx.find_stale().unwrap();
+        assert!(stale.is_empty(), "no missing files means nothing stale");
+    }
+
+    #[test]
+    fn forget_stale_prunes_only_the_missing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 3, 1, "m", dir.path());
+        // Drop two of the three on-disk files.
+        let listed = idx.list_indexed().unwrap();
+        let drop_targets: Vec<_> = listed
+            .iter()
+            .filter(|r| r.pdf_hash == hashes[0] || r.pdf_hash == hashes[1])
+            .map(|r| r.pdf_path.clone())
+            .collect();
+        for p in &drop_targets {
+            std::fs::remove_file(p).unwrap();
+        }
+        let pruned = idx.forget_stale().unwrap();
+        assert_eq!(pruned, 2);
+        let after = idx.list_indexed().unwrap();
+        assert_eq!(after.len(), 1, "the live row survives");
+        assert_eq!(after[0].pdf_hash, hashes[2]);
+    }
+
+    #[test]
+    fn forget_stale_on_clean_index_is_zero_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        assert_eq!(idx.forget_stale().unwrap(), 0);
+        assert_eq!(idx.list_indexed().unwrap().len(), 1);
     }
 }

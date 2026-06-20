@@ -3000,6 +3000,36 @@ fn slab_beacon_index_stats_by_model() -> CmdResult<Vec<ModelBucket>> {
     index.stats_by_model().into()
 }
 
+/// Every indexed PDF whose `path` no longer points at a readable file.
+/// The inspector turns this into a "Forget all N stale" affordance.
+#[tauri::command]
+fn slab_beacon_index_find_stale() -> CmdResult<Vec<IndexedPdfRecord>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.find_stale().into()
+}
+
+/// Bulk-forget every stale (missing-on-disk) PDF in one transaction.
+/// Returns the count actually removed.
+#[tauri::command]
+fn slab_beacon_index_forget_stale() -> CmdResult<usize> {
+    let mut index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget_stale().into()
+}
+
 // ---------- Beacon PII Highlighter (Slice 8) ----------
 
 impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
@@ -5805,6 +5835,8 @@ pub fn run() {
             slab_beacon_index_list,
             slab_beacon_index_forget_many,
             slab_beacon_index_stats_by_model,
+            slab_beacon_index_find_stale,
+            slab_beacon_index_forget_stale,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
