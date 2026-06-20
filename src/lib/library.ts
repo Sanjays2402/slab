@@ -609,6 +609,39 @@ export async function ocrQueueRunAll(
 }
 
 /**
+ * Per-`ocr_state` count snapshot for the OCR Queue Panel's dashboard.
+ * v3.52.0 Atlas OCR-Queue Slice 3.
+ */
+export interface OcrQueueStats {
+  /** Pre-classification — legacy import or scanner hasn't seen it. */
+  unknown: number;
+  /** Scanner decided no OCR needed. */
+  text_native: number;
+  /** Image-only PDFs awaiting OCR. */
+  scanned: number;
+  /** Mixed text + scanned pages. */
+  mixed: number;
+  /** Currently being OCR'd. */
+  pending: number;
+  /** OCR succeeded — `ocr_output_path` should be set. */
+  done: number;
+  /** Last OCR attempt failed — `ocr_error` carries the reason. */
+  failed: number;
+  /** scanned + mixed — what the queue would pull next. */
+  pending_total: number;
+  /** Every doc, regardless of state. */
+  total: number;
+}
+
+/** Fetch the queue dashboard counts. Safe to poll; pure read. */
+export async function ocrQueueStats(): Promise<OcrQueueStats> {
+  const res = await invoke<CmdResult<OcrQueueStats>>(
+    "slab_library_ocr_queue_stats",
+  );
+  return unwrap(res);
+}
+
+/**
  * Re-queue a single document by flipping `ocr_done` / `ocr_failed` /
  * `ocr_pending` back to `scanned` and clearing both the persisted
  * error and any stale output path. Returns the updated row so callers

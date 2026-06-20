@@ -38,7 +38,7 @@ pub use auto_tagger::{
 pub use ocr_queue::{
     list_pending as ocr_queue_list_pending, requeue_all_failed as ocr_queue_requeue_all_failed,
     requeue_doc as ocr_queue_requeue_doc, run_all as ocr_queue_run_all,
-    run_one as ocr_queue_run_one, OcrQueueResult,
+    run_one as ocr_queue_run_one, stats as ocr_queue_stats, OcrQueueResult, OcrQueueStats,
 };
 pub use query::{query_documents, LibraryFilter, SortBy};
 pub use registry::{

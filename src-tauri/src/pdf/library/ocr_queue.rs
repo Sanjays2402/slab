@@ -1,6 +1,6 @@
 //! Library auto-OCR queue — Slice 2 of v0.13.0 Lens, expanded by
 //! v3.52.0 "Atlas OCR-Queue" into a real subsystem with re-queue,
-//! stats, and failure-inbox surfaces.
+//!   stats and failure-inbox surfaces.
 //!
 //! ## State machine
 //!
@@ -18,6 +18,8 @@
 //!   row back to `scanned` so the queue picks it up again, clearing
 //!   `ocr_error` and `ocr_output_path` so the row is genuinely fresh
 //!   (v3.52.0 Slice 2).
+//! - [`stats`] returns a per-state count for the OCR Queue Panel's
+//!   dashboard footer (v3.52.0 Slice 3).
 
 use super::registry::{
     DocumentRecord, LibraryDb, LibraryError, OCR_STATE_DONE, OCR_STATE_FAILED, OCR_STATE_MIXED,
@@ -207,6 +209,66 @@ pub fn run_all(db: &mut LibraryDb, opts: &OcrOpts) -> Result<Vec<OcrQueueResult>
     for doc in pending {
         out.push(run_one(db, doc.id, opts));
     }
+    Ok(out)
+}
+
+/// Snapshot of the queue surface — how many docs sit in each `ocr_state`
+/// bucket. Powers the OCR Queue Panel's status footer; the same numbers
+/// you'd see if you ran `SELECT ocr_state, COUNT(*) GROUP BY ocr_state`
+/// by hand, with the known constants exposed as named fields so the
+/// frontend never has to spell-check magic strings. v3.52.0 Slice 3.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OcrQueueStats {
+    /// Pre-classification (legacy import or scanner hasn't seen it yet).
+    pub unknown: i64,
+    /// Text-native — `scan_audit` decided OCR is unnecessary.
+    pub text_native: i64,
+    /// Scanned, image-only.
+    pub scanned: i64,
+    /// Mixed text + scanned pages.
+    pub mixed: i64,
+    /// The queue is actively OCR'ing this doc.
+    pub pending: i64,
+    /// Finished — `ocr_output_path` should be set.
+    pub done: i64,
+    /// Last OCR attempt failed — `ocr_error` carries the reason.
+    pub failed: i64,
+    /// Convenience: docs the queue would pull next = scanned + mixed.
+    /// Mirrors `list_pending().len()` without a second query.
+    pub pending_total: i64,
+    /// Convenience: every row, regardless of state.
+    pub total: i64,
+}
+
+/// Return per-`ocr_state` counts in a single round-trip. Buckets we don't
+/// recognise (e.g. a future state added before the UI knows about it) are
+/// silently ignored so the dashboard never panics on schema drift.
+pub fn stats(db: &LibraryDb) -> Result<OcrQueueStats, LibraryError> {
+    use crate::pdf::library::registry::OCR_STATE_TEXT_NATIVE;
+    use crate::pdf::library::registry::OCR_STATE_UNKNOWN;
+
+    let conn = db.conn();
+    let mut stmt =
+        conn.prepare("SELECT ocr_state, COUNT(*) FROM library_documents GROUP BY ocr_state")?;
+    let mut out = OcrQueueStats::default();
+    let mut total: i64 = 0;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (state, count) = row?;
+        total += count;
+        match state.as_str() {
+            s if s == OCR_STATE_UNKNOWN => out.unknown = count,
+            s if s == OCR_STATE_TEXT_NATIVE => out.text_native = count,
+            s if s == OCR_STATE_SCANNED => out.scanned = count,
+            s if s == OCR_STATE_MIXED => out.mixed = count,
+            s if s == OCR_STATE_PENDING => out.pending = count,
+            s if s == OCR_STATE_DONE => out.done = count,
+            s if s == OCR_STATE_FAILED => out.failed = count,
+            _ => {} // ignore unknown buckets — forward-compat
+        }
+    }
+    out.pending_total = out.scanned + out.mixed;
+    out.total = total;
     Ok(out)
 }
 
@@ -476,6 +538,82 @@ mod tests {
         let _ = id;
         let r = run_all(&mut db, &OcrOpts::default()).unwrap();
         assert!(r.is_empty());
+    }
+
+    // -- v3.52.0 Atlas OCR-Queue Slice 3: stats --
+
+    #[test]
+    fn stats_on_empty_library_is_all_zeros() {
+        let db = LibraryDb::open_in_memory().unwrap();
+        let s = stats(&db).unwrap();
+        assert_eq!(s, OcrQueueStats::default());
+        assert_eq!(s.total, 0);
+        assert_eq!(s.pending_total, 0);
+    }
+
+    #[test]
+    fn stats_counts_every_bucket_correctly() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        // 2 scanned, 1 mixed, 1 text-native, 1 done, 1 failed, 1 pending = 7 total
+        seed_doc(&mut db, "/a.pdf", OCR_STATE_SCANNED);
+        seed_doc(&mut db, "/b.pdf", OCR_STATE_SCANNED);
+        seed_doc(&mut db, "/c.pdf", OCR_STATE_MIXED);
+        seed_doc(&mut db, "/d.pdf", OCR_STATE_TEXT_NATIVE);
+        let done_id = seed_doc(&mut db, "/e.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(done_id, OCR_STATE_DONE).unwrap();
+        let failed_id = seed_doc(&mut db, "/f.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(failed_id, OCR_STATE_FAILED).unwrap();
+        let pending_id = seed_doc(&mut db, "/g.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(pending_id, OCR_STATE_PENDING).unwrap();
+
+        let s = stats(&db).unwrap();
+        assert_eq!(s.scanned, 2);
+        assert_eq!(s.mixed, 1);
+        assert_eq!(s.text_native, 1);
+        assert_eq!(s.done, 1);
+        assert_eq!(s.failed, 1);
+        assert_eq!(s.pending, 1);
+        assert_eq!(s.unknown, 0);
+        assert_eq!(s.pending_total, 3, "scanned + mixed only");
+        assert_eq!(s.total, 7);
+    }
+
+    #[test]
+    fn stats_ignores_unknown_buckets_silently() {
+        // Forward-compat: a future state shouldn't crash the dashboard.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/a.pdf", OCR_STATE_SCANNED);
+        // Sneak in a synthetic future state directly via the underlying
+        // UPDATE (the public setter takes &str so we can simulate it).
+        db.set_doc_ocr_state(id, "ocr_quantum_entangled").unwrap();
+        let s = stats(&db).unwrap();
+        // No known bucket should be incremented; total still counts the row.
+        assert_eq!(s.scanned, 0);
+        assert_eq!(s.failed, 0);
+        assert_eq!(s.done, 0);
+        assert_eq!(s.total, 1);
+        assert_eq!(s.pending_total, 0);
+    }
+
+    #[test]
+    fn stats_serde_round_trip_uses_snake_case() {
+        // Pin the wire shape — the TS client deserialises by field name.
+        let s = OcrQueueStats {
+            unknown: 1,
+            text_native: 2,
+            scanned: 3,
+            mixed: 4,
+            pending: 5,
+            done: 6,
+            failed: 7,
+            pending_total: 7,
+            total: 28,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"text_native\":2"));
+        assert!(json.contains("\"pending_total\":7"));
+        let back: OcrQueueStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
     }
 
     // -- v3.52.0 Atlas OCR-Queue Slice 2: requeue --
