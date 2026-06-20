@@ -47,7 +47,7 @@ pub fn list_pending(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError>
     let conn = db.conn();
     let mut stmt = conn.prepare(
         "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
-                added_at, last_seen_at, ocr_state, ocr_output_path
+                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
          FROM library_documents
          WHERE ocr_state IN (?1, ?2)
          ORDER BY added_at ASC, id ASC",
@@ -69,6 +69,7 @@ pub fn list_pending(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError>
                     last_seen_at: row.get(9)?,
                     ocr_state: row.get(10)?,
                     ocr_output_path: row.get(11)?,
+                    ocr_error: row.get(12)?,
                     tags: Vec::new(),
                 })
             },
@@ -101,7 +102,7 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
         let row = conn
             .query_row(
                 "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
-                        added_at, last_seen_at, ocr_state, ocr_output_path
+                        added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
                  FROM library_documents WHERE id = ?1",
                 rusqlite::params![doc_id],
                 |row| {
@@ -118,6 +119,7 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
                         last_seen_at: row.get(9)?,
                         ocr_state: row.get(10)?,
                         ocr_output_path: row.get(11)?,
+                        ocr_error: row.get(12)?,
                         tags: Vec::new(),
                     })
                 },
@@ -168,6 +170,10 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
         Ok(_report) => {
             let _ = db.set_doc_ocr_state(doc.id, OCR_STATE_DONE);
             let _ = db.set_doc_ocr_output_path(doc.id, Some(output.to_string_lossy().as_ref()));
+            // Clear any prior failure string — a successful re-OCR
+            // overwrites the stale reason so the failure inbox stays
+            // honest. v3.52.0 Atlas OCR-Queue Slice 1.
+            let _ = db.set_doc_ocr_error(doc.id, None);
             OcrQueueResult {
                 doc_id: doc.id,
                 state_after: OCR_STATE_DONE.to_string(),
@@ -176,12 +182,19 @@ pub fn run_one(db: &mut LibraryDb, doc_id: i64, opts: &OcrOpts) -> OcrQueueResul
             }
         }
         Err(err) => {
+            let msg = err.to_string();
             let _ = db.set_doc_ocr_state(doc.id, OCR_STATE_FAILED);
+            // Persist the captured reason so the failure inbox can render
+            // it without re-running OCR; clear any leftover output_path
+            // from a prior success so the row never claims to have an
+            // .ocr.pdf it doesn't. v3.52.0 Atlas OCR-Queue Slice 1.
+            let _ = db.set_doc_ocr_error(doc.id, Some(&msg));
+            let _ = db.set_doc_ocr_output_path(doc.id, None);
             OcrQueueResult {
                 doc_id: doc.id,
                 state_after: OCR_STATE_FAILED.to_string(),
                 output_path: None,
-                error: Some(err.to_string()),
+                error: Some(msg),
             }
         }
     }
@@ -330,6 +343,54 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(row.ocr_state, OCR_STATE_FAILED);
+    }
+
+    #[test]
+    fn run_one_persists_error_message_on_failure() {
+        // v3.52.0 Atlas OCR-Queue Slice 1 — failure reasons used to vanish
+        // after run_one returned. Now they're persisted in ocr_error so the
+        // failure inbox can render them without re-running OCR.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/missing/nope.pdf", OCR_STATE_SCANNED);
+        let r = run_one(&mut db, id, &OcrOpts::default());
+        // Same returned shape as before.
+        let returned = r.error.clone().expect("failed run returns error");
+        assert!(!returned.is_empty());
+        // …and now the row carries the same reason.
+        let row = db
+            .find_document_by_path("/missing/nope.pdf")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.ocr_state, OCR_STATE_FAILED);
+        assert_eq!(row.ocr_error.as_deref(), Some(returned.as_str()));
+        // Failed rows never carry an output_path (we clear any prior one).
+        assert!(row.ocr_output_path.is_none());
+    }
+
+    #[test]
+    fn run_one_clears_prior_error_on_success() {
+        // Successful re-OCR overwrites a stale failure reason; otherwise the
+        // failure inbox would lie about the row's current state.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let id = seed_doc(&mut db, "/missing/again.pdf", OCR_STATE_SCANNED);
+        // Force a failure to seed the error column.
+        let _ = run_one(&mut db, id, &OcrOpts::default());
+        let after_fail = db
+            .find_document_by_path("/missing/again.pdf")
+            .unwrap()
+            .unwrap();
+        assert!(after_fail.ocr_error.is_some());
+
+        // Now simulate a clean re-queue + success directly through the
+        // setters (we can't actually call tesseract from a unit test).
+        db.set_doc_ocr_state(id, OCR_STATE_DONE).unwrap();
+        db.set_doc_ocr_error(id, None).unwrap();
+        let after_ok = db
+            .find_document_by_path("/missing/again.pdf")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_ok.ocr_state, OCR_STATE_DONE);
+        assert!(after_ok.ocr_error.is_none());
     }
 
     #[test]

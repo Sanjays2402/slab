@@ -634,6 +634,11 @@
             ...d,
             ocr_state: r.state_after,
             ocr_output_path: r.output_path,
+            // v3.52.0: a successful run clears the persisted error; a
+            // failure replaces it with the fresh reason. Mirror what
+            // run_one wrote to the DB so the local doc list and the
+            // backend stay in lockstep without a refetch.
+            ocr_error: r.error,
           }
         : d,
     );

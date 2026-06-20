@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 11;
+const SCHEMA_VERSION: u32 = 12;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -72,6 +72,12 @@ pub struct DocumentRecord {
     /// original). NULL otherwise.
     #[serde(default)]
     pub ocr_output_path: Option<String>,
+    /// When `ocr_state == "ocr_failed"`, the captured error message from
+    /// the queue worker (e.g. "tesseract not found on PATH", "page 14
+    /// rasterised at 0 bytes"). Cleared back to NULL on a successful
+    /// re-OCR. v3.52.0 Atlas OCR-Queue.
+    #[serde(default)]
+    pub ocr_error: Option<String>,
     #[serde(default)]
     pub tags: Vec<TagRecord>,
 }
@@ -360,7 +366,19 @@ impl LibraryDb {
             // column only ever holds "real" notes.
             conn.execute_batch("ALTER TABLE library_tags ADD COLUMN description TEXT;")?;
             conn.execute_batch("PRAGMA user_version = 11;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 11);
+        }
+        if version < 12 {
+            // v3.52.0 "Atlas OCR-Queue" — persist the OCR worker's error
+            // message alongside `ocr_state = 'ocr_failed'` so the failure
+            // inbox can show *why* a doc failed (tesseract missing, page
+            // unrasterisable, source vanished) and the user can decide to
+            // re-queue, edit the source, or remove the row. Nullable —
+            // every pre-v12 row silently picks up NULL (no rewrite); set
+            // back to NULL on a successful re-OCR so the column only ever
+            // holds the most recent failure.
+            conn.execute_batch("ALTER TABLE library_documents ADD COLUMN ocr_error TEXT;")?;
+            conn.execute_batch("PRAGMA user_version = 12;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 12);
         }
         Ok(())
     }
@@ -539,6 +557,22 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// Record the OCR worker's error message for a document. Pass `None`
+    /// (or an all-whitespace string) to clear the column. Trims input so a
+    /// blank explanation never sits in the DB. v3.52.0 Atlas OCR-Queue.
+    pub fn set_doc_ocr_error(
+        &mut self,
+        doc_id: i64,
+        error: Option<&str>,
+    ) -> Result<(), LibraryError> {
+        let trimmed = error.map(str::trim).filter(|s| !s.is_empty());
+        self.conn.execute(
+            "UPDATE library_documents SET ocr_error = ?1 WHERE id = ?2",
+            params![trimmed, doc_id],
+        )?;
+        Ok(())
+    }
+
     /// Remove a document row by id. ON DELETE CASCADE on
     /// `library_doc_tags` will drop its tag links too.
     pub fn remove_document(&mut self, doc_id: i64) -> Result<(), LibraryError> {
@@ -567,7 +601,7 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
                  FROM library_documents WHERE path = ?1",
                 params![path],
                 document_from_row,
@@ -988,6 +1022,7 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRecord
         last_seen_at: row.get(9)?,
         ocr_state: row.get(10)?,
         ocr_output_path: row.get(11)?,
+        ocr_error: row.get(12)?,
         tags: Vec::new(),
     })
 }
@@ -1191,6 +1226,111 @@ mod tests {
         assert_eq!(has_col, 1, "library_tags.description column missing");
         // Pre-v11 tags pick up NULL automatically (no default rewriting).
         assert!(db.schema_version().unwrap() >= 11);
+    }
+
+    #[test]
+    fn schema_v12_has_ocr_error_on_documents() {
+        // v3.52.0 Atlas OCR-Queue — adds a nullable `ocr_error` column
+        // to library_documents so the most recent failure reason travels
+        // with each row. `>=` not `==` so the next migration doesn't
+        // accidentally fail this assert (same equality-trap discipline
+        // as the v11 description test).
+        let db = db();
+        let has_col: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library_documents') \
+                 WHERE name = 'ocr_error'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1, "library_documents.ocr_error column missing");
+        assert!(db.schema_version().unwrap() >= 12);
+    }
+
+    #[test]
+    fn set_doc_ocr_error_round_trips() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        // Fresh row has NULL ocr_error.
+        assert!(d.ocr_error.is_none());
+
+        // Setting a real reason persists.
+        db.set_doc_ocr_error(d.id, Some("tesseract not on PATH"))
+            .unwrap();
+        let d2 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d2.ocr_error.as_deref(), Some("tesseract not on PATH"));
+
+        // Setting None clears it.
+        db.set_doc_ocr_error(d.id, None).unwrap();
+        let d3 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert!(d3.ocr_error.is_none());
+
+        // Trimmed-empty equivalent to None (no whitespace-only reasons).
+        db.set_doc_ocr_error(d.id, Some("real")).unwrap();
+        db.set_doc_ocr_error(d.id, Some("   \n\t  ")).unwrap();
+        let d4 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert!(
+            d4.ocr_error.is_none(),
+            "whitespace-only reason should clear the column, got {:?}",
+            d4.ocr_error
+        );
+
+        // Trims leading/trailing whitespace on real reasons.
+        db.set_doc_ocr_error(d.id, Some("  rasterise failed  "))
+            .unwrap();
+        let d5 = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(d5.ocr_error.as_deref(), Some("rasterise failed"));
+    }
+
+    #[test]
+    fn set_doc_ocr_error_preserves_other_doc_columns() {
+        // Guard against column drift: writing the error must not regress
+        // ocr_state / ocr_output_path / title.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(
+                Some(f.id),
+                "/tmp/keep.pdf",
+                Some("My Doc"),
+                "h",
+                1,
+                1,
+                Some(7),
+                Some(OCR_STATE_DONE),
+            )
+            .unwrap();
+        db.set_doc_ocr_output_path(d.id, Some("/tmp/keep.ocr.pdf"))
+            .unwrap();
+        db.set_doc_ocr_error(d.id, Some("transient blip")).unwrap();
+        let after = db.find_document_by_path("/tmp/keep.pdf").unwrap().unwrap();
+        assert_eq!(after.title.as_deref(), Some("My Doc"));
+        assert_eq!(after.ocr_state, OCR_STATE_DONE);
+        assert_eq!(after.ocr_output_path.as_deref(), Some("/tmp/keep.ocr.pdf"));
+        assert_eq!(after.pages, Some(7));
+        assert_eq!(after.ocr_error.as_deref(), Some("transient blip"));
+    }
+
+    #[test]
+    fn upsert_existing_doc_preserves_ocr_error() {
+        // The hot re-upsert path mustn't smash a persisted error string.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        db.set_doc_ocr_error(d.id, Some("first failure")).unwrap();
+        // Re-upsert (scanner re-spotting the same file) must not drop the column.
+        let _ = db
+            .upsert_document(Some(f.id), "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let after = db.find_document_by_path("/tmp/a.pdf").unwrap().unwrap();
+        assert_eq!(after.ocr_error.as_deref(), Some("first failure"));
     }
 
     #[test]

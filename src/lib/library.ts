@@ -63,6 +63,10 @@ export interface DocumentRecord {
   ocr_state: OcrState;
   /** Where the OCR'd searchable PDF lives, when `ocr_state === "ocr_done"`. */
   ocr_output_path: string | null;
+  /** When `ocr_state === "ocr_failed"`, the captured reason (e.g. "tesseract
+   * not on PATH"). Cleared back to null on a successful re-OCR. Surfaced by
+   * the OCR Queue Panel's failure inbox. v3.52.0 Atlas OCR-Queue. */
+  ocr_error: string | null;
   tags: TagRecord[];
 }
 

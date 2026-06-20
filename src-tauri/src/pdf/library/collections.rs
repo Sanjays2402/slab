@@ -190,7 +190,7 @@ pub fn list_collection_docs(
     let mut stmt = conn.prepare(
         "SELECT d.id, d.folder_id, d.path, d.title, d.hash, d.size_bytes,
                 d.mtime_ns, d.pages, d.added_at, d.last_seen_at,
-                d.ocr_state, d.ocr_output_path
+                d.ocr_state, d.ocr_output_path, d.ocr_error
          FROM library_documents d
          JOIN library_collection_docs cd ON cd.doc_id = d.id
          WHERE cd.collection_id = ?1
@@ -211,6 +211,7 @@ pub fn list_collection_docs(
                 last_seen_at: r.get(9)?,
                 ocr_state: r.get(10)?,
                 ocr_output_path: r.get(11)?,
+                ocr_error: r.get(12)?,
                 tags: Vec::new(),
             })
         })?
