@@ -54,6 +54,13 @@ pub struct SavedViewRecord {
     pub filter: LibraryFilter,
     pub created_at: i64,
     pub sort_order: i64,
+    /// Whether the user has pinned this view to the top of the rail.
+    /// Pinned views sort above unpinned ones; ties within each group fall
+    /// back to `sort_order` then alphabetical name. Defaults to `false` so
+    /// every pre-v15 row silently reads as unpinned. v3.56.0 Atlas
+    /// Saved-Views-Polish.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// Caller-supplied spec for `save_view`.
@@ -91,7 +98,7 @@ pub fn save_view(db: &mut LibraryDb, spec: &NewSavedView) -> Result<SavedViewRec
 pub fn get_view(db: &LibraryDb, id: i64) -> Result<SavedViewRecord, LibraryError> {
     let conn = db.conn();
     conn.query_row(
-        "SELECT id, name, filter_json, created_at, sort_order
+        "SELECT id, name, filter_json, created_at, sort_order, pinned
          FROM library_saved_views WHERE id = ?1",
         rusqlite::params![id],
         row_to_record,
@@ -104,22 +111,26 @@ fn row_to_record(row: &rusqlite::Row) -> rusqlite::Result<SavedViewRecord> {
     let filter: LibraryFilter = serde_json::from_str(&json).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
     })?;
+    let pinned_int: i64 = row.get(5)?;
     Ok(SavedViewRecord {
         id: row.get(0)?,
         name: row.get(1)?,
         filter,
         created_at: row.get(3)?,
         sort_order: row.get(4)?,
+        pinned: pinned_int != 0,
     })
 }
 
-/// All views, oldest sort_order first (mirrors personal_presets ordering).
+/// All views, pinned-first then by sort_order ASC then name ASC. The
+/// pinned-first dimension makes the rail's most-used views stay anchored
+/// at the top while ordinary views drift on insert order.
 pub fn list_views(db: &LibraryDb) -> Result<Vec<SavedViewRecord>, LibraryError> {
     let conn = db.conn();
     let mut stmt = conn.prepare(
-        "SELECT id, name, filter_json, created_at, sort_order
+        "SELECT id, name, filter_json, created_at, sort_order, pinned
          FROM library_saved_views
-         ORDER BY sort_order ASC, name ASC",
+         ORDER BY pinned DESC, sort_order ASC, name ASC",
     )?;
     let rows = stmt
         .query_map([], row_to_record)?
@@ -226,6 +237,28 @@ fn derive_copy_name(db: &LibraryDb, source_name: &str) -> Result<String, Library
     Err(LibraryError::Other(
         "too many copies of this view already exist".into(),
     ))
+}
+
+/// Toggle the pin flag on a saved view. The rail surfaces pinned views
+/// above unpinned ones (see [`list_views`] for the ORDER BY). Idempotent:
+/// setting the same value twice succeeds (SQLite reports rows matched,
+/// not rows whose value changed). Errors on unknown id so the caller
+/// learns when the row vanished mid-flight (e.g. another window deleted
+/// it) instead of thinking the toggle landed.
+pub fn set_view_pinned(
+    db: &mut LibraryDb,
+    id: i64,
+    pinned: bool,
+) -> Result<SavedViewRecord, LibraryError> {
+    // Same get-then-update shape as update_view_filter — the UPDATE on a
+    // missing id silently affects 0 rows; we want a hard error.
+    let _ = get_view(db, id)?;
+    let conn = db.conn_mut();
+    conn.execute(
+        "UPDATE library_saved_views SET pinned = ?1 WHERE id = ?2",
+        rusqlite::params![pinned as i64, id],
+    )?;
+    get_view(db, id)
 }
 
 // -----------------------------------------------------------------
@@ -580,5 +613,105 @@ mod tests {
         let err = duplicate_view(&mut db, 9999).unwrap_err();
         let _ = err;
         assert_eq!(list_views(&db).unwrap().len(), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // v3.56.0 Atlas Saved-Views-Polish — slice 40: set_view_pinned
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn fresh_view_is_unpinned_by_default() {
+        let mut db = db();
+        let v = save_view(&mut db, &spec("Fresh", flat_filter())).unwrap();
+        assert!(!v.pinned, "fresh saved views must default to unpinned");
+    }
+
+    #[test]
+    fn set_view_pinned_toggles_round_trip() {
+        let mut db = db();
+        let v = save_view(&mut db, &spec("Toggle", flat_filter())).unwrap();
+        let pinned = set_view_pinned(&mut db, v.id, true).unwrap();
+        assert!(pinned.pinned);
+        // Other fields are untouched.
+        assert_eq!(pinned.id, v.id);
+        assert_eq!(pinned.name, "Toggle");
+        assert_eq!(pinned.created_at, v.created_at);
+        assert_eq!(pinned.sort_order, v.sort_order);
+
+        let unpinned = set_view_pinned(&mut db, v.id, false).unwrap();
+        assert!(!unpinned.pinned);
+    }
+
+    #[test]
+    fn set_view_pinned_is_idempotent() {
+        let mut db = db();
+        let v = save_view(&mut db, &spec("Twice", flat_filter())).unwrap();
+        let a = set_view_pinned(&mut db, v.id, true).unwrap();
+        let b = set_view_pinned(&mut db, v.id, true).unwrap();
+        // Both calls succeed and report the same final state.
+        assert!(a.pinned);
+        assert!(b.pinned);
+    }
+
+    #[test]
+    fn set_view_pinned_unknown_id_is_rejected() {
+        let mut db = db();
+        let err = set_view_pinned(&mut db, 9999, true).unwrap_err();
+        let _ = err;
+        assert_eq!(list_views(&db).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn list_views_surfaces_pinned_first() {
+        let mut db = db();
+        // Insert order: A, B, C. By default they'd surface A, B, C.
+        let _a = save_view(&mut db, &spec("A", flat_filter())).unwrap();
+        let b = save_view(&mut db, &spec("B", flat_filter())).unwrap();
+        let _c = save_view(&mut db, &spec("C", flat_filter())).unwrap();
+        // Pin B — it must surface FIRST despite having a higher sort_order
+        // than A (the pinned dimension dominates the ORDER BY).
+        set_view_pinned(&mut db, b.id, true).unwrap();
+        let names: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.name)
+            .collect();
+        assert_eq!(names, vec!["B", "A", "C"]);
+    }
+
+    #[test]
+    fn list_views_two_pinned_keep_their_relative_order() {
+        let mut db = db();
+        let a = save_view(&mut db, &spec("A", flat_filter())).unwrap();
+        let _b = save_view(&mut db, &spec("B", flat_filter())).unwrap();
+        let c = save_view(&mut db, &spec("C", flat_filter())).unwrap();
+        // Pin A and C — within the pinned group their relative order
+        // falls back to sort_order ASC (A's sort_order < C's), so the
+        // expected listing is A, C, B.
+        set_view_pinned(&mut db, a.id, true).unwrap();
+        set_view_pinned(&mut db, c.id, true).unwrap();
+        let names: Vec<_> = list_views(&db)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.name)
+            .collect();
+        assert_eq!(names, vec!["A", "C", "B"]);
+    }
+
+    #[test]
+    fn pin_legacy_json_without_pinned_deserialises_as_false() {
+        // Pre-v3.56 SavedViewRecord JSON didn't carry the `pinned` field.
+        // The serde default keeps backwards compat — the rail can decode
+        // legacy snapshots without choking on the missing field.
+        let legacy = r#"{
+            "id": 1,
+            "name": "Old",
+            "filter": {"folder_id": null, "tag_ids": [], "tag_match": "all",
+                       "title_substring": null, "sort": "added_desc"},
+            "created_at": 0,
+            "sort_order": 0
+        }"#;
+        let parsed: SavedViewRecord = serde_json::from_str(legacy).unwrap();
+        assert!(!parsed.pinned);
     }
 }

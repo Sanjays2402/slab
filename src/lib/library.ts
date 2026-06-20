@@ -1195,6 +1195,9 @@ export interface SavedViewRecord {
   filter: LibraryFilter;
   created_at: number;
   sort_order: number;
+  /** v3.56.0 — true when the user has pinned this view to the top of
+   *  the rail. Pre-v3.56 snapshots (without the field) decode as false. */
+  pinned?: boolean;
 }
 
 /** Spec for `savedViewSave`. Mirrors `NewSavedView` on Rust side. */
@@ -1278,6 +1281,23 @@ export async function savedViewDuplicate(
   const res = await invoke<CmdResult<SavedViewRecord>>(
     "slab_library_saved_view_duplicate",
     { id },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Pin or unpin a saved view. Pinned views surface at the top of the
+ * rail; the API is idempotent (setting the same value twice succeeds
+ * without churn). Errors if the id no longer exists. v3.56.0 Atlas
+ * Saved-Views-Polish.
+ */
+export async function savedViewSetPinned(
+  id: number,
+  pinned: boolean,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_set_pinned",
+    { id, pinned },
   );
   return unwrap(res);
 }

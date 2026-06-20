@@ -3473,6 +3473,22 @@ fn slab_library_saved_view_duplicate(
     result.into()
 }
 
+#[tauri::command]
+fn slab_library_saved_view_set_pinned(
+    app: tauri::AppHandle,
+    id: i64,
+    pinned: bool,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::set_view_pinned(&mut db, id, pinned)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -5954,6 +5970,7 @@ pub fn run() {
             slab_library_saved_view_rename,
             slab_library_saved_view_update_filter,
             slab_library_saved_view_duplicate,
+            slab_library_saved_view_set_pinned,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,

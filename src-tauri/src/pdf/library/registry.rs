@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 14;
+const SCHEMA_VERSION: u32 = 15;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -422,7 +422,27 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 14;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 14);
+        }
+        if version < 15 {
+            // v3.56.0 "Atlas Saved-Views-Polish" — pin flag for saved views.
+            // DEFAULT 0 so every pre-v15 row reads as unpinned without a
+            // rewrite. NOT NULL — a tri-state pin would just complicate the
+            // ORDER BY without adding anything (an unset pin and a false
+            // pin are the same UI outcome). Partial index keyed on
+            // `WHERE pinned = 1` because only a small fraction of saved
+            // views are ever pinned — the list still ORDER BYs pinned DESC
+            // first, then sort_order ASC, then name ASC for the rail's
+            // "pinned-first" surfacing.
+            conn.execute_batch(
+                r#"
+                ALTER TABLE library_saved_views
+                  ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+                CREATE INDEX IF NOT EXISTS idx_saved_views_pinned
+                  ON library_saved_views(pinned) WHERE pinned = 1;
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 15;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 15);
         }
         Ok(())
     }
@@ -1512,6 +1532,36 @@ mod tests {
             .unwrap();
         assert_eq!(has_idx, 1, "idx_documents_starred missing");
         assert!(db.schema_version().unwrap() >= 14);
+    }
+
+    #[test]
+    fn schema_v15_has_pinned_on_saved_views() {
+        // v3.56.0 Atlas Saved-Views-Polish — adds an INTEGER NOT NULL
+        // DEFAULT 0 `pinned` column to library_saved_views + the partial
+        // index on rows where pinned = 1. `>=` not `==` so the next
+        // migration doesn't accidentally fail.
+        let db = db();
+        let has_col: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library_saved_views') \
+                 WHERE name = 'pinned'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1, "library_saved_views.pinned column missing");
+        let has_idx: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'index' AND name = 'idx_saved_views_pinned'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_idx, 1, "idx_saved_views_pinned missing");
+        assert!(db.schema_version().unwrap() >= 15);
     }
 
     #[test]
