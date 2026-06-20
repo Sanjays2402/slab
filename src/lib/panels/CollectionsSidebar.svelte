@@ -34,6 +34,7 @@
   import PresetPicker from "./PresetPicker.svelte";
   import SmartFoldersHubPanel from "./SmartFoldersHubPanel.svelte";
   import OcrQueuePanel from "./OcrQueuePanel.svelte";
+  import BeaconCachePanel from "./BeaconCachePanel.svelte";
 
   type SelectPayload = {
     kind: "collection" | "smart";
@@ -83,6 +84,15 @@
   }
   export function openOcrQueuePanel() {
     openOcrQueue();
+  }
+
+  // Beacon Cache Inspector (v3.54.0 Atlas Beacon-Cache Slice 32)
+  let beaconCacheOpen = $state(false);
+  function openBeaconCache() {
+    beaconCacheOpen = true;
+  }
+  export function openBeaconCachePanel() {
+    openBeaconCache();
   }
 
   function openNewSmart() {
@@ -367,6 +377,8 @@
     window.addEventListener("slab:open-smart-folders-hub", openHub);
     const openOcrQ = () => openOcrQueue();
     window.addEventListener("slab:open-ocr-queue", openOcrQ);
+    const openBeaconC = () => openBeaconCache();
+    window.addEventListener("slab:open-beacon-cache", openBeaconC);
     const clickAway = () => (menu = null);
     window.addEventListener("click", clickAway);
     return () => {
@@ -376,6 +388,7 @@
       window.removeEventListener("slab:open-smart-builder", openBuilder);
       window.removeEventListener("slab:open-smart-folders-hub", openHub);
       window.removeEventListener("slab:open-ocr-queue", openOcrQ);
+      window.removeEventListener("slab:open-beacon-cache", openBeaconC);
       window.removeEventListener("click", clickAway);
     };
   });
@@ -746,6 +759,11 @@
 <OcrQueuePanel
   open={ocrQueueOpen}
   onClose={() => (ocrQueueOpen = false)}
+/>
+
+<BeaconCachePanel
+  open={beaconCacheOpen}
+  onClose={() => (beaconCacheOpen = false)}
 />
 
 <!-- v3.53.0 Atlas Collections — Slice 24 color editor modal -->

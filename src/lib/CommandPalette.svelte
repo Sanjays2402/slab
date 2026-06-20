@@ -429,6 +429,23 @@
       },
       keywords: "ocr queue scan tesseract retry failed pending inbox dashboard auto recognise text searchable image atlas",
     });
+    // v3.54.0 "Atlas Beacon-Cache" — dedicated inspector for the
+    // embedding index: per-model breakdown, stale-path detection,
+    // multi-select forget, full indexed-PDF table.
+    out.push({
+      id: "library:beacon-cache",
+      title: "Beacon Cache…",
+      subtitle: "Inspect & prune the semantic-search index: per-model, stale paths, bulk forget",
+      icon: "◉",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-beacon-cache"));
+        });
+      },
+      keywords: "beacon cache embedding index inspector vector semantic search prune forget stale mixed model nomic mxbai chunks pdfs storage cleanup atlas",
+    });
     out.push({
       id: "library:new-smart",
       title: "New smart collection…",
