@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-20 06:09 PT by Cake (cron) — round-8 BATCH shipped: 5 Doc-Inspector slices that promote a library document row from an opaque grid cell into a full editable surface (title override + freeform notes + star + starred-only filter + dedicated DocInspectorPanel drawer). Pushed + verified on feature branch (4fe82f9).
+Last updated: 2026-06-20 09:55 PT by Cake (cron) — round-9 BATCH shipped: 5 Saved-Views-Polish slices that promote the v3.50 saved-views rail from a thin save/list/delete/rename CRUD into a full Notion-grade rail surface (in-place edit + duplicate + pin + atomic reorder + wired UI). Pushed + verified on feature branch (58e895b).
 
 ## Active branch & version
 
@@ -9,8 +9,124 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `4fe82f9` — "feat(library): dedicated Doc Inspector drawer ties slices 33-36 together".
+Latest commit: `58e895b` — "feat(library): wire pin/duplicate/edit/reorder verbs into saved-views rail".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
+
+### What round-9 (2026-06-20 09:55 PT) just shipped
+
+A demo-able overhaul of the saved-views rail. Before this tick the
+v3.50 rail had only the CRUD primitives: save / list / delete /
+rename. Every power-user verb was missing — no in-place edit (so
+tweaking a filter meant delete-and-recreate, losing id +
+sort_order + created_at), no fork (so building "Apollo invoices
+2024" then "2025" meant retyping the whole filter), no pin (so
+your most-used view drifted under newer ones), no reorder.
+Tonight every Notion-grade rail verb lands:
+
+- Slice 38: `update_view_filter(id, &LibraryFilter)` (7774964)
+  swaps just the saved filter blob in place, preserving id +
+  name + created_at + sort_order. get_view confirms the row
+  exists first so unknown id surfaces as a hard error instead
+  of silent 0-rows-affected. Re-pin the rail onto an existing
+  view with one click. 3 new tests + Tauri command + TS client.
+- Slice 39: `duplicate_view(id)` (128d0a2) forks an existing
+  view's filter byte-for-byte, derives a unique name by
+  appending " (copy)" / " (copy 2)" / … up to 999 to dodge
+  the UNIQUE constraint, gets a fresh sort_order at the
+  bottom. The duplicate is INDEPENDENT — editing it later does
+  NOT mutate the source (covered by
+  duplicate_view_is_independent_from_source). 5 new tests +
+  Tauri command + TS client.
+- Slice 40: schema bump v14 -> v15 adds `pinned INTEGER NOT
+  NULL DEFAULT 0` to library_saved_views + partial index
+  `idx_saved_views_pinned WHERE pinned = 1` (cheap because
+  only a small fraction of saved views are ever pinned).
+  `set_view_pinned(id, bool)` is the writer; idempotent
+  (SQLite reports rows matched not rows changed). list_views
+  ORDER BY widens to `pinned DESC, sort_order ASC, name ASC`.
+  SavedViewRecord widens with the `pinned: bool` field with
+  serde default so pre-v3.56 JSON snapshots cached client-side
+  decode as false. (c86cc42) 8 new tests incl. schema_v15
+  pragma_table_info + partial-index pin + legacy-JSON-without-
+  pinned pin.
+- Slice 41: `reorder_views(&[i64])` (8278a2a) atomically
+  re-stamps sort_order by zero-based position. Single SQLite
+  txn so partial failures can't leave the rail mid-shuffle.
+  Validation runs BEFORE the txn opens (duplicate ids → "duplicate
+  view id N"; unknown ids → "unknown view id N") — so a rejected
+  reorder doesn't touch a row. Subset reorders are PERMITTED
+  (unmentioned ids keep their pre-reorder sort_order) — documented
+  in reorder_views_subset_only_restamps_named_rows so a future
+  change can't regress. Mirrors the
+  smart_folders::set_order / set_collection_order patterns.
+  Reorder does NOT mutate the pinned flag — the rail's
+  pinned-first sort survives shuffles transparently. 6 new
+  tests + Tauri command + TS client.
+- Slice 42: pure frontend — wired all four verbs into the
+  LibraryPanel saved-views rail (58e895b). Rail-head gains an
+  "Update" button (visible only when an active view is loaded
+  AND the current filter is non-default). Per-row layout
+  becomes [★ pin glyph] [◆ row body] [⋯ menu]; the pin is gold
+  (#f7c948) when on and ghost on hover when off. The ⋯ menu
+  surfaces Pin/Unpin, Rename… (inline-input pattern matching
+  the existing rename rails), Duplicate, Move up / Move down
+  (conditional on group position; restricted to within
+  pin-group because pinned-first dominates the sort), then a
+  danger-tinted Delete view. The window-click-outside listener
+  was extended to clear savedViewMenuId alongside the doc-card
+  menu so the popover dismisses on outside click. Local
+  savedViewCompare matches the backend ORDER BY so in-memory
+  pin/duplicate/rename mutations keep the rail order without
+  a round-trip; reorder does refresh-via-list because
+  recomputing sort_order locally is more error-prone than
+  re-fetching.
+
+Gates passed: cargo fmt clean, cargo test --lib pdf::library::
+381 passed / 0 failed (+22 from round-8's 359 baseline: 3
+update_view_filter + 5 duplicate_view + 8 set_view_pinned/list_views
++ 6 reorder_views tests; the schema_v15 pin is in the same
+suite), cargo test --lib ai::embedding_index 30 passed / 0
+failed (round-8 baseline preserved), cargo clippy --lib -D
+warnings clean (4m16s warm — first cycle after a kill, second
+cycle would be faster), pnpm check 0 errors / 104 warnings
+(same baseline as round-8; zero new warnings from the new
+imports / handlers / popover markup / styles).
+
+PROCESS NOTES:
+- First gate cycle wedged because I ran cargo clippy + cargo
+  test concurrently — STATE.md was prescient: the
+  /Volumes/SlabBuild sparse image's slow fsync makes two cargo
+  invocations contend on the build lock. Killed both and ran
+  serially; the test build then surfaced a borrow-doesn't-live
+  long-enough error on the reorder_views id-set collect (stmt
+  + query_map + collect needs an explicit Vec intermediate so
+  stmt doesn't get dropped while the iterator is still alive).
+  Fixed and amended into slice 41's commit (so each slice
+  remains independently revertible + tests-green).
+- Pre-existing rust-analyzer false positives for `async fn`
+  saturate the lint output on lib.rs (it can't see the package's
+  edition = "2021"); ignored — cargo itself doesn't complain.
+- LSP type cache lag in svelte-check is also pre-existing on
+  the SavedViewRecord widening — running `pnpm check` truthfully
+  surfaces no new errors.
+
+DESIGN NOTES:
+- Reorder restricted to within pin-group: the dominant sort key
+  is `pinned DESC`, so letting an unpinned view "swap" past a
+  pinned one above it would just visually no-op and confuse the
+  user. The UI guards the menu items conditionally on group
+  position (Move up hidden at the top of the group, Move down
+  hidden at the bottom).
+- No drag-handle UI this round — the Move up/down menu items
+  cover the use case at-grade and Sanjay can revisit a real
+  drag affordance once the rail's volume justifies it. The
+  reorder backend takes a full positional list, so wiring a
+  drag handle is a pure-frontend follow-up later.
+- Update button (slice 38) carries a confirm() dialog because
+  the action OVERWRITES the saved filter — irreversible-ish
+  (you'd have to recreate the original from memory). Duplicate
+  / pin / rename don't confirm because they're either
+  reversible or cosmetic.
 
 ### What round-8 (2026-06-20 06:09 PT) just shipped
 
@@ -118,6 +234,148 @@ check`. If cargo wedges >5 min with no rustc CPU: `pkill -f 'cargo'`, retry once
 GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppImage)
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
+
+## Roadmap — round 9 (Saved-Views Polish) — ALL DONE
+
+Round 9 batched FIVE feature slices into one cron tick onto an
+existing subsystem (the v3.50 saved-views rail — CRUD-only,
+missing every power-user verb). Tag/search/OCR/manual-collection/
+doc-row/beacon-cache surfaces are all end-to-end demo-able; this
+round picked the next opaque corner.
+
+38. ~~**update_view_filter (in-place edit)**~~ — DONE
+    (2026-06-20 09:55 PT, 7774964, single commit). Backend
+    `update_view_filter(id, &LibraryFilter)` swaps just the
+    saved filter blob in place, preserving id + name +
+    created_at + sort_order. get_view confirms the row exists
+    first so unknown id surfaces as a hard error instead of
+    silent 0-rows-affected. The pre-v3.56 path required
+    delete-and-recreate, losing id (breaking stored
+    references) + sort_order (shuffles to the bottom) +
+    created_at. 3 new tests + Tauri command + TS client.
+39. ~~**duplicate_view (fork the filter)**~~ — DONE
+    (2026-06-20 09:55 PT, 128d0a2, single commit). Forks an
+    existing view's filter byte-for-byte, derives a unique
+    name by appending " (copy)" / " (copy 2)" / … up to 999
+    to dodge the UNIQUE constraint, gets a fresh sort_order
+    at the bottom of the rail. The duplicate is INDEPENDENT
+    — editing it later does NOT mutate the source (covered
+    by duplicate_view_is_independent_from_source). 5 new
+    tests + Tauri command + TS client.
+40. ~~**set_view_pinned (schema v15)**~~ — DONE
+    (2026-06-20 09:55 PT, c86cc42, single commit). Schema
+    bump 14 -> 15 adds `pinned INTEGER NOT NULL DEFAULT 0`
+    to library_saved_views + partial index `WHERE pinned = 1`.
+    Setter is idempotent (SQLite reports rows matched not
+    rows changed). list_views ORDER BY widens to `pinned
+    DESC, sort_order ASC, name ASC`. SavedViewRecord widens
+    with the `pinned: bool` field; serde default keeps
+    backwards-compat for pre-v3.56 JSON snapshots. 8 new
+    tests incl. schema_v15 pragma_table_info pin + partial
+    index pin + legacy-JSON-deserialises-as-false pin.
+41. ~~**reorder_views (atomic full-list)**~~ — DONE
+    (2026-06-20 09:55 PT, 8278a2a, single commit).
+    `reorder_views(&[i64])` atomically re-stamps sort_order
+    by zero-based position in one SQLite transaction. Both
+    duplicate-id and unknown-id rejections happen BEFORE the
+    txn opens so a rejected reorder doesn't touch a row.
+    Subset reorders are PERMITTED (unmentioned ids keep
+    their pre-reorder sort_order). Does NOT mutate the
+    pinned flag — the pinned-first sort survives shuffles
+    transparently. Mirrors smart_folders::set_order /
+    set_collection_order patterns. 6 new tests + Tauri
+    command + TS client.
+42. ~~**Saved-views rail UI**~~ — DONE (2026-06-20 09:55 PT,
+    58e895b, single commit). Pure frontend — wired all four
+    new verbs into the LibraryPanel saved-views rail.
+    Rail-head gains "Update" button (visible only when an
+    active view is loaded AND the current filter is
+    non-default). Per-row layout becomes [★ pin glyph] [◆
+    row body] [⋯ menu]; pin is gold (#f7c948) when on. The
+    ⋯ menu surfaces Pin/Unpin, Rename…, Duplicate, Move up
+    / Move down (conditional on group position), then a
+    danger-tinted Delete view. Window-click-outside dismiss
+    extends the existing onWindowClickForMenu listener.
+    Local savedViewCompare matches the backend ORDER BY so
+    in-memory mutations keep rail order without a
+    round-trip. No new Tauri commands.
+
+    With Round 9 done, the saved-views rail is end-to-end
+    demo-able: in-place edit, duplicate, pin, reorder, full
+    rail UI with menu. Next subsystem candidates: Hopper
+    backfill progress surface (the panel fires but doesn't
+    show per-doc progress live), plugin marketplace UI (the
+    backend ships in marketplace/ but only PluginsPanel's
+    Browse tab surfaces it — no install history, no
+    per-plugin detail), smart-folders hub UI polish (the
+    rail's drag/pin chrome could be tightened), saved-views
+    drag-handle UI (the reorder backend takes positional
+    lists; a drag-handle is a pure-frontend follow-up).
+
+## Tick log
+
+- 2026-06-20 09:55 PT (Cake, cron): round-9 BATCH tick — FIVE
+  Saved-Views-Polish slices that promote the v3.50 saved-views
+  rail from CRUD-only into a full Notion-grade rail surface
+  (in-place edit + duplicate + pin + atomic reorder + wired UI).
+  All DONE, pushed + verified (local==origin 58e895b). Five
+  commits, one per slice (each backend slice bundles the
+  matching Tauri command + TS client per the established
+  wire-layer convention; UI slice as the 5th commit).
+  - Slice 38 update_view_filter (7774964): swap saved filter
+    in place, preserving id/name/created_at/sort_order;
+    pre-existing get_view confirms the row exists first so
+    unknown id is a hard error. 3 new tests.
+  - Slice 39 duplicate_view (128d0a2): fork the filter
+    byte-for-byte, auto-name "<src> (copy)" / "(copy N)" up
+    to 999, fresh sort_order at the bottom. Independent
+    fork — editing source doesn't mutate copy. 5 new tests.
+  - Slice 40 set_view_pinned (c86cc42): schema v14 -> v15
+    adds `pinned INTEGER NOT NULL DEFAULT 0` + partial
+    index `WHERE pinned = 1`. Idempotent. list_views ORDER
+    BY widens to `pinned DESC, sort_order ASC, name ASC`.
+    SavedViewRecord widens with serde-default pinned for
+    legacy-JSON compat. 8 new tests incl. schema_v15 +
+    partial-index pin + legacy-JSON pin.
+  - Slice 41 reorder_views (8278a2a): atomic re-stamp by
+    position in one txn. Validation up front (duplicate id
+    + unknown id rejected without touching a row). Subset
+    reorders permitted. Pin flag NOT mutated. Mirrors
+    smart_folders::set_order. 6 new tests incl.
+    subset-only-restamps-named-rows pin. Amended after gate
+    surfaced a borrow-doesn't-live-long-enough on the
+    id-set collect (stmt + query_map + collect needs an
+    explicit Vec intermediate so stmt doesn't drop while
+    iterator is alive).
+  - Slice 42 saved-views rail UI (58e895b): pure frontend.
+    Rail-head Update button. Per-row [★ pin] [◆ body] [⋯
+    menu] with inline rename, gold-on pin glyph,
+    danger-tinted Delete, conditional Move up/down,
+    window-click-outside dismiss. Local savedViewCompare
+    keeps order without round-trip; reorder does
+    refresh-via-list because recomputing sort_order locally
+    is more error-prone than re-fetching.
+  All gates green: cargo fmt clean, cargo test --lib
+  pdf::library:: 381 passed / 0 failed (+22 from round-8's
+  359 baseline: 3 update + 5 duplicate + 8 pin + 6 reorder),
+  cargo test --lib ai::embedding_index 30 passed / 0 failed
+  (round-8 baseline preserved), cargo clippy --lib -D
+  warnings clean (4m16s warm — first cycle after a kill),
+  pnpm check 0 errors / 104 warnings (same as round-8
+  baseline; zero new from imports/handlers/popover
+  markup/styles). Pushed + verified (local==origin 58e895b).
+  Process note: first gate cycle wedged on two concurrent
+  cargo invocations contending the SlabBuild sparse image's
+  slow fsync; killed both and ran serially per the
+  documented STATE.md guidance. The build-lock contention
+  surfaced exactly the wedge symptom the BUILD ENVIRONMENT
+  section warns about. Tag/search/OCR/manual-collection/
+  beacon-cache/doc-row surfaces stay feature-complete (359
+  baseline preserved); saved-views rail is now also
+  end-to-end demo-able with this batch. Next subsystem
+  candidates: Hopper backfill progress surface, plugin
+  marketplace UI, smart-folders hub UI polish, saved-views
+  drag-handle UI.
 
 ## Roadmap — round 8 (Doc Inspector) — ALL DONE
 
