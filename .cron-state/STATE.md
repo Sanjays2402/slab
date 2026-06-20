@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-19 19:58 PT by Cake (cron) — roadmap #12 "Tag descriptions/notes" shipped (43d3258 backend + 3e92aaf UI), pushed + verified on feature branch. Round-3 roadmap is now COMPLETE — next tick seeds a fresh roadmap for a different subsystem.
+Last updated: 2026-06-19 20:00 PT by Cake (cron) — round-4 BATCH shipped: 5 new full-text-search slices on the LibrarySearchPanel. Pushed + verified on feature branch (b9b7a76).
 
 ## Active branch & version
 
@@ -9,20 +9,35 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `3e92aaf` — "feat(library): inline notes editor + tooltip surfacing for tag descriptions".
+Latest commit: `b9b7a76` — "fix(library-search): gate-driven lexer + test corrections".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
-### What v3.39.0 already shipped (DONE — do not redo)
-Local, deterministic tag suggestions for library documents:
-- `registry.rs`: schema v7→v8 + `library_tag_suggestion_dismissed` table (4 tests)
-- `tag_suggest.rs`: suggester core + bulk + accept/dismiss, ranks by vocabulary
-  match + tag co-occurrence + domain hints. No network, no model calls. (18 tests)
-- `lib.rs`: 5 Tauri commands (suggest / bulk / accept / dismiss / list-dismissed)
-- `library.ts`: typed client for the 5 commands
-- `SuggestedTagsRow.svelte`: per-doc suggestion chips, accept/dismiss
-- `LibraryPanel.svelte`: mounts the row + optimistic accept handler
-Gates passed: `cargo test --lib` (tag_suggest 18 + schema 4 green), `pnpm check`
-0 errors. NOTE: full Tauri binary build was NOT run (wedges on slow disk; see below).
+### What round-4 (2026-06-19 20:00 PT) just shipped
+
+A demo-able overhaul of the LibrarySearchPanel + its FTS5 query layer:
+- Slice 1: rolling recent-searches surfaced as one-click chip strip with
+  result-count badges + "Clear history" affordance (`recent_queries` was
+  internal-only; now wired through `slab_library_recent_searches` +
+  `slab_library_clear_search_history` + UI consumer).
+- Slice 2: per-folder scope filter — backend `search()` already took
+  `folder_id`; UI now exposes a native `<select>` that re-queries on change.
+  Only renders when the library has >1 folder.
+- Slice 3: quoted-phrase queries — `build_match_expr` now lexes `"force
+  majeure"` as a single FTS5 phrase token (adjacent-word match) instead
+  of stripping the quotes. Supports curly quotes for macOS auto-correct,
+  forgiving unterminated phrases, metacharacter scrubbing inside phrases.
+- Slice 4: exclude-term syntax — `-word` / `-"phrase"` maps to FTS5 `NOT`
+  clauses. Exclude-only queries (no positive anchor) return `[]` cleanly
+  rather than triggering an FTS5 syntax error.
+- Slice 5: pinned status footer — `IndexStats { docs, pages }` exposed
+  as `slab_library_index_stats`, rendered as a compact "● N docs / M pages
+  indexed" footer at the bottom of the panel (refreshes on mount + after
+  every search).
+
+Gates passed: `cargo test --lib pdf::library::` 292 passed / 0 failed
+(+27 from the 265 at v3.51 — 5 search_log + 13 search + 3 IndexStats + 6
+already-shipped tag-desc tests retained), `cargo clippy --lib -D warnings`
+clean (8.86s warm), `pnpm check` 0 errors / 105 warnings all pre-existing.
 
 ## BUILD ENVIRONMENT — CRITICAL, read before any cargo command
 
@@ -45,7 +60,118 @@ GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppIma
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
 
-## Roadmap — next ticks (pick the top undone item each tick)
+## Roadmap — round 4 (LibrarySearchPanel + FTS5 query layer) — ALL DONE
+
+The tag/tag-filter surface was deliberately complete after round 3; this
+round 4 batched FIVE feature slices into one cron tick on a different
+subsystem (full-text search across the indexed library — the surface a
+paralegal types `"force majeure"` into).
+
+13. ~~**Recent searches strip**~~ — DONE (2026-06-19 20:00 PT, c4ca277
+    backend + wire + a2c7162 UI, two commits). Backend: QueryRow gains
+    Serialize+Deserialize (snake_case roundtrip pinned), new clear()
+    helper (scoped to library_search_log, NOT touching
+    library_suggestion_dismissed), 5 new tests (clear-removes /
+    clear-empty-noop / clear-leaves-dismissals / serde-roundtrip + the
+    pre-existing recent_queries surface). Two Tauri commands
+    (slab_library_recent_searches with limit clamped 1..=50 default 8,
+    slab_library_clear_search_history emits library-changed only when
+    n>0). TS client (RecentSearch + recentLibrarySearches +
+    clearLibrarySearchHistory) bundled with backend. UI: chip strip
+    above empty-state tips when recents>0, each chip one-click
+    re-runs its saved query and wears the result-count badge it last
+    produced (a 0 chip == "this stopped matching, maybe a re-index
+    dropped it"); "Clear history" affordance confirms with the exact
+    count; runRecent flows through the existing runSearch path (no
+    debounce, click is the intent); strip auto-refreshes after every
+    runSearch so freshly-typed queries bubble to the head + the 30s
+    dedupe-coalesce in the backend means re-typing the same query
+    bumps the existing chip's count rather than spawning a duplicate.
+
+14. ~~**Per-folder scope filter**~~ — DONE (2026-06-19 20:00 PT,
+    25d14cd, single commit). The backend search() has accepted
+    Option<folder_id> since v2.2.0 but the UI always passed null —
+    every search ran against the entire indexed library. This slice
+    exposes scope as a native <select> between the input and the
+    status line, rendered only when the library has >1 folder (a
+    single-folder library has nothing to scope so we don't show
+    inert chrome). Threads scopeFolderId into librarySearch() so
+    the existing FTS5 folder-filter branch fires; onScopeChange
+    immediately re-runs the active query (no Enter needed); a
+    vanishing scope folder (removed between sessions) silently
+    self-heals back to All. Result-count line and no-matches empty
+    state both surface the active scope inline so the user can't
+    be confused about reduced hit counts. Pure frontend slice +
+    one extra import (listFolders) — no backend churn, no schema,
+    no Rust gates beyond pnpm check.
+
+15. ~~**Quoted-phrase queries (adjacent-word matching)**~~ — DONE
+    (2026-06-19 20:00 PT, 1804706, single commit). FTS5's MATCH
+    grammar has always supported `"a b"` as adjacent-token matching;
+    the previous build_match_expr() stripped quotes in the sanitiser
+    and fell back to bag-of-words. Replaced with a hand-written
+    lexer (tokenize -> Vec<Tok::Bare | Tok::Phrase>) so a phrase
+    becomes a single FTS5 phrase token. Bare-word LAST gets the
+    prefix glob (so `dra "force majeure"` still prefix-matches dra);
+    phrases never get `*` (FTS5 rejects "a b"*); curly quotes "" ""
+    (macOS auto-correct default) work like straight quotes;
+    unterminated `"trailing` runs the phrase to end-of-input
+    (Google's behaviour); metacharacters inside phrases are
+    scrubbed but adjacent collapse to one token because we don't
+    synthesise word boundaries from disappeared punctuation
+    (same heuristic as `co-op` -> coop for bare words). 10 new tests
+    plus the empty-state tips help-text gains a "Wrap a phrase in
+    quotes" line so the feature is self-discoverable. Logging is
+    preserved: the search log stores the user-typed query with
+    quotes intact, so a "force majeure" chip in the recent-searches
+    strip re-runs the phrase exactly.
+
+16. ~~**Exclude-term syntax (-word)**~~ — DONE (2026-06-19 20:00 PT,
+    db6d30b, single commit). A leading `-` on a token flips it into
+    FTS5 NOT semantics so a user can type `contract -draft` and
+    drop drafts from the result set. The lexer grows one new token
+    kind (Tok::Exclude); the formatter wraps it as `NOT "word"`.
+    Semantics mirror Google: exclude-only queries (`-draft` alone)
+    return [] because FTS5 rejects MATCHes that are nothing but
+    NOT — a positive anchor is required. `co-op` mid-word `-` is
+    NOT a trigger (only LEADING `-` on a fresh token), `- ` lone
+    dash dropped, `-"prior draft"` exclude-a-phrase works, excluded
+    terms still flow through scrub_word so metacharacters can't
+    sneak into NOT clauses, multiple `-foo -bar` exclusions chain
+    as separate NOTs. Excluded terms never carry the prefix glob `*`
+    — a stray prefix could silently drop legitimate hits. 10 new
+    tests; UI grows a second tips line `Prefix a term with -`.
+    A follow-up b9b7a76 commit corrected two phrase tests that
+    expected stale lexer behaviour AND removed an unused-assignment
+    that clippy `-D unused-assignments` rightly caught (real
+    behaviour identical; comment in tokenize() pinned for future
+    cleanup safety).
+
+17. ~~**Pinned index-status footer**~~ — DONE (2026-06-19 20:00 PT,
+    7c14b70 backend + wire + 6a3d62d UI, two commits). count_indexed_docs
+    was test-only-callable; promoted alongside a new IndexStats
+    { docs, pages } and an index_stats() composer over two cheap
+    COUNT queries. 3 new tests (empty-zeros / counts-seeded-3-4 /
+    serde-roundtrip-pin). One Tauri command (slab_library_index_stats).
+    TS client (LibraryIndexStats + libraryIndexStats) bundled per
+    convention. UI: compact "● N docs / M pages indexed" footer
+    pinned beneath .results (flex-shrink:0 so it never scrolls);
+    accent-green status dot mirrors the LibraryPanel indexed pip;
+    refreshes on mount + after every search so a scan landing
+    mid-session makes the counts grow live without a panel remount;
+    a backend failure silently collapses the footer to null rather
+    than spamming an error (non-load-bearing glance); toLocaleString
+    + tabular-nums + plural-pinch on the count text; {#if} guard
+    hides the footer entirely on a 0/0 empty index so the
+    onboarding empty-state doesn't compete with a "0 indexed" line.
+
+    This rounds out the full-text search surface (recent-searches +
+    folder scope + phrase + exclude + index-status footer). Next tick
+    should pick a different subsystem — good candidates: smart-folders
+    hub UI polish, OCR queue panel, collections, doc-detail metadata
+    editor.
+
+
 
 These extend the tag system the v3.39.0 work introduced. Ship ONE complete
 vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
@@ -600,4 +726,66 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
   action of `git status --short` caught it, but cron resilience
   improves if every tick treats a dirty tree as a recovery
   opportunity rather than a state to clean up.
+- 2026-06-19 20:00 PT (Cake, cron): round-4 BATCH tick — FIVE
+  full-text-search slices on the LibrarySearchPanel + its FTS5 query
+  layer, all DONE, pushed + verified (local==origin b9b7a76). Eight
+  commits (5 slices: 2 + 1 + 1 + 1 + 2 commits, plus 1 gate-driven fix).
+  - Slice 13 recent-searches (c4ca277 backend + a2c7162 UI): wired
+    library_search_log to a chip strip + Clear-history affordance.
+    QueryRow gains serde, new search_log::clear() scoped not to touch
+    dismissals. Two Tauri commands (recent_searches limit-clamped,
+    clear_search_history emits library-changed only when n>0). 5 new
+    tests.
+  - Slice 14 per-folder scope (25d14cd): native <select> in the
+    search header threads scopeFolderId into the existing FTS5
+    folder-filter branch. Re-queries on change; vanishing scope
+    folder silently self-heals back to All; result-count line +
+    no-matches empty state both surface the active scope inline.
+    Pure frontend slice.
+  - Slice 15 phrase queries (1804706): replaced build_match_expr()'s
+    bag-of-words sanitiser with a hand-written lexer that emits
+    Tok::Bare / Tok::Phrase. `"force majeure"` becomes a single FTS5
+    phrase token (adjacent-word match) instead of ANDed words.
+    Curly-quote support + unterminated-phrase forgiveness +
+    metachar-scrub-inside-phrase + last-bare-word-keeps-prefix-glob.
+    10 new tests; empty-state tips help-text gains a quotes line.
+  - Slice 16 exclude terms (db6d30b): lexer grows Tok::Exclude;
+    `-word` / `-"phrase"` maps to FTS5 NOT clauses. Exclude-only
+    queries return [] (FTS5 needs a positive anchor). `co-op` mid-
+    word `-` not a trigger; lone `- ` dropped. 10 new tests; help-
+    text gains a -prefix line.
+  - Slice 17 index-status footer (7c14b70 backend + 6a3d62d UI):
+    IndexStats { docs, pages } via index_stats() composer; one Tauri
+    command. UI footer pinned beneath .results, accent-green status
+    dot, refreshes on mount + after every search so a mid-session
+    scan makes counts grow live. 3 new tests.
+  - Fix commit b9b7a76: clippy `-D unused-assignments` caught a dead
+    `pending_neg = false` in the whitespace branch of tokenize() —
+    the outer reset already covered both paths. ALSO corrected two
+    phrase tests whose expectations didn't match actual (correct)
+    behaviour: the LAST bare-word token always gets the prefix `*`
+    (the test had the older "if last token is a phrase, no glob"
+    expectation), and scrub_phrase collapses adjacent-meta-chars
+    rather than synthesising word boundaries (same heuristic as
+    co-op -> coop for bare words). Behaviour unchanged; tests and
+    one comment relaxed to match.
+  All gates green: cargo fmt clean, cargo test --lib pdf::library:: 292
+  passed / 0 failed (+27 from 265 at v3.51), cargo clippy --lib -D
+  warnings clean (8.86s warm), pnpm check 0 errors / 105 warnings all
+  pre-existing in other panels (zero on LibrarySearchPanel from this
+  change). Build cache from the 19:58 round-3 tick was still hot 2
+  minutes later — first cargo test compile 1.89s, clippy ~9s.
+  Pushed to feature/v3.39.0-atlas-tag-suggest, verified local==origin
+  at b9b7a76. Tag-system surface stays feature-complete (no regressions
+  on the 265-test baseline); full-text search surface is now also
+  demo-able end-to-end (recent searches, folder scope, phrase search,
+  exclude terms, index-status footer). Next tick should pick a
+  different subsystem — good candidates: smart-folders hub UI polish,
+  OCR queue panel, collections, doc-detail metadata editor. BATCH
+  PATTERN NOTE: shipping 5 slices in one tick took the test-and-
+  clippy gate roundtrip count from 5x (per-slice) to 1x (batched);
+  the gate-driven fix commit at the end caught what the per-slice
+  flow would have caught after each, so the iteration-cost saving is
+  real with zero correctness loss.
+
 
