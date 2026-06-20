@@ -127,12 +127,76 @@ pub fn list_collections(db: &LibraryDb) -> Result<Vec<CollectionRecord>, Library
     Ok(rows?)
 }
 
-pub fn rename_collection(db: &mut LibraryDb, id: i64, name: &str) -> Result<(), LibraryError> {
+/// Maximum length, in Unicode scalars (not bytes), accepted for a manual
+/// collection name. Mirrors the budget tags get for descriptions — generous
+/// enough for emoji + CJK names, tight enough that the rail row stays
+/// readable. v3.53.0 Atlas Collections.
+pub(crate) const MAX_COLLECTION_NAME_LEN: usize = 120;
+
+fn valid_collection_name(name: &str) -> bool {
+    let len = name.chars().count();
+    len > 0 && len <= MAX_COLLECTION_NAME_LEN
+}
+
+/// Rename a manual collection in place. Returns the updated row.
+///
+/// Trims the input. Empty (after trim) is rejected. Same-name (after trim)
+/// short-circuits without an UPDATE — important because the rail's inline
+/// rename UI commits on blur, and we don't want a no-op edit to fire a
+/// library-changed event. A length cap protects the rail row. A collision
+/// with a *different* collection's name (UNIQUE) is rejected with a named
+/// error so the UI can show it inline; the bare rusqlite "UNIQUE
+/// constraint failed" message is opaque. Unknown id errors.
+/// v3.53.0 Atlas Collections — Slice 23.
+pub fn rename_collection(
+    db: &mut LibraryDb,
+    id: i64,
+    name: &str,
+) -> Result<CollectionRecord, LibraryError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(LibraryError::Other(
+            "collection name cannot be empty".into(),
+        ));
+    }
+    if !valid_collection_name(trimmed) {
+        return Err(LibraryError::Other(format!(
+            "collection name too long (max {MAX_COLLECTION_NAME_LEN} chars)"
+        )));
+    }
+    let current = get_collection(db, id)?;
+    // Same-name (after trim) is a no-op so a blur-to-commit inline rename
+    // doesn't fire library-changed for nothing.
+    if current.name == trimmed {
+        return Ok(current);
+    }
+    // Reject a collision with a *different* collection's name. Look it up
+    // first so the error message names the conflict instead of leaking the
+    // raw UNIQUE-constraint string.
+    let collision: Option<i64> = db
+        .conn()
+        .query_row(
+            "SELECT id FROM library_collections WHERE name = ?1",
+            params![trimmed],
+            |r| r.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    if let Some(other_id) = collision {
+        if other_id != id {
+            return Err(LibraryError::Other(format!(
+                "a collection named {trimmed:?} already exists"
+            )));
+        }
+    }
     db.conn_mut().execute(
         "UPDATE library_collections SET name = ?1 WHERE id = ?2",
-        params![name, id],
+        params![trimmed, id],
     )?;
-    Ok(())
+    get_collection(db, id)
 }
 
 pub fn delete_collection(db: &mut LibraryDb, id: i64) -> Result<(), LibraryError> {
@@ -475,10 +539,76 @@ mod tests {
     fn rename_and_delete() {
         let mut db = LibraryDb::open_in_memory().unwrap();
         let c = create_collection(&mut db, "Old", None, None).unwrap();
-        rename_collection(&mut db, c.id, "New").unwrap();
+        let updated = rename_collection(&mut db, c.id, "New").unwrap();
+        assert_eq!(updated.id, c.id);
+        assert_eq!(updated.name, "New");
         assert_eq!(get_collection(&db, c.id).unwrap().name, "New");
         delete_collection(&mut db, c.id).unwrap();
         assert_eq!(list_collections(&db).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn rename_collection_trims_whitespace() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Old", None, None).unwrap();
+        let updated = rename_collection(&mut db, c.id, "  Tax 2026  ").unwrap();
+        assert_eq!(updated.name, "Tax 2026");
+        assert_eq!(get_collection(&db, c.id).unwrap().name, "Tax 2026");
+    }
+
+    #[test]
+    fn rename_collection_rejects_empty_and_whitespace_only() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Old", None, None).unwrap();
+        assert!(rename_collection(&mut db, c.id, "").is_err());
+        assert!(rename_collection(&mut db, c.id, "    ").is_err());
+        // Row untouched.
+        assert_eq!(get_collection(&db, c.id).unwrap().name, "Old");
+    }
+
+    #[test]
+    fn rename_collection_same_name_is_noop() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Tax 2026", None, None).unwrap();
+        // Returns the current row, no error. Trailing whitespace still trims.
+        let got = rename_collection(&mut db, c.id, "  Tax 2026  ").unwrap();
+        assert_eq!(got.name, "Tax 2026");
+        assert_eq!(got.id, c.id);
+    }
+
+    #[test]
+    fn rename_collection_rejects_unique_collision() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = create_collection(&mut db, "Tax 2026", None, None).unwrap();
+        let b = create_collection(&mut db, "Onboarding", None, None).unwrap();
+        // Renaming b onto a's name is rejected with a named error rather
+        // than the opaque rusqlite "UNIQUE constraint failed" message.
+        let err = rename_collection(&mut db, b.id, "Tax 2026").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("already exists"), "got {msg:?}");
+        // Both rows untouched.
+        assert_eq!(get_collection(&db, a.id).unwrap().name, "Tax 2026");
+        assert_eq!(get_collection(&db, b.id).unwrap().name, "Onboarding");
+    }
+
+    #[test]
+    fn rename_collection_rejects_unknown_id() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        assert!(rename_collection(&mut db, 999_999, "Anything").is_err());
+    }
+
+    #[test]
+    fn rename_collection_caps_length() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let c = create_collection(&mut db, "Old", None, None).unwrap();
+        // At the cap: ok.
+        let at_max: String = "x".repeat(MAX_COLLECTION_NAME_LEN);
+        let ok = rename_collection(&mut db, c.id, &at_max).unwrap();
+        assert_eq!(ok.name.chars().count(), MAX_COLLECTION_NAME_LEN);
+        // One past: rejected, row untouched.
+        let too_long: String = "x".repeat(MAX_COLLECTION_NAME_LEN + 1);
+        assert!(rename_collection(&mut db, c.id, &too_long).is_err());
+        assert_eq!(get_collection(&db, c.id).unwrap().name, at_max);
     }
 
     #[test]

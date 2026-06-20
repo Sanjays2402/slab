@@ -3399,8 +3399,12 @@ fn slab_collection_list() -> CmdResult<Vec<pdf::library::collections::Collection
 }
 
 #[tauri::command]
-fn slab_collection_rename(app: tauri::AppHandle, id: i64, name: String) -> CmdResult<()> {
-    let result = (|| -> Result<(), LibraryError> {
+fn slab_collection_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    name: String,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
         let mut db = open_library_db()?;
         pdf::library::collections::rename_collection(&mut db, id, &name)
     })();

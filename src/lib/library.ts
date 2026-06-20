@@ -798,12 +798,12 @@ export async function collectionList(): Promise<CollectionRecord[]> {
 export async function collectionRename(
   id: number,
   name: string,
-): Promise<void> {
-  const res = await invoke<CmdResult<null>>("slab_collection_rename", {
+): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>("slab_collection_rename", {
     id,
     name,
   });
-  unwrap(res);
+  return unwrap(res);
 }
 
 export async function collectionDelete(id: number): Promise<void> {

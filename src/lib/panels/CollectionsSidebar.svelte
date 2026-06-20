@@ -16,6 +16,7 @@
     collectionList,
     collectionCreate,
     collectionDelete,
+    collectionRename,
     collectionListDocs,
     collectionAddDocs,
     smartCollectionList,
@@ -116,6 +117,52 @@
   // delta on the next refresh and add a one-shot CSS class.
   let prevCounts = $state<Map<number, number>>(new Map());
   let pulsing = $state<Set<number>>(new Set());
+
+  // Inline rename state (v3.53.0 Atlas Collections — Slice 23). One
+  // collection at a time goes into edit mode; Enter commits, Escape/blur
+  // cancels, unchanged or empty short-circuits with no round-trip.
+  let renamingId = $state<number | null>(null);
+  let renameDraft = $state("");
+  let renameError = $state<string | null>(null);
+  let renameBusy = $state(false);
+
+  // Focus + select-all a freshly-mounted input — mirrors the LibraryPanel
+  // tag-rename action so users land typing-ready.
+  function focusSelect(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  function startRename(c: CollectionRecord, ev: MouseEvent) {
+    ev.stopPropagation();
+    renamingId = c.id;
+    renameDraft = c.name;
+    renameError = null;
+  }
+  function cancelRename() {
+    renamingId = null;
+    renameDraft = "";
+    renameError = null;
+  }
+  async function commitRename(c: CollectionRecord) {
+    const next = renameDraft.trim();
+    if (!next || next === c.name) {
+      cancelRename();
+      return;
+    }
+    renameBusy = true;
+    try {
+      const updated: CollectionRecord = await collectionRename(c.id, next);
+      // Swap the row in place so the rail reflects the new name without
+      // waiting for the library-changed refresh.
+      collections = collections.map((row): CollectionRecord => (row.id === c.id ? updated : row));
+      cancelRename();
+    } catch (e) {
+      renameError = (e as Error).message;
+    } finally {
+      renameBusy = false;
+    }
+  }
 
   async function refresh() {
     try {
@@ -360,26 +407,67 @@
         class="cs-row-wrap"
         class:active={activeId === `c:${c.id}`}
         class:drag-over={dragOverId === c.id}
+        class:renaming={renamingId === c.id}
       >
-        <button
-          class="cs-row"
-          class:active={activeId === `c:${c.id}`}
-          onclick={() => pickCollection(c)}
-          ondragover={(e) => onDocDragOver(e, c)}
-          ondragleave={() => onDocDragLeave(c)}
-          ondrop={(e) => onDocDrop(e, c)}
-          title={c.name}
-        >
-          <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
-          <span class="cs-label">{c.name}</span>
-          <span class="cs-count" class:pulse={pulsing.has(c.id)}>{c.doc_count}</span>
-        </button>
-        <button
-          class="cs-x"
-          aria-label="Delete {c.name}"
-          onclick={(e) => handleDelete(c, e)}
-        >×</button>
+        {#if renamingId === c.id}
+          <form
+            class="cs-rename"
+            onsubmit={(e) => {
+              e.preventDefault();
+              commitRename(c);
+            }}
+          >
+            <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
+            <input
+              class="cs-rename-input"
+              type="text"
+              aria-label="Rename collection"
+              bind:value={renameDraft}
+              use:focusSelect
+              maxlength={120}
+              disabled={renameBusy}
+              onkeydown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  cancelRename();
+                }
+              }}
+              onblur={() => {
+                // Defer so an Enter-driven submit lands first.
+                if (!renameError) setTimeout(() => commitRename(c), 0);
+              }}
+            />
+          </form>
+        {:else}
+          <button
+            class="cs-row"
+            class:active={activeId === `c:${c.id}`}
+            onclick={() => pickCollection(c)}
+            ondragover={(e) => onDocDragOver(e, c)}
+            ondragleave={() => onDocDragLeave(c)}
+            ondrop={(e) => onDocDrop(e, c)}
+            title={c.name}
+          >
+            <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
+            <span class="cs-label">{c.name}</span>
+            <span class="cs-count" class:pulse={pulsing.has(c.id)}>{c.doc_count}</span>
+          </button>
+          <button
+            class="cs-edit"
+            aria-label="Rename {c.name}"
+            title="Rename collection"
+            onclick={(e) => startRename(c, e)}
+          >&#9998;</button>
+          <button
+            class="cs-x"
+            aria-label="Delete {c.name}"
+            onclick={(e) => handleDelete(c, e)}
+          >×</button>
+        {/if}
       </div>
+      {#if renamingId === c.id && renameError}
+        <div class="cs-rename-err" role="alert">{renameError}</div>
+      {/if}
     {/each}
 
     <div class="cs-sub-row">
@@ -632,11 +720,60 @@
     opacity: 0;
     transition: opacity 120ms ease, color 120ms ease;
   }
-  .cs-row:hover .cs-x {
+  .cs-row-wrap:hover .cs-x {
     opacity: 1;
   }
   .cs-x:hover {
     color: var(--danger, #f87171);
+  }
+  /* v3.53.0 Atlas Collections — Slice 23 inline rename */
+  .cs-edit {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 12px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease;
+  }
+  .cs-row-wrap:hover .cs-edit {
+    opacity: 1;
+  }
+  .cs-edit:hover {
+    color: var(--text-1);
+  }
+  .cs-rename {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+  }
+  .cs-rename-input {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: var(--text-1);
+    font-size: 13px;
+    outline: none;
+    min-width: 0;
+  }
+  .cs-rename-input:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  .cs-rename-err {
+    margin: 2px 8px 4px 24px;
+    font-size: 11px;
+    color: var(--danger, #f87171);
+  }
+  .cs-row-wrap.renaming {
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+    border-radius: 6px;
   }
   .cs-sub {
     padding: 12px 8px 4px;
