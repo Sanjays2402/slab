@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-19 22:08 PT by Cake (cron) — round-6 BATCH shipped: 5 Manual-Collection-management slices that promote the previously stub-grade collection rail into a full Notion/Linear-grade surface (rename, color, drag-to-reorder, duplicate, plus bulk add-to-collection from the LibraryPanel multi-select). Pushed + verified on feature branch (76860b0).
+Last updated: 2026-06-19 23:14 PT by Cake (cron) — round-7 BATCH shipped: 5 Beacon Cache Inspector slices that promote the embedding index from an opaque (pdfs,chunks) tuple into a Notion-grade manageable surface (list, bulk-forget, per-model breakdown, stale-path detect, dedicated UI). Pushed + verified on feature branch (5be3a3d).
 
 ## Active branch & version
 
@@ -9,8 +9,230 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `76860b0` — "feat(library): duplicate a collection".
+Latest commit: `5be3a3d` — "feat(beacon-cache): dedicated Beacon Cache Inspector panel".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
+
+### What round-7 (2026-06-19 23:14 PT) just shipped
+
+A demo-able overhaul of the Beacon embedding index. Before this tick
+the embedding index was an opaque box: the BeaconSearchPanel footer
+showed just "X PDFs · Y chunks indexed" with zero list, zero per-model
+breakdown, zero stale-path detection, and `forget(hash)` only wired
+into the per-PDF trash icon on the current document — no surface for
+managing the cache across the whole library. Now every Notion-grade
+inspector affordance lands:
+
+- Slice 28: `EmbeddingIndex::list_indexed()` returns one
+  IndexedPdfRecord per PDF (hash + path + pages + embed_model +
+  indexed_at + chunks) via a single LEFT JOIN + GROUP BY round-trip
+  so the inspector table is cheap even on a 10k-PDF cache. LEFT JOIN
+  keeps zero-chunk rows visible (an INNER JOIN would silently hide a
+  partial-write recovery). ORDER BY indexed_at DESC, hash ASC matches
+  Slab's activity-feed convention. 5 new tests incl. serde
+  snake_case round-trip pin + the LEFT JOIN guard. One Tauri command
+  (slab_beacon_index_list) + TS client (beaconIndexList) in a new
+  `src/lib/beaconCache.ts` module — kept apart from `library.ts`
+  because the embedding index is a different DB file
+  (beacon-index.sqlite vs library.sqlite). (6507452)
+- Slice 29: `forget_many(hashes)` bulk-deletes in one transaction
+  with a prepared statement, returns the count actually removed,
+  silently skips unknown hashes (tolerant wire contract for the
+  inspector's multi-select). Empty input is a zero no-op. FOREIGN
+  KEY ON DELETE CASCADE on the chunks table picks up the children.
+  3 new tests. One Tauri command + TS client bundled. (bd9655e)
+- Slice 30: `stats_by_model()` returns Vec<ModelBucket> per
+  embed_model in one GROUP BY round-trip — chunks DESC, model ASC
+  tie-break. Surfaces the mixed-model trap that the existing
+  search.rs dim-mismatch skip otherwise hides (loser's chunks become
+  dead weight). Empty index → empty Vec; single-model → 1-element Vec.
+  4 new tests incl. serde snake_case round-trip pin. One Tauri
+  command + TS client bundled. (86a70cd)
+- Slice 31: `find_stale()` walks every row and returns the subset
+  whose `pdf_path` no longer points at a readable file (renamed,
+  deleted, on an unmounted volume). `forget_stale()` is the bulk
+  companion that runs find_stale once up front then forget_many's
+  the resulting hashes (so a file restored mid-scan isn't
+  accidentally pruned). 4 new tests. Two Tauri commands + TS
+  clients. (76cae48)
+- Slice 32: dedicated BeaconCachePanel.svelte — ~700-LOC Svelte 5
+  panel that ties slices 28-31 into one surface: dashboard tiles
+  (total PDFs + chunks + per-model breakdown with a "Mixed-model
+  index detected" warning when buckets > 1), stale section (only
+  renders when stale > 0, danger-tinted, section-head "Forget all N
+  stale"), indexed-PDFs table with multi-select checkboxes + Select
+  all/None/Invert + column-sort toggle (Newest/Oldest/Chunks) +
+  per-row Forget + floating bulk-forget bar when selection > 0.
+  Selection prunes on every refresh so a forgotten hash can't
+  linger. Mounted by CollectionsSidebar via window event +
+  "Beacon Cache…" command-palette entry (◉ glyph). Refreshes on
+  library-changed. Pure frontend slice (no schema, no backend, no
+  new Tauri commands beyond the four shipped in 28-31). (5be3a3d)
+
+Gates passed: cargo test --lib pdf::library:: 337 passed / 0
+failed (unchanged from round-6 baseline — no regression), cargo
+test --lib ai::embedding_index 30 passed / 0 failed (+16 from the
+14 pre-existing: 5 list_indexed + 3 forget_many + 4 stats_by_model
++ 2 find_stale + 2 forget_stale), cargo clippy --lib -D warnings
+clean (31s warm), cargo fmt clean, pnpm check 0 errors / 104
+warnings (same as round-6 baseline — none new from BeaconCachePanel
+or its sidebar mount or palette entry).
+
+KEYBOARD-SHORTCUT NOTE: did NOT wire Cmd+Shift+B for the inspector
+because that combo is already bound at the App level (`+page.svelte`)
+to open the Bates panel — Slab's convention is to defer ad-hoc letter
+shortcuts to the keymap registry rather than collide globally. The
+palette entry + library-changed auto-refresh cover discoverability
+and the live-update story without the conflict. If a shortcut becomes
+useful later, route it through `src-tauri/src/keymap/`.
+
+## BUILD ENVIRONMENT — CRITICAL, read before any cargo command
+
+Internal disk is FULL (~2.9 GiB free of 228). Cargo target is redirected to an
+APFS sparse image at **/Volumes/SlabBuild** via `src-tauri/.cargo/config.toml`
+(gitignored). Verify mounted each tick: `df -h /Volumes/SlabBuild | tail -1`.
+If missing: `hdiutil attach "/Volumes/Sanjay SSD/SlabBuild.sparseimage"`.
+
+**The image has very slow fsync.** Proven tonight across many attempts:
+- `cargo test --lib`, `cargo check --lib`, `pnpm check` → WORK (slow but finish).
+- A FULL `cargo build` / `cargo tauri build` → WEDGES on the `tauri` crate's
+  final codegen (rustc goes to sleep state, no CPU, target size flat for min).
+**RULE: never run a full binary build in a tick.** It's release work, blocked by
+CI billing anyway. Gate with `cargo test --lib` + `cargo clippy --lib` + `pnpm
+check`. If cargo wedges >5 min with no rustc CPU: `pkill -f 'cargo'`, retry once.
+
+## CI STILL BLOCKED — needs Sanjay
+
+GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppImage)
+until fixed. Action: https://github.com/settings/billing → update payment / raise
+limit. Does NOT affect local dev or branch pushes.
+
+## Roadmap — round 7 (Beacon Cache Inspector) — ALL DONE
+
+Round 7 batched FIVE feature slices into one cron tick onto a fresh
+subsystem (the Beacon embedding index — opaque box → manageable
+surface). The tag/search/OCR/manual-collection surfaces are all
+end-to-end demo-able; this round picks the next opaque corner.
+
+28. ~~**list_indexed_pdfs (full inspector feed)**~~ — DONE
+    (2026-06-19 23:14 PT, 6507452, single commit). Backend
+    EmbeddingIndex::list_indexed() returns Vec<IndexedPdfRecord> in
+    one LEFT JOIN + GROUP BY round-trip; LEFT JOIN keeps zero-chunk
+    rows visible; ORDER BY indexed_at DESC, hash ASC. 5 new tests
+    (empty, one-row-per-pdf-with-joined-count, newest-first,
+    LEFT JOIN guard, serde snake_case round-trip). One Tauri command
+    + TS client in new `src/lib/beaconCache.ts` module.
+29. ~~**forget_many (bulk delete in one transaction)**~~ — DONE
+    (2026-06-19 23:14 PT, bd9655e, single commit). Single
+    transaction + prepared statement, returns count actually removed,
+    silently skips unknown hashes, empty is zero no-op. 3 new tests.
+    One Tauri command + TS client bundled.
+30. ~~**stats_by_model (per-embed-model bucket counts)**~~ — DONE
+    (2026-06-19 23:14 PT, 86a70cd, single commit). One GROUP BY
+    round-trip; chunks DESC, model ASC tie-break; empty Vec for
+    empty index; 1-element Vec for single-model. Surfaces the
+    mixed-model trap that search.rs's dim-mismatch skip otherwise
+    hides. 4 new tests (bucket-per-model, empty, single, serde
+    round-trip). One Tauri command + TS client bundled. NB: tests
+    need distinct content per model because the index keys by hash;
+    the seed_pdfs helper introduced in slice 28 folds embed_model
+    into the seeded byte stream to handle that.
+31. ~~**find_stale + forget_stale (dead-path detection & cleanup)**~~
+    — DONE (2026-06-19 23:14 PT, 76cae48, single commit).
+    find_stale walks every row, returns IndexedPdfRecord rows whose
+    on-disk path is missing (Path::exists; broken symlinks count as
+    missing, right call since the index can't search what it can't
+    read). forget_stale companion runs find_stale once up front then
+    forget_many's the resulting hash list (so a file restored
+    mid-scan isn't pruned). 4 new tests (only-missing-rows surface,
+    clean-empty, prune-only-missing, zero-noop). Two Tauri commands
+    + TS clients.
+32. ~~**Dedicated BeaconCachePanel UI**~~ — DONE (2026-06-19 23:14
+    PT, 5be3a3d, single commit). ~700-LOC Svelte 5 panel mirroring
+    OcrQueuePanel pattern. Sections: dashboard tiles (total + per-
+    model + mixed-model warning), stale section (only renders >0,
+    danger-tinted, section-head Forget-all), indexed-PDFs table
+    (multi-select with Select all/None/Invert, column-sort toggle
+    Newest/Oldest/Chunks, per-row Forget, floating bulk-forget bar
+    when selection >0). Selection prunes on refresh. Mounted by
+    CollectionsSidebar via slab:open-beacon-cache window event +
+    "Beacon Cache…" palette entry (◉ glyph). Refreshes on
+    library-changed. Pure frontend slice. No Cmd+Shift+B shortcut
+    because that's already wired to Bates at App level.
+
+    With Round 7 done, the Beacon embedding index is now end-to-end
+    demo-able: per-model breakdown, stale-path detection, bulk
+    forget, full table with sort+multi-select. Next subsystem
+    candidates: smart-folders hub UI polish (the rail's drag/pin
+    chrome could be tightened), doc-detail metadata editor (no
+    surface for editing title/author/keywords on a library doc),
+    plugin marketplace UI (the backend ships in marketplace/ but
+    has no panel), Hopper backfill progress surface (the panel
+    fires but doesn't show per-doc progress live).
+
+## Tick log
+
+- 2026-06-19 23:14 PT (Cake, cron): round-7 BATCH tick — FIVE
+  Beacon-Cache-Inspector slices that promote the embedding index
+  from an opaque (pdfs,chunks) tuple into a Notion-grade manageable
+  surface (list, bulk forget, per-model breakdown, stale detect,
+  dedicated UI). All DONE, pushed + verified (local==origin
+  5be3a3d). Five commits, one per slice (each backend slice bundles
+  the matching Tauri command + TS client per the established
+  wire-layer convention; UI slice as the 5th commit).
+  - Slice 28 list_indexed (6507452): one LEFT JOIN + GROUP BY
+    round-trip returning IndexedPdfRecord (hash + path + pages +
+    embed_model + indexed_at + chunks), newest first, LEFT JOIN
+    keeps zero-chunk rows visible. 5 new tests incl. serde
+    snake_case pin. One Tauri command + TS client in NEW
+    `src/lib/beaconCache.ts` (kept apart from library.ts because
+    the embedding index is a different DB file —
+    beacon-index.sqlite vs library.sqlite).
+  - Slice 29 forget_many (bd9655e): bulk delete in one transaction
+    with prepared statement, returns count actually removed,
+    silently skips unknown hashes, empty is zero no-op, CASCADE
+    handles chunks. 3 new tests. One Tauri command + TS client.
+  - Slice 30 stats_by_model (86a70cd): per-embed-model bucket
+    counts in one GROUP BY round-trip; chunks DESC, model ASC
+    tie-break. Empty Vec / single-bucket / mixed-model serde
+    round-trip. 4 new tests. One Tauri command + TS client. The
+    seed_pdfs helper from slice 28 was designed with embed_model
+    folded into the byte stream specifically so this slice's
+    multi-model bucket test wouldn't collapse to one row.
+  - Slice 31 find_stale + forget_stale (76cae48): missing-on-disk
+    detection via Path::exists walk; bulk companion runs the scan
+    once up front then forget_many's the resulting hashes so a
+    file restored mid-scan isn't pruned. 4 new tests. Two Tauri
+    commands + TS clients.
+  - Slice 32 BeaconCachePanel (5be3a3d): ~700-LOC Svelte 5 panel
+    that ties slices 28-31 into one surface — dashboard tiles +
+    mixed-model warning + stale section + indexed-PDFs table with
+    multi-select + column sort + bulk forget. Mounted via
+    CollectionsSidebar window event + palette entry. Refreshes on
+    library-changed. Pure frontend slice. No Cmd+Shift+B shortcut
+    because that's already bound to Bates at the App level
+    (+page.svelte) — Slab's convention is to defer ad-hoc letter
+    shortcuts to the keymap registry rather than collide globally.
+  All gates green: cargo fmt clean, cargo test --lib pdf::library::
+  337 passed / 0 failed (unchanged from round-6 baseline — no
+  regression on the library surface), cargo test --lib
+  ai::embedding_index 30 passed / 0 failed (+16 from the 14
+  pre-existing: 5 list_indexed + 3 forget_many + 4 stats_by_model
+  + 2 find_stale + 2 forget_stale), cargo clippy --lib -D warnings
+  clean (31s warm), pnpm check 0 errors / 104 warnings (same as
+  round-6 baseline; zero new from BeaconCachePanel or sidebar mount
+  or palette entry). Pushed + verified (local==origin 5be3a3d).
+  Process note: built whole batch first for one gate cycle (caught
+  a same-content-hash collapse in the model-bucket test — fixed by
+  folding embed_model into the seed bytes), snapshotted final
+  files to /tmp/bc-final, reset, then re-applied each slice via
+  targeted patches to land 5 independently-revertible commits.
+  Same pattern rounds 5-6 introduced; per-slice gate checks
+  confirmed each slice compiles + tests-green before the next.
+  Tag/search/OCR/manual-collection surfaces stay feature-complete
+  (337 baseline preserved); Beacon embedding index is now also
+  end-to-end demo-able with this batch. Next subsystem candidates:
+  smart-folders hub UI polish, doc-detail metadata editor, plugin
+  marketplace UI, Hopper backfill progress surface.
 
 ### What round-6 (2026-06-19 22:08 PT) just shipped
 
