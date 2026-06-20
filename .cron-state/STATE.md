@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-18 07:50 PT by Cake (cron) — roadmap #11 "Tag filter clear-all" shipped (f41a6a1, frontend-only), pushed + verified on feature branch.
+Last updated: 2026-06-19 19:47 PT by Cake (cron) — roadmap #10 "Saved tag-filter views" shipped (2cf2a49 backend + 7c83eee UI), pushed + verified on feature branch.
 
 ## Active branch & version
 
@@ -9,7 +9,7 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `f41a6a1` — "feat(library): one-click Clear for the tag-rail filter".
+Latest commit: `7c83eee` — "feat(library): pin and one-click restore saved tag-filter views in the rail".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
 
 ### What v3.39.0 already shipped (DONE — do not redo)
@@ -212,20 +212,48 @@ vertical slice per tick (Rust + tests + Tauri command + TS client + Svelte UI).
 These are NEW surfaces, not more tag plumbing — the tag-management +
 tag-filter surface is mature. Ship ONE complete vertical slice per tick.
 
-10. **Saved tag-filter views** — let the user pin the current rail filter
-    (selected folder + tag set + All/Any mode + untagged toggle + sort) as a
-    named "view" that one click restores. This is distinct from v3.32
-    Collections (which snapshot a doc list); a view re-runs the live filter.
-    Backend: a `library_saved_views` table (name, query_json of the
-    LibraryFilter, created_at, sort_order) + registry CRUD (create/list/
-    delete/rename) mirroring the smart_folders/personal_presets pattern;
-    serialize the existing LibraryFilter straight into query_json so it
-    round-trips through the same serde the query path already trusts. Tauri
-    commands + TS client + a small "Saved views" rail section (mirror
-    CollectionsSidebar) with a "Save current filter" affordance. Tests:
-    CRUD + query_json roundtrip + that a restored view reproduces the doc
-    set. Good-sized but self-contained; the filter serialization is already
-    proven by the smart-collection builder.
+10. ~~**Saved tag-filter views**~~ — DONE (2026-06-19 19:47 PT, 2cf2a49
+    backend + 7c83eee UI). Schema v9->v10: new `library_saved_views`
+    table (id, name UNIQUE, filter_json, created_at, sort_order). Filter
+    is the full LibraryFilter blob serialized via serde_json (opacity
+    contract mirrors personal_presets so the entire FilterGroup tree
+    survives query-language schema bumps). `saved_views.rs`: save_view
+    (trims, empty rejected, UNIQUE on duplicate), get_view, list_views
+    (sort_order asc, name tie-break), delete_view (unknown id = 0-row
+    no-op), rename_view (trims, empty rejected, same-name short-circuit
+    without an UPDATE, UNIQUE collision rejected leaving both rows
+    intact). 17 module tests incl. flat AND clause-tree round-trips
+    byte-for-byte through serde, sort order, delete pruning only the
+    target, rename collision atomicity. 4 Tauri commands
+    (slab_library_saved_view_save / list / delete / rename) all emit
+    library-changed on success so the rail self-heals via refreshAll.
+    UI: a new "Saved views" rail section between Folders and Tags.
+    "Save filter" button shows in the section head when any filter
+    dimension is non-default (folder, any tag, untagged, search query,
+    non-default sort); opens an inline name input (Enter commits,
+    Escape cancels). Each view = rail row + diamond glyph + name +
+    x-delete. One click on a view restores the entire saved filter in
+    a single batch (folder + tags + match mode + untagged + sort +
+    query) so the existing reactive $effect re-queries exactly once;
+    active row highlight clears the moment the user diverges from the
+    saved snapshot via a cheap structural $effect diff. Save form seeds
+    the name from the obvious anchor (active folder name, only-selected
+    tag name, or "Untagged") so 80% of saves are one keystroke. UNIQUE
+    collisions on save surface inline. buildCurrentFilter mirrors
+    refreshDocs's two-branch shape so what's saved is what gets queried;
+    restoreSavedView unpacks either shape back into the rail $state
+    cells, ignoring exotic clauses so forward-compat is automatic.
+    Bumped SCHEMA_VERSION 9->10, relaxed the v9 column-test schema-
+    version assert from ==9 to >=9, added a positive v10 column/table
+    test (asserts library_saved_views exists with id/name/filter_json/
+    created_at/sort_order). Gates: cargo fmt clean, cargo test --lib
+    pdf::library:: 252 passed/0 failed (18 new: 17 saved_views + 1
+    schema v10), clippy --lib -D warnings clean (8.66s warm), pnpm
+    check 0 errors (LibraryPanel still only the 2 pre-existing
+    autofocus + webkit warnings, none new). Pushed + verified
+    (local==origin 7c83eee). Two commits, backend bundled with the TS
+    client wire layer (useless without each other), UI as the second
+    commit. Next undone: #12 tag descriptions/notes.
 11. ~~**Tag filter clear-all**~~ — DONE (2026-06-18 07:50 PT, f41a6a1,
     frontend-only single commit). A "Clear" affordance in the Tags rail
     head, shown only when `tagFilterActive` ($derived: activeTagIds.size > 0
@@ -442,4 +470,50 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
   wouldn't finish in budget, whereas #11 was the seeded "lowest-risk pick if a
   tick is tight on build budget" and gates on pnpm check alone. Next undone:
   #10 saved tag-filter views, #12 tag descriptions/notes.
+- 2026-06-19 19:47 PT (Cake, cron): round-3 roadmap #10 "Saved tag-filter
+  views" shipped (2cf2a49 backend + 7c83eee UI, two commits) — the bigger of
+  the two pending items #11 had previously deferred. Backend: schema v9->v10
+  new library_saved_views table (id, name UNIQUE, filter_json, created_at,
+  sort_order); new saved_views.rs module mirroring the personal_presets
+  opacity contract (filter serialized through serde_json so the whole
+  FilterGroup tree survives query-language bumps). CRUD = save / get / list
+  (sort_order asc, name tie-break) / delete / rename, with trim + empty +
+  UNIQUE + same-name-no-op + atomic-collision semantics (17 module tests
+  incl. flat AND clause-tree round-trips byte-for-byte through serde). 4
+  Tauri commands (slab_library_saved_view_save / list / delete / rename),
+  each emits library-changed on success. UI: a new "Saved views" rail
+  section between Folders and Tags. "Save filter" affordance in the section
+  head shows ONLY when some filter dimension is non-default ($derived
+  filterIsNonDefault: folder != "all" || any tag selected || untagged ||
+  query.trim() || sort != "added_desc"). Save opens an inline name input
+  (Enter / Escape) seeded from the obvious anchor (folder short name /
+  lone selected tag / "Untagged"). Each view = rail row with diamond glyph
+  + name + x-delete. ONE CLICK restores the full filter in a single batch
+  so the existing reactive $effect re-queries exactly once; active-view
+  highlight self-heals through a cheap structural $effect that compares
+  the live rail state to the saved snapshot and clears as soon as they
+  diverge. buildCurrentFilter mirrors refreshDocs's two-branch shape
+  (clause tree when untaggedOnly, flat folder/tag/title otherwise) so what
+  gets saved is what re-runs; restoreSavedView reads either shape back
+  into the rail $state cells, ignoring exotic clauses to keep forward-
+  compat automatic. Relaxed the v9 column-test schema-version assert from
+  ==9 to >=9 (the trap that bit the v3.39 -> bulk-tag tick) and added a
+  positive v10 column/table test. Gates: cargo fmt clean, cargo test --lib
+  pdf::library:: 252 passed/0 failed (18 new: 17 saved_views + 1 schema
+  v10), clippy --lib -D warnings clean (8.66s warm), pnpm check 0 errors
+  (LibraryPanel still only the 2 pre-existing autofocus + webkit
+  line-clamp warnings, none new). Pushed + verified (local==origin
+  7c83eee). Build cache from the 07:50 tick (~36 h ago, June 18 -> June
+  19 19:32 PT) was actually still warm: first cargo test compile 21s,
+  full library suite 1.73s, clippy 8.66s — this tick fit comfortably in
+  the loop with no cold-recompile penalty. Note on commit grouping:
+  bundled the TS client (library.ts) WITH the backend commit instead of
+  with the UI commit, since the TS client is the backend's wire layer
+  and is useless without the Tauri commands it wraps — same grouping the
+  v3.47.0 unused-tag-cleanup tick used. The ~36-hour gap between ticks
+  means Sanjay must have re-armed the cron loop today; nothing to
+  diagnose. Next undone: #12 tag descriptions/notes (it's the LAST
+  round-3 roadmap item — next tick should ship #12 and then either seed
+  a fresh round-4 roadmap or surface that the tag-and-filter surface is
+  feature-complete enough that we should move to a different subsystem).
 
