@@ -71,6 +71,11 @@ export interface DocumentRecord {
    * `null` when unset. Cap is 4000 Unicode scalars at the backend.
    * v3.55.0 Atlas Doc-Inspector. */
   notes: string | null;
+  /** Whether the user has starred this document. Defaults to `false` for
+   * pre-v14 rows. Surfaced as a ★ glyph on the card and filterable via
+   * `starred_only` / the `starred` clause variant. v3.55.0 Atlas
+   * Doc-Inspector. */
+  starred: boolean;
   tags: TagRecord[];
 }
 
@@ -499,6 +504,27 @@ export async function setDocumentNotes(
     {
       docId,
       notes,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Toggle the `starred` flag on a library document. Idempotent (setting an
+ * already-`true` flag to `true` returns the row unchanged). Returns the
+ * refreshed `DocumentRecord` (with tags eager-loaded) so the LibraryPanel
+ * can splice the card without an extra `listDocuments` round-trip. v3.55.0
+ * Atlas Doc-Inspector.
+ */
+export async function setDocumentStarred(
+  docId: number,
+  starred: boolean,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_starred",
+    {
+      docId,
+      starred,
     },
   );
   return unwrap(res);

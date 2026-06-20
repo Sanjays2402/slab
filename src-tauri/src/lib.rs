@@ -4182,6 +4182,26 @@ fn slab_library_set_doc_notes(
     result.into()
 }
 
+/// Toggle the `starred` flag on a library document. Idempotent. Returns the
+/// refreshed [`DocumentRecord`] (with tags eager-loaded) so the UI can splice
+/// the card without an extra `listDocuments` round-trip. v3.55.0 Atlas
+/// Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_starred(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    starred: bool,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_starred(doc_id, starred)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Fold `source_id` into `target_id`: re-point every document link from the
 /// source tag to the target, coalescing duplicates by the newer `applied_at`,
 /// then delete the source tag. Returns the surviving target row. This is the
@@ -5946,6 +5966,7 @@ pub fn run() {
             slab_library_set_tag_description,
             slab_library_set_doc_title,
             slab_library_set_doc_notes,
+            slab_library_set_doc_starred,
             slab_library_merge_tags,
             slab_library_set_doc_tags,
             slab_library_bulk_apply_tag,

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 13;
+const SCHEMA_VERSION: u32 = 14;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -84,6 +84,12 @@ pub struct DocumentRecord {
     /// Doc-Inspector.
     #[serde(default)]
     pub notes: Option<String>,
+    /// Whether the user has starred this document. Surfaced on the doc-card
+    /// as a ★ glyph and filterable via [`LibraryFilter::starred_only`] or
+    /// the `Starred` clause variant. Defaults to `false` so every pre-v14
+    /// row silently reads as unstarred. v3.55.0 Atlas Doc-Inspector.
+    #[serde(default)]
+    pub starred: bool,
     #[serde(default)]
     pub tags: Vec<TagRecord>,
 }
@@ -396,7 +402,27 @@ impl LibraryDb {
             // not a constraint-violation rusqlite blob — on the wire.
             conn.execute_batch("ALTER TABLE library_documents ADD COLUMN notes TEXT;")?;
             conn.execute_batch("PRAGMA user_version = 13;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 13);
+        }
+        if version < 14 {
+            // v3.55.0 "Atlas Doc-Inspector" — per-doc star/favorite flag.
+            // Stored as INTEGER 0/1 (SQLite has no BOOLEAN type; INT is the
+            // canonical encoding). DEFAULT 0 so every pre-v14 row reads as
+            // "not starred" without a rewrite. NOT NULL because a tri-state
+            // would just complicate the filter SQL — unset == 0 is enough.
+            // Indexed because the LibraryFilter `starred_only` flag and the
+            // sidebar "Starred" quick-filter both filter on this column;
+            // a partial index (`WHERE starred = 1`) is cheap because only
+            // a small fraction of the library is ever starred.
+            conn.execute_batch(
+                r#"
+                ALTER TABLE library_documents
+                  ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+                CREATE INDEX IF NOT EXISTS idx_documents_starred
+                  ON library_documents(starred) WHERE starred = 1;
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 14;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 14);
         }
         Ok(())
     }
@@ -639,7 +665,7 @@ impl LibraryDb {
         let mut doc = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes, starred
                  FROM library_documents WHERE id = ?1",
                 params![doc_id],
                 document_from_row,
@@ -690,7 +716,40 @@ impl LibraryDb {
         let mut doc = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes, starred
+                 FROM library_documents WHERE id = ?1",
+                params![doc_id],
+                document_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| LibraryError::Other(format!("document {doc_id} not found")))?;
+        doc.tags = self.tags_for_document(doc.id)?;
+        Ok(doc)
+    }
+
+    /// Set the `starred` flag on a library document. Idempotent: setting an
+    /// already-`true` flag to `true` is a no-op UPDATE that returns the row
+    /// unchanged (count == 1 still — SQLite reports rows matched, not rows
+    /// whose value changed). Errors on unknown id. Returns the refreshed
+    /// [`DocumentRecord`] with tags eager-loaded so the UI can splice the
+    /// card without a list_documents round-trip. v3.55.0 Atlas Doc-Inspector.
+    pub fn set_doc_starred(
+        &mut self,
+        doc_id: i64,
+        starred: bool,
+    ) -> Result<DocumentRecord, LibraryError> {
+        let val: i64 = if starred { 1 } else { 0 };
+        let changed = self.conn.execute(
+            "UPDATE library_documents SET starred = ?1 WHERE id = ?2",
+            params![val, doc_id],
+        )?;
+        if changed == 0 {
+            return Err(LibraryError::Other(format!("document {doc_id} not found")));
+        }
+        let mut doc = self
+            .conn
+            .query_row(
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes, starred
                  FROM library_documents WHERE id = ?1",
                 params![doc_id],
                 document_from_row,
@@ -729,7 +788,7 @@ impl LibraryDb {
         let row = self
             .conn
             .query_row(
-                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes, starred
                  FROM library_documents WHERE path = ?1",
                 params![path],
                 document_from_row,
@@ -1152,6 +1211,7 @@ fn document_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRecord
         ocr_output_path: row.get(11)?,
         ocr_error: row.get(12)?,
         notes: row.get(13)?,
+        starred: row.get::<_, i64>(14)? != 0,
         tags: Vec::new(),
     })
 }
@@ -1422,6 +1482,36 @@ mod tests {
             .unwrap();
         assert_eq!(has_col, 1, "library_documents.notes column missing");
         assert!(db.schema_version().unwrap() >= 13);
+    }
+
+    #[test]
+    fn schema_v14_has_starred_on_documents() {
+        // v3.55.0 Atlas Doc-Inspector — adds an INTEGER NOT NULL DEFAULT 0
+        // `starred` column and a partial index on rows where starred = 1.
+        // `>=` not `==` so the next migration doesn't accidentally fail.
+        let db = db();
+        let has_col: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('library_documents') \
+                 WHERE name = 'starred'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_col, 1, "library_documents.starred column missing");
+        // Partial index lands too — confirms the migration ran in full.
+        let has_idx: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'index' AND name = 'idx_documents_starred'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_idx, 1, "idx_documents_starred missing");
+        assert!(db.schema_version().unwrap() >= 14);
     }
 
     #[test]
@@ -1810,6 +1900,79 @@ mod tests {
             db.set_doc_notes(424242, Some("nope")).is_err(),
             "unknown id should error"
         );
+    }
+
+    #[test]
+    fn set_doc_starred_toggles_and_returns_row_with_tags() {
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/s.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let t = db.add_tag("priority", None).unwrap();
+        db.set_doc_tags(d.id, &[t.id]).unwrap();
+        // Default value is false — pre-v14 rows pick up `starred = 0`.
+        assert!(!d.starred);
+        let starred = db.set_doc_starred(d.id, true).unwrap();
+        assert!(starred.starred);
+        // Tags survive the round-trip.
+        assert_eq!(starred.tags.len(), 1);
+        assert_eq!(starred.tags[0].name, "priority");
+        // Persisted: a fresh path lookup also sees the new flag.
+        let fresh = db.find_document_by_path("/tmp/s.pdf").unwrap().unwrap();
+        assert!(fresh.starred);
+        // Other columns are untouched by a pure star update.
+        assert_eq!(fresh.hash, "h");
+        // Toggle back off works too.
+        let cleared = db.set_doc_starred(d.id, false).unwrap();
+        assert!(!cleared.starred);
+        let fresh = db.find_document_by_path("/tmp/s.pdf").unwrap().unwrap();
+        assert!(!fresh.starred);
+    }
+
+    #[test]
+    fn set_doc_starred_is_idempotent() {
+        // Setting an already-starred doc to starred again is a no-op UPDATE
+        // that still returns the row (SQLite reports rows matched, not rows
+        // whose value changed).
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/i.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        db.set_doc_starred(d.id, true).unwrap();
+        let again = db.set_doc_starred(d.id, true).unwrap();
+        assert!(again.starred);
+        // Same for unstarred -> unstarred.
+        db.set_doc_starred(d.id, false).unwrap();
+        let again = db.set_doc_starred(d.id, false).unwrap();
+        assert!(!again.starred);
+    }
+
+    #[test]
+    fn set_doc_starred_unknown_id_errors() {
+        let mut db = db();
+        assert!(
+            db.set_doc_starred(424242, true).is_err(),
+            "unknown id should error"
+        );
+    }
+
+    #[test]
+    fn upsert_existing_doc_preserves_starred() {
+        // The scanner's re-scan pass calls upsert_document on every existing
+        // path; a star set by the user must NOT get wiped by a scan.
+        let mut db = db();
+        let f = db.add_folder("/tmp").unwrap();
+        let d = db
+            .upsert_document(Some(f.id), "/tmp/p.pdf", None, "v1", 100, 1, Some(3), None)
+            .unwrap();
+        db.set_doc_starred(d.id, true).unwrap();
+        // Re-upsert with new hash / size (typical post-edit scan).
+        let d2 = db
+            .upsert_document(Some(f.id), "/tmp/p.pdf", None, "v2", 200, 2, Some(5), None)
+            .unwrap();
+        assert!(d2.starred, "starred flag should survive a re-upsert");
     }
 
     #[test]
