@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-19 21:25 PT by Cake (cron) — round-5 BATCH shipped: 5 OCR-Queue slices that turn the headless auto-OCR pipeline into a real demo-able subsystem (failure persistence, re-queue, stats, failure inbox, dedicated panel). Pushed + verified on feature branch (07f5f0a).
+Last updated: 2026-06-19 22:08 PT by Cake (cron) — round-6 BATCH shipped: 5 Manual-Collection-management slices that promote the previously stub-grade collection rail into a full Notion/Linear-grade surface (rename, color, drag-to-reorder, duplicate, plus bulk add-to-collection from the LibraryPanel multi-select). Pushed + verified on feature branch (76860b0).
 
 ## Active branch & version
 
@@ -9,8 +9,263 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `07f5f0a` — "feat(library): dedicated OCR Queue Panel".
+Latest commit: `76860b0` — "feat(library): duplicate a collection".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
+
+### What round-6 (2026-06-19 22:08 PT) just shipped
+
+A demo-able overhaul of the manual-collection rail. Before this
+tick the rail had a stub `rename_collection` that swallowed every
+error (UNIQUE collision, empty name) and a `color` + `icon` columns
+that were INSERT-only — there was no edit path, no reorder, no
+duplicate. Now every Notion-grade collection surface lands:
+
+- Slice 23: `rename_collection` hardened to return CollectionRecord,
+  trim input, reject empty/over-cap names, short-circuit same-name
+  no-ops, reject UNIQUE collisions with a named error, error on
+  unknown id. Inline pencil-glyph rename in CollectionsSidebar
+  with focusSelect + Enter/Escape/blur semantics + in-place row
+  swap on save + inline error on rejection. Backend + UI bundled
+  per-commit (b25253c).
+- Slice 24: `set_collection_color(id, Option<&str>)` reuses
+  registry::valid_tag_color to gate persistence (same `#hex` and
+  functional `hsl()/hsla()/rgb()/rgba()` allowlist tags get —
+  no CSS injection), trim + None-clears semantics, guard runs
+  BEFORE the UPDATE so a rejected value leaves the row's prior
+  color untouched. Clickable .cs-color-dot opens a palette modal
+  (live preview + 8-swatch palette + Default-to-clear). 7 new
+  tests. (7a772d1)
+- Slice 25: `reorder_collections(ordered_ids)` atomic single-
+  transaction rewrite of sort_order using 100/200/300 spacing so
+  a future single-row splice has room. Tolerates unknown ids
+  (silent skip), subset reorders (leaves un-named rows alone),
+  duplicate ids (last write wins). HTML5 native drag-to-reorder
+  in the rail with a dedicated `application/x-slab-collection-id`
+  payload type so the existing doc-drop handler ignores reorder
+  drags; lifted row dims to 0.35 opacity, drop target paints a
+  2px accent insertion line (Notion/Linear pattern). Optimistic
+  UI swaps the rail instantly; persist in background, rollback
+  on failure. 6 new tests. (a8a748f)
+- Slice 26: `duplicate_collection(source_id)` clones name + icon
+  + color + ENTIRE doc membership in one transaction (INSERT …
+  SELECT for the membership, one shared added_at baseline so the
+  "added_at DESC" preview is stable). Auto-suffixes name with
+  `(copy)` → `(copy 2)` → ... through 999. Returns the row with
+  doc_count already populated so the rail can splice it in
+  without an extra round-trip. Source name is truncated to fit
+  the 120-scalar cap BEFORE the suffix so a long source never
+  produces an over-cap clone. New ❏ glyph beside the existing
+  rename/× chrome. 6 new tests. (76860b0)
+- Slice 27: Pure frontend slice — a second "Add to collection…"
+  button on the LibraryPanel multi-select floating bar wraps
+  collectionList + collectionAddDocs. Picker lazy-loads on first
+  open, refreshes on every subsequent open to catch
+  newly-created collections, lists each target with its existing
+  doc_count + color dot, toasts the result count with any
+  duplicates named ("Added 4 docs to 'Tax 2026' (1 already in)").
+  Mutually exclusive with the tag picker so the bar doesn't
+  grow two free-floating popovers. (7418116)
+
+Gates passed: cargo test --lib pdf::library:: 337 passed / 0
+failed (+25 from the 312 at round-5 baseline: 7 rename + 7
+set_color + 5 reorder + 6 duplicate), cargo clippy --lib -D
+warnings clean (8s warm), cargo fmt clean, pnpm check 0 errors /
+104 warnings (1 LESS than the 105 baseline — the role="list"
+list-wrapper for reorder also fixed a long-standing
+a11y_no_static_element_interactions warning on the row-wrap).
+
+## BUILD ENVIRONMENT — CRITICAL, read before any cargo command
+
+Internal disk is FULL (~2.9 GiB free of 228). Cargo target is redirected to an
+APFS sparse image at **/Volumes/SlabBuild** via `src-tauri/.cargo/config.toml`
+(gitignored). Verify mounted each tick: `df -h /Volumes/SlabBuild | tail -1`.
+If missing: `hdiutil attach "/Volumes/Sanjay SSD/SlabBuild.sparseimage"`.
+
+**The image has very slow fsync.** Proven tonight across many attempts:
+- `cargo test --lib`, `cargo check --lib`, `pnpm check` → WORK (slow but finish).
+- A FULL `cargo build` / `cargo tauri build` → WEDGES on the `tauri` crate's
+  final codegen (rustc goes to sleep state, no CPU, target size flat for min).
+**RULE: never run a full binary build in a tick.** It's release work, blocked by
+CI billing anyway. Gate with `cargo test --lib` + `cargo clippy --lib` + `pnpm
+check`. If cargo wedges >5 min with no rustc CPU: `pkill -f 'cargo'`, retry once.
+
+## CI STILL BLOCKED — needs Sanjay
+
+GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppImage)
+until fixed. Action: https://github.com/settings/billing → update payment / raise
+limit. Does NOT affect local dev or branch pushes.
+
+## Roadmap — round 6 (Manual Collections management) — ALL DONE
+
+Round 6 batched FIVE feature slices into one cron tick onto a fresh
+subsystem (manual collections — every Notion/Linear-grade affordance
+the rail was missing in v3.39.0).
+
+23. ~~**rename_collection hardening + inline UI**~~ — DONE
+    (2026-06-19 22:08 PT, b25253c, single commit). Backend
+    rename_collection returns CollectionRecord (was unit), trim
+    input, empty-after-trim rejects with "collection name cannot
+    be empty", over-cap (>120 scalars) rejects with a named error,
+    same-name short-circuits no-op without an UPDATE or
+    library-changed emit, UNIQUE collision with a different row
+    rejects with "a collection named X already exists" (looked
+    up first to dodge the opaque rusqlite message), unknown id
+    rejects via get_collection's QueryReturnedNoRows. 7 new tests
+    (trim, empty rejection, same-name no-op, UNIQUE collision
+    leaving both rows intact, unknown id, cap-at-120-scalars).
+    UI: pencil glyph on hover flips the row label into an
+    auto-selected text input, Enter commits, Escape/blur cancels,
+    unchanged/empty short-circuits client-side, in-place row swap
+    on save, inline error keeps the input in edit mode for retry.
+    .cs-edit/.cs-rename/.cs-rename-input/.cs-rename-err CSS
+    mirrors the LibraryPanel tag-rename chrome.
+24. ~~**set_collection_color + palette modal**~~ — DONE
+    (2026-06-19 22:08 PT, 7a772d1, single commit). Backend
+    set_collection_color(id, Option<&str>) reuses
+    registry::valid_tag_color so collections inherit the same
+    CSS-injection guard tags get (`#hex` + functional
+    `hsl()/hsla()/rgb()/rgba()` only). Trim input, trimmed-empty
+    treated as None so the column never holds "real but empty"
+    trash, guard runs BEFORE the UPDATE so a rejected color
+    leaves the row's prior color intact, unknown id rejects
+    before the UPDATE. 7 new tests (updates+returns-row, trims,
+    None-clears, accepts pastel_for hsl shape, rejects every CSS-
+    injection variant the guard knows about with prior color
+    intact, unknown-id, preserves-name-and-doc-count column-drift
+    guard). UI: rail's dot becomes a clickable .cs-color-dot
+    button opening a palette modal (live preview, 8-color swatch
+    palette same as tags, Default-to-clear). In-place row swap on
+    save; modal stays open with backend reason on rejection.
+    .cs-modal-backdrop/.cs-modal chrome reuses the OcrQueuePanel
+    pop-in pattern.
+25. ~~**reorder_collections + drag-to-reorder UI**~~ — DONE
+    (2026-06-19 22:08 PT, a8a748f, single commit). Backend
+    reorder_collections(ordered_ids) is a single atomic
+    transaction; new sort_order values step by 100 (100, 200,
+    300, ...) so a future single-row splice has room without
+    rounding. Tolerant wire contract: unknown ids silently
+    skipped (a stale id from a list-vs-reorder race shouldn't
+    crash the rail; survivors land at correct positions —
+    a,_,b → 100,300), subset reorders leave un-named rows'
+    sort_order intact, duplicate ids accepted (last write wins).
+    Returns the count of rows whose sort_order actually moved so
+    the Tauri command can suppress library-changed on a no-op
+    reorder. 6 new tests. UI: HTML5 native drag on .cs-row-wrap
+    with a dedicated `application/x-slab-collection-id` payload
+    type so the existing doc-drop handler ignores reorder drags;
+    lifted row dims to 0.35 opacity, drop target paints a 2px
+    accent insertion line at its top edge (Notion/Linear "drop X
+    on Y means X lands where Y was"). Optimistic UI swaps the
+    rail instantly; persist in background, rollback on failure.
+    role="list" wrapper around the each-block so each draggable
+    row-wrap can carry role="listitem" without tripping
+    a11y_no_static_element_interactions — also retired one
+    long-standing svelte-check warning.
+26. ~~**duplicate_collection with auto-suffix + full membership clone**~~
+    — DONE (2026-06-19 22:08 PT, 76860b0, single commit).
+    Backend duplicate_collection(source_id) clones name + icon +
+    color + ENTIRE doc membership in one transaction
+    (INSERT…SELECT for the membership, single shared added_at
+    baseline so the "added_at DESC" preview lands stable). Name
+    auto-suffix: `" (copy)"` → `" (copy 2)"` → ... through 999;
+    the source portion is truncated to fit the 120-scalar cap
+    BEFORE the suffix so a long source never produces an
+    over-cap clone. Returns CollectionRecord with doc_count
+    already populated (no extra get round-trip needed). Unknown
+    id errors before any write. New row lands at MAX(sort_order)
+    + 1 so it bottoms the rail without disturbing the
+    persisted reorder. 6 new tests (clones all 4 fields + docs +
+    source untouched, suffix chain (copy)/(copy 2)/(copy 3) +
+    chained dup of a (copy) row lands at "(copy) (copy)", lands
+    at end of sort_order, empty source → empty clone, unknown
+    id rejects, long-source truncation fits under cap). UI:
+    paragraph glyph (❏) sits between rename and × in the row
+    chrome. One click duplicates, toast names source + clone +
+    cloned doc count. duplicateBusyId debounces repeat clicks.
+    Reuses .cs-edit chrome — no new CSS.
+27. ~~**Bulk Add-to-collection on LibraryPanel multi-select**~~ —
+    DONE (2026-06-19 22:08 PT, 7418116, single commit, pure
+    frontend). Second floating-bar button beside "Tag selected…"
+    that opens a popover listing every manual collection by name.
+    Click adds the N selected docs and toasts "Added 4 docs to
+    'Tax 2026' (1 already in)" naming any duplicates that were
+    already members. Reuses collectionList + collectionAddDocs
+    IPC — no new backend or schema. Picker refreshes on every
+    open so collections created via the sidebar since the last
+    open are present without bespoke library-changed wiring.
+    Mutually exclusive with the tag picker (opening one closes
+    the other) so the bulk bar doesn't grow two free-floating
+    popovers. Selection survives the chain so a user can drop
+    the same selection into two collections in a row.
+    clearSelection() closes both pickers + drops the set.
+    .bulk-coll-wrap mirrors .bulk-tag-wrap positioning;
+    .bulk-picker-empty handles loading + no-collections states;
+    .bulk-picker-count surfaces each candidate's existing
+    doc_count beside its name so users picking a target can
+    confirm they're adding to the right one.
+
+    With Round 6 done, manual collections are now end-to-end
+    demo-able: rename, color, reorder, duplicate, bulk-add. The
+    smart-collection side already had its surface (suggest, hub,
+    saved views). Next ticks should pick a different subsystem —
+    good candidates remaining: smart-folders hub UI polish,
+    doc-detail metadata editor, Beacon cache inspector, plugin
+    marketplace.
+
+## Tick log
+
+- 2026-06-19 22:08 PT (Cake, cron): round-6 BATCH tick — FIVE
+  Manual-Collection-management slices that turn the previously
+  stub-grade rail into a Notion/Linear-grade surface (rename,
+  color, reorder, duplicate, bulk-add). All DONE, pushed +
+  verified (local==origin 76860b0). Five commits, one per slice
+  (each backend slice bundles backend + tests + Tauri command + TS
+  client + UI bits per the established wire-layer convention).
+  - Slice 23 rename (b25253c): hardened backend (trim, empty
+    rejection, same-name no-op, UNIQUE collision with named
+    error, unknown id, 120-scalar cap), 7 new tests, return type
+    widened CollectionRecord. Inline pencil-glyph rename UI with
+    focusSelect, Enter/Escape/blur semantics, in-place row swap.
+  - Slice 24 color (7a772d1): set_collection_color reuses
+    registry::valid_tag_color, trim+None-clears, guard runs
+    BEFORE UPDATE, unknown id rejects, 7 new tests. Clickable
+    .cs-color-dot opens palette modal (8 swatches + Default).
+  - Slice 25 reorder (a8a748f): single-transaction rewrite of
+    sort_order in 100-step spacing, tolerant of unknown ids /
+    subset reorders / dup ids, returns moved-count for no-op
+    suppression of library-changed. 6 new tests. HTML5 native
+    drag on the rail with dedicated payload type, accent
+    insertion line, optimistic UI with rollback on failure.
+    role="list" wrapper retired one a11y warning.
+  - Slice 26 duplicate (76860b0): full transaction-atomic clone
+    of name + icon + color + membership (INSERT…SELECT), auto-
+    suffix `(copy)` chain through 999, source-truncation to fit
+    cap before suffix, returns row with doc_count populated. 6
+    new tests. ❏ glyph between rename and ×, debounced toast.
+  - Slice 27 bulk-add (7418116): pure frontend slice — second
+    floating-bar button on LibraryPanel multi-select wrapping
+    existing collectionList + collectionAddDocs IPC, picker
+    refresh-on-open, dup-count toast, mutually exclusive with
+    the tag picker, selection survives so user can chain into
+    multiple collections.
+  All gates green: cargo fmt clean, cargo test --lib pdf::library::
+  337 passed / 0 failed (+25 from 312 at round-5 baseline; 7
+  rename + 7 color + 5 reorder + 6 duplicate), cargo clippy --lib
+  -D warnings clean (8.01s warm), pnpm check 0 errors / 104
+  warnings (1 LESS than the 105 baseline because the role="list"
+  reorder wrapper retired a long-standing
+  a11y_no_static_element_interactions warning on the row-wrap).
+  Pushed + verified (local==origin 76860b0). Process note: built
+  the whole batch first for one gate cycle, snapshotted final
+  files to /tmp/coll-final, then unwound to HEAD and re-applied
+  each slice via targeted patches to land 5 independently-
+  revertible commits — same pattern round-5 introduced, time
+  cost ~15 extra min vs one mega-commit but every slice stays
+  revertible. Tag/search/OCR-Queue surfaces stay feature-
+  complete (no regressions on the 312 baseline); manual
+  collections are now also end-to-end demo-able. Next subsystem
+  candidates: smart-folders hub UI polish, doc-detail metadata
+  editor, Beacon cache inspector, plugin marketplace.
 
 ### What round-5 (2026-06-19 21:25 PT) just shipped
 
