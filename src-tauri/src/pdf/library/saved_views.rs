@@ -160,6 +160,34 @@ pub fn rename_view(
     get_view(db, id)
 }
 
+/// Update only the saved filter for an existing view, preserving id, name,
+/// created_at, and sort_order. The pre-v3.56 behaviour required the user to
+/// delete-and-recreate to tweak a view — that lost the id (breaking any
+/// stored references), shuffled sort_order, and reset `created_at`. With this
+/// setter the user can re-pin the current rail state onto an existing view as
+/// a single in-place edit. Errors on unknown id; no payload validation
+/// because LibraryFilter is opaque JSON and the rail already builds the
+/// shape (the deserialize on the wire side rejects malformed blobs first).
+pub fn update_view_filter(
+    db: &mut LibraryDb,
+    id: i64,
+    filter: &LibraryFilter,
+) -> Result<SavedViewRecord, LibraryError> {
+    let json = serde_json::to_string(filter).map_err(map_serde)?;
+    // Confirm the row exists FIRST — UPDATE with no matching id silently
+    // affects zero rows, and we want a hard error so the caller knows the
+    // setter rejected (rather than thinking it landed and re-querying for
+    // nothing). `get_view` returns Err on unknown id via the underlying
+    // rusqlite QueryReturnedNoRows path.
+    let _ = get_view(db, id)?;
+    let conn = db.conn_mut();
+    conn.execute(
+        "UPDATE library_saved_views SET filter_json = ?1 WHERE id = ?2",
+        rusqlite::params![json, id],
+    )?;
+    get_view(db, id)
+}
+
 // -----------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------
@@ -402,5 +430,50 @@ mod tests {
         let listed = &list_views(&db).unwrap()[0];
         let restored_json = serde_json::to_string(&listed.filter).unwrap();
         assert_eq!(original_json, restored_json);
+    }
+
+    // -----------------------------------------------------------------
+    // v3.56.0 Atlas Saved-Views-Polish — slice 38: update_view_filter
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn update_view_filter_swaps_filter_only() {
+        let mut db = db();
+        let original = save_view(&mut db, &spec("Pinned", flat_filter())).unwrap();
+        // Replace with a totally different shape (clause tree instead of
+        // flat) — id / name / created_at / sort_order must all survive.
+        let updated = update_view_filter(&mut db, original.id, &clause_filter()).unwrap();
+        assert_eq!(updated.id, original.id);
+        assert_eq!(updated.name, "Pinned");
+        assert_eq!(updated.created_at, original.created_at);
+        assert_eq!(updated.sort_order, original.sort_order);
+        // Filter swapped — confirm by serializing both ends.
+        let updated_json = serde_json::to_string(&updated.filter).unwrap();
+        let target_json = serde_json::to_string(&clause_filter()).unwrap();
+        assert_eq!(updated_json, target_json);
+    }
+
+    #[test]
+    fn update_view_filter_unknown_id_is_rejected() {
+        let mut db = db();
+        let err = update_view_filter(&mut db, 9999, &flat_filter()).unwrap_err();
+        // Wraps the rusqlite NotFound — we just need confirmation that the
+        // setter refused (rather than silently no-op'ing).
+        let _ = err;
+        assert_eq!(list_views(&db).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn update_view_filter_does_not_touch_other_rows() {
+        let mut db = db();
+        let a = save_view(&mut db, &spec("A", flat_filter())).unwrap();
+        let b = save_view(&mut db, &spec("B", flat_filter())).unwrap();
+        update_view_filter(&mut db, a.id, &clause_filter()).unwrap();
+        // B's filter is untouched.
+        let b_after = get_view(&db, b.id).unwrap();
+        let b_json = serde_json::to_string(&b_after.filter).unwrap();
+        let flat_json = serde_json::to_string(&flat_filter()).unwrap();
+        assert_eq!(b_json, flat_json);
+        assert_eq!(b_after.name, "B");
     }
 }

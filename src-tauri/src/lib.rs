@@ -3442,6 +3442,22 @@ fn slab_library_saved_view_rename(
     result.into()
 }
 
+#[tauri::command]
+fn slab_library_saved_view_update_filter(
+    app: tauri::AppHandle,
+    id: i64,
+    filter: pdf::library::query::LibraryFilter,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::update_view_filter(&mut db, id, &filter)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -5921,6 +5937,7 @@ pub fn run() {
             slab_library_saved_view_list,
             slab_library_saved_view_delete,
             slab_library_saved_view_rename,
+            slab_library_saved_view_update_filter,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,

@@ -1244,6 +1244,25 @@ export async function savedViewRename(
   return unwrap(res);
 }
 
+/**
+ * Re-pin a saved view's filter in place. Preserves id, name, created_at,
+ * and sort_order; only the saved filter blob is swapped. Lets the user
+ * tweak the rail (folder / tags / sort / untagged / starred / search) and
+ * push the new shape onto an existing pinned view with one click — no
+ * delete-and-recreate, no churn on sort_order, no broken id references.
+ * Errors if the id no longer exists.
+ */
+export async function savedViewUpdateFilter(
+  id: number,
+  filter: LibraryFilter,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_update_filter",
+    { id, filter },
+  );
+  return unwrap(res);
+}
+
 // -----------------------------------------------------------------
 // v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
 // list with persisted display order and pin flags.
