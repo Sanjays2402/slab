@@ -46,6 +46,7 @@
     setTagColor,
     renameTag,
     mergeTags,
+    setTagDescription,
     recentlyUsedTags,
     tagUsageCounts,
     deleteUnusedTags,
@@ -292,6 +293,18 @@
       ? tags.filter((t) => t.id !== mergeSourceTag!.id)
       : [],
   );
+
+  // Edit-tag-description modal state (v3.51.0 Atlas Tag-Descriptions). Holds
+  // the tag whose description is being edited plus the in-flight draft;
+  // null = closed. The draft is the *textarea contents* (the empty string is
+  // a real, user-typed value) — the backend semantically maps empty/whitespace
+  // to clearing the column, so we don't need a separate "null" sentinel here.
+  // `editDescError` surfaces a rejected save (e.g. oversized text) inline.
+  const MAX_TAG_DESCRIPTION_LEN = 500; // mirror of backend constant.
+  let editDescTag = $state<TagRecord | null>(null);
+  let editDescDraft = $state("");
+  let editDescBusy = $state(false);
+  let editDescError = $state<string | null>(null);
 
   // Debounced search.
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1233,6 +1246,43 @@
     }
   }
 
+  // ---------- Edit tag description (v3.51.0 Atlas Tag-Descriptions) ----------
+
+  function openEditDescription(tag: TagRecord) {
+    editDescTag = tag;
+    // Seed the textarea with the current description (empty string when unset
+    // — the textarea binding works on strings, and an empty save semantically
+    // clears the column back to null on the backend).
+    editDescDraft = tag.description ?? "";
+    editDescError = null;
+    editDescBusy = false;
+  }
+
+  async function commitEditDescription() {
+    if (!editDescTag || editDescBusy) return;
+    editDescBusy = true;
+    editDescError = null;
+    try {
+      // The backend trims and treats trimmed-empty as "clear back to null";
+      // pass the raw draft through and let the single source of truth decide.
+      const updated = await setTagDescription(editDescTag.id, editDescDraft);
+      // Swap the updated row into the rail and every doc card that carries it,
+      // so the new tooltip (or its absence) appears without a full refetch.
+      tags = tags.map((t) => (t.id === updated.id ? updated : t));
+      docs = docs.map((d) => ({
+        ...d,
+        tags: d.tags.map((t) => (t.id === updated.id ? updated : t)),
+      }));
+      editDescTag = null;
+    } catch (e) {
+      // Rejected save (e.g. oversized) keeps the modal open with the reason
+      // inline so the user can trim and retry, mirroring the rename pattern.
+      editDescError = String(e);
+    } finally {
+      editDescBusy = false;
+    }
+  }
+
   // ---------- Rename tag inline (v3.43.0 Atlas Tag-Rename) ----------
 
   function startRenameTag(tag: TagRecord) {
@@ -1728,6 +1778,7 @@
               <button
                 class="rail-row tag"
                 class:active={activeTagIds.has(t.id)}
+                title={t.description ?? undefined}
                 onclick={() => toggleTag(t)}
               >
                 <span class="rail-icon dot" style:background={t.color ?? "var(--text-3)"}></span>
@@ -1740,6 +1791,15 @@
                 aria-label="Rename tag"
                 onclick={() => startRenameTag(t)}
               >&#9998;</button>
+              <button
+                class="rail-row-x"
+                title={t.description
+                  ? "Edit notes — " + t.description
+                  : "Add notes"}
+                aria-label="Edit tag notes"
+                class:has-notes={!!t.description}
+                onclick={() => openEditDescription(t)}
+              >&#182;</button>
               <button
                 class="rail-row-x"
                 title="Merge into another tag"
@@ -1910,6 +1970,7 @@
                     <span
                       class="chip"
                       style:border-left-color={t.color ?? "var(--text-3)"}
+                      title={t.description ?? undefined}
                     >{t.name}</span>
                   {/each}
                   {#if d.tags.length > 3}
@@ -2174,6 +2235,63 @@
         <button class="ghost" onclick={() => (editColorTag = null)}>Cancel</button>
         <button class="primary" onclick={commitEditColor} disabled={editColorBusy}>
           {editColorBusy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Edit tag description modal (v3.51.0 Atlas Tag-Descriptions) -->
+{#if editDescTag}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={() => (editDescTag = null)}
+    onkeydown={(e) => { if (e.key === "Escape") editDescTag = null; }}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <div class="modal-title">Tag notes</div>
+      <div class="desc-lead">
+        <span class="dot" style:background={editDescTag.color ?? "var(--text-3)"}></span>
+        <span class="desc-name">{editDescTag.name}</span>
+      </div>
+      <textarea
+        class="desc-textarea"
+        class:invalid={editDescError !== null}
+        placeholder="Optional notes — shown as a tooltip on the rail row and every doc chip."
+        rows="4"
+        maxlength={MAX_TAG_DESCRIPTION_LEN}
+        aria-label="Tag notes"
+        bind:value={editDescDraft}
+        oninput={() => (editDescError = null)}
+        onkeydown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            commitEditDescription();
+          }
+        }}
+      ></textarea>
+      <div class="desc-meta">
+        <span class="desc-count" class:near-limit={editDescDraft.length > MAX_TAG_DESCRIPTION_LEN - 50}>
+          {editDescDraft.length} / {MAX_TAG_DESCRIPTION_LEN}
+        </span>
+        <span class="desc-hint">⌘↩ to save</span>
+      </div>
+      {#if editDescError}
+        <div class="desc-error" title={editDescError}>{editDescError}</div>
+      {/if}
+      <div class="modal-actions">
+        <button class="ghost" onclick={() => (editDescTag = null)}>Cancel</button>
+        <button class="primary" onclick={commitEditDescription} disabled={editDescBusy}>
+          {editDescBusy ? "Saving…" : editDescDraft.trim() ? "Save" : "Clear"}
         </button>
       </div>
     </div>
@@ -3072,6 +3190,66 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* v3.51.0 Atlas Tag-Descriptions — notes modal + has-notes affordance */
+  .desc-lead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .desc-lead .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .desc-name {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .desc-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 8px 10px;
+    resize: vertical;
+    min-height: 84px;
+  }
+  .desc-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .desc-textarea.invalid { border-color: var(--danger, #e54); }
+  .desc-textarea::placeholder { color: var(--text-3); }
+  .desc-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: -2px;
+  }
+  .desc-count.near-limit { color: var(--danger, #e54); }
+  .desc-hint { font-variant: small-caps; letter-spacing: 0.04em; }
+  .desc-error {
+    font-size: 11px;
+    color: var(--danger, #e54);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* A muted accent on the notes glyph when the tag actually carries a note,
+     so a glance at the rail tells you which tags have lore behind them. */
+  .rail-row-x.has-notes { color: var(--text-2); }
+  .rail-row-x.has-notes:hover { color: var(--accent); }
 
   /* v3.41.0 Atlas Bulk Tag-Apply — floating action bar + tag picker. */
   .bulk-bar {
