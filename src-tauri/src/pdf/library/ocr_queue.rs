@@ -20,6 +20,9 @@
 //!   (v3.52.0 Slice 2).
 //! - [`stats`] returns a per-state count for the OCR Queue Panel's
 //!   dashboard footer (v3.52.0 Slice 3).
+//! - [`list_failed`] returns every `ocr_failed` row ordered newest-first
+//!   so the failure inbox can render the most recent breakages on top
+//!   (v3.52.0 Slice 4).
 
 use super::registry::{
     DocumentRecord, LibraryDb, LibraryError, OCR_STATE_DONE, OCR_STATE_FAILED, OCR_STATE_MIXED,
@@ -348,6 +351,40 @@ pub fn requeue_all_failed(db: &mut LibraryDb) -> Result<usize, LibraryError> {
     )?;
     tx.commit()?;
     Ok(n)
+}
+
+/// List every `ocr_failed` document, ordered by `last_seen_at` DESC
+/// (newest failures bubble to the top of the inbox). v3.52.0 Slice 4.
+pub fn list_failed(db: &LibraryDb) -> Result<Vec<DocumentRecord>, LibraryError> {
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages,
+                added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error
+         FROM library_documents
+         WHERE ocr_state = ?1
+         ORDER BY last_seen_at DESC, id DESC",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![OCR_STATE_FAILED], |row| {
+            Ok(DocumentRecord {
+                id: row.get(0)?,
+                folder_id: row.get(1)?,
+                path: row.get(2)?,
+                title: row.get(3)?,
+                hash: row.get(4)?,
+                size_bytes: row.get(5)?,
+                mtime_ns: row.get(6)?,
+                pages: row.get(7)?,
+                added_at: row.get(8)?,
+                last_seen_at: row.get(9)?,
+                ocr_state: row.get(10)?,
+                ocr_output_path: row.get(11)?,
+                ocr_error: row.get(12)?,
+                tags: Vec::new(),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -706,5 +743,44 @@ mod tests {
         let mut db = LibraryDb::open_in_memory().unwrap();
         seed_doc(&mut db, "/clean.pdf", OCR_STATE_TEXT_NATIVE);
         assert_eq!(requeue_all_failed(&mut db).unwrap(), 0);
+    }
+
+    // -- v3.52.0 Atlas OCR-Queue Slice 4: list_failed --
+
+    #[test]
+    fn list_failed_returns_only_failed_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let a = seed_doc(&mut db, "/a.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(a, OCR_STATE_FAILED).unwrap();
+        db.set_doc_ocr_error(a, Some("a-reason")).unwrap();
+        let b = seed_doc(&mut db, "/b.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(b, OCR_STATE_DONE).unwrap();
+        let c = seed_doc(&mut db, "/c.pdf", OCR_STATE_TEXT_NATIVE);
+        let _ = c;
+        let out = list_failed(&db).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].path, "/a.pdf");
+        assert_eq!(out[0].ocr_error.as_deref(), Some("a-reason"));
+    }
+
+    #[test]
+    fn list_failed_orders_newest_first_by_last_seen_at() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let older = seed_doc(&mut db, "/older.pdf", OCR_STATE_SCANNED);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let newer = seed_doc(&mut db, "/newer.pdf", OCR_STATE_SCANNED);
+        db.set_doc_ocr_state(older, OCR_STATE_FAILED).unwrap();
+        db.set_doc_ocr_state(newer, OCR_STATE_FAILED).unwrap();
+        let out = list_failed(&db).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].path, "/newer.pdf", "DESC by last_seen_at");
+        assert_eq!(out[1].path, "/older.pdf");
+    }
+
+    #[test]
+    fn list_failed_empty_when_nothing_failed() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        seed_doc(&mut db, "/ok.pdf", OCR_STATE_DONE);
+        assert!(list_failed(&db).unwrap().is_empty());
     }
 }

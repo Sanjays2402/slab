@@ -642,6 +642,18 @@ export async function ocrQueueStats(): Promise<OcrQueueStats> {
 }
 
 /**
+ * Every `ocr_failed` document, newest first, with `ocr_error`
+ * populated. Powers the failure inbox on the OCR Queue Panel.
+ * v3.52.0 Atlas OCR-Queue Slice 4.
+ */
+export async function ocrQueueListFailed(): Promise<DocumentRecord[]> {
+  const res = await invoke<CmdResult<DocumentRecord[]>>(
+    "slab_library_ocr_queue_list_failed",
+  );
+  return unwrap(res);
+}
+
+/**
  * Re-queue a single document by flipping `ocr_done` / `ocr_failed` /
  * `ocr_pending` back to `scanned` and clearing both the persisted
  * error and any stale output path. Returns the updated row so callers
