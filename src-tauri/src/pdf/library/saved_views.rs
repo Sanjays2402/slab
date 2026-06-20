@@ -188,6 +188,46 @@ pub fn update_view_filter(
     get_view(db, id)
 }
 
+/// Duplicate an existing saved view: copies the filter, gives the copy a
+/// fresh sort_order at the bottom of the list, and derives a unique name by
+/// appending " (copy)" / " (copy 2)" / … so the UNIQUE constraint on `name`
+/// never bites. Errors on unknown id. The duplicate is independent — editing
+/// it later does NOT affect the source.
+pub fn duplicate_view(db: &mut LibraryDb, id: i64) -> Result<SavedViewRecord, LibraryError> {
+    let source = get_view(db, id)?;
+    let new_name = derive_copy_name(db, &source.name)?;
+    save_view(
+        db,
+        &NewSavedView {
+            name: new_name,
+            filter: source.filter,
+        },
+    )
+}
+
+/// Find the first available "<name> (copy)" / "<name> (copy N)" variant that
+/// doesn't collide with an existing view. Capped at 999 attempts as a
+/// belt-and-suspenders guard against a pathological library where someone
+/// has somehow accumulated a thousand copies of the same view — at that
+/// point we surface a clear error rather than burn CPU forever.
+fn derive_copy_name(db: &LibraryDb, source_name: &str) -> Result<String, LibraryError> {
+    let existing: std::collections::HashSet<String> =
+        list_views(db)?.into_iter().map(|v| v.name).collect();
+    let first = format!("{source_name} (copy)");
+    if !existing.contains(&first) {
+        return Ok(first);
+    }
+    for n in 2..=999 {
+        let candidate = format!("{source_name} (copy {n})");
+        if !existing.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(LibraryError::Other(
+        "too many copies of this view already exist".into(),
+    ))
+}
+
 // -----------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------
@@ -475,5 +515,70 @@ mod tests {
         let flat_json = serde_json::to_string(&flat_filter()).unwrap();
         assert_eq!(b_json, flat_json);
         assert_eq!(b_after.name, "B");
+    }
+
+    // -----------------------------------------------------------------
+    // v3.56.0 Atlas Saved-Views-Polish — slice 39: duplicate_view
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn duplicate_view_first_copy_uses_copy_suffix() {
+        let mut db = db();
+        let src = save_view(&mut db, &spec("Apollo invoices", flat_filter())).unwrap();
+        let dup = duplicate_view(&mut db, src.id).unwrap();
+        assert_eq!(dup.name, "Apollo invoices (copy)");
+        // Filter survives the duplication byte-for-byte.
+        let src_json = serde_json::to_string(&src.filter).unwrap();
+        let dup_json = serde_json::to_string(&dup.filter).unwrap();
+        assert_eq!(src_json, dup_json);
+        // Distinct id, fresh sort_order at the bottom.
+        assert_ne!(dup.id, src.id);
+        assert!(dup.sort_order > src.sort_order);
+    }
+
+    #[test]
+    fn duplicate_view_walks_to_copy_2_when_copy_1_taken() {
+        let mut db = db();
+        let src = save_view(&mut db, &spec("Source", flat_filter())).unwrap();
+        // Manually park a "Source (copy)" so the next duplicate must land at
+        // "Source (copy 2)".
+        save_view(&mut db, &spec("Source (copy)", flat_filter())).unwrap();
+        let dup = duplicate_view(&mut db, src.id).unwrap();
+        assert_eq!(dup.name, "Source (copy 2)");
+    }
+
+    #[test]
+    fn duplicate_view_chain_keeps_walking_to_copy_3() {
+        let mut db = db();
+        let src = save_view(&mut db, &spec("Chain", flat_filter())).unwrap();
+        let a = duplicate_view(&mut db, src.id).unwrap();
+        assert_eq!(a.name, "Chain (copy)");
+        let b = duplicate_view(&mut db, src.id).unwrap();
+        assert_eq!(b.name, "Chain (copy 2)");
+        let c = duplicate_view(&mut db, src.id).unwrap();
+        assert_eq!(c.name, "Chain (copy 3)");
+        // The 3 copies + the source — 4 total rows.
+        assert_eq!(list_views(&db).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn duplicate_view_is_independent_from_source() {
+        let mut db = db();
+        let src = save_view(&mut db, &spec("Master", flat_filter())).unwrap();
+        let dup = duplicate_view(&mut db, src.id).unwrap();
+        // Edit the SOURCE — the duplicate must NOT follow along.
+        update_view_filter(&mut db, src.id, &clause_filter()).unwrap();
+        let dup_after = get_view(&db, dup.id).unwrap();
+        let dup_json = serde_json::to_string(&dup_after.filter).unwrap();
+        let flat_json = serde_json::to_string(&flat_filter()).unwrap();
+        assert_eq!(dup_json, flat_json);
+    }
+
+    #[test]
+    fn duplicate_view_unknown_id_is_rejected() {
+        let mut db = db();
+        let err = duplicate_view(&mut db, 9999).unwrap_err();
+        let _ = err;
+        assert_eq!(list_views(&db).unwrap().len(), 0);
     }
 }

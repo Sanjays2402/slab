@@ -1263,6 +1263,25 @@ export async function savedViewUpdateFilter(
   return unwrap(res);
 }
 
+/**
+ * Duplicate an existing saved view. Filter is copied byte-for-byte; the
+ * new row gets a fresh id, fresh created_at, and a fresh sort_order at
+ * the bottom of the rail. The duplicate's name is `"<source> (copy)"` (or
+ * `"<source> (copy N)"` if the simple "(copy)" is already taken — walked
+ * up to 999 to dodge the UNIQUE constraint). The duplicate is independent:
+ * editing it later does NOT mutate the source. Errors if the source id no
+ * longer exists.
+ */
+export async function savedViewDuplicate(
+  id: number,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_duplicate",
+    { id },
+  );
+  return unwrap(res);
+}
+
 // -----------------------------------------------------------------
 // v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
 // list with persisted display order and pin flags.
