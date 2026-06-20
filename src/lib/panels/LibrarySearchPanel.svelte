@@ -25,7 +25,13 @@
   //   - Empty / error / no-results states all explicitly designed.
 
   import { onMount } from "svelte";
-  import { librarySearch, type SearchHit } from "$lib/library";
+  import {
+    clearLibrarySearchHistory,
+    librarySearch,
+    recentLibrarySearches,
+    type RecentSearch,
+    type SearchHit,
+  } from "$lib/library";
   import { basename } from "$lib/types";
 
   let query = $state("");
@@ -34,6 +40,11 @@
   let error = $state<string | null>(null);
   let lastQuery = $state("");
   let inputEl: HTMLInputElement | null = $state(null);
+  /** Newest-first rolling log of the user's prior searches. Refreshed
+   *  after every successful run + on mount. */
+  let recents = $state<RecentSearch[]>([]);
+  /** Toggle for the "clear history" affordance shown when recents>0. */
+  let clearing = $state(false);
 
   // 180ms debounce keeps the FTS5 query rate sane while feeling instant.
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -65,11 +76,50 @@
       if (trimmed !== query.trim()) return;
       hits = res;
       lastQuery = trimmed;
+      // The backend writes to library_search_log inside `search()`; refresh
+      // the chip strip so the just-run query bubbles to the head (or its
+      // dedup-window update bumps an existing chip's resultCount).
+      void refreshRecents();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       hits = [];
     } finally {
       loading = false;
+    }
+  }
+
+  async function refreshRecents(): Promise<void> {
+    try {
+      recents = await recentLibrarySearches(8);
+    } catch {
+      // Non-fatal — chips are an enhancement, not the panel's reason for being.
+      recents = [];
+    }
+  }
+
+  function runRecent(r: RecentSearch): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    query = r.query;
+    void runSearch(r.query);
+    inputEl?.focus();
+  }
+
+  async function clearHistory(): Promise<void> {
+    if (clearing || recents.length === 0) return;
+    if (
+      !window.confirm(
+        `Clear ${recents.length} recent search${recents.length === 1 ? "" : "es"}?`,
+      )
+    )
+      return;
+    clearing = true;
+    try {
+      await clearLibrarySearchHistory();
+      recents = [];
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      clearing = false;
     }
   }
 
@@ -136,6 +186,7 @@
 
   onMount(() => {
     inputEl?.focus();
+    void refreshRecents();
   });
 
   // Public API: when the keyboard shortcut activates the panel, the
@@ -222,6 +273,40 @@
           relevance. Adobe Acrobat charges $239/yr for this — Slab keeps it
           free and local.
         </p>
+        {#if recents.length > 0}
+          <section class="recents" aria-label="Recent searches">
+            <header class="recents-head">
+              <span class="recents-label">Recent searches</span>
+              <button
+                type="button"
+                class="recents-clear"
+                onclick={clearHistory}
+                disabled={clearing}
+                title="Clear your search history"
+                aria-label="Clear recent searches"
+              >
+                {clearing ? "Clearing…" : "Clear history"}
+              </button>
+            </header>
+            <ul class="recents-list">
+              {#each recents as r (r.id)}
+                <li>
+                  <button
+                    type="button"
+                    class="recent-chip"
+                    onclick={() => runRecent(r)}
+                    title={r.resultCount > 0
+                      ? `${r.resultCount} match${r.resultCount === 1 ? "" : "es"} last run`
+                      : "No matches last run"}
+                  >
+                    <span class="recent-query">{r.query}</span>
+                    <span class="recent-meta">{r.resultCount}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
         <ul class="tips">
           <li><kbd>Enter</kbd> — run search immediately</li>
           <li><kbd>Esc</kbd> — clear</li>
@@ -516,6 +601,92 @@
     color: var(--danger, #c0392b);
   }
 
+  /* Recent-searches chip strip — surfaces the rolling library_search_log
+     as one-click re-runnable chips above the tips. Each chip wears its
+     last result count so a "0" tells the user that query stopped finding
+     anything (eg. they re-indexed and the doc no longer matches). */
+  .recents {
+    margin: 8px auto 18px;
+    text-align: left;
+  }
+  .recents-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .recents-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-muted, #888);
+    font-weight: 600;
+  }
+  .recents-clear {
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-size: 11px;
+    color: var(--fg-muted, #888);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .recents-clear:hover:not(:disabled) {
+    color: var(--fg, #111);
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+  }
+  .recents-clear:disabled {
+    opacity: 0.5;
+    cursor: progress;
+  }
+  .recents-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .recent-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-panel, #fff);
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+    border-radius: 999px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--fg, #222);
+    cursor: pointer;
+    transition: border-color 80ms, background 80ms, color 80ms;
+    max-width: 320px;
+  }
+  .recent-chip:hover {
+    border-color: var(--accent, #4a72ff);
+    background: var(--bg-hover, rgba(74, 114, 255, 0.06));
+    color: var(--fg, #111);
+  }
+  .recent-query {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 240px;
+  }
+  .recent-meta {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    color: var(--fg-muted, #888);
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    flex-shrink: 0;
+  }
+
   @media (prefers-color-scheme: dark) {
     .search-panel {
       background: var(--bg-app, #1a1a1a);
@@ -524,6 +695,10 @@
     .search-header,
     .hit-btn {
       background: var(--bg-panel, #222);
+    }
+    .recent-chip {
+      background: var(--bg-panel, #222);
+      color: var(--fg, #ddd);
     }
     .search-input {
       background: var(--bg-input, #2a2a2a);
