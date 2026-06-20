@@ -27,8 +27,10 @@
   import { onMount } from "svelte";
   import {
     clearLibrarySearchHistory,
+    listFolders,
     librarySearch,
     recentLibrarySearches,
+    type FolderRecord,
     type RecentSearch,
     type SearchHit,
   } from "$lib/library";
@@ -45,6 +47,16 @@
   let recents = $state<RecentSearch[]>([]);
   /** Toggle for the "clear history" affordance shown when recents>0. */
   let clearing = $state(false);
+  /** Every indexed folder; loaded once on mount. The picker is only shown
+   *  when >1 folder exists (a one-folder library has nothing to scope). */
+  let folders = $state<FolderRecord[]>([]);
+  /** null = search every indexed folder; otherwise an existing folder id. */
+  let scopeFolderId = $state<number | null>(null);
+  let scopeFolder = $derived(
+    scopeFolderId == null
+      ? null
+      : (folders.find((f) => f.id === scopeFolderId) ?? null),
+  );
 
   // 180ms debounce keeps the FTS5 query rate sane while feeling instant.
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -71,7 +83,7 @@
     loading = true;
     error = null;
     try {
-      const res = await librarySearch(trimmed, 50, null);
+      const res = await librarySearch(trimmed, 50, scopeFolderId);
       // Discard if a newer query already kicked off.
       if (trimmed !== query.trim()) return;
       hits = res;
@@ -187,7 +199,33 @@
   onMount(() => {
     inputEl?.focus();
     void refreshRecents();
+    void refreshFolders();
   });
+
+  async function refreshFolders(): Promise<void> {
+    try {
+      folders = await listFolders();
+      // If the scoped folder vanished between sessions, fall back to All.
+      if (scopeFolderId != null && !folders.some((f) => f.id === scopeFolderId)) {
+        scopeFolderId = null;
+      }
+    } catch {
+      folders = [];
+    }
+  }
+
+  function onScopeChange(e: Event): void {
+    const v = (e.target as HTMLSelectElement).value;
+    const next = v === "" ? null : Number(v);
+    if (next === scopeFolderId) return;
+    scopeFolderId = next;
+    // Re-run the active query against the new scope so the result list
+    // refreshes immediately — no need for the user to press Enter again.
+    if (query.trim()) {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      void runSearch(query);
+    }
+  }
 
   // Public API: when the keyboard shortcut activates the panel, the
   // route already sets `active = "library-search"`. We expose a method
@@ -246,6 +284,28 @@
         >
       {/if}
     </div>
+    {#if folders.length > 1}
+      <div class="scope-row">
+        <label class="scope-label" for="search-scope">Scope</label>
+        <select
+          id="search-scope"
+          class="scope-select"
+          value={scopeFolderId == null ? "" : String(scopeFolderId)}
+          onchange={onScopeChange}
+          title="Restrict search to one indexed folder"
+        >
+          <option value="">All folders ({folders.length})</option>
+          {#each folders as f (f.id)}
+            <option value={String(f.id)}>{basename(f.path) || f.path}</option>
+          {/each}
+        </select>
+        {#if scopeFolder}
+          <span class="scope-path" title={scopeFolder.path}
+            >{scopeFolder.path}</span
+          >
+        {/if}
+      </div>
+    {/if}
     {#if loading}
       <div class="status">Searching…</div>
     {:else if lastQuery && hits.length > 0}
@@ -253,6 +313,11 @@
         {hits.length} match{hits.length === 1 ? "" : "es"} across {groups.length}
         document{groups.length === 1 ? "" : "s"} for
         <strong>"{lastQuery}"</strong>
+        {#if scopeFolder}
+          in <strong title={scopeFolder.path}
+            >{basename(scopeFolder.path) || scopeFolder.path}</strong
+          >
+        {/if}
       </div>
     {/if}
   </header>
@@ -317,9 +382,17 @@
       <div class="state empty">
         <h2>No matches for "{lastQuery}"</h2>
         <p>
-          Nothing in your indexed library matches that query. Try shorter
-          words, a different phrase, or check that you've added the folder
-          you expect this PDF to live in.
+          {#if scopeFolder}
+            Nothing in <strong title={scopeFolder.path}
+              >{basename(scopeFolder.path) || scopeFolder.path}</strong
+            > matches that query. Try shorter words, switch the scope back to
+            All folders, or check that you've added the folder you expect this
+            PDF to live in.
+          {:else}
+            Nothing in your indexed library matches that query. Try shorter
+            words, a different phrase, or check that you've added the folder
+            you expect this PDF to live in.
+          {/if}
         </p>
       </div>
     {:else}
@@ -454,6 +527,50 @@
     margin-top: 10px;
     font-size: 12px;
     color: var(--fg-muted, #666);
+  }
+
+  /* Folder-scope picker — appears between the search input and the status
+     line whenever the library has >1 indexed folder. The picker uses the
+     native <select> so platform chrome (macOS focus ring, Windows arrow)
+     stays consistent, but is styled to match the rest of the panel. */
+  .scope-row {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .scope-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-muted, #888);
+    font-weight: 600;
+  }
+  .scope-select {
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+    border-radius: 6px;
+    background: var(--bg-input, #fff);
+    color: var(--fg, #111);
+    cursor: pointer;
+    max-width: 240px;
+  }
+  .scope-select:focus {
+    outline: none;
+    border-color: var(--accent, #4a72ff);
+    box-shadow: 0 0 0 3px var(--accent-fade, rgba(74, 114, 255, 0.15));
+  }
+  .scope-path {
+    font-size: 11px;
+    color: var(--fg-muted, #888);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
   }
 
   .results {
@@ -699,6 +816,10 @@
     .recent-chip {
       background: var(--bg-panel, #222);
       color: var(--fg, #ddd);
+    }
+    .scope-select {
+      background: var(--bg-input, #2a2a2a);
+      color: var(--fg, #eee);
     }
     .search-input {
       background: var(--bg-input, #2a2a2a);
