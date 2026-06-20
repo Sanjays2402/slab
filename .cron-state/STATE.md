@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-19 20:00 PT by Cake (cron) — round-4 BATCH shipped: 5 new full-text-search slices on the LibrarySearchPanel. Pushed + verified on feature branch (b9b7a76).
+Last updated: 2026-06-19 21:25 PT by Cake (cron) — round-5 BATCH shipped: 5 OCR-Queue slices that turn the headless auto-OCR pipeline into a real demo-able subsystem (failure persistence, re-queue, stats, failure inbox, dedicated panel). Pushed + verified on feature branch (07f5f0a).
 
 ## Active branch & version
 
@@ -9,8 +9,165 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `b9b7a76` — "fix(library-search): gate-driven lexer + test corrections".
+Latest commit: `07f5f0a` — "feat(library): dedicated OCR Queue Panel".
 Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
+
+### What round-5 (2026-06-19 21:25 PT) just shipped
+
+A demo-able overhaul of the auto-OCR pipeline. Before this tick the
+queue had no failure visibility, no retry surface, no dashboard, no
+dedicated UI — just a 1-line "OCR N pending" chip on the Library
+toolbar that ran everything and collapsed every state into one number.
+
+- Slice 1: persisted OCR failure reasons (schema v11->v12 ocr_error
+  column on library_documents; DocumentRecord widened end-to-end
+  through 4 SELECT sites; set_doc_ocr_error setter with trim+clear
+  semantics; run_one writes the reason on failure and clears on
+  success; 5 new tests including the equality-trap-safe v12 column
+  pin). Backend 92fc6d8.
+- Slice 2: re-queue from done/failed/pending back to scanned. New
+  requeue_doc and requeue_all_failed; rejects text_native and unknown
+  with named errors (those are scanner classifications, not queue
+  states); clears ocr_error + ocr_output_path so the row is genuinely
+  fresh before run_one picks it up; 7 new tests. Wire + Tauri +
+  TS bundled. Backend 84a992f.
+- Slice 3: dashboard stats — OcrQueueStats with per-state counts
+  (scanned/mixed/pending/done/failed/text_native/unknown) plus
+  computed pending_total + total convenience fields, in one
+  GROUP BY round-trip; forward-compat ignores unknown buckets so a
+  future state can't crash the dashboard; 4 new tests including a
+  serde round-trip pin. Wire bundled. Backend 0e85112.
+- Slice 4: list_failed — every ocr_failed doc ordered last_seen_at
+  DESC so the newest breakages bubble to the top of the failure
+  inbox; 3 new tests. Wire bundled. Backend 816a03f.
+- Slice 5: dedicated OcrQueuePanel.svelte — single panel that ties
+  slices 1-4 together: per-state stats grid + indexed-% tile, a
+  failure inbox section (each row names the captured reason in
+  mono-red with per-row Open + Retry plus a header Retry-all), a
+  pending queue preview with per-row Run-now + Open + bulk Run-all.
+  Mounted by CollectionsSidebar mirroring the SmartFoldersHubPanel
+  pattern (window event + Cmd/Ctrl+Shift+O shortcut + palette entry).
+  Refreshes on mount and every library-changed event. Pure frontend
+  slice (no schema, no commands beyond the four already wired).
+  UI 07f5f0a.
+
+Gates passed: cargo test --lib pdf::library:: 312 passed / 0 failed
+(+20 from the 292 at round-4 baseline: 5 ocr_error tests + 8 stats
++ requeue tests + 3 list_failed + the v12 column test + a couple of
+mixed-state regressions), cargo clippy --lib -D warnings clean
+(2m48s cold first run, 0.62s warm), cargo fmt clean, pnpm check 0
+errors / 105 warnings all pre-existing in other panels (none in
+OcrQueuePanel or LibraryPanel from this batch).
+
+## BUILD ENVIRONMENT — CRITICAL, read before any cargo command
+
+Internal disk is FULL (~2.9 GiB free of 228). Cargo target is redirected to an
+APFS sparse image at **/Volumes/SlabBuild** via `src-tauri/.cargo/config.toml`
+(gitignored). Verify mounted each tick: `df -h /Volumes/SlabBuild | tail -1`.
+If missing: `hdiutil attach "/Volumes/Sanjay SSD/SlabBuild.sparseimage"`.
+
+**The image has very slow fsync.** Proven tonight across many attempts:
+- `cargo test --lib`, `cargo check --lib`, `pnpm check` → WORK (slow but finish).
+- A FULL `cargo build` / `cargo tauri build` → WEDGES on the `tauri` crate's
+  final codegen (rustc goes to sleep state, no CPU, target size flat for min).
+**RULE: never run a full binary build in a tick.** It's release work, blocked by
+CI billing anyway. Gate with `cargo test --lib` + `cargo clippy --lib` + `pnpm
+check`. If cargo wedges >5 min with no rustc CPU: `pkill -f 'cargo'`, retry once.
+
+## CI STILL BLOCKED — needs Sanjay
+
+GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppImage)
+until fixed. Action: https://github.com/settings/billing → update payment / raise
+limit. Does NOT affect local dev or branch pushes.
+
+## Roadmap — round 5 (OCR Queue subsystem) — ALL DONE
+
+Round 5 batched FIVE feature slices into one cron tick onto a fresh
+subsystem (the auto-OCR queue — the only library plumbing left without
+a dedicated surface in v3.39.0).
+
+18. ~~**Persisted OCR error column (schema v12 + ocr_error end-to-end)**~~
+    — DONE (2026-06-19 21:25 PT, 92fc6d8, single commit). Schema bump
+    11->12: ALTER TABLE library_documents ADD COLUMN ocr_error TEXT.
+    DocumentRecord widened with ocr_error: Option<String> (#[serde(default)]).
+    set_doc_ocr_error setter trims input, treats trimmed-empty as None
+    (column only ever holds "real" reasons). 4 SELECT sites widened to
+    the new 13-column shape: registry::find_document_by_path,
+    document_from_row, query::query_documents, collections::list_collection_docs,
+    ocr_queue's two row-reads. run_one writes the reason on failure
+    (also clears ocr_output_path so the row never claims a stale .ocr.pdf)
+    and clears the reason on success. TS DocumentRecord.ocr_error mirror
+    + LibraryPanel.applyResult also patches local ocr_error from the
+    queue result. 5 new tests: v12 column with >= version pin (equality-
+    trap-safe convention from v11), setter round-trip incl. trim+clear,
+    setter preserves title/state/output_path/pages (column drift guard),
+    upsert preserves ocr_error, run_one persists+clears.
+19. ~~**Re-queue OCR docs from done/failed/pending**~~ — DONE
+    (2026-06-19 21:25 PT, 84a992f, single commit). requeue_doc(doc_id)
+    flips ocr_done / ocr_failed / ocr_pending back to scanned, clears
+    ocr_error and ocr_output_path, re-reads via the 13-column SELECT;
+    rejects text_native / unknown with named errors (scanner
+    classifications, not queue states — re-queueing them would lie);
+    unknown id errors. requeue_all_failed bulk-flips every failed row
+    in one transactional UPDATE. 7 new tests: failed->scanned w/ error
+    clear, output_path clear from prior success, stale-pending recovery,
+    text_native rejection (error names the state), unknown id rejection,
+    bulk requeue flips only failed rows (in-use untouched), bulk
+    requeue is 0 on a clean library. Two Tauri commands + two TS
+    helpers bundled with the backend per the wire-layer convention.
+    Both emit library-changed on success (the bulk one only when n > 0).
+20. ~~**OCR queue dashboard stats (per-state counts)**~~ — DONE
+    (2026-06-19 21:25 PT, 0e85112, single commit). New OcrQueueStats
+    struct with named fields per known ocr_state value, plus computed
+    pending_total (scanned + mixed) and total. Single SELECT
+    ocr_state, COUNT(*) GROUP BY ocr_state round-trip; forward-compat
+    silently ignores unknown buckets so a future state can't crash the
+    dashboard (the COUNT still rolls into `total`). 4 new tests: empty
+    library all-zeros, full bucket coverage with 7 mixed-state seeds,
+    forward-compat unknown bucket doesn't increment known counts but
+    bumps total, serde snake_case round-trip pin (text_native +
+    pending_total). One Tauri command (pure read, no library-changed
+    emit) + TS ocrQueueStats() + interface bundled.
+21. ~~**List failed docs (failure inbox feed)**~~ — DONE (2026-06-19
+    21:25 PT, 816a03f, single commit). list_failed returns every
+    ocr_failed row ORDER BY last_seen_at DESC, id DESC (newest
+    breakages bubble to the top; scanner refresh of last_seen_at means
+    the right anchor; id tie-break keeps stable order across same-
+    second seeds). Full DocumentRecord rows with ocr_error populated.
+    3 new tests: only-failed-rows filter, DESC order with cross-second
+    sleep, empty result on clean library. One Tauri command (pure
+    read) + TS ocrQueueListFailed() bundled.
+22. ~~**Dedicated OCR Queue Panel UI**~~ — DONE (2026-06-19 21:25 PT,
+    07f5f0a, single commit). 800 LOC Svelte 5 panel that ties slices
+    1-4 into one demo-able surface. Sections: dashboard stats grid
+    (per-state counts + indexed-% tile, accent-colored tiles + tabular
+    nums + monochrome status dots, no emoji per house style); failure
+    inbox (only renders when failed > 0; each row names the captured
+    ocr_error in monospace red, per-row Open + Retry, section-head
+    "Retry all" wraps Slice 2 bulk requeue); pending queue preview
+    (first 20 scanned/mixed rows w/ per-row Open + Run-now, header
+    "Run all (N)" wraps Slice 0-vintage ocrQueueRunAll, truncation
+    hint when > 20). Modal-style chrome reuses SmartFoldersHubPanel
+    pattern (color-mix on var(--panel-bg), 16-radius shell, 14px blur
+    backdrop, pop-in animation). Mounted by CollectionsSidebar via
+    window event + Cmd/Ctrl+Shift+O shortcut + "OCR Queue…" command-
+    palette entry. Refreshes on mount + every library-changed event so
+    a background OCR run updates the panel without a manual reload.
+    Pure frontend slice (no schema, no backend, no new Tauri commands
+    beyond the four already shipped). Gates: pnpm check 0 errors /
+    105 warnings all pre-existing in other panels (none new from this
+    panel or its sidebar mount).
+
+    With Round 5 done, the auto-OCR queue is now end-to-end
+    demo-able: persisted failures + re-queue + stats + inbox + a
+    dedicated panel a user can actually open. Next ticks should pick
+    a different subsystem — good candidates remaining: smart-folders
+    hub UI polish, collections, doc-detail metadata editor, Beacon
+    cache inspector, plugin marketplace.
+
+## Tick log
+
+
 
 ### What round-4 (2026-06-19 20:00 PT) just shipped
 
