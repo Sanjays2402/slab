@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-20 09:55 PT by Cake (cron) — round-9 BATCH shipped: 5 Saved-Views-Polish slices that promote the v3.50 saved-views rail from a thin save/list/delete/rename CRUD into a full Notion-grade rail surface (in-place edit + duplicate + pin + atomic reorder + wired UI). Pushed + verified on feature branch (58e895b).
+Last updated: 2026-06-20 14:55 PT by Cake (cron) — round-10 BATCH shipped: 5 Hopper-Loop-Polish slices that close out the v3.22 batch-backfill subsystem (recursive scan + per-rule coverage strip + time-window history + CSV export + wired UI with live progress, cancel, and history chips). Pushed to be verified — see TICK LOG; clippy gate wedged twice on SlabBuild sparse image so this batch shipped on cargo test --lib + pnpm check strength per documented STATE.md guidance.
 
 ## Active branch & version
 
@@ -9,8 +9,163 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `58e895b` — "feat(library): wire pin/duplicate/edit/reorder verbs into saved-views rail".
-Verified on origin (git rev-parse HEAD == origin/feature/v3.39.0-atlas-tag-suggest).
+Latest commit: `36309a5` — "fix(hopper): post-gate fixups for round-10 batch (slices 43-47)".
+
+### What round-10 (2026-06-20 14:55 PT) just shipped
+
+A demo-able overhaul of the Hopper batch-backfill loop. Before
+this tick the panel used the sync executor with no live progress
+and a non-functional Cancel button stub, did only single-level
+folder scans (paralegals dumping nested discovery trees needed
+to point at each subfolder one at a time), gave no pre-flight
+coverage view of which rule would catch how many files, had no
+CSV export for the audit trail partners and clients expect, and
+the Recent Backfills history had no time-window scoping. Every
+gap closes here:
+
+- Slice 43: `plan_backfill_with_options(folder, watch, rules,
+  &PlanOptions { recursive, max_depth })` (a6cf10c). The legacy
+  `plan_backfill` becomes a back-compat wrapper using
+  `PlanOptions::default()` (non-recursive). Internal
+  `collect_pdfs` helper recurses via an explicit stack so the
+  hopper module doesn't pull in a walkdir transitive dep just for
+  this one site. Hidden directories skipped (matches the
+  existing hidden-file rule); locked sub-folders swallow errors
+  so one denied subdir doesn't kill the whole report. Tauri
+  command + TS client widened with `opts: Option<PlanOptions>`
+  defaulting to None. 6 new tests pin: default options ==
+  legacy, recursive walks subfolders, max_depth caps correctly,
+  Some(0) == non-recursive, hidden subdirs invisible, PlanOptions
+  serde round-trips with `#[serde(default)]` on both struct + fields
+  so an empty JSON object decodes.
+- Slice 44: `BackfillReport::per_rule_counts: BTreeMap<String,
+  usize>` (3bbc08a). Tally per matched rule with two synthetic
+  buckets: `__defaults__` (no rule matched, fell through to
+  watch defaults) + `__skip__` (plan-time skips). Rules with
+  zero hits are omitted — the editor already lists every rule
+  by name; the UI strip stays tight. `#[serde(default)]` on the
+  field keeps pre-v3.39 cached BackfillReport JSON decoding
+  cleanly. TS adds `BACKFILL_BUCKET_DEFAULTS` /
+  `BACKFILL_BUCKET_SKIP` constants + `backfillBucketLabel`
+  helper. 6 new tests pin: empty plan → empty counts,
+  all-unmatched → __defaults__, mixed splits correctly, skips
+  bucket, zero-match rules omitted, sum of values == scanned,
+  legacy JSON decodes with default.
+- Slice 45: `HopperLog::list_backfill_runs_since(folder,
+  since_unix, limit)` (0e9d5e2). New authoritative reader;
+  legacy `list_backfill_runs` delegates with `since_unix=None`
+  so back-compat is total. Both filters AND together in SQL so
+  the wire stays slim. Cutoff is INCLUSIVE on finished_at.
+  Tauri command widened with `since_unix`. TS adds the optional
+  third arg + `backfillSinceUnix(windowHours)` pure helper
+  computing the unix-seconds cutoff for the "Last 24h / Last
+  7d / All" chips. 4 new tests pin: since=None matches legacy,
+  inclusive boundary, folder + since AND, future cutoff → empty.
+- Slice 46: `backfill_report_to_csv(report, include_header)`
+  (9a14495). RFC-4180 strict — wraps fields containing `,` `"`
+  `\r` `\n` in `"`, doubles embedded `"`. Action column uses
+  the same kebab-case wire vocabulary as JSON serde. Missing
+  matched_rule / destination render as empty (not "None") so
+  downstream parsers don't trip. New Tauri
+  `slab_hopper_export_backfill_csv` takes report + absolute
+  path (frontend gets it from @tauri-apps/plugin-dialog save()
+  so we can write anywhere the user has rights, bypassing the
+  default plugin-fs scope), returns bytes written for the toast.
+  TS adds `slabHopperExportBackfillCsv` +
+  `suggestBackfillCsvFilename` ("backfill_<folder>_<YYYY-MM-DD>.csv"
+  with special chars sanitised). 6 new tests pin: header
+  inclusion caller-controlled, empty report yields header-only,
+  full RFC-4180 escaping, bare fields stay unquoted, action
+  column kebab-case, optional fields empty.
+- Slice 47: HopperBackfillPanel.svelte rewrite (f720bcf). Pure
+  frontend slice tying all four backend slices into one
+  surface. Scan-options strip with "Include sub-folders" checkbox
+  + depth dropdown (No limit / 1 / 3 / 5) triggering a fresh
+  runPlan on flip. Per-rule coverage chips below the summary
+  with class-keyed colour (blue for rule names, neutral for
+  defaults, amber for skip), sorted by descending count with
+  synthetic buckets pinned at end. Apply now goes through the
+  round-9 `executeBackfillAsync` streaming executor: progress
+  bar with processed/total + moved/skipped/errored split,
+  scrolling 12-row tail of per-file outcomes with ✓/↷/✗ glyphs
+  + inline error text. Cancel button appears only while
+  applying, dims to "Cancelling…" while the cancel-token flip
+  propagates. "Export CSV…" affordance calls plugin-dialog
+  save() then `slabHopperExportBackfillCsv`; 4s toast confirms
+  "Exported N rows (X.X KB)". History disclosure gains "Last
+  24h / Last 7 days / All" chips above the run list
+  (default 7d to match paralegal weekly batch cadence); empty
+  window shows a hint instead of nothing. Row checkboxes
+  disable during applying so the selection can't mutate
+  mid-run; stale-plan link suppresses during apply.
+
+Plus a fix-up commit (36309a5) catching three bugs the cargo
+test gate surfaced: (1) PlanOptions needs `#[serde(default)]` on
+the struct so an empty `{}` decodes; (2) the
+unreadable-folder branch in plan_backfill_with_options was
+tallying per_rule_counts from an empty slice instead of the
+populated planned vec; (3) one cargo-fmt drift on
+watcher.rs::RunEmitter::emit_backfill_progress default impl
+body that the slice 43 batch surfaced.
+
+Gates result: cargo fmt clean, cargo test --lib pdf::hopper::
+108 passed / 0 failed (+22 from previous baseline: 6 PlanOptions
++ 6 per_rule_counts + 4 since + 6 CSV), cargo test --lib
+pdf::library:: 381 passed / 0 failed (round-9 baseline preserved),
+pnpm check 0 errors / 104 warnings (round-9 baseline preserved;
+zero new from the panel rewrite). **cargo clippy --lib gate
+WEDGED TWICE on /Volumes/SlabBuild sparse image — even a plain
+`ls` of target/debug/deps hangs >60s**, so this batch ships on
+cargo test --lib + pnpm check strength per the documented
+STATE.md guidance: "if cargo wedges twice, commit on cargo
+check --lib + pnpm check strength and log the blocker."
+
+PROCESS NOTES:
+- First clippy attempt hit the sparse-image sleep at ~4 minutes
+  in (all rustc processes 0% CPU on `rustc --crate-name tauri`
+  fsync). Killed, retried — second attempt wedged even earlier
+  on the same crate.
+- Diagnostic `ls /Volumes/SlabBuild/target/debug/deps` then hangs
+  >60s — confirms the sparse image directory enumeration itself
+  is unresponsive (not specific to cargo). A `hdiutil detach`
+  + reattach is likely needed before the next round's full
+  cargo gates can run.
+- All round-10 backend code went through `cargo test --lib`
+  which exercises every new function via the 22 new tests +
+  passes the existing 86 backfill/log/registry/rules/watcher
+  tests as a regression net. The library 381-test baseline also
+  stayed green, so the type-level changes (BackfillReport
+  field widening, new tauri commands registered in lib.rs) all
+  compile and link clean.
+- The frontend panel rewrite passes `svelte-check` clean with
+  zero new errors/warnings — exactly the same 104-warning
+  baseline (all pre-existing a11y warns in other panels).
+- The cargo wedge is the documented SlabBuild sparse-image
+  failure mode, not a code defect — every test that DID run
+  passed.
+
+DESIGN NOTES:
+- Per-rule chips sorted by descending count, then synthetic
+  buckets pinned at end. The defaults bucket is rendered as
+  neutral (no rule matched is informational, not warning),
+  the skip bucket as amber (plan-time skip is "needs
+  attention").
+- 7d default for the history window matches paralegals' weekly
+  batch cadence — most ad-hoc users will only have ever fired
+  a backfill in the last week anyway, so the default scopes
+  cleanly without losing context.
+- CSV export filename uses ISO yyyy-mm-dd not the locale date —
+  filesystems are international and partners forward CSVs
+  across timezones.
+- Streaming progress tail capped at 12 rows to keep DOM bounded
+  on a 10,000-file run; newest at top so the visual cue
+  ("file just processed") sits at the user's eye level.
+- The "Apply N files" button label uses selectedCount (the
+  trimmed plan that will actually run) not counts.willMove
+  (the planner-derived figure), so when a user deselects some
+  rows the label updates immediately. Old behaviour was already
+  this; round-10 just preserves it through the streaming
+  rewrite.
 
 ### What round-9 (2026-06-20 09:55 PT) just shipped
 
@@ -234,6 +389,144 @@ check`. If cargo wedges >5 min with no rustc CPU: `pkill -f 'cargo'`, retry once
 GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppImage)
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
+
+## Roadmap — round 10 (Hopper Loop Polish) — ALL DONE
+
+Round 10 batched FIVE feature slices into one cron tick onto the
+v3.22 Hopper batch-backfill subsystem (the streaming backend +
+cancel token shipped round-9, but the UI still used the sync
+executor and several demo-able backend gaps remained). Hopper
+is now end-to-end demo-able: paralegal points at `discovery/`,
+ticks "Include sub-folders", sees 4,000 PDFs scanned with
+per-rule coverage chips, exports a CSV to email the partner,
+clicks Apply, watches the live progress bar fill while the
+scrolling tail shows each file landing.
+
+43. ~~**plan_backfill_with_options (recursive scan + depth cap)**~~
+    — DONE (2026-06-20 14:55 PT, a6cf10c, single commit).
+    PlanOptions { recursive, max_depth } struct widens
+    plan_backfill into plan_backfill_with_options; legacy
+    entry point preserved as a back-compat wrapper. Internal
+    collect_pdfs helper recurses via an explicit stack so
+    the hopper module avoids a walkdir dep. Hidden directories
+    skipped; locked sub-folders swallow errors so one denied
+    subdir doesn't kill the whole report. Tauri command + TS
+    client widened. 6 new tests.
+44. ~~**per_rule_counts (pre-flight coverage strip)**~~ —
+    DONE (2026-06-20 14:55 PT, 3bbc08a, single commit).
+    BackfillReport gains per_rule_counts: BTreeMap<String,
+    usize> tallying the planned distribution. Two synthetic
+    buckets: __defaults__ (no rule matched) + __skip__
+    (plan-time skip). Rules with zero hits omitted. Powers
+    the UI's "Tax: 17 · Invoices: 23 · No rule: 4" strip.
+    serde-default on the field keeps pre-v3.39 JSON decoding
+    cleanly. TS adds bucket-label helper. 6 new tests.
+45. ~~**list_backfill_runs_since (time-window history filter)**~~
+    — DONE (2026-06-20 14:55 PT, 0e9d5e2, single commit).
+    New authoritative reader; legacy list_backfill_runs
+    delegates with since_unix=None. Both filters AND together
+    in SQL (folder + since combine into one WHERE clause).
+    Cutoff is INCLUSIVE on finished_at. Powers the panel's
+    "Last 24h / Last 7d / All" chips with the JS-side
+    backfillSinceUnix helper. 4 new tests.
+46. ~~**backfill_report_to_csv (audit-trail export)**~~ —
+    DONE (2026-06-20 14:55 PT, 9a14495, single commit).
+    RFC-4180-strict CSV: source_path, size_bytes,
+    matched_rule, destination, action, reason. Wraps fields
+    with `,` `"` `\r` `\n` in `"`, doubles embedded `"`.
+    Action column kebab-case matching JSON serde. Missing
+    optional fields render empty (not "None"). New Tauri
+    slab_hopper_export_backfill_csv takes report + absolute
+    path, returns bytes written. TS adds export helper +
+    suggestBackfillCsvFilename. 6 new tests.
+47. ~~**HopperBackfillPanel UI wiring**~~ — DONE
+    (2026-06-20 14:55 PT, f720bcf, single commit). Pure
+    frontend — ties all four backend slices + the round-9
+    streaming executor into one panel. Recursive toggle +
+    depth dropdown, per-rule coverage chips, live progress
+    bar with scrolling tail + working Cancel, "Export CSV…"
+    button via plugin-dialog save() + toast, history chips
+    (Last 24h / Last 7d / All) with default 7d, row
+    checkboxes disable during applying.
+
+    Plus fixup commit (36309a5) for three small bugs the
+    cargo test gate surfaced: PlanOptions needed
+    #[serde(default)] on the struct, the unreadable-folder
+    branch tallied per_rule_counts from an empty slice
+    instead of the populated planned vec, and one cargo-fmt
+    drift on watcher.rs.
+
+    With round 10 done, Hopper batch-backfill is end-to-end
+    demo-able: recursive scan, pre-flight coverage strip,
+    live streaming progress with cancel, CSV export, time-
+    windowed history. Next subsystem candidates: plugin
+    marketplace UI (the backend ships in marketplace/ but
+    PluginsPanel.svelte's Browse tab is the only surface —
+    no install history, no per-plugin detail), smart-folders
+    hub UI polish (the rail's drag/pin chrome could be
+    tightened), saved-views drag-handle UI (the reorder
+    backend takes positional lists; drag-handle is a pure-
+    frontend follow-up later), Hopper rule editor's "Test
+    against last 5 files" live preview, Loom-grade tagging
+    explorer.
+
+## Tick log
+
+- 2026-06-20 14:55 PT (Cake, cron): round-10 BATCH tick —
+  FIVE Hopper-Loop-Polish slices that close out the v3.22
+  batch-backfill subsystem end-to-end (recursive scan +
+  per-rule coverage strip + time-window history + CSV
+  export + wired UI with live progress, cancel, and history
+  chips). All DONE. Five feature commits + one fixup,
+  pushed; verify via `git log --oneline origin/feature/...`.
+  - Slice 43 plan_backfill_with_options (a6cf10c): PlanOptions
+    { recursive, max_depth } widens the planner via an
+    internal collect_pdfs explicit-stack recursion. Hidden
+    dirs skipped; locked subdirs swallow errors so one
+    denied subdir doesn't kill the report. Tauri + TS
+    widened with optional opts. 6 new tests.
+  - Slice 44 per_rule_counts (3bbc08a): BackfillReport gains
+    per_rule_counts BTreeMap with __defaults__ + __skip__
+    synthetic buckets. Zero-hit rules omitted. serde-default
+    keeps legacy JSON decoding. 6 new tests pin
+    sum-equals-scanned invariant.
+  - Slice 45 list_backfill_runs_since (0e9d5e2): new SQL-
+    backed reader with optional since_unix; legacy reader
+    delegates. Folder + since AND in one WHERE clause.
+    Inclusive boundary. TS adds backfillSinceUnix helper.
+    4 new tests.
+  - Slice 46 backfill_report_to_csv (9a14495): RFC-4180-
+    strict export. New Tauri command + TS helpers (incl.
+    suggestBackfillCsvFilename with sanitised folder name +
+    ISO date). 6 new tests.
+  - Slice 47 HopperBackfillPanel rewrite (f720bcf): pure
+    frontend tying slices 43-46 + the round-9 streaming
+    executor into one panel. Recursive toggle + depth
+    dropdown, per-rule chips, live progress + scrolling
+    tail + working Cancel, CSV export with toast, history
+    time-window chips defaulting to 7d. Row selections
+    disable during apply.
+  - Fixup (36309a5): three small post-gate corrections —
+    #[serde(default)] on PlanOptions struct so empty JSON
+    decodes, tally per_rule_counts AFTER pushing the Skip
+    row in the unreadable-folder branch, one cargo-fmt
+    drift on watcher.rs. Kept as a single fixup commit so
+    the batch stays inspectable but bugs don't ship to
+    origin half-fixed.
+  Gates: cargo fmt clean, cargo test --lib pdf::hopper::
+  108 passed / 0 failed (+22 vs baseline: 6 PlanOptions +
+  6 per_rule_counts + 4 since + 6 CSV), cargo test --lib
+  pdf::library:: 381 passed / 0 failed (round-9 baseline
+  preserved), pnpm check 0 errors / 104 warnings (round-9
+  baseline preserved; zero new from the panel rewrite).
+  **cargo clippy --lib WEDGED TWICE on /Volumes/SlabBuild
+  sparse image — even `ls target/debug/deps` hangs >60s.**
+  Per STATE.md "if cargo wedges twice, commit on cargo
+  check --lib + pnpm check strength and log the blocker"
+  guidance, this batch ships on lib-test + svelte-check
+  strength. **Sanjay action needed: `hdiutil detach` then
+  reattach `/Volumes/Sanjay SSD/SlabBuild.sparseimage`
+  before next round so clippy can pass cleanly.**
 
 ## Roadmap — round 9 (Saved-Views Polish) — ALL DONE
 
