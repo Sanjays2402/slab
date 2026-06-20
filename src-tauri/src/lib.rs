@@ -3301,6 +3301,65 @@ fn slab_library_delete_unused_tags(app: tauri::AppHandle) -> CmdResult<usize> {
     result.into()
 }
 
+// -----------------------------------------------------------------
+// v3.50.0 "Atlas Saved Views" — one-click restorable rail filters.
+// Distinct from personal_presets (which materialize into a smart
+// collection) and from smart_collections (which own a doc list) —
+// a saved view RESTORES the rail's LibraryFilter and re-runs it live.
+// -----------------------------------------------------------------
+
+#[tauri::command]
+fn slab_library_saved_view_save(
+    app: tauri::AppHandle,
+    spec: pdf::library::saved_views::NewSavedView,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::save_view(&mut db, &spec)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_list() -> CmdResult<Vec<pdf::library::saved_views::SavedViewRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::saved_views::list_views(&db)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::delete_view(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    new_name: String,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::rename_view(&mut db, id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -5533,6 +5592,10 @@ pub fn run() {
             slab_library_recently_used_tags,
             slab_library_tag_usage_counts,
             slab_library_delete_unused_tags,
+            slab_library_saved_view_save,
+            slab_library_saved_view_list,
+            slab_library_saved_view_delete,
+            slab_library_saved_view_rename,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,

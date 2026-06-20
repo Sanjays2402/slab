@@ -25,6 +25,7 @@ pub mod personal_presets;
 pub mod presets;
 pub mod query;
 pub mod registry;
+pub mod saved_views;
 pub mod scanner;
 pub mod search;
 pub mod search_log;

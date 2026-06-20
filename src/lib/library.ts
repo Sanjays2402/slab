@@ -876,6 +876,74 @@ export async function personalPresetsImport(
 }
 
 // -----------------------------------------------------------------
+// v3.50.0 "Atlas Saved Views" — one-click restorable rail filters.
+//
+// A saved view is just a NAMED LibraryFilter. Distinct from
+// personalPreset (which materializes into a smart collection) and
+// from smartCollection (which owns a doc list) — a view simply
+// RE-RUNS the saved filter live whenever the user clicks it.
+// The whole filter (folder + tag set + match mode + untagged toggle
+// + sort) round-trips through serde_json on the backend, so a
+// restored view reproduces exactly the same doc set the user pinned.
+// -----------------------------------------------------------------
+
+/** Row of `library_saved_views` as decoded for the frontend. */
+export interface SavedViewRecord {
+  id: number;
+  name: string;
+  filter: LibraryFilter;
+  created_at: number;
+  sort_order: number;
+}
+
+/** Spec for `savedViewSave`. Mirrors `NewSavedView` on Rust side. */
+export interface NewSavedView {
+  name: string;
+  filter: LibraryFilter;
+}
+
+export async function savedViewSave(
+  spec: NewSavedView,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_save",
+    { spec },
+  );
+  return unwrap(res);
+}
+
+export async function savedViewList(): Promise<SavedViewRecord[]> {
+  const res = await invoke<CmdResult<SavedViewRecord[]>>(
+    "slab_library_saved_view_list",
+  );
+  return unwrap(res);
+}
+
+export async function savedViewDelete(id: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_saved_view_delete", {
+    id,
+  });
+  unwrap(res);
+}
+
+/**
+ * Rename a saved view. Trims the name; empty rejected; an unchanged
+ * name (post-trim) is a no-op returning the existing row; a name that
+ * collides with another view's name is rejected by the UNIQUE
+ * constraint — both rows are left intact.
+ */
+export async function savedViewRename(
+  id: number,
+  newName: string,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_rename",
+    { id, newName },
+  );
+  return unwrap(res);
+}
+
+// -----------------------------------------------------------------
 // v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
 // list with persisted display order and pin flags.
 // -----------------------------------------------------------------

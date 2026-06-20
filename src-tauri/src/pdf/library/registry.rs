@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 /// Initial / unknown OCR classification — written for legacy rows that
 /// predate Slice 2 (auto-OCR queue) and for documents the scanner has
@@ -321,7 +321,31 @@ impl LibraryDb {
                 "#,
             )?;
             conn.execute_batch("PRAGMA user_version = 9;")?;
-            debug_assert_eq!(SCHEMA_VERSION, 9);
+        }
+        if version < 10 {
+            // v3.50.0 "Atlas Saved Views" — one-click restorable rail
+            // filters. A saved view is a name + the full LibraryFilter
+            // serialized as JSON (folder + tag selection + match mode +
+            // untagged toggle + sort, whatever the user had pinned).
+            // Distinct from `library_personal_presets` (which materialize
+            // into smart_collections) and from `library_smart_collections`
+            // (which own a doc list) — a view just RE-RUNS the live filter.
+            // Stored as opaque filter_json so the entire LibraryFilter
+            // tree survives schema changes to the query language, exactly
+            // like personal_presets does.
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS library_saved_views (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    filter_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                "#,
+            )?;
+            conn.execute_batch("PRAGMA user_version = 10;")?;
+            debug_assert_eq!(SCHEMA_VERSION, 10);
         }
         Ok(())
     }
@@ -1037,7 +1061,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(has_col, 1, "library_doc_tags.applied_at column missing");
-        assert_eq!(db.schema_version().unwrap(), 9);
+        assert!(db.schema_version().unwrap() >= 9);
+    }
+
+    #[test]
+    fn schema_v10_has_saved_views_table() {
+        // v3.50.0 Atlas Saved Views — new table for one-click restorable
+        // rail filters. Independent of the smart_collections / personal_presets
+        // surfaces (a view re-runs a filter; it doesn't own a doc list and
+        // doesn't materialize into one). Assert with `>=` not `==` so the
+        // next migration doesn't trip an unrelated equality check — the
+        // trap that bit the v3.39 -> bulk-tag tick.
+        let db = db();
+        let table_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type='table' AND name='library_saved_views'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 1, "library_saved_views table missing");
+        // The four columns the saved_views module expects.
+        for col in ["id", "name", "filter_json", "created_at", "sort_order"] {
+            let has_col: i64 = db
+                .conn()
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('library_saved_views') \
+                     WHERE name = ?1",
+                    rusqlite::params![col],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(has_col, 1, "library_saved_views.{col} column missing");
+        }
+        assert!(db.schema_version().unwrap() >= 10);
     }
 
     #[test]
