@@ -226,10 +226,7 @@ mod tests {
                     pattern: "tax_*.pdf".into(),
                 },
             ),
-            rule(
-                "Catch all",
-                RulePredicate::Always,
-            ),
+            rule("Catch all", RulePredicate::Always),
         ];
         let report = compute_coverage(&rules, &[]);
         assert_eq!(report.total_samples, 0);
@@ -295,10 +292,7 @@ mod tests {
                     pattern: "tax_*.pdf".into(),
                 },
             ),
-            rule(
-                "Anything",
-                RulePredicate::Always,
-            ),
+            rule("Anything", RulePredicate::Always),
         ];
         let report = compute_coverage(
             &rules,
@@ -397,10 +391,7 @@ mod tests {
                     pattern: "*.pdf".into(),
                 },
             ),
-            rule(
-                "Anything",
-                RulePredicate::Always,
-            ),
+            rule("Anything", RulePredicate::Always),
         ];
         let report = compute_coverage(
             &rules,

@@ -268,6 +268,136 @@ pub fn slab_hopper_test_rules(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 80 — rule coverage analyzer command
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::compute_coverage`] primitive
+// with a one-shot Tauri command that:
+//
+// 1. Sources the sample list FROM THE WATCH'S RECENT RUN LOG by
+//    default (the most useful question is "how would this chain have
+//    handled my actual recent traffic?"), or from a caller-supplied
+//    list when the editor wants to test against synthesised samples.
+// 2. Evaluates the in-flight, possibly-unsaved rule chain (so users
+//    see coverage shift live as they edit, no save round-trip).
+// 3. Returns a [`super::coverage::RuleCoverageReport`] the UI can
+//    render as a per-rule bar strip + a fall-through count + a
+//    "dead at position" diagnostic chip.
+//
+// Default sample source: the latest [`super::log::RunRecord`]s filtered
+// to `watch_id`. We pull at most `sample_limit` (default 100, capped at
+// 1000 to keep IPC payload bounded even on an enormous log). Each row
+// contributes its `input_path`'s basename + the watch's recorded
+// `duration_ms` proxy is NOT used; size + page count are unknown in the
+// log so we default them to zero / None. Text-aware predicates still
+// won't fire — that's a known limitation matching the live preview's
+// behaviour and is documented at the call site.
+
+/// `slab_hopper_rule_coverage` — evaluate a rule chain against the
+/// watch's recent run log (or a caller-supplied sample list), returning
+/// per-rule first-match + would-match counts and the fall-through
+/// count.
+///
+/// `candidate_rules`: optional in-flight rule list; falls back to the
+/// watch's persisted rules so the command works on saved chains too.
+///
+/// `samples`: optional explicit sample list; when `None`, the command
+/// pulls the most-recent `sample_limit` runs (default 100, capped at
+/// 1000) from the run log filtered to `watch_id`. Each run contributes
+/// its `input_path` basename with `size_bytes=0` and `page_count=None`
+/// because the run log doesn't persist those — text-aware and size-
+/// aware predicates won't fire on log-sourced samples, matching the
+/// live preview's existing limitation.
+///
+/// Returns a [`super::coverage::RuleCoverageReport`] alongside the
+/// effective sample count so the UI can render "<rule> X / N matched"
+/// without recomputing.
+#[tauri::command]
+pub fn slab_hopper_rule_coverage(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    candidate_rules: Option<Vec<Rule>>,
+    samples: Option<Vec<super::coverage::RuleSample>>,
+    sample_limit: Option<i64>,
+) -> CmdResult<super::coverage::RuleCoverageReport> {
+    // Resolve the rule chain — caller's in-flight rules win; otherwise
+    // we read whatever's persisted for the watch.
+    let rules = match candidate_rules {
+        Some(rs) => rs,
+        None => {
+            let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.get_rules(watch_id)
+                .map_err(|e| format!("registry get_rules: {e}"))?
+        }
+    };
+
+    // Resolve the sample list — caller wins; else fall back to recent
+    // log entries for this watch. Clamp the sample limit defensively.
+    let resolved_samples: Vec<super::coverage::RuleSample> = match samples {
+        Some(s) => s,
+        None => {
+            let cap = clamp_sample_limit(sample_limit);
+            let over_read = sample_over_read(cap);
+            let runs = {
+                let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
+                log.list_recent(over_read)
+                    .map_err(|e| format!("hopper log list_recent: {e}"))?
+            };
+            samples_from_runs(&runs, watch_id, cap as usize)
+        }
+    };
+
+    Ok(super::coverage::compute_coverage(&rules, &resolved_samples))
+}
+
+/// Clamp the caller's `sample_limit` to `[1, 1000]`, defaulting to 100.
+/// The 1000 ceiling keeps the IPC payload bounded even on a huge log;
+/// the 1 floor stops a caller from accidentally asking for zero (which
+/// would return an all-zero report and look like a bug).
+fn clamp_sample_limit(input: Option<i64>) -> i64 {
+    input.unwrap_or(100).clamp(1, 1000)
+}
+
+/// Compute the over-read size for the global recent-tail scan that
+/// powers per-watch sampling. The hopper log doesn't expose a per-watch
+/// `list_recent`, so we over-fetch and filter. The 4x multiplier keeps
+/// the post-filter sample count meaningful when the target watch is a
+/// small fraction of total traffic, while the 10_000 ceiling guards
+/// against a runaway query on an enormous log.
+fn sample_over_read(cap: i64) -> i64 {
+    cap.saturating_mul(4).min(10_000)
+}
+
+/// Derive a [`super::coverage::RuleSample`] list from a tail of run
+/// records: filter to `watch_id`, take the first `cap`, reduce each
+/// `input_path` to its basename, and zero out the size/page/text axes
+/// (the run log doesn't persist them).
+fn samples_from_runs(
+    runs: &[super::log::RunRecord],
+    watch_id: i64,
+    cap: usize,
+) -> Vec<super::coverage::RuleSample> {
+    runs.iter()
+        .filter(|r| r.watch_id == watch_id)
+        .take(cap)
+        .map(|r| super::coverage::RuleSample {
+            // Reduce the absolute path to its basename so glob / regex
+            // predicates evaluate against the bare filename, matching
+            // how `evaluate_rules` is invoked from the live watcher
+            // pipeline.
+            filename: std::path::Path::new(&r.input_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_owned)
+                .unwrap_or_else(|| r.input_path.clone()),
+            size_bytes: 0,
+            page_count: None,
+            text_sample: None,
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------
 // v3.22.0 — Hopper Loop: batch backfill commands
 // ---------------------------------------------------------------------
 //
@@ -690,5 +820,132 @@ mod tests {
         // 2000 X's + the surrounding prompt scaffold.
         assert!(msgs[1].content.len() < 2200);
         assert!(msgs[1].content.contains(&"X".repeat(2000)));
+    }
+
+    // ── v3.40 Slice 80 — coverage command helper tests ────────────────
+
+    fn run_record(watch_id: i64, input_path: &str) -> super::super::log::RunRecord {
+        super::super::log::RunRecord {
+            id: 0,
+            watch_id,
+            input_path: input_path.into(),
+            output_path: None,
+            status: super::super::log::RunStatus::Success,
+            error: None,
+            duration_ms: 0,
+            ai_title: None,
+            started_at: "0".into(),
+        }
+    }
+
+    #[test]
+    fn clamp_sample_limit_defaults_to_one_hundred() {
+        assert_eq!(clamp_sample_limit(None), 100);
+    }
+
+    #[test]
+    fn clamp_sample_limit_clamps_below_one_to_one() {
+        assert_eq!(clamp_sample_limit(Some(0)), 1);
+        assert_eq!(clamp_sample_limit(Some(-7)), 1);
+    }
+
+    #[test]
+    fn clamp_sample_limit_clamps_above_ceiling_to_one_thousand() {
+        assert_eq!(clamp_sample_limit(Some(10_000)), 1000);
+        assert_eq!(clamp_sample_limit(Some(i64::MAX)), 1000);
+    }
+
+    #[test]
+    fn clamp_sample_limit_passes_in_range_through() {
+        assert_eq!(clamp_sample_limit(Some(1)), 1);
+        assert_eq!(clamp_sample_limit(Some(50)), 50);
+        assert_eq!(clamp_sample_limit(Some(1000)), 1000);
+    }
+
+    #[test]
+    fn sample_over_read_is_four_times_cap() {
+        assert_eq!(sample_over_read(50), 200);
+        assert_eq!(sample_over_read(100), 400);
+    }
+
+    #[test]
+    fn sample_over_read_clamped_to_ceiling() {
+        // 1000 * 4 = 4000, well under the 10_000 cap, so the result
+        // tracks 4x.
+        assert_eq!(sample_over_read(1000), 4000);
+        // Even an absurd cap can't push the over-read past 10_000.
+        assert_eq!(sample_over_read(100_000), 10_000);
+        assert_eq!(sample_over_read(i64::MAX), 10_000);
+    }
+
+    #[test]
+    fn samples_from_runs_filters_to_watch_id() {
+        let runs = vec![
+            run_record(1, "/tmp/a.pdf"),
+            run_record(2, "/tmp/b.pdf"),
+            run_record(1, "/tmp/c.pdf"),
+            run_record(3, "/tmp/d.pdf"),
+        ];
+        let samples = samples_from_runs(&runs, 1, 100);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].filename, "a.pdf");
+        assert_eq!(samples[1].filename, "c.pdf");
+    }
+
+    #[test]
+    fn samples_from_runs_reduces_to_basename() {
+        let runs = vec![
+            run_record(1, "/Users/sanjay/Documents/tax_2026.pdf"),
+            run_record(1, "/var/folders/x/invoice.pdf"),
+            run_record(1, "bare-filename.pdf"),
+        ];
+        let samples = samples_from_runs(&runs, 1, 100);
+        assert_eq!(samples[0].filename, "tax_2026.pdf");
+        assert_eq!(samples[1].filename, "invoice.pdf");
+        assert_eq!(samples[2].filename, "bare-filename.pdf");
+    }
+
+    #[test]
+    fn samples_from_runs_respects_cap() {
+        let runs: Vec<_> = (0..50)
+            .map(|i| run_record(1, &format!("/tmp/f{i}.pdf")))
+            .collect();
+        let samples = samples_from_runs(&runs, 1, 10);
+        assert_eq!(samples.len(), 10);
+        assert_eq!(samples[0].filename, "f0.pdf");
+        assert_eq!(samples[9].filename, "f9.pdf");
+    }
+
+    #[test]
+    fn samples_from_runs_empty_input_returns_empty() {
+        let samples = samples_from_runs(&[], 1, 100);
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn samples_from_runs_no_matches_returns_empty() {
+        let runs = vec![run_record(2, "/tmp/a.pdf"), run_record(3, "/tmp/b.pdf")];
+        let samples = samples_from_runs(&runs, 99, 100);
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn samples_from_runs_zeroes_size_page_text() {
+        let runs = vec![run_record(1, "/tmp/x.pdf")];
+        let samples = samples_from_runs(&runs, 1, 100);
+        assert_eq!(samples[0].size_bytes, 0);
+        assert!(samples[0].page_count.is_none());
+        assert!(samples[0].text_sample.is_none());
+    }
+
+    #[test]
+    fn samples_from_runs_handles_invalid_utf8_basename() {
+        // If file_name returns something that doesn't decode as UTF-8
+        // (essentially impossible on the runtime input_path String, but
+        // belt-and-suspenders), fall back to the full path.
+        let runs = vec![run_record(1, "/")];
+        let samples = samples_from_runs(&runs, 1, 100);
+        // Path::new("/").file_name() returns None -> falls back to "/".
+        assert_eq!(samples[0].filename, "/");
     }
 }

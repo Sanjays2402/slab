@@ -7222,6 +7222,7 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_get_rules,
             crate::pdf::hopper::cmds::slab_hopper_set_rules,
             crate::pdf::hopper::cmds::slab_hopper_test_rules,
+            crate::pdf::hopper::cmds::slab_hopper_rule_coverage,
             crate::pdf::hopper::cmds::slab_hopper_plan_backfill,
             crate::pdf::hopper::cmds::slab_hopper_execute_backfill,
             crate::pdf::hopper::cmds::slab_hopper_execute_backfill_async,
