@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-20 20:47 PT by Cake (cron) — round-12 BATCH shipped: 5 Plugin-Marketplace-Install-History slices that fill the long-standing gap on the marketplace install pipeline (no audit history → end-to-end logged + visible). Append-only sqlite install log primitive + install/uninstall/failure wiring + reader Tauri commands + retention/prune surface + Activity section on PluginDetailDrawer + RecentInstallsDrawer on the PluginsPanel toolbar. Pushed + verified (local==origin 1d79d7b) — see TICK LOG; clippy gate wedged twice AGAIN on SlabBuild sparse image so this batch shipped on cargo test --lib (2153 pass, +21 from round-11's 2132) + pnpm check (0 errors / 104 warnings = round-11 baseline preserved exactly) strength per the documented STATE.md guidance.
+Last updated: 2026-06-20 22:59 PT by Cake (cron) — round-13 BATCH shipped: 5 Install-Log-Export slices that turn the marketplace audit log into a deliverable artifact (paralegals can now email partners a CSV of "every plugin install/uninstall/failure in the last 90 days"). Time-window read primitive + RFC-4180 CSV serialiser + JSON envelope with schema_version/generated_at/window-bounds metadata + Tauri export commands + UI Export menu in RecentInstallsDrawer respecting the active window. Pushed + verified (local==origin ecc2261) — see TICK LOG; clippy gate wedged twice AGAIN on SlabBuild sparse image (4th tick in a row) so this batch shipped on cargo test --lib (2171 pass, +18 from round-12's 2153) + pnpm check (0 errors / 104 warnings = round-12 baseline preserved EXACTLY) strength per documented STATE.md guidance.
 
 ## Active branch & version
 
@@ -9,7 +9,232 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `1d79d7b` — "chore(fmt): rustfmt drift on install log wiring".
+Latest commit: `ecc2261` — "feat(plugins): install-log export menu in Recent installs drawer".
+
+### What round-13 (2026-06-20 22:59 PT) just shipped
+
+A demo-able overhaul of the plugin marketplace install log's
+exportability. Before this tick the round-12 install-log surface
+shipped logging + readers + drawer UI for browsing the audit
+trail, but the log itself was trapped in `~/.slab/marketplace-
+history.sqlite` — paralegals and auditors who need to email the
+partner a record of "every plugin install / uninstall / failure
+in the last 90 days" had no path. Round-12's closing notes
+called this out explicitly as the next candidate ("marketplace
+install log export — CSV + JSON; mirrors round 10's hopper CSV
+export pattern"). Tonight that gap closes end-to-end:
+
+- Slice 58: time-window install-log reader (b0a602a).
+  `InstallLog::list_events_between(since_unix, until_unix, limit)`
+  with optional inclusive boundaries on both ends (None == no
+  bound on that side; both None collapses to a plain
+  newest-first scan equivalent to list_recent). Same limit
+  semantics — negative limit clamps to zero rather than
+  panicking. Drives the export surface so the file matches
+  the user's window choice exactly. Dynamically assembles the
+  WHERE clause so the unbounded scan plan is identical to the
+  existing list_recent path. 6 new tests pin: no-bounds-matches-
+  list-recent, since-only, until-only, inclusive-both-
+  boundaries, empty-window-returns-empty, limit-clamps-results
+  (incl. negative-clamps-to-zero).
+- Slice 59: RFC-4180 CSV serialiser (26e01a7). Pure function
+  `install_log_to_csv(&[InstallEvent], include_header)` +
+  module constant `INSTALL_LOG_CSV_HEADER`. Columns:
+  `id,plugin_id,version,action,occurred_at_unix,occurred_at_iso,
+  source,bytes_written,files_extracted,replaced_existing,
+  prior_version,error_msg`. Two timestamp columns by design —
+  unix-seconds for machine joining, ISO-8601 UTC for direct
+  Excel review; both come from the same `occurred_at` so they
+  can't drift. Escaping policy matches the hopper backfill
+  CSV: fields containing , " \r \n are wrapped in "; embedded
+  " is doubled. NULL-able columns render as empty (never
+  "None" or "null" which would trip downstream parsers).
+  Boolean replaced_existing renders true/false/empty. Action
+  column uses the same lowercase tokens (install/update/
+  uninstall/failed) the JSON serde uses so CSV + JSON exports
+  align column-for-column. ISO timestamp uses
+  chrono::DateTime::from_timestamp (already a direct workspace
+  dep) so a pathological out-of-range value degrades to empty
+  rather than panicking. 7 new tests pin: header-inclusion-
+  caller-controlled, empty-with-header-is-header-only, paired-
+  unix-and-ISO timestamps, NULL-renders-as-empty-not-string-
+  None, full RFC-4180 escaping (commas + doubled quotes +
+  embedded newlines), action-column-matches-serde-vocabulary
+  (all 4 kinds), boolean-true-false-or-empty.
+- Slice 60: JSON export envelope (b13de9f). New
+  `InstallLogExportEnvelope` wire shape + `InstallEventExport`
+  row + `INSTALL_LOG_EXPORT_SCHEMA_VERSION = 1`. Envelope
+  carries schema_version + generated_at_iso + event_count +
+  since_unix/iso + until_unix/iso + events array. Each event
+  carries its own occurred_at_iso companion so the JSON file
+  is self-describing — a script reading the export doesn't
+  need to know about unix-seconds or install a date library
+  to render timestamps. `InstallEventExport` uses
+  `#[serde(flatten)]` over the InstallEvent so the wire stays
+  readable (no nested "event:" container) while still letting
+  us add the ISO companion. `install_log_to_json_with_now`
+  test-only variant takes an explicit now so unit tests don't
+  race the wall clock. Envelope shape designed to mirror a
+  generic "audit export" pattern so a future Hopper run log
+  export / plugin-storage backup / similar audit surface can
+  adopt the same envelope without inventing a third format.
+  5 new tests pin: schema + generated_at_iso, window-bounds
+  round-trip-iso (since-only + both-bounds), event flatten
+  with iso companion (no "event:" nesting on wire), empty-
+  events still renders + serde round-trips, full-envelope
+  serde round-trip with multiple action kinds preserved.
+- Slice 61: Tauri export commands + TS client (8186b2a).
+  Two new Tauri commands wired into the builder:
+  `slab_marketplace_install_log_export_csv(path, since_unix?,
+  until_unix?, limit?)` → u64 bytes_written;
+  `slab_marketplace_install_log_export_json(path, ...)` →
+  u64 bytes_written. Both open the log per-call (events fire
+  on user click not in a hot loop), feed list_events_between
+  → install_log_to_csv/json. Default limit = 100_000 (cap
+  protects against runaway log eating disk on export).
+  Idempotent — overwrites the target path. Returns bytes-
+  written so the UI toast can say "Exported N events (X.X KB)"
+  without re-reading the file. TS client adds
+  `InstallLogExportFilter` shape (since_unix / until_unix /
+  limit, all optional), `exportInstallLogCsv` /
+  `exportInstallLogJson` wrappers, and
+  `suggestInstallLogExportFilename(filter, ext, now?)` helper
+  building filenames per the convention
+  `marketplace-history_<window>_<YYYY-MM-DD>.<ext>` where
+  window reads "all" / "from-YYYYMMDD" / "to-YYYYMMDD" /
+  "YYYYMMDD-YYYYMMDD" depending on the bounds. Pure helper
+  (no I/O, no Tauri) so it works in browser-mode + tests can
+  pin the now param.
+- Slice 62: Export menu in RecentInstallsDrawer (ecc2261,
+  203 lines). Pure frontend tying slices 58-61 into a
+  demo-able surface. Footer "Export…" popover anchored
+  absolutely above the trigger with two entries: "Export as
+  CSV…" (spreadsheet-friendly) and "Export as JSON…" (with
+  envelope metadata). Each entry's subtitle reads either
+  "Whole log · <format-hint>" or "Last <window> · <format-
+  hint>" so the user sees at a glance what the export will
+  contain BEFORE clicking. A new `windowSinceUnix` $derived
+  maps the windowChoice toggle (7d/30d/all) to the matching
+  unix-seconds cutoff and feeds it into the export filter —
+  what gets exported matches what's filtered. Native save-as
+  dialog with the kind-appropriate default extension; the
+  suggested filename uses suggestInstallLogExportFilename.
+  Escape handler dismisses the export menu first if open,
+  then falls through to confirm-prune / close ladder.
+  Window-click handler dismisses on outside click (Notion/
+  Linear pattern). `exporting` boolean gates the Export/
+  Clear/Close buttons during in-flight writes so users can't
+  double-click or close mid-export. Single 4-second auto-
+  clear toast surfaces "Exported N events (X.X KB)" on
+  success; failures surface through the existing err banner.
+
+Gates result: cargo fmt clean, cargo test --lib
+marketplace::install_log:: 39 passed / 0 failed (+18 from
+round-12's 21 baseline: 6 slice 58 + 7 slice 59 + 5 slice 60;
+slice 61 is wire layer with no new tests, slice 62 is pure
+frontend with no Rust tests), cargo test --lib 2171 passed /
+0 failed (round-12 baseline + 18), pnpm check 0 errors /
+104 warnings (round-12 baseline preserved EXACTLY — zero new
+warnings from the Export menu, toast, or CSS additions on
+RecentInstallsDrawer). **cargo clippy --lib gate WEDGED
+TWICE AGAIN on /Volumes/SlabBuild sparse image — 4th tick
+in a row hitting the same wedge** — first attempt cargo
+check spawned but stayed at 0% CPU for 2+ min with no
+rustc subprocess; second attempt identical. Per STATE.md
+guidance, this batch ships on lib-test + svelte-check
+strength.
+
+PROCESS NOTES:
+- SlabBuild sparse-image disk responsiveness was fine at
+  tick start: `ls /Volumes/SlabBuild/target/debug/deps` ran
+  in 0.3s with 6,424 entries cached. The wedge is reliably
+  reproducible only when cargo's clippy/check codegen path
+  needs to spawn rustc to enumerate the tauri crate's deps.
+  cargo test --lib itself ran cleanly through the 2171-test
+  suite in 40s with no wedge.
+- This is the 4th tick in a row with this exact failure
+  mode. **Sanjay action recommended (urgently):
+  `hdiutil detach` then reattach `/Volumes/Sanjay
+  SSD/SlabBuild.sparseimage` BEFORE the next round so
+  clippy can pass cleanly.** The wedge is now consistent
+  enough that we should consider it a documented "needs
+  reattach between rounds" property of this build setup
+  until a more permanent fix lands.
+- The clippy gate wedge does NOT affect correctness — every
+  new function in slices 58-60 went through cargo test
+  --lib which exercises all 18 new tests + the existing
+  21-test baseline + the broader 2153-test corpus as a
+  regression net. The Tauri command surface in slice 61
+  compiles + links via the cargo test build. Slice 62's
+  pure-frontend surface passes pnpm check clean.
+- Slice 58's dynamic WHERE-clause SQL was the only piece
+  needing care: built it from a Vec<&'static str> for the
+  clauses + a Vec<rusqlite::types::Value> for the params,
+  then joined with " AND " between clauses. Used
+  `rusqlite::params_from_iter` to bind the heterogeneous
+  param list back. This was cleaner than building 4
+  branches (none/since/until/both) by hand.
+- Slice 59's CSV constant column header ended up cleaner
+  as a `pub const &str` than a builder function — the
+  header never changes between calls, every test would
+  build the same string, so the constant is the truth.
+- Slice 60's `#[serde(flatten)]` was the key insight that
+  let the JSON event row look like a plain InstallEvent +
+  one extra occurred_at_iso field, instead of either (a) a
+  nested `{event: {...}, occurred_at_iso: ...}` shape, or
+  (b) duplicating every InstallEvent field on the export
+  row. The flatten attribute means downstream consumers
+  reading the JSON see exactly what they'd see reading the
+  raw InstallEvent over the Tauri wire, with the timestamp
+  companion added at the same level.
+- Slice 62's `windowSinceUnix` $derived was a small but
+  important addition — without it, the export menu would
+  have shipped the whole loaded 100-event buffer regardless
+  of the windowChoice toggle the user had set, which would
+  silently produce exports that don't match what's
+  visible. Now the toggle controls both display AND export
+  in one place.
+
+DESIGN NOTES:
+- Two timestamp columns in the CSV (unix + ISO) chosen over
+  one because the two audiences differ: developers writing
+  shell pipelines join on unix-seconds (millisecond
+  precision doesn't matter for an install audit; jq + awk
+  on the int column is cleaner than parsing ISO strings),
+  while paralegals reading the file in Excel need
+  human-readable dates without writing a formula. The cost
+  of both columns is tiny (10 chars per row); the cost of
+  picking one and being wrong is friction every time
+  someone reads the export.
+- JSON envelope schema_version starts at 1 (not 0) because
+  v0 has the connotation of "draft / experimental"; v1 is
+  the v1.0.0 contract — additive changes (new optional
+  fields) stay at v1, breaking changes bump to v2. Same
+  versioning convention as the marketplace IndexEntry
+  schema bump from v1→v2.
+- Export menu lives in the footer, not the header, because
+  the header is reserved for "what am I looking at" and
+  the footer is reserved for "what can I do with it". The
+  Clear/Close pair was already in the footer; adding
+  Export… there keeps the action vocabulary in one place.
+- Export menu is a popover with subtitles (not a flat
+  dropdown of "CSV / JSON") because the choice has two
+  axes the user cares about: format AND window scope. The
+  subtitle makes the window scope visible without forcing
+  the user to remember what they had selected on the
+  window strip. This is the same affordance HopperBackfill-
+  Panel's Export CSV button uses (single fixed format
+  there because the only format that matters for backfill
+  is CSV).
+- 4-second toast for success matches the HopperBackfill
+  panel's CSV export toast — same export grammar, same
+  toast lifespan.
+- exporting boolean gates Close as well as Export/Clear
+  because the user could otherwise close the drawer
+  mid-write and lose their progress feedback. The 100k
+  default limit means even a worst-case write completes in
+  well under a second on any modern disk, but the gate is
+  cheap defensive UX.
 
 ### What round-12 (2026-06-20 20:47 PT) just shipped
 
@@ -809,6 +1034,87 @@ GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppIma
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
 
+## Roadmap — round 13 (Install Log Export) — ALL DONE
+
+Round 13 batched FIVE feature slices into one cron tick onto the
+marketplace install-log subsystem (round-12 shipped logging +
+readers + drawer UI, but the audit log was trapped in
+`~/.slab/marketplace-history.sqlite` with no deliverable surface).
+The install log is now end-to-end exportable: paralegals tick
+"Last 7d" in the drawer, click Export… → CSV/JSON, hand a partner
+the audit file. Mirrors round-10's hopper CSV export pattern
+(suggestBackfillCsvFilename / slab_hopper_export_backfill_csv) so
+both export surfaces share one mental model.
+
+58. ~~**list_events_between (time-window reader)**~~ — DONE
+    (2026-06-20 22:59 PT, b0a602a, single commit).
+    `InstallLog::list_events_between(since_unix, until_unix, limit)`
+    with optional inclusive boundaries on both ends. Drives the
+    export surface so the exported file matches the user's
+    window choice exactly. None on both sides == list_recent
+    (plain newest-first scan). Same limit semantics — negative
+    limit clamps to zero. Dynamic WHERE clause built from a
+    Vec<&'static str> + Vec<rusqlite::types::Value> joined with
+    " AND ". 6 new tests.
+59. ~~**install_log_to_csv (RFC-4180 serialiser)**~~ — DONE
+    (2026-06-20 22:59 PT, 26e01a7, single commit). Pure function
+    `install_log_to_csv(events, include_header)` + module constant
+    `INSTALL_LOG_CSV_HEADER`. 12 columns including paired
+    occurred_at_unix + occurred_at_iso. RFC-4180 escaping matches
+    the hopper backfill CSV. NULL-able columns render as empty
+    (never "None"/"null"). Boolean replaced_existing renders
+    true/false/empty. Action column uses serde-canonical lowercase
+    tokens so CSV + JSON align column-for-column. 7 new tests.
+60. ~~**install_log_to_json (export envelope)**~~ — DONE
+    (2026-06-20 22:59 PT, b13de9f, single commit). New
+    InstallLogExportEnvelope (schema_version + generated_at_iso +
+    event_count + since_unix/iso + until_unix/iso + events array)
+    + InstallEventExport row (flattens InstallEvent with an
+    occurred_at_iso companion via #[serde(flatten)] so the wire
+    stays nest-free). INSTALL_LOG_EXPORT_SCHEMA_VERSION = 1.
+    install_log_to_json_with_now variant pinned for tests. 5 new
+    tests pin schema + window bounds + flatten + serde round-trip.
+61. ~~**Tauri export commands + TS client**~~ — DONE
+    (2026-06-20 22:59 PT, 8186b2a, single commit). Two Tauri
+    commands wired into the builder:
+    slab_marketplace_install_log_export_csv(path, since_unix?,
+    until_unix?, limit?) -> u64 bytes_written, plus the JSON
+    twin. Default limit = 100_000. Idempotent. TS adds
+    InstallLogExportFilter + exportInstallLogCsv +
+    exportInstallLogJson + suggestInstallLogExportFilename
+    helper (marketplace-history_<window>_<YYYY-MM-DD>.<ext>
+    convention with window slot reading all / from-YYYYMMDD /
+    to-YYYYMMDD / YYYYMMDD-YYYYMMDD depending on bounds).
+62. ~~**Export menu in RecentInstallsDrawer**~~ — DONE
+    (2026-06-20 22:59 PT, ecc2261, 203 lines). Pure frontend
+    tying slices 58-61 into one surface. Footer Export…
+    popover anchored absolutely above the trigger with two
+    entries: "Export as CSV…" (spreadsheet-friendly) +
+    "Export as JSON…" (with envelope metadata). Each entry's
+    subtitle reads "Whole log · <hint>" or "Last <window> ·
+    <hint>" so window scope is visible BEFORE clicking. A new
+    windowSinceUnix $derived maps the 7d/30d/all toggle to
+    the matching unix-seconds cutoff so the export filter
+    matches what the user sees. Native save-as dialog,
+    suggested filename via suggestInstallLogExportFilename.
+    Escape dismisses menu first, then prune-confirm, then
+    drawer. Window-click dismisses on outside click (Notion/
+    Linear pattern). exporting boolean gates Export/Clear/
+    Close during the in-flight write. 4-second auto-clear
+    toast on success.
+
+    With round 13 done, marketplace install log is end-to-end
+    exportable: per-plugin Activity timeline (round 12),
+    corpus-wide Recent installs drawer with window strip
+    (round 12), retention pruning (round 12), and now CSV +
+    JSON exports filtered by the same window strip. Next
+    subsystem candidates: Hopper rule editor's "Test against
+    last 5 files" live preview, saved-views drag-handle UI,
+    smart-folders hub UI polish, Loom-grade tagging explorer,
+    marketplace install log retention background task (the
+    pruneInstallLog command exists; the auto-prune-on-startup
+    surface isn't wired yet).
+
 ## Roadmap — round 12 (Plugin Marketplace Install History) — ALL DONE
 
 Round 12 batched FIVE feature slices into one cron tick onto the
@@ -1071,6 +1377,77 @@ scrolling tail shows each file landing.
     explorer.
 
 ## Tick log
+
+- 2026-06-20 22:59 PT (Cake, cron): round-13 BATCH tick — FIVE
+  Install-Log-Export slices closing the audit-trail-deliverable
+  gap (round-12 shipped logging + browsing, round-13 ships the
+  exportable artifact). Paralegals can now hand a partner a
+  CSV/JSON of "every plugin install/uninstall/failure in the
+  last 90 days" filtered by the same 7d/30d/all window the
+  drawer already exposes. All DONE. Five feature commits,
+  pushed + verified (local==origin ecc2261).
+  - Slice 58 list_events_between (b0a602a): time-window
+    reader with optional inclusive boundaries on both ends.
+    Drives the export surface so the file matches the user's
+    window choice. Dynamic WHERE clause built from
+    Vec<&'static str> + Vec<rusqlite::types::Value> joined
+    with " AND ". 6 new tests.
+  - Slice 59 install_log_to_csv (26e01a7): RFC-4180 pure
+    function + INSTALL_LOG_CSV_HEADER constant. 12 columns
+    incl. paired occurred_at_unix + occurred_at_iso. Same
+    escaping policy as the hopper backfill CSV. NULL renders
+    as empty (never "None"/"null"). Boolean renders true/
+    false/empty. Action column uses canonical lowercase
+    serde tokens. 7 new tests.
+  - Slice 60 install_log_to_json (b13de9f): export envelope
+    with schema_version + generated_at_iso + event_count +
+    since_unix/iso + until_unix/iso + events array.
+    InstallEventExport flattens InstallEvent +
+    occurred_at_iso via #[serde(flatten)] so wire stays
+    nest-free. install_log_to_json_with_now test-only
+    variant pins now to avoid clock races. 5 new tests.
+  - Slice 61 Tauri export commands + TS client (8186b2a):
+    slab_marketplace_install_log_export_csv +
+    slab_marketplace_install_log_export_json. Default limit
+    100_000. Bytes-written return for the UI toast.
+    Idempotent. TS adds InstallLogExportFilter +
+    exportInstallLogCsv + exportInstallLogJson +
+    suggestInstallLogExportFilename with the
+    marketplace-history_<window>_<YYYY-MM-DD>.<ext>
+    convention.
+  - Slice 62 Export menu in RecentInstallsDrawer (ecc2261,
+    203 lines): footer Export… popover anchored above the
+    trigger with CSV + JSON entries, subtitles that surface
+    the window scope before clicking. windowSinceUnix
+    $derived ties the 7d/30d/all toggle into the export
+    filter so what the user sees IS what gets exported.
+    Native save dialog, suggested filename via the slice-61
+    helper. Escape dismisses menu first, then prune-confirm,
+    then drawer. Outside-click dismiss matches Notion/Linear
+    pattern. exporting boolean gates Export/Clear/Close
+    during in-flight write. 4-second toast on success.
+  Gates: cargo fmt clean, cargo test --lib
+  marketplace::install_log:: 39 passed / 0 failed (+18 from
+  round-12's 21 baseline: 6 slice 58 + 7 slice 59 + 5
+  slice 60), cargo test --lib 2171 passed / 0 failed
+  (round-12 baseline + 18), pnpm check 0 errors / 104
+  warnings (round-12 baseline preserved EXACTLY). **cargo
+  clippy --lib WEDGED TWICE AGAIN on /Volumes/SlabBuild
+  sparse image — 4th tick in a row hitting the same wedge**
+  — first attempt cargo check spawned but stayed at 0%
+  CPU for 2+ min with no rustc subprocess; second attempt
+  identical. SlabBuild disk-listing was fine at tick start
+  (ls returned 6,424 entries in 0.3s) so it's specifically
+  the clippy/check codegen path. cargo test --lib itself
+  ran the 2171-test suite cleanly in 40s — no wedge there.
+  Per STATE.md guidance this batch ships on lib-test +
+  svelte-check strength. **Sanjay action recommended
+  (urgently — 4 ticks in a row): `hdiutil detach` then
+  reattach `/Volumes/Sanjay SSD/SlabBuild.sparseimage`
+  BEFORE the next round so clippy can pass cleanly. The
+  wedge is now consistent enough that we should consider
+  it a documented "needs reattach between rounds" property
+  of this build setup until a more permanent fix lands.**
 
 - 2026-06-20 20:47 PT (Cake, cron): round-12 BATCH tick —
   FIVE Plugin-Marketplace-Install-History slices that close out
