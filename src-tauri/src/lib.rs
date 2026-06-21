@@ -3798,6 +3798,44 @@ fn slab_personal_preset_apply(
     result.into()
 }
 
+/// Rename a personal preset in place. Trims the new name; empty
+/// rejected; collision with another preset rejected by the UNIQUE
+/// constraint. Returns the renamed record. v3.40 Slice 76.
+#[tauri::command]
+fn slab_personal_preset_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    new_name: String,
+) -> CmdResult<pdf::library::personal_presets::PersonalPresetRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::rename_personal_preset(&mut db, id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Duplicate a personal preset. The copy gets a fresh sort_order at
+/// the bottom of the list and a derived unique name ("<src> (copy)"
+/// or "<src> (copy N)"). The duplicate is INDEPENDENT — editing it
+/// later doesn't affect the source. v3.40 Slice 76.
+#[tauri::command]
+fn slab_personal_preset_duplicate(
+    app: tauri::AppHandle,
+    id: i64,
+) -> CmdResult<pdf::library::personal_presets::PersonalPresetRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::duplicate_personal_preset(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Export the given personal preset ids (empty = all) to a JSON string.
 /// The frontend handles the file save dialog itself.
 #[tauri::command]
@@ -7065,6 +7103,8 @@ pub fn run() {
             slab_personal_preset_list,
             slab_personal_preset_delete,
             slab_personal_preset_apply,
+            slab_personal_preset_rename,
+            slab_personal_preset_duplicate,
             slab_personal_presets_export,
             slab_personal_presets_import,
             slab_smart_folders_list,

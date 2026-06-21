@@ -1149,6 +1149,40 @@ export async function personalPresetApply(
 }
 
 /**
+ * Rename a personal preset in place. Trims the new name; empty is
+ * rejected with a thrown error; collision with another preset name
+ * is rejected by the backend's UNIQUE constraint. Returns the renamed
+ * record so the caller can splice it back into its local list without
+ * a refetch. v3.40 Slice 76.
+ */
+export async function personalPresetRename(
+  id: number,
+  newName: string,
+): Promise<PersonalPresetRecord> {
+  const res = await invoke<CmdResult<PersonalPresetRecord>>(
+    "slab_personal_preset_rename",
+    { id, newName },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Duplicate a personal preset. The copy gets a fresh sort_order at
+ * the bottom of the list and a derived unique name ("<src> (copy)"
+ * or "<src> (copy N)"). The copy is INDEPENDENT — editing it doesn't
+ * affect the source. v3.40 Slice 76.
+ */
+export async function personalPresetDuplicate(
+  id: number,
+): Promise<PersonalPresetRecord> {
+  const res = await invoke<CmdResult<PersonalPresetRecord>>(
+    "slab_personal_preset_duplicate",
+    { id },
+  );
+  return unwrap(res);
+}
+
+/**
  * Export the given personal preset ids (empty = all) to a `.slabpresets`
  * JSON string. Caller is responsible for the file save dialog + write.
  */
