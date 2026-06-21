@@ -5121,27 +5121,57 @@ async fn slab_marketplace_index() -> MarketplaceFetchResult {
 ///
 /// The frontend is expected to have already filtered out untrusted
 /// entries; we re-verify here as defence-in-depth.
+///
+/// Side effect (v3.39 Slice 54): every outcome (signature failure,
+/// download / extract failure, success / update success) is recorded
+/// as one row in [`marketplace::InstallLog`] at
+/// `~/.slab/marketplace-history.sqlite`. Log open failures are
+/// swallowed (warned to stderr) — losing audit history must never
+/// block an install the user just clicked.
 #[tauri::command]
 async fn slab_marketplace_install(
     entry: marketplace::IndexEntry,
     reg: tauri::State<'_, plugins::PluginRegistry>,
 ) -> Result<marketplace::InstallReport, String> {
+    // Capture prior version BEFORE the install (the install pipeline
+    // doesn't read manifests; the registry does). This is the value
+    // we'll log as `prior_version` on an update row.
+    let prior_version = reg
+        .get(&entry.id)
+        .and_then(|p| p.manifest.map(|m| m.version));
+
     // 1) Signature check — never trust unsigned input.
-    marketplace::verify_with_maintainer_key(&entry)
-        .map_err(|e| format!("signature check failed: {e}"))?;
+    if let Err(e) = marketplace::verify_with_maintainer_key(&entry) {
+        let msg = format!("signature check failed: {e}");
+        record_install_failure(&entry.id, &entry.version, &msg);
+        return Err(msg);
+    }
 
     // 2) Resolve plugins root (HOME-rooted).
-    let plugins_root = plugins::default_plugins_root()
-        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    let plugins_root = match plugins::default_plugins_root() {
+        Some(p) => p,
+        None => {
+            let msg = "HOME env var not set; cannot locate ~/.slab/plugins".to_string();
+            record_install_failure(&entry.id, &entry.version, &msg);
+            return Err(msg);
+        }
+    };
     if let Err(e) = std::fs::create_dir_all(&plugins_root) {
-        return Err(format!("could not create plugins dir: {e}"));
+        let msg = format!("could not create plugins dir: {e}");
+        record_install_failure(&entry.id, &entry.version, &msg);
+        return Err(msg);
     }
 
     // 3) Download + extract via the install pipeline.
     let client = marketplace::default_client();
-    let report = marketplace::install_from_entry(&client, &entry, &plugins_root)
-        .await
-        .map_err(|e| e.to_string())?;
+    let report = match marketplace::install_from_entry(&client, &entry, &plugins_root).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            record_install_failure(&entry.id, &entry.version, &msg);
+            return Err(msg);
+        }
+    };
 
     // 4) Refresh the registry so the new plugin appears in the UI.
     let enabled = plugins::default_state_path()
@@ -5150,6 +5180,31 @@ async fn slab_marketplace_install(
         .unwrap_or_default();
     reg.discover(&plugins_root, &enabled);
 
+    // 5) Append a success row. The install pipeline's
+    // `replaced_existing` flag is the source of truth for whether we
+    // overwrote a prior copy on disk; the registry-derived
+    // `prior_version` is what the UI displays. Both can drift if the
+    // user mutated `~/.slab/plugins/` out of band — we trust the
+    // pipeline flag for the action discriminant.
+    let logged_prior = if report.replaced_existing {
+        prior_version.as_deref()
+    } else {
+        None
+    };
+    if let Err(e) = open_install_log_and(|log| {
+        log.record_install(
+            &report.id,
+            &report.version,
+            "marketplace",
+            report.bytes_written,
+            report.files_extracted,
+            logged_prior,
+        )
+        .map(|_| ())
+    }) {
+        eprintln!("[slab] install log write failed: {e}");
+    }
+
     Ok(report)
 }
 
@@ -5157,11 +5212,22 @@ async fn slab_marketplace_install(
 /// the install module's uninstall is pure-filesystem. After removal,
 /// re-discover so the registry drops the entry. Returns `false` if the
 /// plugin wasn't installed in the first place.
+///
+/// Side effect (v3.39 Slice 54): on successful removal we append one
+/// `uninstall` row to [`marketplace::InstallLog`] carrying the version
+/// that was just deleted (resolved from the registry BEFORE
+/// removal). Log open failures are swallowed.
 #[tauri::command]
 fn slab_marketplace_uninstall(
     id: String,
     reg: tauri::State<'_, plugins::PluginRegistry>,
 ) -> Result<bool, String> {
+    // Capture prior version BEFORE removing — once the dir is gone
+    // the registry can't tell us what version we just deleted.
+    let prior_version = reg
+        .get(&id)
+        .and_then(|p| p.manifest.map(|m| m.version));
+
     let plugins_root = plugins::default_plugins_root()
         .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
     let removed = marketplace::uninstall_plugin(&plugins_root, &id).map_err(|e| e.to_string())?;
@@ -5171,8 +5237,42 @@ fn slab_marketplace_uninstall(
             .map(plugins::read_enabled_state)
             .unwrap_or_default();
         reg.discover(&plugins_root, &enabled);
+
+        // Log the uninstall. If the plugin had no readable manifest
+        // (registry returned None for version), use the literal
+        // "unknown" so the row is still queryable by id.
+        let ver = prior_version.as_deref().unwrap_or("unknown");
+        if let Err(e) = open_install_log_and(|log| log.record_uninstall(&id, ver).map(|_| ())) {
+            eprintln!("[slab] install log write failed: {e}");
+        }
     }
     Ok(removed)
+}
+
+/// Open the default install log, run `f` against it, return the
+/// result. Centralises the open + path-resolve boilerplate so the
+/// install / uninstall commands stay tight. Errors propagate as
+/// [`marketplace::InstallLogError`] so the caller can decide whether
+/// to surface or swallow.
+fn open_install_log_and<F>(f: F) -> Result<(), marketplace::InstallLogError>
+where
+    F: FnOnce(&mut marketplace::InstallLog) -> Result<(), marketplace::InstallLogError>,
+{
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path)?;
+    f(&mut log)
+}
+
+/// Record an install/update failure to the install log. Best-effort:
+/// any failure to open or write the log is logged to stderr and
+/// swallowed — we never want a logging failure to mask the install
+/// failure being reported back to the user.
+fn record_install_failure(plugin_id: &str, version: &str, error_msg: &str) {
+    if let Err(e) =
+        open_install_log_and(|log| log.record_failure(plugin_id, version, error_msg).map(|_| ()))
+    {
+        eprintln!("[slab] install log failure write failed: {e}");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
