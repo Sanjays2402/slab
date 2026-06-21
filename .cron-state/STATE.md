@@ -1,6 +1,327 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 05:35 PT by Cake (cron) — round-15 BATCH shipped: 5 Bulk-Plugin-Updates slices that wire the marketplace into a proper package-manager-grade update experience. Today the Installed tab grew an "Updates available" banner that auto-derives from a deterministic Rust planner (semver-aware, parity-tested against the TS Browse-tab implementation), a single "Update all" button that runs sequential updates through the same install pipeline the single-install command uses, and a live per-step progress overlay that subscribes to a new marketplace://update-progress event stream and shows pending/updating/done/failed icons per target as the batch lands. All gates green: cargo test --lib 2208 passed (round-14 baseline 2182 + 26 new from slices 68 & 69), cargo clippy --lib -D warnings clean in ~14s, pnpm check 0 errors / 104 warnings (round-14 baseline preserved EXACTLY). Pushed + verified (local==origin 9fe1d50).
+Last updated: 2026-06-21 08:36 PT by Cake (cron) — round-16 BATCH shipped: 5 slices closing two genuine gaps. Install-log filter arc (slices 73-75 + 77): server-side filtered reader with action set + plugin-id substring (LIKE-escape-correct), Tauri command surface emitting InstallEventFilteredResult, TS client + describeActionSet + pluginQueryActiveLabel helpers, and the demo-able filter bar in the Recent installs drawer with four-action chip group + autocompleting plugin search. Personal-preset CRUD parity arc (slice 76): rename + duplicate verbs in personal_presets.rs mirroring saved_views' verbs, Tauri commands wired, TS wrappers in library.ts. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 14.6s, cargo test --lib 2233 passed / 0 failed (round-15 baseline 2208 + 14 from slice 73 + 11 from slice 76 = 2233), pnpm check 0 errors / 104 warnings (round-15 baseline preserved EXACTLY). Pushed + verified (local==origin b74a749).
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+branch — keep shipping onto it unless Sanjay says otherwise).
+**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
+src-tauri/tauri.conf.json, Cargo.lock.
+
+Latest commit: `b74a749` — "feat(plugins): install-log filter bar in Recent installs drawer".
+
+### What round-16 (2026-06-21 08:36 PT) just shipped
+
+Five slices across two cohesive arcs. Before this tick the
+Recent installs drawer surfaced the install log with only a
+time-window filter (Last 7d / Last 30d / All), and personal
+presets (the Smart Folders Hub's user-saved entries) shipped
+with save / list / delete / apply / export / import but
+neither rename nor duplicate. Tonight both gaps close
+end-to-end with one user-visible payoff each.
+
+Round-15's closing notes listed "Hopper rule editor live
+preview already ships (verified), saved-views drag-handle UI,
+smart-folders hub UI polish, Loom-grade tagging explorer,
+doc-detail metadata editor, Beacon cache inspector polish,
+Quill multi-document field-detect queueing." Inspection
+confirmed: saved-views shipped a per-row ⋯ menu with Move
+up / Move down (round 12 slice 50 + round 14 polish), the
+Hopper rule editor's live preview ships (slice 47 work),
+and the Smart Folders Hub already has drag-handle reordering
+(round 7). The actual gaps were (a) the install-log drawer's
+filter UX (only one axis — time window — even though the
+backend log has four orthogonal filter axes available) and
+(b) the parity gap between personal_presets and saved_views
+on the rename + duplicate verbs. Both lend themselves to
+clean 1-3 slice arcs that compose into a 5-slice batch.
+
+- Slice 73: install-log filtered reader (e5f8a7d, 482 LOC).
+  New `InstallLog::list_events_filtered(since, until, actions,
+  plugin_id_substr, limit)` extending list_events_between with
+  two new axes. Action axis is a slice of InstallAction with
+  empty == no filter; plugin_id substring is case-insensitive
+  via `LOWER(plugin_id) LIKE '%needle%' ESCAPE '\'` backed by
+  a fresh `like_escape` helper that doubles \, %, _ so a user
+  pasting "100%" doesn't accidentally trigger a wildcard. Also
+  new: `recent_plugin_ids(limit)` for the future filter-bar
+  autocomplete — distinct plugin_ids ordered by most-recent
+  activity via GROUP BY + MAX(occurred_at). 14 new tests pin
+  no-axes==list_recent, single-action and multi-action sets,
+  empty-set==None, substring anchored anywhere + case-
+  insensitive + whitespace-empty==None + no-match returns
+  empty + LIKE wildcards escaped to literals, three-axis
+  composition via AND, limit clamps zero/negative,
+  recent_plugin_ids newest-first + cap + empty log,
+  like_escape order-correctness (backslash before % and _).
+- Slice 74: filtered-reader Tauri command surface (3b81f5b,
+  +90 LOC in lib.rs). Two new commands:
+  slab_marketplace_install_log_list_filtered(since, until,
+  actions, plugin_id_substr, limit) returns
+  InstallEventFilteredResult {events, total_returned,
+  limit_used}; slab_marketplace_install_log_recent_plugin_ids
+  (limit) returns Vec<String>. Action token parser explicitly
+  drops unknown strings so a TS typo can't widen the result
+  (the storage layer's InstallAction::parse treats unknown
+  as Failed, but the command rejects unknowns before they
+  reach storage). Default limit = 500 on the list command,
+  25 on the recent-ids command. Self-describing payload
+  matches BatchUpdateReport (slice 70) / InstallLogExportEnvelope
+  (slice 60) precedent. Both registered in invoke_handler.
+- Slice 75: filtered-reader TS client + helpers (e404b53,
+  175 LOC in marketplace.ts). New wire types:
+  ALL_INSTALL_ACTIONS readonly tuple (canonical four-action
+  order), InstallEventQuery (four-axis filter mirroring the
+  Rust signature), InstallEventFilteredResult.
+  listInstallEventsFiltered / recentInstallPluginIds wrappers
+  with browser-mode empty fallbacks. Pure helpers:
+  describeActionSet returns "all actions" / "failures only" /
+  "installs and updates" / "X, Y and Z" depending on set size
+  (single-action specialisation appends " only"; "failed"
+  pluralises to "failures"; three-or-more uses Oxford-style
+  "X, Y and Z" without the Oxford comma matching slice 70's
+  formatUpdateSummary); de-dupes + treats full-set as "all
+  actions"; deterministic order via ALL_INSTALL_ACTIONS
+  sequence. pluginQueryActiveLabel(query) counts narrowing
+  axes (window / action set / plugin substring; window
+  counts as one even when both since+until set); returns
+  null on clean filter so callers can hide the subtitle.
+  Both helpers pure — no I/O, no Tauri.
+- Slice 76: personal-preset rename + duplicate (f82fa5e,
+  268 LOC across personal_presets.rs + lib.rs + library.ts).
+  Closes a parity gap that's been open since saved_views
+  shipped rename + duplicate in round 12 (slice 50).
+  Backend: rename_personal_preset trims + rejects empty +
+  short-circuits unchanged-name + rejects collision via
+  UNIQUE constraint (mirrors rename_view verbatim);
+  duplicate_personal_preset carbon-copies icon/color/
+  description/filter, derives unique name via "<src> (copy)"
+  / "<src> (copy N)" capped at 999, gets fresh sort_order at
+  bottom via save_personal_preset's MAX+1 (mirrors
+  duplicate_view); derive_personal_copy_name helper mirrors
+  derive_copy_name. Tauri commands slab_personal_preset_rename
+  and slab_personal_preset_duplicate emit library-changed on
+  success and return the renamed/duplicated record so the UI
+  splices without a refetch. TS wrappers personalPresetRename
+  and personalPresetDuplicate. 12 new tests bring
+  personal_presets total to 22: rename preserves
+  id/created_at/sort_order/icon/color/description; rename
+  trims; same-name is no-op; empty rejected with row intact;
+  collision rejected with row intact; unknown id errors;
+  duplicate creates independent copy; renaming copy doesn't
+  affect source; suffix sequence "(copy)" → "(copy 2)" →
+  "(copy 3)"; duplicate unknown id errors.
+- Slice 77: install-log filter bar in Recent installs drawer
+  (b74a749, 459 LOC in RecentInstallsDrawer.svelte). The
+  demo-able payoff tying slices 73-75 together. New
+  `<section class="filter-strip">` between the window-strip
+  and the retention-block: (a) four-chip multi-select action
+  group (Installs / Updates / Uninstalls / Failures) with
+  monochrome installEventGlyph icons; selected chips tint
+  the glyph by action (green / accent / amber / red) so the
+  four chips read as four flavours not a uniform "selected"
+  block; (b) plugin id substring search with case-insensitive
+  matching, 220ms debounce, autocomplete dropdown sourced
+  from recentInstallPluginIds(25); mousedown (not click)
+  commits suggestions so the blur race is impossible; Enter
+  commits if exactly one suggestion is visible; (c) filter
+  summary line appears only when at least one axis narrows,
+  showing describeActionSet + active substring + a
+  "Clear filters" affordance. Wiring: $effect re-runs load()
+  on actionFilter OR debounced pluginQueryActive change;
+  filter narrowing flips load() from listRecentInstallEvents
+  to listInstallEventsFiltered so the result reflects the
+  FULL log (not the 100-row buffer — fixes a real gap where
+  a "failures last 30d" query couldn't surface old
+  failures). Empty state grows a third branch:
+  filtered-but-no-match prompts "widen with another chip or
+  clear the plugin search". Escape ladder grows two new
+  levels: suggest dropdown → export menu → confirm prune →
+  retention → narrow filter (clears) → drawer close. CSS
+  ~170 lines scoped with the existing dark-first tokens
+  (--accent, --border, --bg-1/2/3, --text/-3), focus-within
+  accent border, absolute popover matching the install-modal
+  z-index/shadow vocabulary, monospace plugin ids for
+  id-vs-id alignment. a11y: aria-pressed on chips, role=
+  combobox (not the implicit searchbox role from type=
+  search which doesn't permit aria-expanded) + aria-controls
+  + aria-expanded + aria-autocomplete + role="listbox"/option
+  + aria-selected on the dropdown.
+
+Gates result: cargo fmt clean (cargo fmt --all --check
+exit 0), cargo clippy --lib -- -D warnings PASSED CLEAN in
+14.6s (matches the round-15 14s baseline — der/spki 0.7 pin
+from round-14 still holding), cargo test --lib 2233 passed
+/ 0 failed (round-15 baseline 2208 + 14 from slice 73 + 11
+from slice 76 = 2233), pnpm check 0 errors / 104 warnings
+(round-15 baseline preserved EXACTLY — zero new warnings
+from the filter strip markup, action chips, suggest
+dropdown, or scoped CSS).
+
+PROCESS NOTES:
+- The round-15 "Next subsystem candidates" list was a mix
+  of already-shipped items (Hopper live preview, saved-views
+  reorder UI via ⋯ menu, Smart Folders Hub drag) and real
+  gaps (install-log filter UX, personal-preset CRUD parity,
+  Loom/Quill/Beacon polish). The pattern from rounds 13-15
+  recurs: validate candidates against the actual code before
+  trusting the optimism in the closing notes. Two of tonight's
+  arcs (filter UX + preset CRUD) came from inspection of the
+  install_log/personal_presets module shapes against their
+  UI surfaces, not from the candidate list at all.
+- Five slices, five commits, two logical subsystems. The
+  install-log filter arc (73-75 + 77) is four slices with
+  the storage primitive → command → TS client → UI shape
+  matching the round-15 bulk-update arc verbatim. The
+  personal-preset arc (76) compressed backend + commands +
+  TS into one slice because rename + duplicate are tightly
+  coupled verbs and the saved_views precedent gives a
+  zero-design-cost mirror — each new function is a 30-line
+  rename of an existing function.
+- like_escape() in slice 73 is the first SQL LIKE wildcard
+  escape helper in the codebase. The Hopper rule UI's
+  filename substring predicates went through a different
+  path (regex-bridged); future SQL LIKE callers should adopt
+  this helper rather than reinventing. Tests pin order
+  correctness (backslash MUST be replaced first).
+- The Tauri command `slab_marketplace_install_log_list_filtered`
+  parses action tokens explicitly via a match arm and drops
+  unknowns, rather than calling through InstallAction::parse
+  which converts unknowns to Failed. This is a defence-in-
+  depth choice — the storage layer's behaviour is safe in
+  isolation but a TS typo widening the result would be a
+  subtle UX bug; the command-level explicit drop makes
+  "asked for nothing valid" yield "no filter" rather than
+  "secret extra filter for failures".
+- The filter strip in slice 77 reloads SERVER-SIDE on filter
+  change but keeps the window axis client-side. Rationale:
+  toggling 7d/30d/All should be instant from the loaded
+  buffer, AND a server-side window refetch would lose
+  in-flight context if the user is mid-typing in the plugin
+  search. Action chip + plugin-id changes refetch because
+  the buffer might not contain the rows needed (the 100-row
+  list_recent default may miss a 90-day-old failure).
+
+DESIGN NOTES:
+- Four-action chip group instead of a dropdown because the
+  count is exactly four and they fit in one row at typical
+  drawer widths. A dropdown would hide the affordance
+  behind a click; the chip strip surfaces all four states
+  at a glance with their associated glyphs.
+- Action-specific glyph tint (green install / accent update
+  / amber uninstall / red failed) matches the BulkUpdateProgressOverlay's
+  three-color palette from slice 72 + extends it with a
+  green for install rows. One mental model for "what colour
+  is this kind of event" across the drawer + the overlay.
+- Plugin search debounce is 220ms (not 100 or 500) because
+  it's the same debounce the LibrarySearchPanel uses for
+  its fts query — one mental model for "how fast does a
+  filter respond?" across the app.
+- Autocomplete shows up to 8 matches because the typical
+  paralegal install footprint is <25 plugins; beyond 8
+  the user is better off completing the substring than
+  scrolling a long list. The 8 cap also keeps the dropdown
+  height bounded so it doesn't cover the action chips.
+- mousedown (not click) on suggestion items because blur
+  fires before click, and we want the suggestion to commit
+  before the input loses focus. The 120ms blur delay is
+  belt-and-suspenders; mousedown is the actual mechanism.
+- describeActionSet's "failures only" specialisation (vs
+  "failures") reads better as a filter-bar subtitle. The
+  Oxford-comma-free three-or-more form matches the existing
+  formatUpdateSummary from slice 70 so the two filter
+  surfaces share one copy vocabulary.
+- pluginQueryActiveLabel counts the WINDOW axis as ONE even
+  when both since+until are set because the user makes a
+  single semantic choice ("Last 7d") that happens to express
+  as two boundaries; "2 filters active" reading from one
+  user choice would be wrong.
+- Personal-preset rename + duplicate slot into the EXACTLY
+  same shape as saved-views' rename + duplicate so the
+  Smart Folders Hub can add a per-row ⋯ menu (deferred to
+  a later tick — the verbs land tonight, the UI surface
+  next time) with the same Notion-style "<src> (copy)"
+  naming and the same in-place rename inline-edit pattern
+  the saved-views rail uses. One mental model across both
+  list-of-named-filters surfaces.
+
+## Roadmap — round 16 (Install-Log Filter + Preset CRUD Parity) — ALL DONE
+
+Round 16 batched FIVE feature slices into one cron tick. Four slices
+closed the install-log filter arc (Recent installs drawer's filter UX
+went from one axis to four, with the demo-able filter bar landing as
+the user-visible payoff); the fifth closed the saved-views vs
+personal-presets parity gap on the rename + duplicate verbs.
+
+73. ~~**install-log filtered reader (actions + plugin substring)**~~ —
+    DONE (2026-06-21 08:36 PT, e5f8a7d, single commit). New
+    `InstallLog::list_events_filtered(since, until, actions,
+    plugin_id_substr, limit)` extending list_events_between.
+    Action axis is &[InstallAction] with empty == no filter;
+    plugin substring is case-insensitive via LOWER + LIKE
+    with a fresh `like_escape` helper that doubles \, %, _.
+    Also new: `recent_plugin_ids(limit)` for autocomplete via
+    GROUP BY plugin_id ORDER BY MAX(occurred_at). 14 new tests.
+74. ~~**install-log filtered Tauri command surface**~~ —
+    DONE (2026-06-21 08:36 PT, 3b81f5b, single commit). Two
+    new commands: slab_marketplace_install_log_list_filtered
+    (returns InstallEventFilteredResult {events, total_returned,
+    limit_used}; default limit 500) and
+    slab_marketplace_install_log_recent_plugin_ids (default 25).
+    Action token parser explicitly drops unknowns so a TS typo
+    can't widen the result.
+75. ~~**install-log filter TS client + describe helpers**~~ —
+    DONE (2026-06-21 08:36 PT, e404b53, single commit, 175 LOC).
+    ALL_INSTALL_ACTIONS / InstallEventQuery /
+    InstallEventFilteredResult wire types. listInstallEventsFiltered
+    / recentInstallPluginIds wrappers with browser-mode fallbacks.
+    Pure helpers describeActionSet (single→"X only", two→"X and Y",
+    three+→Oxford-style without Oxford comma; full-set==no-filter;
+    deterministic order) and pluginQueryActiveLabel (counts
+    narrowing axes; window counts as one even when both bounds
+    set).
+76. ~~**personal-preset rename + duplicate**~~ —
+    DONE (2026-06-21 08:36 PT, f82fa5e, single commit, 268 LOC).
+    Backend rename_personal_preset (trim, empty rejected, same-name
+    no-op, collision rejected by UNIQUE) and duplicate_personal_preset
+    (carbon-copy, "<src> (copy)"/"<src> (copy N)" capped at 999,
+    fresh sort_order). Tauri commands emit library-changed.
+    TS wrappers personalPresetRename / personalPresetDuplicate.
+    12 new tests bring personal_presets total to 22.
+77. ~~**install-log filter bar in Recent installs drawer**~~ —
+    DONE (2026-06-21 08:36 PT, b74a749, single commit, 459 LOC).
+    Four-chip multi-select action group with action-specific
+    glyph tint (green install / accent update / amber uninstall /
+    red failed); plugin id substring search with case-insensitive
+    matching + 220ms debounce + autocomplete dropdown (top-8
+    from recentInstallPluginIds, mousedown commits, Enter
+    commits if exactly one); filter summary line shows
+    describeActionSet + active substring + "Clear filters"
+    affordance when at least one axis narrows. $effect re-runs
+    load() on filter change (server-side via
+    listInstallEventsFiltered so the result reflects the FULL
+    log, not the 100-row buffer). Empty state grows third
+    branch; Escape ladder grows two levels. a11y: role=combobox
+    + aria-controls + aria-expanded + aria-autocomplete +
+    role=listbox/option + aria-selected.
+
+    With round 16 done, the marketplace install-log drawer is
+    now a proper four-axis investigative surface — paralegals
+    can answer "show me failures for com.acme.\* in the last
+    30 days" in three clicks, and personal presets gain rename
+    + duplicate verbs that match the saved-views vocabulary
+    (the Smart Folders Hub ⋯ menu wiring is the natural next
+    tick — verbs are live, UI surface to surface them is the
+    small follow-up). Next subsystem candidates: Smart Folders
+    Hub ⋯ menu wiring (Rename / Duplicate / Delete on personal
+    rows), Loom-grade tagging explorer, doc-detail metadata
+    editor read/write surface, Beacon cache inspector polish,
+    Quill multi-document field-detect queueing, Hopper
+    rule-test panel "Test against last 100 files" surface
+    extension beyond the current 5.
+
+
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
