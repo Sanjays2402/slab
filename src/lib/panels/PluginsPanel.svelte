@@ -37,12 +37,15 @@
     marketplaceAvailable,
     formatBytes,
     compareSemver,
+    installLogSummary,
     type IndexEntry,
+    type InstallLogSummary,
     type MarketplaceState,
   } from "$lib/marketplace";
   import { notify } from "$lib/notify";
   import { tStore, t } from "$lib/i18n";
   import PluginDetailDrawer from "$lib/components/PluginDetailDrawer.svelte";
+  import RecentInstallsDrawer from "$lib/components/RecentInstallsDrawer.svelte";
   import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
   import UninstallConfirmModal from "$lib/components/UninstallConfirmModal.svelte";
   import PluginConsentModal from "$lib/components/PluginConsentModal.svelte";
@@ -65,6 +68,30 @@
   // Per-plugin "currently writing to backend" flag so we can disable
   // the toggle while a flip is in flight and avoid double-clicks.
   let busy = $state<Record<string, boolean>>({});
+
+  // ---------------- v3.39 Slice 57 — Recent installs drawer state -----
+  /** Slim summary of the install log — used to gate the History
+   *  button so it only appears when there's something to show. */
+  let installLog = $state<InstallLogSummary>({
+    total_events: 0,
+    distinct_plugins: 0,
+    oldest_occurred_at: null,
+  });
+  /** Drawer open flag. */
+  let recentInstallsOpen = $state(false);
+
+  /** Refresh the slim install-log summary. Cheap (three small
+   *  queries); we call this on mount and after every install /
+   *  uninstall / prune so the toolbar badge stays current. */
+  async function refreshInstallLog(): Promise<void> {
+    try {
+      installLog = await installLogSummary();
+    } catch (e) {
+      // Non-fatal — surface the failure to the console but leave
+      // the badge dark rather than nag the user.
+      console.warn("[slab] installLogSummary failed", e);
+    }
+  }
 
   // ---------------- Bench (v1.4.0) — Browse-tab state --------------
   /** Which tab is showing — 'installed' or 'browse'. The Browse tab
@@ -258,6 +285,10 @@
     pluginsDir()
       .then((p) => (dirPath = p))
       .catch(() => (dirPath = null));
+    // Slice 57: load the install-log summary so the History button
+    // can gate on `total_events > 0`. Cheap; safe in browser mode
+    // (returns the empty summary).
+    void refreshInstallLog();
   });
 
   /** Fetch marketplace index the first time the Browse tab opens. */
@@ -376,6 +407,10 @@
     try {
       await installPlugin(entry);
       await refreshPlugins();
+      // Slice 57: install row landed in the log; refresh the
+      // summary so the History toolbar button appears (or its count
+      // increments) without requiring a panel remount.
+      void refreshInstallLog();
       clearTimeout(downloadTimer);
       clearTimeout(extractTimer);
       installModal = { entry, phase: "done", error: null };
@@ -396,6 +431,10 @@
       clearTimeout(extractTimer);
       const msg = e instanceof Error ? e.message : String(e);
       installModal = { entry, phase: "error", error: msg };
+      // Slice 57: backend has logged a `failed` row for this attempt;
+      // refresh the summary so the History badge surfaces the
+      // failure path even when no installs ever succeeded.
+      void refreshInstallLog();
       notify.error(t("plugins.notify.installFailed"), { detail: msg });
     }
   }
@@ -438,6 +477,10 @@
       const removed = await uninstallPluginById(entry.id);
       if (removed) {
         await refreshPlugins();
+        // Slice 57: uninstall row landed; refresh the summary so
+        // the History badge keeps current. Skip when nothing was
+        // removed (no log row would have been written).
+        void refreshInstallLog();
         notify.success(t("plugins.notify.uninstallOk", { name: entry.name }));
       }
       // Close the detail drawer if it was showing the now-removed plugin.
@@ -706,6 +749,17 @@
         >📁 {$tStore("plugins.openDir")}</button
       >
       <button type="button" class="ghost" onclick={onReload}>↻ {$tStore("plugins.reload")}</button>
+      {#if installLog.total_events > 0}
+        <button
+          type="button"
+          class="ghost history-btn"
+          onclick={() => (recentInstallsOpen = true)}
+          title="View install / update / uninstall history"
+        >
+          ⏱ History
+          <span class="history-count" aria-label="event count">{installLog.total_events}</span>
+        </button>
+      {/if}
     </div>
 
     {#if snap.plugins.length === 0}
@@ -1158,6 +1212,17 @@
   />
 {/if}
 
+{#if recentInstallsOpen}
+  <RecentInstallsDrawer
+    onClose={() => (recentInstallsOpen = false)}
+    onPruned={() => {
+      // Drawer triggered a prune — refresh the summary so the
+      // toolbar count + History-button gating both update.
+      void refreshInstallLog();
+    }}
+  />
+{/if}
+
 {#if installModal}
   <InstallProgressModal
     entry={installModal.entry}
@@ -1211,6 +1276,27 @@
     display: flex;
     gap: 8px;
     margin-bottom: 18px;
+  }
+  /* Slice 57 — History button + count chip */
+  .history-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .history-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    line-height: 1;
   }
   .empty-state {
     text-align: center;
