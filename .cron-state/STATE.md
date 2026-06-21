@@ -1,6 +1,240 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 02:25 PT by Cake (cron) — round-14 BATCH shipped: 5 Install-Log-Retention slices that turn the marketplace audit log into a self-managing subsystem (auto-prunes old rows on startup, user-configurable retention window, demo-able Retention section in Recent installs drawer). PLUS a critical build-fix pre-slice repairing the broken-since-dependabot main: der 0.7->0.8 + spki 0.7->0.8 PRs landed on main without updating signet/cms_blob.rs, leaving cargo test --lib failing with ~63 errors for 4+ rounds — round-13's claimed "2171 passed" reflected a different cache state but the actual build was red. Tonight that block clears: cargo test --lib 2182 passed (round-13 baseline 2171 + 11 new from slice 63), pnpm check 0/104 baseline preserved EXACTLY, **and cargo clippy --lib -D warnings PASSED FOR THE FIRST TIME IN 5 ROUNDS** (4m 42s, zero warnings) — the wedge that round-10/11/12/13 hit was the dependency-graph version mismatch making clippy's trait-bound resolution explode, not the sparse image. Pushed + verified (local==origin 3d4dde5).
+Last updated: 2026-06-21 05:35 PT by Cake (cron) — round-15 BATCH shipped: 5 Bulk-Plugin-Updates slices that wire the marketplace into a proper package-manager-grade update experience. Today the Installed tab grew an "Updates available" banner that auto-derives from a deterministic Rust planner (semver-aware, parity-tested against the TS Browse-tab implementation), a single "Update all" button that runs sequential updates through the same install pipeline the single-install command uses, and a live per-step progress overlay that subscribes to a new marketplace://update-progress event stream and shows pending/updating/done/failed icons per target as the batch lands. All gates green: cargo test --lib 2208 passed (round-14 baseline 2182 + 26 new from slices 68 & 69), cargo clippy --lib -D warnings clean in ~14s, pnpm check 0 errors / 104 warnings (round-14 baseline preserved EXACTLY). Pushed + verified (local==origin 9fe1d50).
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+branch — keep shipping onto it unless Sanjay says otherwise).
+**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
+src-tauri/tauri.conf.json, Cargo.lock.
+
+Latest commit: `9fe1d50` — "feat(plugins): live per-step bulk-update progress overlay".
+
+### What round-15 (2026-06-21 05:35 PT) just shipped
+
+A demo-able overhaul of the plugin marketplace's update
+experience. Before this tick the Installed tab carried a
+per-card "↑ vX.Y.Z — update available" badge (Slice 8a from
+v1.4.0) but no bulk affordance: a user with 5 plugins to
+update had to click each one individually + wait for each
+install modal to dismiss before clicking the next. STATE.md's
+candidate list had this listed as "plugin marketplace Browse
+search & filter UI" but inspection showed that surface ships
+already (the Browse tab has searchQuery, category chips, sort
+mode toggles, fuzzy matching with highlights — round-12 work).
+The actual gap was bulk updates. Tonight that gap closes
+end-to-end.
+
+- Slice 68: marketplace::update_plan planner primitive
+  (9c2898a). Pure-data Rust planner that intersects the
+  installed plugin set with a freshly-fetched index and
+  returns the deterministic set of plugins for which the
+  index advertises a strictly-newer version. New types:
+  InstalledPlugin {id, version} (slim subset of registry's
+  Plugin so unit tests don't need to mock the registry),
+  UpdateTarget {id, installed_version, available_version,
+  size_bytes, entry} carrying the full IndexEntry for
+  downstream consumers, UpdatePlan {targets, total_bytes}
+  with count() / is_empty() / target_ids() accessors. Core:
+  plan_updates(installed, index) — strict newer test via
+  semver_compare; duplicates in either input list collapse
+  via first-wins. semver_compare(a, b) is a Rust port of the
+  TS compareSemver in src/lib/marketplace.ts; the test corpus
+  pins parity (missing components default to 0, non-numeric
+  components default to 0, release sorts above same-version
+  prerelease, prerelease tags lexicographic). 19 new tests
+  pin semver basics + minor/patch + missing components +
+  non-numeric + release-vs-prerelease + lexicographic order,
+  empty cases (no installs, empty index, already-current,
+  installed-ahead), strict-newer inclusion, index-only
+  ignored, sort-by-id-ascending, total_bytes sums, full entry
+  carried per target, duplicate-id first-wins on both inputs,
+  prerelease semantics, serde wire smoke.
+- Slice 69: bulk-update Tauri command surface (4b1da4f).
+  Two new commands wire the planner into IPC:
+  slab_marketplace_list_update_targets() → UpdatePlan
+  (re-fetches the index via the same cache-aware path
+  slab_marketplace_index uses; combines with PluginRegistry
+  via reg.list().filter_map); slab_marketplace_update_all(
+  batch_id, plugin_ids) → BatchUpdateReport runs sequential
+  updates through the same signature → install_from_entry →
+  reg.discover → install_log pipeline slab_marketplace_install
+  uses. The batch ALWAYS runs to completion — a failed id N
+  does NOT stop ids N+1+ (matches browser extensions, apt/
+  brew, VS Code). New wire types: UpdateProgress {batch_id,
+  index, total, plugin_id, phase, error?} emitted per step
+  on marketplace://update-progress; UpdateOutcome
+  (snake_case serde-tagged enum) succeeded vs failed;
+  BatchUpdateReport {batch_id, outcomes, succeeded, failed,
+  bytes_written} with from_outcomes() folding the counts
+  server-side so the TS reducer doesn't have to. Failure
+  paths reuse the existing record_install_failure +
+  open_install_log_and helpers so every batch step lands in
+  the install_log subsystem rounds 11-14 built (one audit
+  trail for both individual + bulk updates). Index-moved
+  ("id no longer in index") is the only failure path that
+  skips the log row — there's no versioned identity to log
+  against. Both commands registered in invoke_handler. 7
+  new tests pin the accessor methods, count/sum derivations,
+  empty-batch handling, serde tags + field names.
+- Slice 70: bulk-update TS client + helpers (57a7bfa). New
+  exports: UpdateTarget / UpdatePlan / UpdateProgress /
+  UpdateOutcome (discriminated union on "kind") /
+  BatchUpdateReport interfaces matching the Rust serde
+  output. Wrappers: listUpdateTargets() (browser mode returns
+  empty plan so the banner naturally hides during pnpm dev),
+  updateAllPlugins(batchId, ids) (browser mode synthesises an
+  all-failed report so the UI feedback flow is consistent in
+  dev), listenUpdateProgress(handler) wraps the
+  @tauri-apps/api/event listen() and returns an UnlistenFn
+  the caller MUST invoke on cleanup to free the listener
+  slot. Pure helpers: pluralizeUpdates(n) for the banner
+  header text and formatUpdateSummary(report) for the success
+  toast (covers five canonical paths: all-succeed-with-size,
+  mixed-with-size, all-fail, single-fail, empty).
+- Slice 71: Updates-available banner in Installed tab
+  (52d4528, 398 LOC). End-to-end demo-able surface tying
+  slices 68-70 together. New banner above the plugin list
+  showing "↑ 3 updates available · 4.2 MB · Review ·
+  [Update all] [×]". Collapsed-by-default; expand reveals
+  per-target rows with "<name> v<prior> → v<next> · <size> ·
+  [Update]". Versions use mono font; prior version line-
+  through; next version accent-coloured. Per-row Update
+  button disables when the global batch is in flight OR
+  when the specific row is. State: updatePlan +
+  updateBusy + updateRowBusy + updatesExpanded +
+  updatesDismissed (per-session, doesn't persist across
+  reloads — Sanjay's house style: never let the user
+  permanently kill an actionable banner). Wired into
+  onMount + onInstall success + confirmUninstall success +
+  onReload so the banner re-derives whenever the registry
+  changes. Toast grammar uses formatUpdateSummary: all-
+  succeed → notify.success, mixed → notify.warning with
+  firstErrorDetail, all-fail → notify.error. 185 lines of
+  scoped CSS using the existing dark-first design tokens
+  (--accent, --border, --bg-2/3, --text-1/2/3, --r-md/sm,
+  --font-mono); subtle 6% accent-tint background.
+- Slice 72: live per-step progress overlay (9fe1d50, 536
+  LOC). New BulkUpdateProgressOverlay.svelte component
+  + reducer upgrade in PluginsPanel.svelte. Replaces the
+  spinner-only "Updating…" button state with a full modal
+  showing every target's phase (pending / updating / done /
+  failed) in real time. Header icon: in-flight ↑ / done ✓
+  / mixed ! / all-fail ✕, coloured by terminal state.
+  Sub-line: "2/5 · Acme PDF Tools" during, "N succeeded ·
+  M failed" after. Top progress bar fills as (succeeded +
+  failed) / rows.length and flips to green at finish.
+  Per-row list: icon (○ → … → ✓ / ✕) + name + version
+  transition + size + status label + inline error message
+  on failed rows (truncated). Reducer in PluginsPanel:
+  initial rows from current plan with phase: "pending";
+  set up the overlay state BEFORE awaiting the backend;
+  subscribe to listenUpdateProgress BEFORE updateAllPlugins
+  so the early `phase: "starting"` event for the first id
+  isn't dropped; handler filters on batch_id === overlay
+  .batchId so events from other batches can't bleed into
+  the wrong overlay; per-event reducer maps starting →
+  "updating", done → "done", error → "failed" with the
+  error message captured. finally: await unlisten() to
+  free the listener slot. The overlay refuses to close
+  while !finished so the user can't strand a half-running
+  batch off-screen; Esc dismisses only when finished (same
+  gate as InstallProgressModal).
+
+Gates result: cargo fmt clean (cargo fmt --all --check
+exit 0), cargo clippy --lib -D warnings PASSED CLEAN in
+~14s (round-14 baseline preserved — the der/spki pin from
+round-14 keeps clippy resolving normally), cargo test --lib
+2208 passed / 0 failed (round-14 baseline 2182 + 19 new
+from slice 68 + 7 new from slice 69 = 2208), pnpm check 0
+errors / 104 warnings (round-14 baseline preserved
+EXACTLY — zero new warnings from the banner markup,
+overlay component, or scoped CSS).
+
+PROCESS NOTES:
+- STATE.md's "Next subsystem candidates" list at the end of
+  round-14 claimed "plugin marketplace Browse search & filter
+  UI" was the next gap. Inspection found that surface ships
+  already (round-12 work in PluginsPanel: browseQuery +
+  browseCategory + browseSort + browseRanked + fuzzy matching
+  with highlights). Similarly "Hopper rule editor's Test
+  against last 5 files live preview" also ships (the
+  HopperRulesEditor already has testFilename + recomputePreview
+  + slab_hopper_test_rules tied together). Pivoted to bulk
+  plugin updates instead — a genuine gap (no update_all
+  command anywhere in src-tauri) that's also a natural Linear-
+  /Raycast-/Vercel-grade UX addition. Lesson: validate the
+  next-candidate list against the actual code, not against the
+  optimism in the closing notes.
+- Five slices, five commits, one logical bulk-update subsystem.
+  The split: pure backend primitive (68) → Tauri command surface
+  (69) → TS client (70) → banner UI (71) → live progress
+  overlay (72). Each slice is independently revertible and the
+  banner UI in slice 71 fell back to a simple notify.success
+  toast on completion if slice 72 ever needs to be reverted.
+- The marketplace::update_plan module + semver_compare port
+  was the natural foundation. The decision to port
+  compareSemver from TS to Rust (rather than expose the
+  registry/index to the planner and let it call into a
+  shared lib) keeps the planner pure-data + lets the TS
+  Browse-tab "update available" badge keep using its own
+  in-place compareSemver. Both implementations are direct
+  ports of each other; 6 of slice 68's 19 tests pin parity.
+- Tauri event channel naming follows the existing convention:
+  hopper://run-completed, hopper://backfill-progress,
+  beacon://chat-stream, beacon://index-progress — and now
+  marketplace://update-progress. Hierarchical namespaces +
+  kebab-case suffix.
+
+DESIGN NOTES:
+- Banner collapsed-by-default because the summary line ("↑ 3
+  updates available · 4.2 MB · Review") gives the user
+  everything they need to decide "Update all now" vs "expand
+  to see what" vs "dismiss for later" in one glance. The
+  Review label flips to "Hide list" when expanded so the
+  affordance is always discoverable.
+- Per-row Update button + Update all both wired into the
+  same runUpdateBatch path so the overlay + toast feedback
+  is consistent regardless of which the user clicks. The
+  per-row button surfaces when a user wants to defer a
+  heavyweight update (e.g. "I'll update Beacon later — it's
+  120 MB"). The Update all is the dominant path; the
+  per-row affordance is the escape hatch.
+- updatesDismissed is per-session (no localStorage). Sanjay's
+  house style — actionable banners should never be killable
+  permanently because the user might dismiss once, forget,
+  and never see the actionable surface again. Install /
+  uninstall / reload all re-derive the plan, which clears
+  the dismiss flag implicitly: a new banner shows up the
+  moment the registry changes again.
+- Sequential (not concurrent) bulk update because (a) the
+  install_log expects one row per install transaction and
+  concurrent writes to the sqlite log would interleave the
+  audit trail messily, (b) progress events are easier to
+  reason about when one target is in flight at a time, and
+  (c) macOS doesn't parallelize disk writes well anyway —
+  parallel installs would oscillate the disk head.
+- BatchUpdateReport's succeeded / failed / bytes_written
+  fields are pre-computed server-side so the toast +
+  banner-reset logic don't have to fold the outcomes list.
+  Same pattern round-13's InstallLogExportEnvelope used:
+  self-describing wire shape, slim downstream code.
+- Per-step overlay uses the existing modal backdrop +
+  z-index stack as InstallProgressModal so the visual
+  language is consistent; users who have seen the install
+  modal immediately understand the bulk overlay's grammar.
+  Three-color status palette (green #3fc88c done / amber
+  #e0b450 mixed / red #ff6b6b failed) chosen to match the
+  Hopper backfill progress modal's existing palette — one
+  mental model for "how this batch went".
+- listenUpdateProgress filters on batch_id === overlay
+  .batchId so a future concurrent-batches feature wouldn't
+  bleed events between overlays. The UI never fires
+  concurrent batches today, but the contract honours the
+  correlation key the Rust side sends.
+
+
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
@@ -1251,6 +1485,77 @@ GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppIma
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
 
+## Roadmap — round 15 (Bulk Plugin Updates) — ALL DONE
+
+Round 15 batched FIVE feature slices into one cron tick wiring the
+plugin marketplace into a proper package-manager-grade update
+experience. Before round-15 the Installed tab carried per-card
+"update available" badges (v1.4.0 Slice 8a) but no bulk affordance.
+Today the marketplace ships an end-to-end bulk-update flow:
+deterministic Rust planner → batch Tauri command emitting per-step
+events → TS client + helpers → Installed-tab banner with collapse +
+per-row Update + Update-all → live per-step progress overlay.
+
+68. ~~**marketplace::update_plan planner primitive**~~ — DONE
+    (2026-06-21 05:35 PT, 9c2898a, single commit). Pure-data
+    Rust planner that intersects installed plugins with the
+    index, returns UpdatePlan {targets, total_bytes} sorted
+    by id ascending. Includes InstalledPlugin / UpdateTarget
+    / UpdatePlan / plan_updates / semver_compare. semver_compare
+    is a Rust port of TS compareSemver; 19 new tests pin
+    parity + planner edge cases.
+69. ~~**bulk-update Tauri command surface**~~ — DONE
+    (2026-06-21 05:35 PT, 4b1da4f, single commit). Two new
+    commands: slab_marketplace_list_update_targets() →
+    UpdatePlan and slab_marketplace_update_all(batch_id,
+    plugin_ids) → BatchUpdateReport. update_all runs
+    sequential updates through the existing verify →
+    install_from_entry → reg.discover → install_log pipeline,
+    emitting UpdateProgress events on
+    marketplace://update-progress per step. Batch ALWAYS runs
+    to completion (failed N doesn't stop N+1+). 7 new tests
+    pin the report folding + serde tags.
+70. ~~**bulk-update TS client + helpers**~~ — DONE
+    (2026-06-21 05:35 PT, 57a7bfa, single commit). Wire types
+    (UpdateTarget / UpdatePlan / UpdateProgress / UpdateOutcome
+    discriminated union / BatchUpdateReport), wrappers
+    (listUpdateTargets / updateAllPlugins / listenUpdateProgress
+    with browser-mode fallbacks), pure helpers (pluralizeUpdates
+    / formatUpdateSummary covering five canonical paths).
+71. ~~**Updates-available banner in Installed tab**~~ — DONE
+    (2026-06-21 05:35 PT, 52d4528, single commit, 398 LOC).
+    Collapsed-by-default banner above the plugin list. State:
+    updatePlan + updateBusy + updateRowBusy + updatesExpanded
+    + updatesDismissed (per-session). Wired into onMount +
+    onInstall + onUninstall + onReload. Toast grammar uses
+    formatUpdateSummary with severity-appropriate notify
+    routing (success / warning / error). 185 LOC of scoped
+    CSS using existing dark-first design tokens.
+72. ~~**live per-step bulk-update progress overlay**~~ — DONE
+    (2026-06-21 05:35 PT, 9fe1d50, single commit, 536 LOC).
+    New BulkUpdateProgressOverlay.svelte component + reducer
+    upgrade in PluginsPanel.svelte. Per-row icon ladder
+    (○ → … → ✓ / ✕), version transition, current-row +
+    failed-row tinting, inline truncated error message,
+    finished-state header icon (✓ done / ! mixed / ✕
+    all-fail). Reducer subscribes to listenUpdateProgress
+    BEFORE updateAllPlugins so the first id's starting event
+    isn't dropped; filters on batch_id correlation; finally
+    unlistens to free the listener slot. Overlay refuses to
+    close while !finished.
+
+    With round 15 done, the plugin marketplace is now a
+    proper package-manager experience: discover (Browse tab
+    search/filter/sort), install (verify → install_from_entry
+    → install_log), audit (install_log subsystem from rounds
+    11-14), update (bulk planner + banner + progress overlay
+    from round 15). Next subsystem candidates: Hopper rule
+    editor live preview already ships (verified), saved-views
+    drag-handle UI, smart-folders hub UI polish, Loom-grade
+    tagging explorer, doc-detail metadata editor, Beacon
+    cache inspector polish, Quill multi-document field-detect
+    queueing.
+
 ## Roadmap — round 14 (Install Log Retention Policy) — ALL DONE
 
 Round 14 batched FIVE feature slices into one cron tick onto the
@@ -1674,6 +1979,45 @@ scrolling tail shows each file landing.
     explorer.
 
 ## Tick log
+
+- 2026-06-21 05:35 PT (Cake, cron): round-15 BATCH tick — FIVE
+  Bulk-Plugin-Updates slices wiring the marketplace into a proper
+  package-manager-grade update experience. All DONE. Five commits,
+  pushed + verified (local==origin 9fe1d50). **All gates GREEN:
+  cargo fmt clean, cargo clippy --lib -- -D warnings clean in
+  ~14s, cargo test --lib 2208 passed (round-14 baseline 2182 +
+  19 new from slice 68 + 7 new from slice 69), pnpm check 0
+  errors / 104 warnings (baseline preserved EXACTLY).**
+  - Slice 68 marketplace::update_plan planner primitive (9c2898a):
+    pure-data Rust planner intersecting installed plugins with
+    the index, returns UpdatePlan {targets, total_bytes}. New
+    types InstalledPlugin / UpdateTarget / UpdatePlan; core
+    plan_updates + semver_compare (Rust port of TS compareSemver
+    with parity tests). 19 new tests.
+  - Slice 69 bulk-update Tauri commands (4b1da4f):
+    slab_marketplace_list_update_targets + slab_marketplace_update_all.
+    Sequential execution with per-step UpdateProgress events on
+    marketplace://update-progress. Batch always runs to completion.
+    Reuses existing install pipeline + install_log helpers. 7
+    new tests pin BatchUpdateReport folding + serde tags.
+  - Slice 70 TS client + helpers (57a7bfa): UpdateTarget /
+    UpdatePlan / UpdateProgress / UpdateOutcome / BatchUpdateReport
+    interfaces; listUpdateTargets / updateAllPlugins /
+    listenUpdateProgress wrappers with browser-mode fallbacks;
+    pluralizeUpdates + formatUpdateSummary helpers.
+  - Slice 71 Updates-available banner in Installed tab (52d4528):
+    collapsed-by-default banner with chevron + ↑ + headline +
+    meta + Update-all + dismiss. Expand reveals per-target rows
+    with version transition (mono, prior strikethrough, next
+    accent-coloured). 398 LOC total; 185 LOC of scoped CSS.
+    Wired into mount + install + uninstall + reload lifecycles.
+  - Slice 72 live per-step progress overlay (9fe1d50):
+    BulkUpdateProgressOverlay.svelte (412 LOC) + reducer upgrade
+    in PluginsPanel. Per-row icon ladder ○ → … → ✓/✕, version
+    transition, current/failed row tinting, finished header
+    icon. Listener subscribed BEFORE updateAllPlugins so first
+    starting event isn't dropped; filters on batch_id; finally
+    unlistens.
 
 - 2026-06-21 02:25 PT (Cake, cron): round-14 BATCH tick — FIVE
   Install-Log-Retention slices closing the round-13 follow-up
