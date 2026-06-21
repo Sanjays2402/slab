@@ -4136,6 +4136,23 @@ fn slab_library_tag_suggestion_undismiss_one(
     result.into()
 }
 
+/// Bulk suggester over any [`LibraryFilter`]. Generalises
+/// `slab_library_tag_suggestions_bulk_for_untagged` so the review surface
+/// can aim at e.g. "Starred + tagged `discovery-2026`" rather than only
+/// the untagged shortcut. `limit` overrides any filter-embedded limit so
+/// the scan stays bounded.
+#[tauri::command]
+fn slab_library_tag_suggestions_bulk_for_filter(
+    filter: pdf::library::query::LibraryFilter,
+    limit: Option<usize>,
+) -> CmdResult<Vec<pdf::library::tag_suggest::BulkTagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_for_filter(&db, &filter, limit.unwrap_or(50))
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -6076,6 +6093,7 @@ pub fn run() {
             slab_library_tag_suggestions_accept_bulk,
             slab_library_tag_suggestions_list_dismissed,
             slab_library_tag_suggestion_undismiss_one,
+            slab_library_tag_suggestions_bulk_for_filter,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_tag_color,

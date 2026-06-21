@@ -291,6 +291,48 @@ pub fn suggest_for_untagged(
     Ok(out)
 }
 
+/// Generalised bulk suggester: takes any [`LibraryFilter`] (so a saved
+/// view, smart-collection clause tree, or starred-only toggle all
+/// pre-narrow the candidate set) and returns one [`BulkTagSuggestion`]
+/// per matching doc that yields at least one suggestion.
+///
+/// `suggest_for_untagged` stays as the lighter "only show me docs
+/// with zero tags" shortcut; this is the proper review surface that
+/// lets a paralegal aim the engine at e.g. "everything tagged
+/// `discovery-2026`" to top up the missing tags within a known set.
+///
+/// `limit` caps how many candidate docs are scanned BEFORE the
+/// zero-suggestion skip, so the cost stays bounded even when the
+/// filter matches a large folder.
+pub fn suggest_for_filter(
+    db: &LibraryDb,
+    filter: &super::query::LibraryFilter,
+    limit: usize,
+) -> Result<Vec<BulkTagSuggestion>, LibraryError> {
+    // Force the limit + sort. We override `filter.limit` so callers
+    // can't blow past our cap by accident; we leave `filter.sort` alone
+    // so saved views show their authored ordering (e.g. AddedDesc by
+    // default; TitleAsc when a paralegal pinned that to a view).
+    let mut effective = filter.clone();
+    effective.limit = Some(limit as u32);
+    let candidates = super::query::query_documents(db, &effective)?;
+
+    let mut out = Vec::new();
+    for doc in candidates {
+        let suggestions = suggest_tags_for_doc(db, doc.id)?;
+        if suggestions.is_empty() {
+            continue;
+        }
+        out.push(BulkTagSuggestion {
+            doc_id: doc.id,
+            title: doc.title,
+            path: doc.path,
+            suggestions,
+        });
+    }
+    Ok(out)
+}
+
 /// Accept a suggestion: find-or-create the tag (auto-coloring new ones with
 /// a deterministic pastel) and attach it to the doc, unioned with whatever
 /// tags the doc already has.
@@ -993,5 +1035,118 @@ mod tests {
         let cleared = undismiss_one_for_doc(&d, id, "INVOICE").unwrap();
         assert!(cleared);
         assert!(!is_tag_suggestion_dismissed(&d, id, "invoice").unwrap());
+    }
+
+    // ---- Slice 50: suggest_for_filter ----
+
+    #[test]
+    fn suggest_for_filter_runs_over_empty_filter() {
+        let mut d = db();
+        add_doc(&mut d, "Invoice", "/tmp/inv.pdf");
+        add_doc(&mut d, "Receipt", "/tmp/rcp.pdf");
+        // Empty filter (no clauses, no folder, no tags) matches every doc.
+        let out = suggest_for_filter(
+            &d,
+            &crate::pdf::library::query::LibraryFilter::default(),
+            50,
+        )
+        .unwrap();
+        // Both docs have domain-hint suggestions, so both surface.
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn suggest_for_filter_respects_folder() {
+        let mut d = db();
+        let folder = d.add_folder("/tmp/bills").unwrap();
+        d.upsert_document(
+            Some(folder.id),
+            "/tmp/bills/inv1.pdf",
+            Some("Invoice"),
+            "h1",
+            100,
+            1,
+            Some(1),
+            None,
+        )
+        .unwrap();
+        // Outside the folder.
+        add_doc(&mut d, "Tax", "/tmp/tax.pdf");
+        let f = crate::pdf::library::query::LibraryFilter {
+            folder_id: Some(folder.id),
+            ..Default::default()
+        };
+        let out = suggest_for_filter(&d, &f, 50).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].path.ends_with("inv1.pdf"));
+    }
+
+    #[test]
+    fn suggest_for_filter_respects_starred_only() {
+        let mut d = db();
+        let inv = add_doc(&mut d, "Invoice", "/tmp/inv.pdf");
+        add_doc(&mut d, "Tax", "/tmp/tax.pdf"); // Not starred.
+        d.set_doc_starred(inv, true).unwrap();
+        let f = crate::pdf::library::query::LibraryFilter {
+            starred_only: true,
+            ..Default::default()
+        };
+        let out = suggest_for_filter(&d, &f, 50).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].doc_id, inv);
+    }
+
+    #[test]
+    fn suggest_for_filter_overrides_caller_limit() {
+        let mut d = db();
+        for i in 0..6 {
+            add_doc(&mut d, "Invoice", &format!("/tmp/inv{i}.pdf"));
+        }
+        // Caller smuggled in a huge limit; the function clamps to its
+        // own arg.
+        let f = crate::pdf::library::query::LibraryFilter {
+            limit: Some(9999),
+            ..Default::default()
+        };
+        let out = suggest_for_filter(&d, &f, 3).unwrap();
+        assert!(out.len() <= 3);
+    }
+
+    #[test]
+    fn suggest_for_filter_skips_zero_suggestion_docs() {
+        let mut d = db();
+        add_doc(&mut d, "", "/tmp/zzz.pdf"); // No domain hint, no tokens.
+        add_doc(&mut d, "Invoice", "/tmp/inv.pdf"); // Domain hint hit.
+        let out = suggest_for_filter(
+            &d,
+            &crate::pdf::library::query::LibraryFilter::default(),
+            50,
+        )
+        .unwrap();
+        // Both docs are in the candidate set; only the invoice yields
+        // suggestions (skipping the unmatchable zzz doc).
+        assert_eq!(out.len(), 1);
+        assert!(out[0].path.ends_with("inv.pdf"));
+    }
+
+    #[test]
+    fn suggest_for_filter_works_with_clause_tree() {
+        let mut d = db();
+        let a = add_doc(&mut d, "Invoice", "/tmp/a.pdf");
+        let b = add_doc(&mut d, "Receipt", "/tmp/b.pdf");
+        // Pin a star on `a`, leave `b` unstarred.
+        d.set_doc_starred(a, true).unwrap();
+        let f = crate::pdf::library::query::LibraryFilter {
+            clauses: Some(crate::pdf::library::query::FilterGroup {
+                combinator: crate::pdf::library::query::FilterCombinator::And,
+                clauses: vec![crate::pdf::library::query::FilterClause::Starred],
+            }),
+            ..Default::default()
+        };
+        let out = suggest_for_filter(&d, &f, 50).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].doc_id, a);
+        // `b` is not in the candidate set even though it had suggestions.
+        assert!(out.iter().all(|x| x.doc_id != b));
     }
 }

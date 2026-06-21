@@ -1589,3 +1589,22 @@ export async function undismissOneTagSuggestion(
   );
   return unwrap(res);
 }
+
+/**
+ * Bulk-suggest over any `LibraryFilter`. The untagged-shortcut
+ * `tagSuggestionsBulk` covers the lightest case; this is the proper
+ * review-surface entry point that lets a saved view, smart-collection
+ * clause tree, or starred-only toggle pre-narrow the candidate set.
+ *
+ * `limit` overrides any filter-embedded limit so the scan stays bounded.
+ */
+export async function tagSuggestionsBulkForFilter(
+  filter: LibraryFilter,
+  limit = 50,
+): Promise<BulkTagSuggestion[]> {
+  const res = await invoke<CmdResult<BulkTagSuggestion[]>>(
+    "slab_library_tag_suggestions_bulk_for_filter",
+    { filter, limit },
+  );
+  return unwrap(res);
+}
