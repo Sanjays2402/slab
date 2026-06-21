@@ -658,6 +658,108 @@ fn iso8601_utc(unix_seconds: i64) -> String {
         .unwrap_or_default()
 }
 
+// ─── JSON export envelope (Slice 60) ─────────────────────────────────
+
+/// Wire shape for the JSON install-log export. Lifts the raw
+/// [`InstallEvent`] rows into an envelope so a downstream consumer
+/// can see at a glance what schema it's reading, how big the export
+/// is, and when it was produced — without re-counting the array or
+/// guessing at fields.
+///
+/// The envelope is what `slab_marketplace_install_log_export_json`
+/// (Slice 61) writes to disk. The shape mirrors a generic "audit
+/// export" pattern (schema_version + generated_at_iso + body) so a
+/// future surface (Hopper run log export, plugin-storage backup,
+/// …) can adopt the same envelope without inventing a third one.
+///
+/// Each event carries its own `occurred_at_iso` precomputed by the
+/// serialiser so the JSON file is self-describing — a script that
+/// reads the export doesn't need to know about unix-seconds or
+/// install a date library to render the timestamps.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InstallLogExportEnvelope {
+    /// Schema version of the envelope itself (NOT of the install
+    /// log's sqlite schema). Bumped when this envelope's shape
+    /// changes in a non-additive way.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced.
+    pub generated_at_iso: String,
+    /// Total number of events in `events`. Redundant with
+    /// `events.len()` but cheap and saves consumers a parse step.
+    pub event_count: usize,
+    /// Window the export was filtered by, mirroring the
+    /// `list_events_between` boundaries. `null` on either side
+    /// means "no bound" — i.e. the export covers everything before
+    /// (or after) the other boundary.
+    pub since_unix: Option<i64>,
+    pub since_iso: Option<String>,
+    pub until_unix: Option<i64>,
+    pub until_iso: Option<String>,
+    /// The events themselves, each annotated with an additional
+    /// `occurred_at_iso` field so a downstream consumer can render
+    /// timestamps without arithmetic.
+    pub events: Vec<InstallEventExport>,
+}
+
+/// One row in the JSON export array. Wraps [`InstallEvent`] and
+/// flattens its fields so the serialised form looks like a plain
+/// `InstallEvent` plus the `occurred_at_iso` companion. The
+/// `#[serde(flatten)]` keeps the JSON readable (no nested `event:`
+/// container) while still letting us add the extra ISO column.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InstallEventExport {
+    #[serde(flatten)]
+    pub event: InstallEvent,
+    /// `event.occurred_at` rendered as an ISO-8601 UTC string.
+    /// Empty when the unix-seconds value can't be represented (the
+    /// same fallback the CSV serialiser uses).
+    pub occurred_at_iso: String,
+}
+
+/// Schema version of the JSON export envelope. Bumped on
+/// non-additive shape changes only — adding a new optional field is
+/// backward-compatible at v1.
+pub const INSTALL_LOG_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Build the envelope from a slice of events + the same window
+/// boundaries that produced them. The envelope's `generated_at_iso`
+/// stamp uses the wall clock at call time; tests pass a fixed
+/// timestamp via [`install_log_to_json_with_now`].
+pub fn install_log_to_json(
+    events: &[InstallEvent],
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+) -> InstallLogExportEnvelope {
+    install_log_to_json_with_now(events, since_unix, until_unix, unix_now())
+}
+
+/// Same as [`install_log_to_json`] but takes an explicit unix-seconds
+/// "now" so unit tests don't race the wall clock.
+pub fn install_log_to_json_with_now(
+    events: &[InstallEvent],
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    now_unix: i64,
+) -> InstallLogExportEnvelope {
+    let events_export: Vec<InstallEventExport> = events
+        .iter()
+        .map(|ev| InstallEventExport {
+            occurred_at_iso: iso8601_utc(ev.occurred_at),
+            event: ev.clone(),
+        })
+        .collect();
+    InstallLogExportEnvelope {
+        schema_version: INSTALL_LOG_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: iso8601_utc(now_unix),
+        event_count: events_export.len(),
+        since_unix,
+        since_iso: since_unix.map(iso8601_utc),
+        until_unix,
+        until_iso: until_unix.map(iso8601_utc),
+        events: events_export,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1213,5 +1315,95 @@ mod tests {
         assert_eq!(col9(lines[0]), "true");
         assert_eq!(col9(lines[1]), "false");
         assert_eq!(col9(lines[2]), "");
+    }
+
+    // ─── JSON serialiser (Slice 60) ──────────────────────────────────
+
+    #[test]
+    fn json_envelope_carries_schema_and_generated_timestamp() {
+        let events = vec![sample_install_event(1, "com.x", 1_700_000_000)];
+        let env = install_log_to_json_with_now(&events, None, None, 1_710_000_000);
+        assert_eq!(env.schema_version, INSTALL_LOG_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.schema_version, 1);
+        assert_eq!(env.generated_at_iso, "2024-03-09T16:00:00Z");
+        assert_eq!(env.event_count, 1);
+        assert_eq!(env.events.len(), 1);
+    }
+
+    #[test]
+    fn json_envelope_window_bounds_round_trip_iso() {
+        let env = install_log_to_json_with_now(&[], Some(1_700_000_000), None, 1_700_000_010);
+        assert_eq!(env.since_unix, Some(1_700_000_000));
+        assert_eq!(env.since_iso.as_deref(), Some("2023-11-14T22:13:20Z"));
+        assert_eq!(env.until_unix, None);
+        assert_eq!(env.until_iso, None);
+
+        let env2 = install_log_to_json_with_now(
+            &[],
+            Some(1_700_000_000),
+            Some(1_700_001_000),
+            1_700_001_010,
+        );
+        assert_eq!(env2.until_unix, Some(1_700_001_000));
+        assert_eq!(env2.until_iso.as_deref(), Some("2023-11-14T22:30:00Z"));
+    }
+
+    #[test]
+    fn json_event_export_flattens_event_with_iso_companion() {
+        let events = vec![sample_install_event(7, "com.x", 1_700_000_000)];
+        let env = install_log_to_json_with_now(&events, None, None, 1_710_000_000);
+        let ev = &env.events[0];
+        assert_eq!(ev.event.id, 7);
+        assert_eq!(ev.event.plugin_id, "com.x");
+        assert_eq!(ev.occurred_at_iso, "2023-11-14T22:13:20Z");
+        // serialise + re-parse to confirm the flatten works on the wire.
+        let s = serde_json::to_string(&ev).unwrap();
+        // Should contain both the flattened event field AND the ISO
+        // companion at the top level (no `event:` nesting).
+        assert!(s.contains("\"id\":7"));
+        assert!(s.contains("\"plugin_id\":\"com.x\""));
+        assert!(s.contains("\"occurred_at_iso\":\"2023-11-14T22:13:20Z\""));
+        assert!(!s.contains("\"event\":"));
+    }
+
+    #[test]
+    fn json_envelope_empty_events_still_renders() {
+        let env = install_log_to_json_with_now(&[], None, None, 1_710_000_000);
+        assert_eq!(env.event_count, 0);
+        assert!(env.events.is_empty());
+        // serde round-trip on the empty envelope.
+        let s = serde_json::to_string(&env).unwrap();
+        let back: InstallLogExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn json_envelope_serializes_full_roundtrip() {
+        let events = vec![
+            sample_install_event(1, "com.x", 1_700_000_000),
+            InstallEvent {
+                id: 2,
+                plugin_id: "com.y".into(),
+                version: "1.0".into(),
+                action: InstallAction::Failed,
+                occurred_at: 1_700_000_100,
+                source: None,
+                bytes_written: None,
+                files_extracted: None,
+                replaced_existing: None,
+                prior_version: None,
+                error_msg: Some("verify failed".into()),
+            },
+        ];
+        let env = install_log_to_json_with_now(&events, Some(1_700_000_000), None, 1_710_000_000);
+        let s = serde_json::to_string_pretty(&env).unwrap();
+        let back: InstallLogExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+        // Surface-level invariants the audit reader cares about.
+        assert!(s.contains("\"schema_version\": 1"));
+        assert!(s.contains("\"event_count\": 2"));
+        assert!(s.contains("\"action\": \"install\""));
+        assert!(s.contains("\"action\": \"failed\""));
+        assert!(s.contains("\"error_msg\": \"verify failed\""));
     }
 }
