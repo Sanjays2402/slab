@@ -5362,6 +5362,84 @@ fn slab_marketplace_install_log_prune(retain_days: i64) -> Result<usize, String>
     log.prune_older_than(cutoff).map_err(|e| e.to_string())
 }
 
+// ─── Install log export surface (v3.39 Slice 61) ────────────────────
+
+/// Write the install log to disk as RFC-4180 CSV, filtered by an
+/// optional `[since_unix, until_unix]` window. The frontend gathers
+/// the destination from a native save-as dialog and passes the
+/// absolute path here so the Tauri layer owns the disk I/O (the
+/// frontend's @tauri-apps/plugin-fs scope doesn't cover arbitrary
+/// user-chosen paths). Same approach as
+/// `slab_hopper_export_backfill_csv`.
+///
+/// `limit` caps the number of rows written (default = 100_000); the
+/// install log is small in practice but a defensive cap protects
+/// against a runaway log eating a user's disk on export.
+///
+/// Returns the byte count actually written so the UI toast can say
+/// "Exported 42 events (3.1 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+fn slab_marketplace_install_log_export_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let events = log
+        .list_events_between(since_unix, until_unix, limit.unwrap_or(100_000))
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::install_log_to_csv(&events, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the install log to disk as a pretty-printed JSON envelope,
+/// filtered by an optional `[since_unix, until_unix]` window.
+/// Mirrors [`slab_marketplace_install_log_export_csv`] but emits the
+/// [`marketplace::install_log::InstallLogExportEnvelope`] shape (with
+/// schema_version + generated_at_iso + window-bounds + events array).
+///
+/// `limit` caps the number of rows written (same default as CSV).
+/// Returns the byte count actually written.
+///
+/// Idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let events = log
+        .list_events_between(since_unix, until_unix, limit.unwrap_or(100_000))
+        .map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::install_log_to_json(&events, since_unix, until_unix);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Beacon Voice Mode (v1.9.0 Slice 15) — Tauri command surface.
 // ─────────────────────────────────────────────────────────────────────
@@ -6349,6 +6427,8 @@ pub fn run() {
             slab_marketplace_plugin_install_stats,
             slab_marketplace_install_log_summary,
             slab_marketplace_install_log_prune,
+            slab_marketplace_install_log_export_csv,
+            slab_marketplace_install_log_export_json,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,

@@ -463,3 +463,98 @@ export function formatLogSpan(summary: InstallLogSummary, now?: number): string 
   const days = `${span} day${span === 1 ? "" : "s"}`;
   return `${events} across ${days}`;
 }
+
+// ─── Install log export surface (v3.39 Slice 61) ────────────────────
+
+/**
+ * Optional time-window + row-cap filter for an install-log export.
+ * Mirrors the backend `list_events_between` boundaries. Either or
+ * both of `since_unix` / `until_unix` may be omitted for "no
+ * lower / no upper bound"; both omitted exports the whole log.
+ *
+ * `limit` clamps the number of rows written (defaults to 100_000 on
+ * the backend); the install log is small in practice but a defensive
+ * cap protects against a runaway log eating a user's disk.
+ */
+export interface InstallLogExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  limit?: number | null;
+}
+
+const EMPTY_FILTER: InstallLogExportFilter = {};
+
+/**
+ * Write the install log to `path` as RFC-4180 CSV. The path is an
+ * absolute filesystem path that the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()` so it bypasses the default
+ * plugin-fs scope.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported N events (X.X KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op).
+ */
+export async function exportInstallLogCsv(
+  path: string,
+  filter: InstallLogExportFilter = EMPTY_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_csv", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Write the install log to `path` as a pretty-printed JSON envelope.
+ * Mirrors `exportInstallLogCsv` but emits the `InstallLogExportEnvelope`
+ * shape (schema_version + generated_at_iso + window-bounds + events).
+ */
+export async function exportInstallLogJson(
+  path: string,
+  filter: InstallLogExportFilter = EMPTY_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_json", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Suggest a default filename for an install-log export. Mirrors the
+ * hopper backfill CSV convention so paralegals see one consistent
+ * naming pattern across the audit-export surfaces.
+ *
+ * Format: `marketplace-history_<window>_<YYYY-MM-DD>.<ext>`. The
+ * window slot reads "all" when both bounds are unset, "from-YYYYMMDD"
+ * when only `since` is set, "to-YYYYMMDD" when only `until` is set,
+ * and "YYYYMMDD-YYYYMMDD" when both are set. Pure helper — no I/O,
+ * no Tauri.
+ */
+export function suggestInstallLogExportFilename(
+  filter: InstallLogExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-history_${window}_${today}.${ext}`;
+}
