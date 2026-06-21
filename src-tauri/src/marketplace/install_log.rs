@@ -468,6 +468,67 @@ impl InstallLog {
             .optional()?;
         Ok(n.unwrap_or(0))
     }
+
+    // ─── Time-window export reader (Slice 58) ────────────────────────
+
+    /// Corpus-wide events whose `occurred_at` lies in the closed
+    /// interval `[since_unix, until_unix]`, newest first, capped at
+    /// `limit`. Either boundary may be `None` for "no lower / no
+    /// upper bound"; passing `None` for both is equivalent to
+    /// [`list_recent`] (every row).
+    ///
+    /// This is the read primitive that drives the install-log export
+    /// surface — the Recent installs drawer's "Last 7d / Last 30d /
+    /// All" window strip maps directly to a `since_unix` value, and
+    /// the export menu funnels the selected window through this
+    /// reader so the CSV/JSON file matches what the user sees in the
+    /// drawer. Bounds are inclusive on both ends so a precisely-aligned
+    /// boundary row (e.g. an event stamped at exactly the cutoff)
+    /// always survives.
+    ///
+    /// Same `LIMIT` semantics as [`list_recent`]: a negative limit
+    /// clamps to zero rather than panicking.
+    pub fn list_events_between(
+        &self,
+        since_unix: Option<i64>,
+        until_unix: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<InstallEvent>, InstallLogError> {
+        let limit = limit.max(0);
+        // Assemble the WHERE clause from whatever bounds were
+        // supplied. Both unset → no WHERE at all (delegates to a
+        // plain newest-first scan).
+        let mut sql = String::from(
+            "SELECT id, plugin_id, version, action, occurred_at, source,
+                    bytes_written, files_extracted, replaced_existing,
+                    prior_version, error_msg
+             FROM install_events",
+        );
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        let mut clauses: Vec<&'static str> = Vec::new();
+        if let Some(since) = since_unix {
+            clauses.push("occurred_at >= ?");
+            params.push(rusqlite::types::Value::Integer(since));
+        }
+        if let Some(until) = until_unix {
+            clauses.push("occurred_at <= ?");
+            params.push(rusqlite::types::Value::Integer(until));
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY occurred_at DESC, id DESC LIMIT ?");
+        params.push(rusqlite::types::Value::Integer(limit));
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), row_to_event)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 fn row_to_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<InstallEvent> {
@@ -799,5 +860,87 @@ mod tests {
         let removed = log.prune_older_than(unix_now() + 100).unwrap();
         assert_eq!(removed, 3);
         assert_eq!(log.total_event_count().unwrap(), 0);
+    }
+
+    // ─── Time-window reader (Slice 58) ───────────────────────────────
+
+    #[test]
+    fn list_events_between_no_bounds_matches_list_recent() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        insert_at(&mut log, "com.b", "1", 200);
+        insert_at(&mut log, "com.c", "1", 300);
+        let bounded = log.list_events_between(None, None, 100).unwrap();
+        let recent = log.list_recent(100).unwrap();
+        assert_eq!(bounded.len(), recent.len());
+        for (a, b) in bounded.iter().zip(recent.iter()) {
+            assert_eq!(a.id, b.id);
+        }
+    }
+
+    #[test]
+    fn list_events_between_since_only_filters_lower_bound() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        insert_at(&mut log, "com.b", "1", 200);
+        insert_at(&mut log, "com.c", "1", 300);
+        let recent = log.list_events_between(Some(200), None, 100).unwrap();
+        // 200 + 300 survive; 100 drops below the bound.
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].occurred_at, 300);
+        assert_eq!(recent[1].occurred_at, 200);
+    }
+
+    #[test]
+    fn list_events_between_until_only_filters_upper_bound() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        insert_at(&mut log, "com.b", "1", 200);
+        insert_at(&mut log, "com.c", "1", 300);
+        let older = log.list_events_between(None, Some(200), 100).unwrap();
+        // 100 + 200 survive; 300 drops above the bound.
+        assert_eq!(older.len(), 2);
+        assert_eq!(older[0].occurred_at, 200);
+        assert_eq!(older[1].occurred_at, 100);
+    }
+
+    #[test]
+    fn list_events_between_inclusive_boundaries() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        insert_at(&mut log, "com.b", "1", 200);
+        insert_at(&mut log, "com.c", "1", 300);
+        // Window exactly [200, 300] — both boundaries survive.
+        let win = log.list_events_between(Some(200), Some(300), 100).unwrap();
+        assert_eq!(win.len(), 2);
+        assert_eq!(win[0].occurred_at, 300);
+        assert_eq!(win[1].occurred_at, 200);
+    }
+
+    #[test]
+    fn list_events_between_empty_window_returns_empty() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        insert_at(&mut log, "com.b", "1", 200);
+        // Window that brackets nothing (gap between rows).
+        let none = log.list_events_between(Some(150), Some(199), 100).unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn list_events_between_limit_clamps_results() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        for i in 0..5 {
+            insert_at(&mut log, "com.x", &format!("v{i}"), 100 + i as i64);
+        }
+        let two = log.list_events_between(None, None, 2).unwrap();
+        assert_eq!(two.len(), 2);
+        // Newest first.
+        assert_eq!(two[0].occurred_at, 104);
+        assert_eq!(two[1].occurred_at, 103);
+        let zero = log.list_events_between(None, None, 0).unwrap();
+        assert!(zero.is_empty());
+        let neg = log.list_events_between(None, None, -3).unwrap();
+        assert!(neg.is_empty());
     }
 }
