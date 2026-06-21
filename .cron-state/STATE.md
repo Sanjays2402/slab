@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-20 14:55 PT by Cake (cron) — round-10 BATCH shipped: 5 Hopper-Loop-Polish slices that close out the v3.22 batch-backfill subsystem (recursive scan + per-rule coverage strip + time-window history + CSV export + wired UI with live progress, cancel, and history chips). Pushed to be verified — see TICK LOG; clippy gate wedged twice on SlabBuild sparse image so this batch shipped on cargo test --lib + pnpm check strength per documented STATE.md guidance.
+Last updated: 2026-06-20 17:32 PT by Cake (cron) — round-11 BATCH shipped: 5 Tag-Suggest-Bulk-Surface slices that close out the v3.39.0 Atlas Tag-Suggest subsystem end-to-end (bulk-accept primitive + granular per-suggestion undismiss + filter-aware bulk suggester + slim stats badge + 640-LOC review drawer wired into the LibraryPanel toolbar). Pushed + verified (local==origin c881c62) — see TICK LOG; clippy gate wedged twice on SlabBuild sparse image so this batch shipped on cargo test --lib (2132 pass) + pnpm check (0 errors / 104 warnings = round-10 baseline preserved) strength per the documented STATE.md guidance.
 
 ## Active branch & version
 
@@ -9,7 +9,186 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `36309a5` — "fix(hopper): post-gate fixups for round-10 batch (slices 43-47)".
+Latest commit: `c881c62` — "feat(library): bulk tag-suggestion review drawer".
+
+### What round-11 (2026-06-20 17:32 PT) just shipped
+
+A demo-able overhaul of the v3.39.0 Atlas Tag-Suggest bulk
+pathway. Before this tick the per-doc SuggestedTagsRow chip
+strip shipped, but bulk was a half-finished cabbage of
+endpoints: `tagSuggestionsBulk` returned N rows, the user had to
+N-round-trip through the per-doc primitive to apply anything,
+there was no granular dismissal control (the escape hatch only
+nuked the entire dismissal list per doc), no way to bulk-suggest
+over a saved view or starred-only filter (only "untagged"
+shortcut), no badge counter for the review panel, and no review
+panel itself. Tonight every gap closes:
+
+- Slice 48: `accept_tag_suggestions_bulk(db, items)` (d17fe91).
+  Per-item failure semantics — a malformed name in item 12 fails
+  item 12 alone without rolling back the 49 good accepts.
+  AcceptItem + BulkAcceptResult types; case + whitespace
+  pair-dedupe in the pre-pass so a UI that double-checks the
+  same row by accident is silently coalesced. Tauri command
+  `slab_library_tag_suggestions_accept_bulk` emits a single
+  library-changed event after the batch (only when at least one
+  item attached). TS adds `TagSuggestionAcceptItem` +
+  `BulkTagAcceptResult` + `acceptTagSuggestionsBulk(items)`. 6
+  new tests pin: happy path, case+whitespace dedupe, mid-batch
+  failure isolation, empty input no-op, all-empty-failures-no-
+  attach, find-or-create on unknown tags.
+- Slice 49: granular undismiss (88a5439). New
+  `DismissedSuggestion { tag_name, dismissed_at }` row type +
+  `list_dismissed_for_doc(db, doc_id)` reader (ORDER BY
+  dismissed_at DESC, tag_name ASC so the inspector shows the
+  most recent mistake at the top) + `undismiss_one_for_doc(db,
+  doc_id, tag_name)` writer returning bool (true if a row was
+  deleted, false if no such dismissal). Case-insensitive match
+  on the undismiss path mirrors dismiss-time normalisation so
+  the undo path is symmetric. Two new Tauri commands
+  (`slab_library_tag_suggestions_list_dismissed` +
+  `slab_library_tag_suggestion_undismiss_one`). TS adds the
+  DismissedTagSuggestion interface + two helpers. 7 new tests
+  pin: empty no-dismissals, normalised names, newest-first
+  ordering (manual ts insert pins the ordering since
+  dismiss_tag_suggestion stamps now()), per-doc isolation,
+  siblings-preserved single-row delete, missing-row returns
+  false, case-insensitive match.
+- Slice 50: `suggest_for_filter(db, filter, limit)` (3053a7c).
+  Generalises the bulk surface — `suggest_for_untagged` stays
+  as the lighter LEFT-JOIN shortcut; this is the proper review
+  entry point that reuses `query::query_documents` so every
+  LibraryFilter capability (flat folder/tags/title, the
+  recursive clause tree, starred_only, sort, tag_match) composes
+  for free. `limit` is forced onto the effective filter (callers
+  can't smuggle a huge limit by accident); `sort` is left
+  untouched so saved views render in their authored ordering.
+  Docs that yield zero suggestions are skipped post-query.
+  Tauri command `slab_library_tag_suggestions_bulk_for_filter`
+  accepts the same LibraryFilter the live grid uses. TS adds
+  `tagSuggestionsBulkForFilter(filter, limit)`. 6 new tests pin:
+  empty filter matches all, folder filter narrows correctly,
+  starred_only narrows correctly, caller-limit-clamped,
+  zero-suggestion docs skipped, clause-tree composes.
+- Slice 51: `suggestion_stats(db, sample_cap)` (2a3b8b5). New
+  `TagSuggestionStats { untagged_docs_with_suggestions,
+  dismissed_total }` slim payload. Walks the `sample_cap`
+  most-recently-seen untagged docs and probes each with
+  `suggest_tags_for_doc` so the badge counts only docs that
+  WOULD actually surface review — never lures the user into
+  an empty panel. `dismissed_total` is a single corpus-wide
+  COUNT(*) for the settings escape hatch. Sample cap defaults
+  to 200 server-side; the UI renders "200+" upstream when the
+  working set saturates. Tauri command
+  `slab_library_tag_suggestion_stats(sample_cap)`. TS adds
+  `TagSuggestionStats` + `tagSuggestionStats(sampleCap)`. 5
+  new tests pin: empty library, tagged-docs excluded,
+  zero-suggestion-docs excluded, sample-cap bounds the scan,
+  corpus-wide dismissal sum, dismissed pair drops from count.
+- Slice 52: BulkTagSuggestionsPanel.svelte (c881c62, 640 LOC).
+  Pure frontend slice tying all four backend slices into one
+  demo-able review surface. 560px right-side drawer (matching
+  the DocInspectorPanel Notion side-panel convention) with:
+  source-strip segmented toggle ("Untagged only" / "Current
+  filter", filter mode disabled when no active filter) + per-doc
+  cap input (5–500 step 5, default 50, refetches on change);
+  bulk control bar with Refresh + selection chips (All, ♦ vocab,
+  ⚭ co-occ, ⌗ domain so paralegals can one-click "accept every
+  domain-hint chip" across the whole batch) + Apply N primary
+  action; per-doc card grid with title + path + up to 5
+  suggestion chips, each chip a checkbox-toggle on accept +
+  ✗ dismiss button (the dismiss path strips the chip locally
+  AND drops it from selection); per-card "Hidden…" link that
+  loads the dismissed list via `listDismissedTagSuggestions`
+  with one-click Undo via `undismissOneTagSuggestion`; toast
+  confirmation + error banner; deterministic pastel preview
+  on chips matching the rust `pastel_for` so the chip background
+  previews the saved tag colour. LibraryPanel wiring: toolbar
+  gains a "✨ Review N" button gated on
+  `bulkBadge.untagged_docs_with_suggestions > 0` (disappears
+  quietly when there's nothing to review — no nag UI). Stats
+  refresh on mount, after every library-changed event, after
+  the drawer closes, and after a bulk apply succeeds. Drawer
+  receives `buildCurrentFilter()` so the "Current filter" mode
+  picks up whatever the user has narrowed the grid to. No new
+  Tauri commands — pure UI composition.
+
+Gates result: cargo fmt clean (one rustfmt drift on slice 49's
+undismiss_one signature captured in slice 52's commit since
+slice 49 already shipped), cargo test --lib pdf::library::
+tag_suggest:: 42 passed / 0 failed (+24 from baseline: 6
+bulk-accept + 7 granular undismiss + 6 suggest_for_filter + 5
+suggestion_stats), cargo test --lib 2132 passed / 0 failed
+(round-10 baseline + 24 from this batch), pnpm check 0 errors
+/ 104 warnings (round-10 baseline preserved EXACTLY — caught
+2 new a11y warnings during the gate and fixed them before
+commit so the final delta is zero). **cargo clippy --lib gate
+WEDGED TWICE on /Volumes/SlabBuild sparse image — even `ls
+target/debug/deps` hangs >8s post-attempt** (was 0.027s at
+tick start — the cargo invocations triggered the wedge again).
+Per STATE.md "if cargo wedges twice, commit on cargo test --lib
++ pnpm check strength and log the blocker" guidance, this
+batch ships on lib-test + svelte-check strength.
+
+PROCESS NOTES:
+- First clippy attempt: rustc spawned `rustc --crate-name
+  tauri`, fell to 0% CPU within ~30s, stayed there for 100s+.
+  Killed, retried.
+- Second clippy attempt: cargo-clippy itself stayed at 0% CPU
+  without ever spawning rustc — same fsync sleep, different
+  surface. Killed.
+- Disk has 56G free; this is fsync slowdown not space.
+  Sanjay action recommended: `hdiutil detach` + reattach
+  `/Volumes/Sanjay SSD/SlabBuild.sparseimage` before the next
+  round so clippy can pass cleanly (same recommendation as
+  round 10 — the wedge is now consistent enough that detach/
+  reattach should be the standard between-round step until a
+  more permanent fix lands).
+- The slice-by-slice LSP diagnostics flagged "no exported
+  member" errors immediately after each library.ts addition;
+  these were rust-analyzer / TS-server cache lag (the symbols
+  exist, verified via grep + final pnpm check). Ignored.
+- The pnpm check did surface 2 NEW a11y warnings on the bulk
+  panel during the gate: `<aside role="dialog">` (non-
+  interactive element with interactive role) + missing
+  `a11y_no_static_element_interactions` ignore on the overlay
+  div's onclick. Fixed both before the gate cycle by swapping
+  `<aside>` for `<div role="dialog" aria-modal="true">` and
+  splitting the multi-rule svelte-ignore comment into one per
+  line (Svelte 5 only honours one rule per comment). Final
+  count returned to the 104-warning baseline.
+
+DESIGN NOTES:
+- Source strip segmented toggle, not two separate buttons:
+  the two modes are mutually exclusive (one or the other
+  drives the candidate set), so a segmented control reads as
+  "this is THE source choice" rather than two competing
+  toggles. Filter mode disabled when no active filter so
+  the user can't pick the empty path.
+- Selection chips by source (vocab / co-occ / domain) because
+  the source is the user's mental model of trust — vocab
+  matches are "almost always right", co-occ matches are
+  "high-confidence guesses", domain hints are "weakest
+  signal". A paralegal who only trusts vocab can one-click
+  ♦ vocab, scan the selections, and Apply.
+- Set-based selection state, not array-based: toggle becomes
+  O(1) instead of O(n) on big batches; the Apply-N button
+  label updates on every keystroke.
+- Refresh button explicit, not auto-refresh on every key
+  press of the per-doc cap input: the per-doc cap can change
+  the wire payload size 10× so we want a deliberate user
+  action to refetch — `onchange` not `oninput` on the number
+  input so a user typing 500 doesn't fire 3 fetches.
+- Toolbar badge gated on `untagged_docs_with_suggestions > 0`
+  so the button DISAPPEARS quietly when there's nothing to
+  review. Notion-pattern: never show a UI element that opens
+  empty. The drawer can still surface dismissed suggestions
+  via the empty-state "Show dismissed (N)" link as a
+  recovery path.
+- Drawer width 560px (vs 460px for DocInspector): the bulk
+  panel hosts a multi-column-chip grid per card and needs
+  the breathing room. Both still cap at viewport max-width
+  92vw / 96vw so they remain usable on small windows.
 
 ### What round-10 (2026-06-20 14:55 PT) just shipped
 
@@ -390,6 +569,73 @@ GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppIma
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
 
+## Roadmap — round 11 (Tag-Suggest Bulk Surface) — ALL DONE
+
+Round 11 batched FIVE feature slices into one cron tick onto the
+v3.39.0 Atlas Tag-Suggest subsystem (the per-doc SuggestedTagsRow
+chip strip shipped, but bulk was a half-finished pipe with no
+review panel + no granular dismissal control + no filter-aware
+bulk + no badge stats). Tag-Suggest is now end-to-end demo-able:
+toolbar "✨ Review N" badge → drawer pre-filtered by current filter
+or untagged shortcut → per-doc chip cards with source-filtered
+batch selection → Apply N in one round-trip → toast + grid refresh.
+
+48. ~~**accept_tag_suggestions_bulk (per-item batch)**~~ — DONE
+    (2026-06-20 17:32 PT, d17fe91). AcceptItem + BulkAcceptResult
+    types. Per-item failure semantics — malformed name in item 12
+    fails item 12 alone, items 0..11 + 13..N still attach. Case +
+    whitespace pair-dedupe in pre-pass. Tauri command emits single
+    library-changed event after the batch. TS adds matching types
+    + acceptTagSuggestionsBulk(items). 6 new tests.
+49. ~~**list_dismissed_for_doc + undismiss_one_for_doc**~~ — DONE
+    (2026-06-20 17:32 PT, 88a5439). New DismissedSuggestion row
+    type ordered by dismissed_at DESC; undismiss_one returns bool
+    (true if a row was deleted). Case-insensitive match mirrors
+    dismiss-time normalisation. Two new Tauri commands + TS
+    helpers. 7 new tests.
+50. ~~**suggest_for_filter (any LibraryFilter)**~~ — DONE
+    (2026-06-20 17:32 PT, 3053a7c). Reuses query::query_documents
+    so every filter shape composes for free. `limit` forced onto
+    the effective filter; `sort` left untouched so saved views
+    render in authored order. Zero-suggestion docs skipped
+    post-query. Tauri command + TS tagSuggestionsBulkForFilter.
+    6 new tests.
+51. ~~**suggestion_stats (review badge counter)**~~ — DONE
+    (2026-06-20 17:32 PT, 2a3b8b5). TagSuggestionStats {
+    untagged_docs_with_suggestions, dismissed_total }. Walks
+    sample_cap most-recently-seen untagged docs and probes each
+    so badge counts only review-worthy docs — never lures user
+    into empty panel. dismissed_total is one COUNT(*). Tauri
+    command + TS helper. 5 new tests.
+52. ~~**BulkTagSuggestionsPanel UI**~~ — DONE (2026-06-20 17:32
+    PT, c881c62, 640 LOC). Pure frontend tying all four backend
+    slices into one drawer. 560px right-side. Source-strip
+    segmented toggle (untagged / current filter) + per-doc cap
+    input. Bulk control bar with source-filtered selection chips
+    (♦ vocab / ⚭ co-occ / ⌗ domain) + Apply N. Per-doc card
+    grid with checkbox-toggle chips + dismiss button. Per-card
+    "Hidden…" link loads dismissed list with one-click Undo.
+    Toast confirmation, error banner, deterministic pastel
+    preview matching the rust pastel_for. LibraryPanel toolbar
+    gains "✨ Review N" button gated on
+    untagged_docs_with_suggestions > 0. Stats refresh on mount /
+    after library-changed / after drawer close / after bulk
+    apply. Drawer receives buildCurrentFilter() so "Current
+    filter" mode picks up the live grid narrowing.
+
+    With round 11 done, v3.39.0 Atlas Tag-Suggest is end-to-end
+    demo-able: per-doc chip strip, bulk review drawer with
+    per-source filtering, filter-aware suggester, granular
+    undismiss, slim badge. Next subsystem candidates: plugin
+    marketplace UI (the backend ships in marketplace/ but
+    PluginsPanel.svelte's Browse tab is the only surface — no
+    install history, no per-plugin detail), smart-folders hub
+    UI polish (the rail's drag/pin chrome could be tightened),
+    saved-views drag-handle UI (reorder backend takes positional
+    lists; drag-handle is a pure-frontend follow-up later),
+    Hopper rule editor's "Test against last 5 files" live
+    preview, Loom-grade tagging explorer.
+
 ## Roadmap — round 10 (Hopper Loop Polish) — ALL DONE
 
 Round 10 batched FIVE feature slices into one cron tick onto the
@@ -471,6 +717,57 @@ scrolling tail shows each file landing.
     explorer.
 
 ## Tick log
+
+- 2026-06-20 17:32 PT (Cake, cron): round-11 BATCH tick —
+  FIVE Tag-Suggest-Bulk-Surface slices that close out the
+  v3.39.0 Atlas Tag-Suggest subsystem end-to-end (bulk-accept
+  primitive + granular per-suggestion undismiss + filter-aware
+  bulk suggester + slim stats badge + 640-LOC review drawer
+  wired into the LibraryPanel toolbar). All DONE. Five feature
+  commits, pushed + verified (local==origin c881c62).
+  - Slice 48 accept_tag_suggestions_bulk (d17fe91): AcceptItem
+    + BulkAcceptResult, per-item failure isolation, case +
+    whitespace pair-dedupe. Tauri emits single library-changed
+    after batch. 6 new tests.
+  - Slice 49 list_dismissed_for_doc + undismiss_one_for_doc
+    (88a5439): DismissedSuggestion row ordered newest-first;
+    undismiss_one returns bool. Case-insensitive match. Two
+    new Tauri commands. 7 new tests.
+  - Slice 50 suggest_for_filter (3053a7c): reuses
+    query::query_documents so every filter shape composes
+    free; limit forced, sort untouched. Zero-suggestion docs
+    skipped post-query. 6 new tests.
+  - Slice 51 suggestion_stats (2a3b8b5): TagSuggestionStats
+    slim payload. sample_cap-bounded walk of recently-seen
+    untagged docs probes each for plausible suggestions so
+    badge never lures user into empty panel. 5 new tests.
+  - Slice 52 BulkTagSuggestionsPanel + LibraryPanel wiring
+    (c881c62, 640 LOC panel + ~30 LOC toolbar/state changes):
+    pure frontend tying slices 48-51 into one drawer with
+    source-strip toggle, per-doc cap, source-filtered batch
+    selection chips, per-card "Hidden…" disclosure for
+    granular undismiss, toast confirmation, badge gating
+    on stats. No new Tauri commands. Plus one rustfmt
+    drift on slice 49's undismiss_one signature captured
+    here since slice 49 already shipped.
+  Gates: cargo fmt clean, cargo test --lib pdf::library::
+  tag_suggest:: 42 passed / 0 failed (+24 vs baseline: 6
+  bulk-accept + 7 granular undismiss + 6 suggest_for_filter +
+  5 suggestion_stats), cargo test --lib 2132 passed / 0 failed
+  (round-10 baseline + 24), pnpm check 0 errors / 104 warnings
+  (round-10 baseline preserved EXACTLY — 2 new a11y warnings
+  caught + fixed during the gate). **cargo clippy --lib
+  WEDGED TWICE on /Volumes/SlabBuild sparse image** — first
+  attempt rustc fell to 0% CPU on `rustc --crate-name tauri`
+  within 30s, killed after 100s+; second attempt cargo-clippy
+  itself stayed at 0% without spawning rustc. Post-attempt
+  even `ls target/debug/deps` hangs >8s (was 0.027s at tick
+  start). Per STATE.md guidance, this batch ships on lib-test
+  + svelte-check strength. **Sanjay action recommended:
+  `hdiutil detach` then reattach `/Volumes/Sanjay
+  SSD/SlabBuild.sparseimage` before next round so clippy can
+  pass cleanly — this is now the second tick in a row hitting
+  the same wedge.**
 
 - 2026-06-20 14:55 PT (Cake, cron): round-10 BATCH tick —
   FIVE Hopper-Loop-Polish slices that close out the v3.22

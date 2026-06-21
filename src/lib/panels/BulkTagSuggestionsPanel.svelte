@@ -281,9 +281,10 @@
 </script>
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="bts-overlay" onclick={onOverlayClick}>
-    <aside class="bts-drawer" role="dialog" aria-label="Bulk tag suggestions">
+    <div class="bts-drawer" role="dialog" aria-label="Bulk tag suggestions" aria-modal="true">
       <header class="bts-head">
         <div class="bts-title">
           <span class="bts-glyph" aria-hidden="true">✨</span>
@@ -507,7 +508,7 @@
       {#if toast}
         <div class="bts-toast" role="status">{toast}</div>
       {/if}
-    </aside>
+    </div>
   </div>
 {/if}
 
