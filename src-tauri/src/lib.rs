@@ -6240,6 +6240,42 @@ pub fn run() {
                     eprintln!("hopper: bootstrap failed, panel will be empty: {e}");
                 }
             }
+
+            // Marketplace install-log retention (v3.40 Slice 66): if the
+            // 24h debounce window has elapsed since the last auto-prune
+            // (or no prune has ever run), trim install-log rows older
+            // than the user's configured `retain_days` (default 365).
+            // Best-effort + non-fatal — if the log can't be opened
+            // (HOME unset, disk full, schema corruption) we log to
+            // stderr and Slab boots normally. The user's manual
+            // "Clear older than 90d" affordance keeps working
+            // regardless.
+            match marketplace::InstallLog::open(marketplace::default_log_path()) {
+                Ok(mut log) => match log.auto_prune_if_due_now() {
+                    Ok(marketplace::AutoPruneOutcome::Pruned {
+                        rows_removed,
+                        retain_days,
+                        ..
+                    }) => {
+                        if rows_removed > 0 {
+                            eprintln!(
+                                "marketplace install-log: auto-pruned {rows_removed} \
+                                 event(s) older than {retain_days} day(s)"
+                            );
+                        }
+                    }
+                    Ok(marketplace::AutoPruneOutcome::Skipped { .. }) => {
+                        // Debounce window not yet elapsed — silent skip.
+                    }
+                    Err(e) => {
+                        eprintln!("marketplace install-log: auto-prune failed: {e}");
+                    }
+                },
+                Err(e) => {
+                    eprintln!("marketplace install-log: could not open for auto-prune: {e}");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
