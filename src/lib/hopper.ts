@@ -326,6 +326,105 @@ export const summarizeCoverage = (report: RuleCoverageReport): string => {
 };
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 85 — sample drilldown TS client
+// ---------------------------------------------------------------------
+
+/** Bucket selector for the drilldown command. Mirrors
+ *  `pdf::hopper::coverage::SampleBucket` — a `kind`-tagged union.
+ *  Use `ruleBucket(i)` / `FALLTHROUGH_BUCKET` to construct one rather
+ *  than hand-rolling the object literal at call sites. */
+export type SampleBucket =
+  | { kind: "rule"; index: number }
+  | { kind: "fallthrough" };
+
+/** Stable singleton for the fall-through bucket — saves a per-call
+ *  object literal and keeps the bucket comparison stable across
+ *  identity checks. */
+export const FALLTHROUGH_BUCKET: SampleBucket = { kind: "fallthrough" } as const;
+
+/** Construct a rule bucket selector. Throws on negative indices —
+ *  the Rust side treats out-of-range indices as empty buckets, but
+ *  negative numbers indicate a TS bug in the caller, not a real
+ *  drilldown the user asked for. */
+export function ruleBucket(index: number): SampleBucket {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error(`ruleBucket: index must be a non-negative integer, got ${index}`);
+  }
+  return { kind: "rule", index };
+}
+
+/** The drilldown result for a single bucket. Mirrors
+ *  `pdf::hopper::coverage::SampleDrilldown`. `samples` is capped to
+ *  `preview_cap` (default 25 server-side); `total_in_bucket` reports
+ *  the FULL bucket size pre-cap so the UI can render
+ *  "Showing 25 of 47" copy. `truncated` is true iff
+ *  `total_in_bucket > samples.length`. */
+export interface SampleDrilldown {
+  bucket: SampleBucket;
+  samples: RuleSample[];
+  total_in_bucket: number;
+  truncated: boolean;
+}
+
+/** Drill into a coverage bucket and return the files in it (capped
+ *  to `previewCap`, default 25). The other input axes
+ *  (`candidateRules` / `samples` / `sampleLimit`) mirror
+ *  `slabHopperRuleCoverage` so the click-through drilldown evaluates
+ *  the EXACT same chain + samples the coverage report counted. */
+export const slabHopperSampleDrilldown = (
+  watchId: number,
+  bucket: SampleBucket,
+  opts: {
+    candidateRules?: Rule[];
+    samples?: RuleSample[];
+    sampleLimit?: number;
+    previewCap?: number;
+  } = {},
+): Promise<SampleDrilldown> =>
+  invoke("slab_hopper_sample_drilldown", {
+    watchId,
+    bucket,
+    candidateRules: opts.candidateRules ?? null,
+    samples: opts.samples ?? null,
+    sampleLimit: opts.sampleLimit ?? null,
+    previewCap: opts.previewCap ?? null,
+  });
+
+/** True iff two `SampleBucket`s point at the same logical bucket.
+ *  Used by the coverage panel to gate the "this row is open" highlight
+ *  without depending on object identity. */
+export function sampleBucketEquals(a: SampleBucket, b: SampleBucket): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "rule" && b.kind === "rule") return a.index === b.index;
+  return true; // both fallthrough
+}
+
+/** Header copy for the drilldown popover. Returns "Showing N of M"
+ *  when truncated, plain "N file(s)" otherwise. Empty bucket reads
+ *  as "No files in this bucket" so the popover never renders bare. */
+export function describeDrilldown(drill: SampleDrilldown): string {
+  const total = drill.total_in_bucket;
+  if (total === 0) return "No files in this bucket";
+  const shown = drill.samples.length;
+  if (drill.truncated) return `Showing ${shown} of ${total}`;
+  return `${total} ${total === 1 ? "file" : "files"}`;
+}
+
+/** Human-readable label for a bucket — used in the popover heading
+ *  and the close-button title. Rule buckets show `1-based` indices
+ *  to match the coverage panel's `#1 Tax` row labels. */
+export function describeBucket(
+  bucket: SampleBucket,
+  ruleNames?: readonly string[],
+): string {
+  if (bucket.kind === "fallthrough") return "Fall-through to watch defaults";
+  const i = bucket.index;
+  const name = ruleNames?.[i];
+  if (name && name.trim().length > 0) return `#${i + 1} ${name}`;
+  return `Rule #${i + 1}`;
+}
+
+// ---------------------------------------------------------------------
 // Predicate helpers — small but worth their weight in keystroke-saving
 // when the editor wires up 6 different predicate kinds.
 // ---------------------------------------------------------------------

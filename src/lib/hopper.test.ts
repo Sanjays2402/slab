@@ -14,8 +14,16 @@ import {
   ruleMatchPercent,
   ruleCoverageDiagnostic,
   summarizeCoverage,
+  ruleBucket,
+  FALLTHROUGH_BUCKET,
+  sampleBucketEquals,
+  describeDrilldown,
+  describeBucket,
   type RuleCoverageReport,
   type RuleCoverage,
+  type RuleSample,
+  type SampleBucket,
+  type SampleDrilldown,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -164,5 +172,186 @@ function report(
   expect(
     summarizeCoverage(r) === "1 of 3 samples routed (33%)",
     "summarizeCoverage: rounds 33.33 -> 33",
+  );
+}
+
+// ── ruleBucket / FALLTHROUGH_BUCKET (Slice 85) ───────────────────────
+
+{
+  // Valid index round-trips.
+  const b = ruleBucket(3);
+  expect(b.kind === "rule", "ruleBucket: kind is 'rule'");
+  expect(b.kind === "rule" && b.index === 3, "ruleBucket: index preserved");
+}
+{
+  // Index 0 is valid (first rule).
+  const b = ruleBucket(0);
+  expect(b.kind === "rule" && b.index === 0, "ruleBucket: index 0 is valid");
+}
+{
+  // Negative index throws — TS bug guard, not a real bucket.
+  let threw = false;
+  try {
+    ruleBucket(-1);
+  } catch {
+    threw = true;
+  }
+  expect(threw, "ruleBucket: negative index throws");
+}
+{
+  // Non-integer throws — same guard.
+  let threw = false;
+  try {
+    ruleBucket(1.5);
+  } catch {
+    threw = true;
+  }
+  expect(threw, "ruleBucket: float index throws");
+}
+{
+  // The fall-through singleton is a stable object.
+  expect(FALLTHROUGH_BUCKET.kind === "fallthrough", "FALLTHROUGH_BUCKET kind");
+}
+
+// ── sampleBucketEquals (Slice 85) ────────────────────────────────────
+
+{
+  expect(
+    sampleBucketEquals(FALLTHROUGH_BUCKET, FALLTHROUGH_BUCKET),
+    "sampleBucketEquals: fallthrough == fallthrough",
+  );
+  expect(
+    sampleBucketEquals(FALLTHROUGH_BUCKET, { kind: "fallthrough" }),
+    "sampleBucketEquals: fallthrough == new fallthrough",
+  );
+  expect(
+    sampleBucketEquals(ruleBucket(2), ruleBucket(2)),
+    "sampleBucketEquals: rule(2) == rule(2)",
+  );
+  expect(
+    !sampleBucketEquals(ruleBucket(2), ruleBucket(3)),
+    "sampleBucketEquals: rule(2) != rule(3)",
+  );
+  expect(
+    !sampleBucketEquals(ruleBucket(0), FALLTHROUGH_BUCKET),
+    "sampleBucketEquals: rule(0) != fallthrough",
+  );
+  expect(
+    !sampleBucketEquals(FALLTHROUGH_BUCKET, ruleBucket(0)),
+    "sampleBucketEquals: fallthrough != rule(0) (commutative)",
+  );
+}
+
+// ── describeDrilldown (Slice 85) ─────────────────────────────────────
+
+function sample(filename: string): RuleSample {
+  return { filename };
+}
+
+function drilldown(
+  bucket: SampleBucket,
+  samples: RuleSample[],
+  total_in_bucket: number,
+  truncated: boolean,
+): SampleDrilldown {
+  return { bucket, samples, total_in_bucket, truncated };
+}
+
+{
+  const d = drilldown(FALLTHROUGH_BUCKET, [], 0, false);
+  expect(
+    describeDrilldown(d) === "No files in this bucket",
+    "describeDrilldown: empty bucket empty-state copy",
+  );
+}
+{
+  const d = drilldown(FALLTHROUGH_BUCKET, [sample("a.pdf")], 1, false);
+  expect(
+    describeDrilldown(d) === "1 file",
+    "describeDrilldown: singular file copy",
+  );
+}
+{
+  const d = drilldown(
+    FALLTHROUGH_BUCKET,
+    [sample("a.pdf"), sample("b.pdf"), sample("c.pdf")],
+    3,
+    false,
+  );
+  expect(
+    describeDrilldown(d) === "3 files",
+    "describeDrilldown: plural files copy",
+  );
+}
+{
+  // Truncated: show count / total
+  const samples = Array.from({ length: 25 }, (_, i) => sample(`f${i}.pdf`));
+  const d = drilldown(ruleBucket(0), samples, 47, true);
+  expect(
+    describeDrilldown(d) === "Showing 25 of 47",
+    "describeDrilldown: truncated copy",
+  );
+}
+{
+  // total > 0 but samples empty (defensive — shouldn't happen but
+  // make sure we don't divide by zero or render NaN)
+  const d = drilldown(ruleBucket(0), [], 5, true);
+  expect(
+    describeDrilldown(d) === "Showing 0 of 5",
+    "describeDrilldown: defensive zero-shown branch",
+  );
+}
+
+// ── describeBucket (Slice 85) ────────────────────────────────────────
+
+{
+  expect(
+    describeBucket(FALLTHROUGH_BUCKET) === "Fall-through to watch defaults",
+    "describeBucket: fallthrough copy",
+  );
+}
+{
+  // Named rule with names array.
+  expect(
+    describeBucket(ruleBucket(2), ["Tax", "Invoices", "Receipts"]) ===
+      "#3 Receipts",
+    "describeBucket: named rule (1-based index)",
+  );
+}
+{
+  // First rule shows as #1 not #0.
+  expect(
+    describeBucket(ruleBucket(0), ["First", "Second"]) === "#1 First",
+    "describeBucket: zero-indexed rule renders as #1",
+  );
+}
+{
+  // No names array — fall back to "Rule #N".
+  expect(
+    describeBucket(ruleBucket(3)) === "Rule #4",
+    "describeBucket: no names array fallback",
+  );
+}
+{
+  // Empty name in array — fall back to "Rule #N" so the popover
+  // never reads as "#1 " with a trailing space.
+  expect(
+    describeBucket(ruleBucket(0), [""]) === "Rule #1",
+    "describeBucket: empty-name fallback",
+  );
+}
+{
+  // Whitespace-only name — same fallback.
+  expect(
+    describeBucket(ruleBucket(0), ["   "]) === "Rule #1",
+    "describeBucket: whitespace-name fallback",
+  );
+}
+{
+  // Out-of-range index against the names array — fall back, don't
+  // render "undefined" or empty.
+  expect(
+    describeBucket(ruleBucket(99), ["Tax"]) === "Rule #100",
+    "describeBucket: out-of-range index fallback",
   );
 }
