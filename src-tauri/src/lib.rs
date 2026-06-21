@@ -5520,6 +5520,518 @@ fn slab_marketplace_install_log_auto_prune(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Bulk updates (v3.39 round-15 — slices 69-70).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Tauri event channel for per-step bulk-update progress. The frontend
+/// subscribes to this while a `slab_marketplace_update_all` call is
+/// in flight to render a per-plugin progress overlay.
+const MARKETPLACE_UPDATE_PROGRESS_EVENT: &str = "marketplace://update-progress";
+
+/// One step of progress emitted on the `marketplace://update-progress`
+/// channel as the batch updater works through its target list. The
+/// frontend renders this as "Updating 2/5 · Acme PDF Tools…".
+///
+/// Three phases: `starting` (about to call install pipeline),
+/// `done` (install pipeline returned Ok, log row appended), `error`
+/// (install pipeline returned Err — the batch continues onto the next
+/// id, the failed id surfaces on the final report).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UpdateProgress {
+    /// Monotonic batch id (typically `Date.now()`) tying this stream
+    /// of events to the matching `slab_marketplace_update_all` call.
+    /// Lets multiple in-flight batches stay distinct in the event bus
+    /// even though we don't currently fire more than one at a time.
+    pub batch_id: i64,
+    /// 1-indexed position of the current target in the batch list.
+    pub index: usize,
+    /// Total number of targets in the batch.
+    pub total: usize,
+    /// Plugin id of the target this event refers to.
+    pub plugin_id: String,
+    /// `starting` | `done` | `error`.
+    pub phase: String,
+    /// Human-readable error message, only populated when `phase == "error"`.
+    pub error: Option<String>,
+}
+
+/// Outcome of one target in a `slab_marketplace_update_all` batch.
+/// `kind` is `succeeded` (full install pipeline returned Ok and the
+/// log row landed) or `failed` (signature / download / sha256 / extract
+/// returned Err; the failure row also landed in the install log).
+///
+/// The full prior + new version strings are carried for both kinds so
+/// the UI can render "Updated Acme PDF Tools 1.4.0 → 1.5.0" or
+/// "Failed to update Acme PDF Tools 1.4.0 → 1.5.0 (signature check
+/// failed)" without re-resolving from the registry.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UpdateOutcome {
+    Succeeded {
+        plugin_id: String,
+        prior_version: String,
+        new_version: String,
+        bytes_written: u64,
+    },
+    Failed {
+        plugin_id: String,
+        prior_version: String,
+        new_version: String,
+        error: String,
+    },
+}
+
+impl UpdateOutcome {
+    /// Returns the plugin id regardless of outcome kind — used by the
+    /// frontend reducer to key its state map.
+    pub fn plugin_id(&self) -> &str {
+        match self {
+            Self::Succeeded { plugin_id, .. } | Self::Failed { plugin_id, .. } => plugin_id,
+        }
+    }
+
+    /// True iff the outcome is `Succeeded`. Convenience for the
+    /// summary calculation.
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Succeeded { .. })
+    }
+}
+
+/// Final report from a `slab_marketplace_update_all` call. The wire
+/// shape is self-describing: succeeded + failed are derived counts so
+/// callers don't need to fold the outcomes list themselves.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BatchUpdateReport {
+    /// Echo of the batch_id the caller passed in (so a frontend that
+    /// fires multiple batches in close succession can correlate the
+    /// returned report with its in-flight tracking state).
+    pub batch_id: i64,
+    /// Per-target outcomes in the SAME order the caller passed in.
+    pub outcomes: Vec<UpdateOutcome>,
+    /// Count of `Succeeded` outcomes.
+    pub succeeded: usize,
+    /// Count of `Failed` outcomes.
+    pub failed: usize,
+    /// Sum of `bytes_written` across successful outcomes.
+    pub bytes_written: u64,
+}
+
+impl BatchUpdateReport {
+    fn from_outcomes(batch_id: i64, outcomes: Vec<UpdateOutcome>) -> Self {
+        let succeeded = outcomes.iter().filter(|o| o.is_success()).count();
+        let failed = outcomes.len() - succeeded;
+        let bytes_written = outcomes
+            .iter()
+            .filter_map(|o| match o {
+                UpdateOutcome::Succeeded { bytes_written, .. } => Some(*bytes_written),
+                _ => None,
+            })
+            .sum();
+        Self {
+            batch_id,
+            outcomes,
+            succeeded,
+            failed,
+            bytes_written,
+        }
+    }
+}
+
+/// `slab_marketplace_list_update_targets` — compute the deterministic
+/// set of installed plugins that have a newer version available in
+/// the freshly-fetched marketplace index. The frontend's "Updates
+/// available" banner renders directly from this plan.
+///
+/// Re-fetches the index every call so the user gets an up-to-date
+/// answer (the cache + offline-seed fallback in `fetch_index_with_cache`
+/// keeps the call cheap when the network is happy or absent). The
+/// returned plan is sorted by id ascending and carries the full
+/// IndexEntry per target so the banner can render without a second
+/// lookup, and the bulk-update call can feed `entry` straight into
+/// the install pipeline.
+///
+/// Errors surface as `Err(String)` only when the index can't be
+/// loaded at all (no network + no cache + no embedded seed) — every
+/// other code path returns `Ok(UpdatePlan)` with possibly an empty
+/// targets list.
+#[tauri::command]
+async fn slab_marketplace_list_update_targets(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<marketplace::UpdatePlan, String> {
+    // 1) Resolve installed plugins (slim subset of registry).
+    let installed: Vec<marketplace::InstalledPlugin> = reg
+        .list()
+        .into_iter()
+        .filter_map(|p| {
+            let version = p.manifest.as_ref().map(|m| m.version.clone())?;
+            Some(marketplace::InstalledPlugin {
+                id: p.id.clone(),
+                version,
+            })
+        })
+        .collect();
+
+    // 2) Fetch the index. Use the same cache-aware path as the
+    //    Browse-tab refresh so we don't re-burn the network — the
+    //    user's banner reflects what the cache says when offline.
+    let client = marketplace::default_client();
+    let cache_path = marketplace::default_cache_path();
+    let outcome = marketplace::fetch_index_with_cache(
+        &client,
+        marketplace::DEFAULT_INDEX_URL,
+        cache_path.as_deref(),
+    )
+    .await;
+    let index = match outcome.index() {
+        Some(idx) => idx.clone(),
+        None => {
+            // Nothing we can show. Surface the underlying error so
+            // the banner UI can pin the cause to the user.
+            return Err(format!(
+                "marketplace index unavailable: {}",
+                match outcome {
+                    marketplace::FetchOutcome::Failed(e) => e.to_string(),
+                    _ => "no index, no cache, no embedded seed".to_string(),
+                }
+            ));
+        }
+    };
+
+    Ok(marketplace::plan_updates(&installed, &index.plugins))
+}
+
+/// `slab_marketplace_update_all` — bulk-update one or more plugins
+/// sequentially. The caller passes the list of ids (typically derived
+/// from a prior `slab_marketplace_list_update_targets` plan) plus a
+/// monotonic `batch_id` for correlating the progress event stream.
+///
+/// For EACH id in order:
+///   1. Re-resolve the matching IndexEntry from a fresh index call
+///      (defensive — the index might have moved between the planning
+///      call and this call). If the id is no longer in the index, the
+///      target lands as `Failed` with `error: "no longer in
+///      marketplace index"`.
+///   2. Emit `phase: "starting"` on the progress channel.
+///   3. Run the same verify→install pipeline `slab_marketplace_install`
+///      uses (signature, plugins-root, install_from_entry,
+///      reg.discover, install_log).
+///   4. Emit `phase: "done"` or `phase: "error"` accordingly.
+///
+/// The batch ALWAYS runs to completion — a failed update on id N
+/// does NOT stop ids N+1 onward. This matches every other batch
+/// updater UX (browser extensions, system package managers): the user
+/// expects "as many as can succeed will succeed".
+///
+/// Returns the structured [`BatchUpdateReport`] with per-id outcomes,
+/// counts of succeeded + failed, and total bytes written.
+#[tauri::command]
+async fn slab_marketplace_update_all(
+    app: tauri::AppHandle,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+    batch_id: i64,
+    plugin_ids: Vec<String>,
+) -> Result<BatchUpdateReport, String> {
+    use tauri::Emitter;
+
+    // Fetch the index ONCE up front; bulk update inside the loop
+    // resolves entries from this snapshot. If the index moves
+    // mid-batch we don't pick it up — that's the deliberate trade
+    // (avoid network races inside the loop).
+    let client = marketplace::default_client();
+    let cache_path = marketplace::default_cache_path();
+    let index_outcome = marketplace::fetch_index_with_cache(
+        &client,
+        marketplace::DEFAULT_INDEX_URL,
+        cache_path.as_deref(),
+    )
+    .await;
+    let index = match index_outcome.index() {
+        Some(idx) => idx.clone(),
+        None => {
+            return Err(format!(
+                "marketplace index unavailable: {}",
+                match index_outcome {
+                    marketplace::FetchOutcome::Failed(e) => e.to_string(),
+                    _ => "no index, no cache, no embedded seed".to_string(),
+                }
+            ))
+        }
+    };
+
+    let plugins_root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    if let Err(e) = std::fs::create_dir_all(&plugins_root) {
+        return Err(format!("could not create plugins dir: {e}"));
+    }
+
+    let total = plugin_ids.len();
+    let mut outcomes: Vec<UpdateOutcome> = Vec::with_capacity(total);
+
+    for (i, plugin_id) in plugin_ids.iter().enumerate() {
+        let index_pos = i + 1;
+
+        // Capture prior version BEFORE the install (registry-derived).
+        let prior_version = reg
+            .get(plugin_id)
+            .and_then(|p| p.manifest.map(|m| m.version))
+            .unwrap_or_default();
+
+        // Resolve the matching index entry from the snapshot.
+        let Some(entry) = index.plugins.iter().find(|e| &e.id == plugin_id) else {
+            // Index moved or the caller passed a stale id. Surface as
+            // failure without writing an install_log row — there's no
+            // versioned identity to log against here.
+            let _ = app.emit(
+                MARKETPLACE_UPDATE_PROGRESS_EVENT,
+                UpdateProgress {
+                    batch_id,
+                    index: index_pos,
+                    total,
+                    plugin_id: plugin_id.clone(),
+                    phase: "error".into(),
+                    error: Some("no longer in marketplace index".into()),
+                },
+            );
+            outcomes.push(UpdateOutcome::Failed {
+                plugin_id: plugin_id.clone(),
+                prior_version: prior_version.clone(),
+                new_version: String::new(),
+                error: "no longer in marketplace index".into(),
+            });
+            continue;
+        };
+
+        let new_version = entry.version.clone();
+
+        // Starting event.
+        let _ = app.emit(
+            MARKETPLACE_UPDATE_PROGRESS_EVENT,
+            UpdateProgress {
+                batch_id,
+                index: index_pos,
+                total,
+                plugin_id: plugin_id.clone(),
+                phase: "starting".into(),
+                error: None,
+            },
+        );
+
+        // Signature check.
+        if let Err(e) = marketplace::verify_with_maintainer_key(entry) {
+            let msg = format!("signature check failed: {e}");
+            record_install_failure(&entry.id, &entry.version, &msg);
+            let _ = app.emit(
+                MARKETPLACE_UPDATE_PROGRESS_EVENT,
+                UpdateProgress {
+                    batch_id,
+                    index: index_pos,
+                    total,
+                    plugin_id: plugin_id.clone(),
+                    phase: "error".into(),
+                    error: Some(msg.clone()),
+                },
+            );
+            outcomes.push(UpdateOutcome::Failed {
+                plugin_id: plugin_id.clone(),
+                prior_version,
+                new_version,
+                error: msg,
+            });
+            continue;
+        }
+
+        // Install pipeline.
+        let report = match marketplace::install_from_entry(&client, entry, &plugins_root).await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                record_install_failure(&entry.id, &entry.version, &msg);
+                let _ = app.emit(
+                    MARKETPLACE_UPDATE_PROGRESS_EVENT,
+                    UpdateProgress {
+                        batch_id,
+                        index: index_pos,
+                        total,
+                        plugin_id: plugin_id.clone(),
+                        phase: "error".into(),
+                        error: Some(msg.clone()),
+                    },
+                );
+                outcomes.push(UpdateOutcome::Failed {
+                    plugin_id: plugin_id.clone(),
+                    prior_version,
+                    new_version,
+                    error: msg,
+                });
+                continue;
+            }
+        };
+
+        // Refresh registry so the UI sees the bumped version.
+        let enabled = plugins::default_state_path()
+            .as_deref()
+            .map(plugins::read_enabled_state)
+            .unwrap_or_default();
+        reg.discover(&plugins_root, &enabled);
+
+        // Append install_log row (best-effort, same policy as the
+        // single-install command — losing audit never blocks an
+        // install the user just clicked).
+        let logged_prior = if report.replaced_existing && !prior_version.is_empty() {
+            Some(prior_version.as_str())
+        } else {
+            None
+        };
+        if let Err(e) = open_install_log_and(|log| {
+            log.record_install(
+                &report.id,
+                &report.version,
+                "marketplace",
+                report.bytes_written,
+                report.files_extracted,
+                logged_prior,
+            )
+            .map(|_| ())
+        }) {
+            eprintln!("[slab] install log write failed during update: {e}");
+        }
+
+        let _ = app.emit(
+            MARKETPLACE_UPDATE_PROGRESS_EVENT,
+            UpdateProgress {
+                batch_id,
+                index: index_pos,
+                total,
+                plugin_id: plugin_id.clone(),
+                phase: "done".into(),
+                error: None,
+            },
+        );
+
+        outcomes.push(UpdateOutcome::Succeeded {
+            plugin_id: report.id.clone(),
+            prior_version,
+            new_version: report.version.clone(),
+            bytes_written: report.bytes_written,
+        });
+    }
+
+    Ok(BatchUpdateReport::from_outcomes(batch_id, outcomes))
+}
+
+#[cfg(test)]
+mod marketplace_bulk_update_tests {
+    use super::*;
+
+    fn ok(id: &str, prior: &str, new: &str, bytes: u64) -> UpdateOutcome {
+        UpdateOutcome::Succeeded {
+            plugin_id: id.into(),
+            prior_version: prior.into(),
+            new_version: new.into(),
+            bytes_written: bytes,
+        }
+    }
+
+    fn fail(id: &str, prior: &str, new: &str, err: &str) -> UpdateOutcome {
+        UpdateOutcome::Failed {
+            plugin_id: id.into(),
+            prior_version: prior.into(),
+            new_version: new.into(),
+            error: err.into(),
+        }
+    }
+
+    #[test]
+    fn outcome_plugin_id_accessor_works_for_both_kinds() {
+        assert_eq!(ok("a", "1", "2", 0).plugin_id(), "a");
+        assert_eq!(fail("b", "1", "2", "boom").plugin_id(), "b");
+    }
+
+    #[test]
+    fn outcome_is_success_distinguishes_kinds() {
+        assert!(ok("a", "1", "2", 0).is_success());
+        assert!(!fail("b", "1", "2", "boom").is_success());
+    }
+
+    #[test]
+    fn batch_report_counts_succeed_and_fail_correctly() {
+        let outcomes = vec![
+            ok("a", "1.0.0", "1.0.1", 100),
+            fail("b", "2.0.0", "2.0.1", "sig"),
+            ok("c", "3.0.0", "3.1.0", 250),
+        ];
+        let report = BatchUpdateReport::from_outcomes(42, outcomes);
+        assert_eq!(report.batch_id, 42);
+        assert_eq!(report.succeeded, 2);
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.bytes_written, 350);
+        assert_eq!(report.outcomes.len(), 3);
+    }
+
+    #[test]
+    fn batch_report_handles_empty_outcomes() {
+        let report = BatchUpdateReport::from_outcomes(1, vec![]);
+        assert_eq!(report.succeeded, 0);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.bytes_written, 0);
+        assert!(report.outcomes.is_empty());
+    }
+
+    #[test]
+    fn batch_report_serializes_with_snake_case_tags() {
+        let report = BatchUpdateReport::from_outcomes(
+            7,
+            vec![
+                ok("a", "1.0.0", "1.0.1", 100),
+                fail("b", "1.0.0", "1.0.1", "download"),
+            ],
+        );
+        let json = serde_json::to_string(&report).expect("serialize");
+        // Snake_case tag is mandatory — the TS reducer narrows on this.
+        assert!(json.contains("\"kind\":\"succeeded\""), "got {json}");
+        assert!(json.contains("\"kind\":\"failed\""), "got {json}");
+        assert!(json.contains("\"batch_id\":7"));
+        assert!(json.contains("\"succeeded\":1"));
+        assert!(json.contains("\"failed\":1"));
+        assert!(json.contains("\"bytes_written\":100"));
+    }
+
+    #[test]
+    fn update_progress_serializes_with_snake_case_fields() {
+        let p = UpdateProgress {
+            batch_id: 9,
+            index: 2,
+            total: 5,
+            plugin_id: "com.example.hi".into(),
+            phase: "done".into(),
+            error: None,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"batch_id\":9"));
+        assert!(json.contains("\"plugin_id\":\"com.example.hi\""));
+        assert!(json.contains("\"phase\":\"done\""));
+        // error: None skipped under default serde (no skip_if), so the
+        // key is present as null — the TS reducer treats null + missing
+        // identically.
+        assert!(json.contains("\"error\":null"));
+    }
+
+    #[test]
+    fn update_progress_serializes_error_phase_with_message() {
+        let p = UpdateProgress {
+            batch_id: 1,
+            index: 1,
+            total: 1,
+            plugin_id: "a".into(),
+            phase: "error".into(),
+            error: Some("network down".into()),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"error\":\"network down\""));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Beacon Voice Mode (v1.9.0 Slice 15) — Tauri command surface.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -6547,6 +7059,8 @@ pub fn run() {
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,
+            slab_marketplace_list_update_targets,
+            slab_marketplace_update_all,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,
