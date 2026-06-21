@@ -181,6 +181,131 @@ pub fn compute_coverage(rules: &[Rule], samples: &[RuleSample]) -> RuleCoverageR
     }
 }
 
+// ─── Sample drilldown primitive (v3.40 Slice 83) ─────────────────────
+//
+// The coverage report answers "how many samples did each rule catch?",
+// but the natural follow-up question — "which 8 files fell through to
+// the watch defaults?" or "show me the 23 samples Rule 3 routed" — has
+// no answer without re-walking the chain client-side. This primitive
+// fills the gap with a second pure-data pass that groups samples by
+// winner (rule index, or "fall through") and returns the per-bucket
+// sample list capped to a user-configurable preview cap. The UI then
+// renders the bucket as a popover when a coverage row is clicked.
+//
+// We keep this separate from `compute_coverage` for three reasons:
+//
+// 1. The drilldown carries the FILES (not just counts), so the payload
+//    is meaningfully larger; the coverage panel doesn't always need it.
+// 2. The bucket the user wants to drill into is one of N+1 choices
+//    (rules + fall-through); returning all buckets every time would
+//    waste bandwidth on a 20-rule chain.
+// 3. The preview cap (default 25) is independent of the coverage
+//    sample cap (default 100) — a user might scan 500 samples but only
+//    care about the first 25 fall-throughs.
+
+/// Selector for which bucket of samples to extract. Mirrors the UI
+/// choice: a specific rule by 0-based index, or the catch-all
+/// fall-through bucket.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SampleBucket {
+    /// Samples this rule was the FIRST to match. Matches the
+    /// `first_match` count in [`RuleCoverage`].
+    Rule { index: usize },
+    /// Samples that no rule matched — fell through to the watch's
+    /// default recipe.
+    Fallthrough,
+}
+
+/// The result of a drilldown: which bucket was requested, the
+/// matching samples (capped to `preview_cap`), the FULL bucket size
+/// (so the UI can render "Showing 25 of 47"), and a `truncated` flag
+/// for convenience.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SampleDrilldown {
+    pub bucket: SampleBucket,
+    /// The samples in this bucket, capped to `preview_cap`. Order is
+    /// the input order from `samples` (which is typically
+    /// newest-first when sourced from the run log, so the user sees
+    /// the most recent first).
+    pub samples: Vec<RuleSample>,
+    /// Total count of samples in this bucket — equals
+    /// `samples.len()` when not truncated, larger when truncated.
+    /// The UI uses this to render "Showing N of M" copy.
+    pub total_in_bucket: u64,
+    /// True iff `total_in_bucket > samples.len()` after the cap was
+    /// applied. Convenience flag so the UI doesn't have to compare
+    /// the two counts itself.
+    pub truncated: bool,
+}
+
+/// Compute the drilldown for `bucket` against `rules` + `samples`.
+///
+/// Cost is `O(rules.len() * samples.len())` — the same shape as
+/// [`compute_coverage`]; we walk every sample through the chain to
+/// determine its winner. We don't reuse a coverage report because
+/// the bucket assignment isn't carried in the coverage shape (only
+/// counts are), and rebuilding the winners is cheap enough that two
+/// passes is simpler than caching a winners-vec.
+///
+/// `preview_cap` is the maximum number of samples to copy into the
+/// result; the function clamps it to `[1, 5000]` to bound the IPC
+/// payload (5000 ≈ a generous full-screen file list — anything more
+/// is paging territory, not preview territory).
+///
+/// An out-of-range `Rule { index }` (greater than or equal to
+/// `rules.len()`) yields an empty drilldown — the caller's invariant
+/// to keep `index` in range; returning empty instead of panicking
+/// matches the rest of the analyzer's lenient stance.
+pub fn compute_sample_drilldown(
+    rules: &[Rule],
+    samples: &[RuleSample],
+    bucket: SampleBucket,
+    preview_cap: usize,
+) -> SampleDrilldown {
+    let cap = preview_cap.clamp(1, 5_000);
+    let n_rules = rules.len();
+
+    // Resolve out-of-range rule index to an empty bucket up front so
+    // we don't waste a scan.
+    if let SampleBucket::Rule { index } = bucket {
+        if index >= n_rules {
+            return SampleDrilldown {
+                bucket,
+                samples: Vec::new(),
+                total_in_bucket: 0,
+                truncated: false,
+            };
+        }
+    }
+
+    let mut hits: Vec<&RuleSample> = Vec::new();
+    let mut total: u64 = 0;
+    for sample in samples {
+        let ctx = sample.as_context();
+        let winner: Option<usize> = (0..n_rules).find(|&i| rules[i].predicate.matches(&ctx));
+        let in_bucket = match (bucket, winner) {
+            (SampleBucket::Rule { index }, Some(w)) => w == index,
+            (SampleBucket::Fallthrough, None) => true,
+            _ => false,
+        };
+        if in_bucket {
+            total += 1;
+            if hits.len() < cap {
+                hits.push(sample);
+            }
+        }
+    }
+
+    let truncated = total > hits.len() as u64;
+    SampleDrilldown {
+        bucket,
+        samples: hits.into_iter().cloned().collect(),
+        total_in_bucket: total,
+        truncated,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,5 +642,269 @@ mod tests {
         assert_eq!(s.size_bytes, 0);
         assert!(s.page_count.is_none());
         assert!(s.text_sample.is_none());
+    }
+
+    // ── Slice 83 — sample drilldown primitive ─────────────────────────
+
+    #[test]
+    fn drilldown_rule_bucket_returns_first_match_samples() {
+        let rules = vec![
+            rule(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+            rule("Always", RulePredicate::Always),
+        ];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["tax_2025.pdf", "tax_2026.pdf", "invoice.pdf"]),
+            SampleBucket::Rule { index: 0 },
+            10,
+        );
+        assert_eq!(drill.total_in_bucket, 2);
+        assert_eq!(drill.samples.len(), 2);
+        assert_eq!(drill.samples[0].filename, "tax_2025.pdf");
+        assert_eq!(drill.samples[1].filename, "tax_2026.pdf");
+        assert!(!drill.truncated);
+        assert_eq!(drill.bucket, SampleBucket::Rule { index: 0 });
+    }
+
+    #[test]
+    fn drilldown_fallthrough_bucket_returns_unmatched_samples() {
+        let rules = vec![rule(
+            "Tax",
+            RulePredicate::FilenameGlob {
+                pattern: "tax_*.pdf".into(),
+            },
+        )];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["tax_2025.pdf", "invoice.pdf", "receipt.pdf"]),
+            SampleBucket::Fallthrough,
+            10,
+        );
+        assert_eq!(drill.total_in_bucket, 2);
+        assert_eq!(drill.samples.len(), 2);
+        assert_eq!(drill.samples[0].filename, "invoice.pdf");
+        assert_eq!(drill.samples[1].filename, "receipt.pdf");
+        assert!(!drill.truncated);
+    }
+
+    #[test]
+    fn drilldown_shadowed_rule_returns_empty_first_match_bucket() {
+        // Always wins everything so the Tax rule's first_match bucket
+        // is empty even though it would match `tax_*.pdf` in isolation.
+        let rules = vec![
+            rule("Always", RulePredicate::Always),
+            rule(
+                "Tax (shadowed)",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+        ];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["tax_2025.pdf", "invoice.pdf"]),
+            SampleBucket::Rule { index: 1 },
+            10,
+        );
+        assert_eq!(drill.total_in_bucket, 0);
+        assert!(drill.samples.is_empty());
+        assert!(!drill.truncated);
+    }
+
+    #[test]
+    fn drilldown_caps_samples_and_sets_truncated_flag() {
+        let rules = vec![rule("Always", RulePredicate::Always)];
+        let many: Vec<RuleSample> = (0..50).map(|i| sample(&format!("f{i}.pdf"))).collect();
+        let drill = compute_sample_drilldown(&rules, &many, SampleBucket::Rule { index: 0 }, 5);
+        assert_eq!(drill.total_in_bucket, 50);
+        assert_eq!(drill.samples.len(), 5);
+        assert_eq!(drill.samples[0].filename, "f0.pdf");
+        assert_eq!(drill.samples[4].filename, "f4.pdf");
+        assert!(drill.truncated);
+    }
+
+    #[test]
+    fn drilldown_preview_cap_zero_clamps_to_one() {
+        // The cap floor is 1 so a caller can't accidentally ask for
+        // zero (which would return an always-empty bucket and look
+        // like a bug at the call site).
+        let rules = vec![rule("Always", RulePredicate::Always)];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["a.pdf", "b.pdf"]),
+            SampleBucket::Rule { index: 0 },
+            0,
+        );
+        assert_eq!(drill.total_in_bucket, 2);
+        assert_eq!(drill.samples.len(), 1);
+        assert!(drill.truncated);
+    }
+
+    #[test]
+    fn drilldown_preview_cap_above_ceiling_clamps_to_5000() {
+        // The cap ceiling is 5000 so a caller asking for usize::MAX
+        // doesn't try to copy the entire input vec.
+        let rules = vec![rule("Always", RulePredicate::Always)];
+        let many: Vec<RuleSample> = (0..10).map(|i| sample(&format!("f{i}.pdf"))).collect();
+        let drill =
+            compute_sample_drilldown(&rules, &many, SampleBucket::Rule { index: 0 }, usize::MAX);
+        // The clamp ceiling is 5000 but we only had 10 inputs so the
+        // actual returned count is 10 (clamp doesn't inflate).
+        assert_eq!(drill.total_in_bucket, 10);
+        assert_eq!(drill.samples.len(), 10);
+        assert!(!drill.truncated);
+    }
+
+    #[test]
+    fn drilldown_out_of_range_rule_index_returns_empty() {
+        // Caller is supposed to pass an index in [0, rules.len()) but
+        // we return empty (not panic) on misuse — matches the rest
+        // of the analyzer's lenient stance.
+        let rules = vec![rule("Always", RulePredicate::Always)];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["a.pdf", "b.pdf"]),
+            SampleBucket::Rule { index: 99 },
+            10,
+        );
+        assert_eq!(drill.total_in_bucket, 0);
+        assert!(drill.samples.is_empty());
+        assert!(!drill.truncated);
+        assert_eq!(drill.bucket, SampleBucket::Rule { index: 99 });
+    }
+
+    #[test]
+    fn drilldown_fallthrough_with_no_rules_returns_all_samples() {
+        // No rules => every sample falls through; the bucket holds all.
+        let drill = compute_sample_drilldown(
+            &[],
+            &samples(&["a.pdf", "b.pdf", "c.pdf"]),
+            SampleBucket::Fallthrough,
+            10,
+        );
+        assert_eq!(drill.total_in_bucket, 3);
+        assert_eq!(drill.samples.len(), 3);
+    }
+
+    #[test]
+    fn drilldown_fallthrough_with_only_always_rule_is_empty() {
+        // An Always rule catches everything, so the fall-through
+        // bucket is empty even though there are matching samples.
+        let rules = vec![rule("Always", RulePredicate::Always)];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["a.pdf", "b.pdf"]),
+            SampleBucket::Fallthrough,
+            10,
+        );
+        assert_eq!(drill.total_in_bucket, 0);
+        assert!(drill.samples.is_empty());
+    }
+
+    #[test]
+    fn drilldown_preserves_input_order() {
+        // Input order is preserved so the UI shows samples in the
+        // order the caller supplied them (typically newest-first from
+        // the run log). Mix matching + non-matching to confirm we
+        // don't reshuffle by predicate evaluation order.
+        let rules = vec![rule(
+            "Tax",
+            RulePredicate::FilenameGlob {
+                pattern: "tax_*.pdf".into(),
+            },
+        )];
+        let drill = compute_sample_drilldown(
+            &rules,
+            &samples(&["tax_z.pdf", "invoice.pdf", "tax_a.pdf", "tax_m.pdf"]),
+            SampleBucket::Rule { index: 0 },
+            10,
+        );
+        assert_eq!(
+            drill
+                .samples
+                .iter()
+                .map(|s| s.filename.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tax_z.pdf", "tax_a.pdf", "tax_m.pdf"],
+        );
+    }
+
+    #[test]
+    fn drilldown_with_empty_samples_returns_empty_bucket() {
+        let rules = vec![rule("Always", RulePredicate::Always)];
+        let drill = compute_sample_drilldown(&rules, &[], SampleBucket::Rule { index: 0 }, 10);
+        assert_eq!(drill.total_in_bucket, 0);
+        assert!(drill.samples.is_empty());
+        assert!(!drill.truncated);
+    }
+
+    #[test]
+    fn drilldown_carries_full_sample_axes() {
+        // The bucket samples copy the full RuleSample (filename,
+        // size, page count, text). Confirms we don't drop the
+        // size/page/text axes during the bucket copy.
+        let rules = vec![rule("Big", RulePredicate::SizeOver { bytes: 1_000 })];
+        let s = RuleSample {
+            filename: "big.pdf".into(),
+            size_bytes: 5_000,
+            page_count: Some(10),
+            text_sample: Some("hello".into()),
+        };
+        let drill = compute_sample_drilldown(
+            &rules,
+            std::slice::from_ref(&s),
+            SampleBucket::Rule { index: 0 },
+            10,
+        );
+        assert_eq!(drill.samples.len(), 1);
+        assert_eq!(drill.samples[0].size_bytes, 5_000);
+        assert_eq!(drill.samples[0].page_count, Some(10));
+        assert_eq!(drill.samples[0].text_sample.as_deref(), Some("hello"));
+    }
+
+    // ── Slice 83 — SampleBucket serde wire shape ──────────────────────
+
+    #[test]
+    fn sample_bucket_serde_rule_round_trip() {
+        let b = SampleBucket::Rule { index: 3 };
+        let json = serde_json::to_string(&b).unwrap();
+        assert!(json.contains("\"kind\":\"rule\""));
+        assert!(json.contains("\"index\":3"));
+        let back: SampleBucket = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, b);
+    }
+
+    #[test]
+    fn sample_bucket_serde_fallthrough_round_trip() {
+        let b = SampleBucket::Fallthrough;
+        let json = serde_json::to_string(&b).unwrap();
+        assert_eq!(json, "{\"kind\":\"fallthrough\"}");
+        let back: SampleBucket = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, b);
+    }
+
+    #[test]
+    fn sample_drilldown_serde_round_trip() {
+        let d = SampleDrilldown {
+            bucket: SampleBucket::Fallthrough,
+            samples: vec![RuleSample {
+                filename: "x.pdf".into(),
+                size_bytes: 0,
+                page_count: None,
+                text_sample: None,
+            }],
+            total_in_bucket: 7,
+            truncated: true,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"total_in_bucket\":7"));
+        assert!(json.contains("\"truncated\":true"));
+        let back: SampleDrilldown = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, d);
     }
 }
