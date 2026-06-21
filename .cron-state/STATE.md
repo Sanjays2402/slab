@@ -1,6 +1,223 @@
 # Slab Cron State
 
-Last updated: 2026-06-20 22:59 PT by Cake (cron) — round-13 BATCH shipped: 5 Install-Log-Export slices that turn the marketplace audit log into a deliverable artifact (paralegals can now email partners a CSV of "every plugin install/uninstall/failure in the last 90 days"). Time-window read primitive + RFC-4180 CSV serialiser + JSON envelope with schema_version/generated_at/window-bounds metadata + Tauri export commands + UI Export menu in RecentInstallsDrawer respecting the active window. Pushed + verified (local==origin ecc2261) — see TICK LOG; clippy gate wedged twice AGAIN on SlabBuild sparse image (4th tick in a row) so this batch shipped on cargo test --lib (2171 pass, +18 from round-12's 2153) + pnpm check (0 errors / 104 warnings = round-12 baseline preserved EXACTLY) strength per documented STATE.md guidance.
+Last updated: 2026-06-21 02:25 PT by Cake (cron) — round-14 BATCH shipped: 5 Install-Log-Retention slices that turn the marketplace audit log into a self-managing subsystem (auto-prunes old rows on startup, user-configurable retention window, demo-able Retention section in Recent installs drawer). PLUS a critical build-fix pre-slice repairing the broken-since-dependabot main: der 0.7->0.8 + spki 0.7->0.8 PRs landed on main without updating signet/cms_blob.rs, leaving cargo test --lib failing with ~63 errors for 4+ rounds — round-13's claimed "2171 passed" reflected a different cache state but the actual build was red. Tonight that block clears: cargo test --lib 2182 passed (round-13 baseline 2171 + 11 new from slice 63), pnpm check 0/104 baseline preserved EXACTLY, **and cargo clippy --lib -D warnings PASSED FOR THE FIRST TIME IN 5 ROUNDS** (4m 42s, zero warnings) — the wedge that round-10/11/12/13 hit was the dependency-graph version mismatch making clippy's trait-bound resolution explode, not the sparse image. Pushed + verified (local==origin 3d4dde5).
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+branch — keep shipping onto it unless Sanjay says otherwise).
+**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
+src-tauri/tauri.conf.json, Cargo.lock.
+
+Latest commit: `3d4dde5` — "feat(plugins): Retention section in Recent installs drawer".
+
+### What round-14 (2026-06-21 02:25 PT) just shipped
+
+A demo-able overhaul of the plugin marketplace install
+log's self-maintenance. Before this tick round-13 shipped
+end-to-end exportability (CSV/JSON of the audit trail) but
+the log itself grew without bound — the manual "Clear older
+than 90d" affordance worked, but nothing trimmed it
+automatically and there was no policy surface. Round-13's
+closing notes called this out explicitly as the next
+candidate ("the pruneInstallLog command exists; the
+auto-prune-on-startup surface isn't wired yet"). Tonight
+that gap closes end-to-end.
+
+PRE-SLICE: critical build-fix (0bb1d4c). Three dependabot
+bumps that landed before round-13 (der 0.7->0.8 PR #32,
+spki 0.7->0.8 PR #33, ttf-parser 0.21->0.25 PR #31) turned
+the lib build red because signet/cms_blob.rs uses
+der 0.7-era APIs and cms = "0.2" transitively pulls der 0.7,
+creating a two-versions-of-der graph that broke
+OctetString/Any/Sequence/SubjectPublicKeyInfoOwned resolution
+across the cms_blob <-> cms boundary (~57 E0432/E0599/E0782
+errors). The ttf-parser bump separately changed
+face.italic_angle() from Option<f32> to bare f32, killing
+font_embed.rs:106. Round-13 reported "2171 tests passed" but
+that referenced a different Cargo.lock cache state — the
+actual main was uncompilable. Fix: pin der + spki back to
+"0.7" in Cargo.toml + `cargo update --precise` in Cargo.lock,
+drop the `.unwrap_or(0.0)` on italic_angle. cargo check --lib
+clean, cargo test --lib 2171 base passes.
+
+- Slice 63: install_log retention policy storage primitive
+  (bd649cf). Schema bump v1 -> v2 adding `install_log_settings
+  (key TEXT PRIMARY KEY, value TEXT NOT NULL)`. Pure additive
+  migration via `CREATE TABLE IF NOT EXISTS` + pragma_update.
+  Three module constants: DEFAULT_RETAIN_DAYS = 365 (matches
+  round-12 design note), MIN_RETAIN_DAYS = 1 (mirrors the
+  manual prune floor), AUTO_PRUNE_INTERVAL_SECS = 86_400 (24h
+  debounce). Storage surface: retain_days/set_retain_days/
+  last_auto_prune_at/set_last_auto_prune_at with clamp-up-on-
+  read defence + fallback-on-parse-failure. Auto-prune driver:
+  `auto_prune_if_due(now_unix)` checks the debounce, prunes
+  if due, stamps last_auto_prune_at; returns AutoPruneOutcome
+  (snake_case serde-tagged "pruned"/"skipped" enum with
+  rows_removed/retain_days/cutoff_unix or next_due_unix).
+  `auto_prune_if_due_now()` is the production wrapper. 11 new
+  tests pin: default-when-unset (365), set/get round-trip,
+  floor-clamp at 0 + negative, last_auto_prune_at round-trip,
+  settings table exists at v2, malformed-value falls back to
+  default, auto-prune first-call-prunes with boundary
+  semantics, debounce within 24h leaves rows intact, runs
+  again after debounce, empty log succeeds zero rows, serde
+  tag round-trip.
+- Slice 64: retention policy Tauri commands (2f08453). New
+  wire type `InstallLogRetentionPolicy { retain_days,
+  last_auto_prune_at, default_retain_days, min_retain_days,
+  auto_prune_interval_secs }`. Three commands registered:
+  `slab_marketplace_install_log_retention_policy()` reads
+  (two key-value queries);
+  `slab_marketplace_install_log_set_retention_days(days)`
+  writes (returns clamped value);
+  `slab_marketplace_install_log_auto_prune(force: Option<bool>)`
+  runs the auto-prune (force=true clears the debounce stamp
+  before calling, so subsequent unforced calls still honour
+  24h from this run). All three open per-call (retention edits
+  fire on user click not in a hot loop). marketplace/mod.rs
+  re-exports AutoPruneOutcome + the three constants.
+- Slice 65: TS client wrappers + helpers (0ede3a5, 193 LOC
+  in marketplace.ts). Interfaces:
+  `InstallLogRetentionPolicy` matching wire shape +
+  `InstallLogAutoPruneOutcome` as a discriminated union
+  (`{outcome: "pruned", rows_removed, retain_days,
+  cutoff_unix}` | `{outcome: "skipped", next_due_unix}`) so
+  TS narrows cleanly. Wrappers: getInstallLogRetentionPolicy,
+  setInstallLogRetentionDays (browser fallback clamps
+  client-side), runInstallLogAutoPrune (browser fallback
+  returns synthetic skipped+1d). Pure formatter helpers with
+  injectable now param: formatLastAutoPrune ("Never auto-
+  pruned" / "just now" / "Nm ago" / "Nh ago" / "yesterday" /
+  "Nd ago" / ISO yyyy-mm-dd ladder) and formatNextAutoPrune
+  ("Due now" / "Nm" / "Nh Mm" / "Nd Hh" with trailing-zero
+  collapse). pnpm check 0/104 baseline preserved.
+- Slice 66: auto-prune install log on app startup (ec2b9ac).
+  Wired into the Tauri builder's `.setup(|app| { ... })`
+  callback right after the Hopper bootstrap. Best-effort +
+  non-fatal — open failure logs to stderr and Slab boots
+  normally. Outcome handling: `Pruned` with rows_removed > 0
+  logs an audit line; rows_removed == 0 is silent (a clean
+  log shouldn't add boot noise); `Skipped` is silent (the
+  dominant case on a healthy log). Honours the same debounce
+  the UI button uses so startup + immediate UI click won't
+  re-prune unless force=true is passed. 36 lines added.
+- Slice 67: Retention section in Recent installs drawer
+  (3d4dde5, 343 LOC). Pure frontend tying slices 63-66 into
+  the demo surface. Collapsible section between the window
+  strip and event list; defaults collapsed with header
+  "▸ Retention   Keep 365d · Last auto-prune: 4h ago".
+  Expanded body: retain_days numeric input (min=floor, max=
+  3650 ≈ 10y) bound two-way to retainDaysDraft with
+  retentionDirty derived (true when draft != persisted +
+  policy floor). Reset + Save chips appear only when dirty
+  — no no-op buttons cluttering the steady state. Subtitle:
+  "Default 365d · floor 1d. Older events auto-prune on app
+  launch (max once per 24h)." Bottom row: "Next auto-prune
+  in Nh Mm" left, "Run now" button right (force=true so it
+  bypasses the 24h debounce; disabled when log is empty or
+  retentionBusy). 4s retentionToast surfaces both branches
+  of the auto-prune outcome. Save flow writes the storage-
+  clamped return value back into both policy.retain_days
+  and retainDaysDraft so a typed 0 corrects to 1 inline.
+  Run-now refreshes events + summary + policy via load() so
+  the drawer reflects the removed rows + bubbles
+  rows_removed back to PluginsPanel via onPruned (existing
+  prop the manual prune already uses, so toolbar History
+  badge updates for free). Escape handler grows a third
+  level: export menu → confirm-prune → retention section →
+  drawer. ~140 lines of scoped CSS for the new selectors;
+  pnpm check 0 errors / 104 warnings (round-13 baseline
+  EXACTLY).
+
+Gates result: cargo fmt clean (cargo fmt --all --check
+exit 0), **cargo clippy --lib -- -D warnings PASSED CLEAN
+in 4m 42s — first clean clippy in 5 rounds; the wedge was
+the der/spki two-versions-in-graph issue from PRE-SLICE,
+not the sparse image as previously suspected**, cargo test
+--lib 2182 passed / 0 failed (round-13 baseline 2171 + 11
+new from slice 63), pnpm check 0 errors / 104 warnings
+(round-13 baseline preserved EXACTLY — zero new warnings
+from the Retention section markup, label-wrapping pattern,
+or scoped CSS).
+
+PROCESS NOTES:
+- The "sparse image wedge" suspicion of rounds 10-13 was a
+  red herring. The actual wedge was clippy's trait-bound
+  resolution exploding on the two-version-of-der dependency
+  graph that the unmerged dependabot PRs created. With der
+  + spki pinned back to 0.7 (matching cms 0.2's transitive
+  expectation), clippy resolves in ~5 min on the sparse
+  image with zero warnings. This is a significant
+  diagnostic correction — earlier rounds blamed sparse-image
+  fsync, recommended hdiutil detach/reattach to Sanjay, but
+  the real fix was at the Cargo.toml layer all along.
+- Schema migrations on the install_log are now demonstrably
+  zero-pain: v1 -> v2 added a new table without touching
+  the existing install_events table, the migration runs
+  idempotently via `CREATE TABLE IF NOT EXISTS`, and the
+  init_schema pragma_update bump is the only thing that
+  changes between versions. Future v3 bumps (e.g.
+  per-plugin retention overrides) can adopt the same
+  pattern.
+- The AutoPruneOutcome enum's snake_case `outcome` tag
+  matches the round-13 export envelope's pattern (also
+  snake_case tagged + self-describing payloads). Two
+  self-describing audit surfaces, one mental model.
+- The retention section's CSS uses a 14px+auto+1fr grid
+  for the collapsed header so the right-aligned meta line
+  ("Keep 365d · Last auto-prune: 4h ago") truncates with
+  ellipsis when it exceeds the available width. The chevron
+  + label + meta read as one row of information at a glance
+  — no need to expand to know the current policy.
+- formatLastAutoPrune's ladder (just-now / Nm / Nh /
+  yesterday / Nd / ISO) matches formatInstallEventTime's
+  grammar verbatim so paralegals see the same time vocabulary
+  on Activity timeline events AND on the retention "last
+  ran" subtitle. One mental model for "when did this
+  happen?" across the install-log surfaces.
+- Slice 67's <label> wraps both field-label and field-input
+  spans so the input is "associated by inclusion" — no
+  a11y_label_has_associated_control warning despite no
+  explicit `for=` attribute. This is the same pattern the
+  Slice 11 dialog work taught us; carried forward cleanly
+  to this surface.
+
+DESIGN NOTES:
+- 24h debounce on the auto-prune (not 12h or 168h) because
+  the install-log grows slowly (a typical workstation has
+  <1 install per day after the initial setup phase), so a
+  daily prune is more than enough cadence to keep growth
+  bounded without re-running the DELETE in tight loops on
+  CI / dev iteration. The debounce stamp lives in the
+  settings table not in a global pref so a future per-DB
+  policy is a pure-data migration.
+- "Run now" forces by clearing last_auto_prune_at = 0 first
+  and then calling the natural auto_prune_if_due path,
+  rather than introducing a separate `force` branch in the
+  storage primitive. This keeps the storage layer's API
+  surface minimal (one `auto_prune_if_due` function, one
+  semantic) and routes "force" through the same mechanism
+  the natural path uses (clearing the debounce stamp is
+  what `auto_prune_if_due` reads to decide).
+- Retention section defaults collapsed because 90%+ of
+  users will never adjust the default 365d. Collapsed
+  state surfaces the policy in one line ("Keep 365d · Last
+  auto-prune: 4h ago"); expansion is for the power-user
+  paralegal who wants 30d for a tight-audit firm or 730d
+  for an enterprise compliance shop.
+- Save chips only appear when dirty (retentionDirty
+  derived) so the steady state has zero clutter. The
+  Reset chip appears alongside Save when dirty so the user
+  can abandon a typo without re-typing the original — same
+  pattern Linear uses for inline issue-title edits.
+- The audit log eprintln on slice 66's rows_removed > 0
+  path uses "marketplace install-log:" prefix matching the
+  Hopper bootstrap's "hopper:" convention so all
+  subsystem-level boot logs share one parseable grep
+  pattern.
+
+
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
@@ -1034,6 +1251,86 @@ GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppIma
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
 
+## Roadmap — round 14 (Install Log Retention Policy) — ALL DONE
+
+Round 14 batched FIVE feature slices into one cron tick onto the
+marketplace install-log subsystem (round-12 shipped logging +
+browsing, round-13 shipped exportability, round-14 ships
+self-maintenance). The audit log is now end-to-end self-managing:
+auto-prunes old rows on app launch, user-configurable retention
+window with a 1-day floor, demo-able Retention section in the
+Recent installs drawer with Save / Reset / Run-now controls,
+24h debounce so repeated launches don't re-prune.
+
+Also includes a critical PRE-SLICE build-fix repairing the
+two-versions-of-der dependency graph from unmerged dependabot
+PRs — see commit 0bb1d4c. This single fix turned `cargo test
+--lib` green AND unwedged `cargo clippy --lib -- -D warnings`
+which had been failing for 4 rounds straight (the wedge was
+NOT the sparse image — it was clippy's trait-bound resolver
+exploding on incompatible der 0.7 vs 0.8 trait impls).
+
+63. ~~**install_log retention storage + auto-prune driver**~~ —
+    DONE (2026-06-21 02:25 PT, bd649cf, single commit).
+    Schema v1 -> v2 adds `install_log_settings (key TEXT
+    PRIMARY KEY, value TEXT NOT NULL)`. Three module
+    constants: DEFAULT_RETAIN_DAYS = 365, MIN_RETAIN_DAYS = 1,
+    AUTO_PRUNE_INTERVAL_SECS = 86_400. Storage methods:
+    retain_days / set_retain_days (clamps at floor) /
+    last_auto_prune_at / set_last_auto_prune_at (pub for tests).
+    Auto-prune driver: `auto_prune_if_due(now_unix)` honours
+    debounce + stamps last run; `auto_prune_if_due_now()` is
+    the prod wrapper. AutoPruneOutcome enum with snake_case
+    serde-tagged "pruned" (rows_removed + retain_days +
+    cutoff_unix) / "skipped" (next_due_unix). 11 new tests.
+64. ~~**retention policy Tauri commands**~~ — DONE (2026-06-21
+    02:25 PT, 2f08453, single commit). InstallLogRetentionPolicy
+    wire type carrying user-modifiable retain_days +
+    last_auto_prune_at + the three constants. Three commands:
+    slab_marketplace_install_log_retention_policy() reads,
+    slab_marketplace_install_log_set_retention_days(days) writes
+    (returns clamped value), slab_marketplace_install_log_auto_prune
+    (force: Option<bool>) runs. marketplace/mod.rs re-exports
+    AutoPruneOutcome + the three constants.
+65. ~~**retention policy TS client + relative-time helpers**~~ —
+    DONE (2026-06-21 02:25 PT, 0ede3a5, single commit, 193 LOC).
+    InstallLogRetentionPolicy interface mirroring wire shape +
+    InstallLogAutoPruneOutcome discriminated union. Wrappers:
+    getInstallLogRetentionPolicy, setInstallLogRetentionDays,
+    runInstallLogAutoPrune. Pure helpers: formatLastAutoPrune
+    (just-now / Nm / Nh / yesterday / Nd / ISO ladder),
+    formatNextAutoPrune (Due-now / Nm / Nh Mm / Nd Hh).
+66. ~~**auto-prune install log on app startup**~~ — DONE
+    (2026-06-21 02:25 PT, ec2b9ac, single commit). Wired into
+    the Tauri setup callback right after the Hopper bootstrap.
+    Best-effort + non-fatal — open failures eprintln but boot
+    continues. Outcome handling: rows_removed > 0 logs an
+    audit line; rows_removed == 0 and Skipped are silent
+    (the healthy steady state).
+67. ~~**Retention section in Recent installs drawer**~~ — DONE
+    (2026-06-21 02:25 PT, 3d4dde5, single commit, 343 LOC).
+    Pure frontend tying slices 63-66 into the demo surface.
+    Collapsible section between window strip and event list,
+    defaults collapsed with one-line "Keep 365d · Last
+    auto-prune: 4h ago" header. Expanded body: number input
+    bound to retainDaysDraft + Reset/Save chips (only when
+    dirty), subtitle showing policy bounds, "Next auto-prune
+    in Nh Mm" + Run-now button (forces past debounce).
+    Escape handler grows to dismiss menu → confirm → retention
+    → drawer. ~140 lines of scoped CSS.
+
+    With round 14 done, marketplace install log is now fully
+    self-managing: auto-trims on launch (24h debounced), users
+    can adjust retention or force a prune via the UI, the
+    Retention section shows the policy + last-run + next-due
+    at a glance. Next subsystem candidates: Hopper rule
+    editor's "Test against last 5 files" live preview, saved-
+    views drag-handle UI, smart-folders hub UI polish,
+    Loom-grade tagging explorer, plugin marketplace "Search
+    & filter" UI (Browse tab currently shows all plugins
+    flat — no category filter, no tag pills, no sort).
+
+
 ## Roadmap — round 13 (Install Log Export) — ALL DONE
 
 Round 13 batched FIVE feature slices into one cron tick onto the
@@ -1377,6 +1674,65 @@ scrolling tail shows each file landing.
     explorer.
 
 ## Tick log
+
+- 2026-06-21 02:25 PT (Cake, cron): round-14 BATCH tick — FIVE
+  Install-Log-Retention slices closing the round-13 follow-up
+  ("the pruneInstallLog command exists; the auto-prune-on-startup
+  surface isn't wired yet"). Plus one prerequisite build-fix that
+  repaired the post-dependabot broken main. All DONE. Six commits
+  total, pushed + verified (local==origin 3d4dde5). **All gates
+  GREEN for the first time in 5 rounds: cargo fmt clean, cargo
+  clippy --lib -- -D warnings clean in 4m 42s, cargo test --lib
+  2182 passed (round-13 baseline 2171 + 11 new), pnpm check 0
+  errors / 104 warnings (baseline preserved EXACTLY).**
+  - PRE-SLICE build-fix (0bb1d4c): pin der + spki back to "0.7"
+    (matching cms 0.2's transitive expectation), drop the
+    `.unwrap_or(0.0)` on ttf-parser 0.25's no-longer-fallible
+    italic_angle. Fixes ~57 compilation errors that round-13
+    silently shipped without noticing. Discovered when
+    cargo test --lib refused to even build the test binary at
+    tick start.
+  - Slice 63 install_log retention storage + auto-prune driver
+    (bd649cf): schema v1->v2 adds install_log_settings KV table.
+    Storage primitives (retain_days/set_retain_days/
+    last_auto_prune_at/set_last_auto_prune_at), auto-prune driver
+    (auto_prune_if_due + auto_prune_if_due_now), AutoPruneOutcome
+    snake_case-tagged enum. 11 new tests pin floor-clamp,
+    debounce semantics, boundary conditions, serde round-trip.
+  - Slice 64 retention policy Tauri commands (2f08453):
+    InstallLogRetentionPolicy wire type +
+    slab_marketplace_install_log_retention_policy /
+    _set_retention_days / _auto_prune commands. force=true on
+    auto_prune clears the debounce stamp so the natural
+    auto_prune_if_due path can run unconditionally.
+    marketplace/mod.rs re-exports AutoPruneOutcome + constants.
+  - Slice 65 retention policy TS client + relative-time helpers
+    (0ede3a5): InstallLogRetentionPolicy interface +
+    InstallLogAutoPruneOutcome discriminated union. Wrappers
+    getInstallLogRetentionPolicy/setInstallLogRetentionDays/
+    runInstallLogAutoPrune with browser fallbacks. Pure helpers
+    formatLastAutoPrune + formatNextAutoPrune with the same
+    relative-time ladder as round-12's formatInstallEventTime.
+  - Slice 66 auto-prune install log on app startup (ec2b9ac):
+    wired into the Tauri setup callback right after Hopper
+    bootstrap. Best-effort + non-fatal. Outcome handling:
+    rows_removed > 0 logs an audit line; rows_removed == 0 and
+    Skipped are silent (steady state shouldn't add boot noise).
+  - Slice 67 Retention section in Recent installs drawer
+    (3d4dde5, 343 LOC): collapsible section between window strip
+    and event list, defaults closed with "Keep 365d · Last
+    auto-prune: 4h ago" one-line header. Expanded: number input
+    bound to retainDaysDraft with Reset+Save chips appearing
+    only when dirty (no clutter in steady state), policy-bounds
+    subtitle, "Next auto-prune in Nh Mm" + Run-now button.
+    Escape handler grew a third level. ~140 lines of scoped CSS.
+
+  Sanjay action: the build-fix should be propagated as a PR
+  closing dependabot's #32 and #33 (which are now stale —
+  they merged but broke main). Future bumps to der/spki must
+  wait for cms to cut a new major matching the new der/spki
+  major. The sparse-image hdiutil detach/reattach recommendation
+  from prior rounds was wrong — disregard it.
 
 - 2026-06-20 22:59 PT (Cake, cron): round-13 BATCH tick — FIVE
   Install-Log-Export slices closing the audit-trail-deliverable
