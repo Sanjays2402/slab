@@ -5440,6 +5440,94 @@ fn slab_marketplace_install_log_export_json(
     Ok(bytes.len() as u64)
 }
 
+// ─── Install log filtered reader (v3.39 Slice 74) ───────────────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_list_filtered`].
+/// `total_returned` is the row count actually delivered (post-limit) so
+/// the UI can render "Showing N of M (limit reached)" copy when the
+/// query truncated; `limit_used` echoes the effective limit so the
+/// caller doesn't have to remember which default ran when it left
+/// `limit` unset.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallEventFilteredResult {
+    pub events: Vec<marketplace::install_log::InstallEvent>,
+    pub total_returned: i64,
+    pub limit_used: i64,
+}
+
+/// Read the install log with the four-axis filter exposed by
+/// [`marketplace::InstallLog::list_events_filtered`]: optional
+/// time-window (`since_unix` / `until_unix`), optional `actions` set
+/// (case-sensitive lowercase tokens: "install" / "update" /
+/// "uninstall" / "failed"), and optional `plugin_id_substr`
+/// (case-insensitive). Default limit is 500 — large enough for the
+/// drawer's scroll surface, small enough that an absurdly long
+/// filter doesn't accidentally drag a 50k-row table into IPC.
+///
+/// Unknown action tokens are silently dropped — the storage layer's
+/// `InstallAction::parse` treats unknown strings as `Failed` but we
+/// don't want a TS typo to widen the result set; the explicit drop
+/// here makes "asked for nothing valid" yield "no filter" rather
+/// than "secret extra filter for failures".
+#[tauri::command]
+fn slab_marketplace_install_log_list_filtered(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    actions: Option<Vec<String>>,
+    plugin_id_substr: Option<String>,
+    limit: Option<i64>,
+) -> Result<InstallEventFilteredResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+
+    // Parse the action tokens. Drop anything that doesn't round-trip
+    // exactly so a TS typo can't widen the result.
+    let parsed_actions: Option<Vec<marketplace::install_log::InstallAction>> =
+        actions.map(|toks| {
+            toks.iter()
+                .filter_map(|t| match t.as_str() {
+                    "install" => Some(marketplace::install_log::InstallAction::Install),
+                    "update" => Some(marketplace::install_log::InstallAction::Update),
+                    "uninstall" => Some(marketplace::install_log::InstallAction::Uninstall),
+                    "failed" => Some(marketplace::install_log::InstallAction::Failed),
+                    _ => None,
+                })
+                .collect()
+        });
+
+    let limit = limit.unwrap_or(500);
+    let events = log
+        .list_events_filtered(
+            since_unix,
+            until_unix,
+            parsed_actions.as_deref(),
+            plugin_id_substr.as_deref(),
+            limit,
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(InstallEventFilteredResult {
+        total_returned: events.len() as i64,
+        limit_used: limit,
+        events,
+    })
+}
+
+/// Return the most-recently-active distinct plugin_ids in the install
+/// log, newest activity first. Powers the filter bar's plugin
+/// autocomplete in the Recent installs drawer. Default `limit` = 25,
+/// which covers the typical paralegal install footprint without
+/// dragging a giant id list across IPC; the drawer caches the result
+/// for the lifetime of the open session.
+#[tauri::command]
+fn slab_marketplace_install_log_recent_plugin_ids(
+    limit: Option<i64>,
+) -> Result<Vec<String>, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    log.recent_plugin_ids(limit.unwrap_or(25))
+        .map_err(|e| e.to_string())
+}
+
 // ─── Install log retention policy surface (v3.40 Slice 64) ──────────
 
 /// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
@@ -7056,6 +7144,8 @@ pub fn run() {
             slab_marketplace_install_log_prune,
             slab_marketplace_install_log_export_csv,
             slab_marketplace_install_log_export_json,
+            slab_marketplace_install_log_list_filtered,
+            slab_marketplace_install_log_recent_plugin_ids,
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,
