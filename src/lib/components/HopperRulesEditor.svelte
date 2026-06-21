@@ -25,6 +25,11 @@
     slabHopperSetRules,
     slabHopperTestRules,
     slabHopperListRuns,
+    slabHopperRuleCoverage,
+    fallthroughPercent,
+    ruleMatchPercent,
+    ruleCoverageDiagnostic,
+    summarizeCoverage,
     PREDICATE_KINDS,
     predicateLabel,
     emptyPredicate,
@@ -34,6 +39,7 @@
     type Rule,
     type RulePredicate,
     type RuleTestResult,
+    type RuleCoverageReport,
   } from "$lib/hopper";
   import HopperBackfillPanel from "./HopperBackfillPanel.svelte";
 
@@ -78,6 +84,18 @@
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** v3.40 Slice 82 — coverage analyzer state.
+   *  The coverage panel below the rule chain answers "what would my
+   *  rules do against my last N real files?". Hidden by default so
+   *  the editor isn't busier than it needs to be on first load;
+   *  toggled open via the "Coverage" button. */
+  let coverageOpen = $state(false);
+  let coverageLoading = $state(false);
+  let coverage = $state<RuleCoverageReport | null>(null);
+  let coverageError = $state<string | null>(null);
+  let coverageSampleLimit = $state<number>(100);
+  let coverageDebounce: ReturnType<typeof setTimeout> | null = null;
 
   /** v3.22.0 Hopper Loop — when true, the BackfillPanel overlay is
    *  mounted. Driven by the "Test on this folder" button below and by
@@ -167,11 +185,56 @@
   }
 
   // -------------------------------------------------------------------
+  // v3.40 Slice 82 — coverage loader
+  // -------------------------------------------------------------------
+  //
+  // Pulled on demand when the user opens the coverage panel; refreshed
+  // (debounced 400ms) on every rule edit so the bars reshape live
+  // alongside the live preview chips. Server-side filtering caps the
+  // sample set at [1, 1000]; the UI clamps the input to that range.
+
+  async function refreshCoverage() {
+    if (!coverageOpen) return;
+    coverageLoading = true;
+    coverageError = null;
+    try {
+      coverage = await slabHopperRuleCoverage(watchId, {
+        candidateRules: rules,
+        sampleLimit: coverageSampleLimit,
+      });
+    } catch (e) {
+      coverageError = `Failed to compute coverage: ${String(e)}`;
+    } finally {
+      coverageLoading = false;
+    }
+  }
+
+  function scheduleCoverage(delay = 400) {
+    if (coverageDebounce) clearTimeout(coverageDebounce);
+    coverageDebounce = setTimeout(refreshCoverage, delay);
+  }
+
+  function toggleCoverage() {
+    coverageOpen = !coverageOpen;
+    if (coverageOpen && coverage === null) {
+      refreshCoverage();
+    }
+  }
+
+  function setSampleLimit(next: number) {
+    const clamped = Math.max(1, Math.min(1000, Math.round(next)));
+    if (clamped === coverageSampleLimit) return;
+    coverageSampleLimit = clamped;
+    if (coverageOpen) scheduleCoverage(150);
+  }
+
+  // -------------------------------------------------------------------
   // Save (debounced)
   // -------------------------------------------------------------------
 
   function scheduleSave() {
     schedulePreview();
+    scheduleCoverage();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
       saving = true;
@@ -280,6 +343,16 @@
         title="Apply these rules to PDFs already in this folder (Cmd+Shift+B)"
       >
         Test on this folder…
+      </button>
+      <button
+        class="ghost"
+        class:active={coverageOpen}
+        onclick={toggleCoverage}
+        title="Show per-rule coverage against the last {coverageSampleLimit} runs"
+        aria-expanded={coverageOpen}
+        aria-controls="hopper-coverage-panel"
+      >
+        Coverage{coverage ? ` · ${coverage.total_samples}` : ""}
       </button>
       <button class="primary" onclick={addRule}>+ Add rule</button>
     </div>
@@ -499,6 +572,132 @@
       {/if}
     </aside>
   </div>
+
+  {#if coverageOpen}
+    <section
+      id="hopper-coverage-panel"
+      class="coverage"
+      aria-label="Rule coverage analyzer"
+    >
+      <header class="cov-head">
+        <div class="cov-title">
+          <h4>Coverage</h4>
+          <span class="cov-summary">
+            {coverage ? summarizeCoverage(coverage) : "Loading…"}
+          </span>
+          {#if coverageLoading}
+            <span class="dot"></span>
+          {/if}
+        </div>
+        <div class="cov-actions">
+          <label class="cov-limit">
+            Sample size
+            <input
+              type="number"
+              min="1"
+              max="1000"
+              step="10"
+              value={coverageSampleLimit}
+              onchange={(e) =>
+                setSampleLimit(
+                  Number((e.currentTarget as HTMLInputElement).value),
+                )}
+            />
+          </label>
+          <button
+            class="ghost"
+            onclick={refreshCoverage}
+            disabled={coverageLoading}
+            title="Recompute coverage"
+          >Refresh</button>
+        </div>
+      </header>
+
+      {#if coverageError}
+        <div class="cov-error" role="alert">{coverageError}</div>
+      {/if}
+
+      {#if coverage}
+        {#if coverage.total_samples === 0}
+          <div class="cov-empty">
+            No recent runs in this watch's log yet. Drop a file into
+            <code>{basename(watchSource) || watchSource}</code>
+            and re-open coverage to see the rules light up.
+          </div>
+        {:else if coverage.rules.length === 0}
+          <div class="cov-empty">
+            No rules yet — every sample falls through to the watch
+            defaults. Add a rule above to start routing.
+          </div>
+        {:else}
+          <ul class="cov-list">
+            {#each coverage.rules as row (row.index)}
+              {@const diagnostic = ruleCoverageDiagnostic(row)}
+              {@const firstPct = ruleMatchPercent(row, coverage)}
+              {@const wouldPct = coverage.total_samples
+                ? (row.would_match / coverage.total_samples) * 100
+                : 0}
+              <li class="cov-row" class:dead={diagnostic === "dead"}>
+                <div class="cov-name">
+                  <span class="cov-idx">#{row.index + 1}</span>
+                  <span class="cov-rname">{row.name || "(unnamed)"}</span>
+                  {#if diagnostic === "dead"}
+                    <span class="cov-chip dead" title="No samples reach this rule — shadowed by an earlier rule. Reorder it earlier to fire."
+                      >Dead at position</span>
+                  {:else if diagnostic === "zero"}
+                    <span class="cov-chip zero" title="Predicate too narrow — matches none of the sampled files in isolation either."
+                      >No matches</span>
+                  {:else if diagnostic === "shadowed"}
+                    <span class="cov-chip shadow" title="Predicate matches {row.would_match} samples in isolation but only routes {row.first_match} at this position — partly shadowed by an earlier rule."
+                      >Partly shadowed</span>
+                  {/if}
+                </div>
+                <div class="cov-bar">
+                  <div
+                    class="cov-bar-would"
+                    style="width: {wouldPct}%"
+                    title="Would match {row.would_match} samples in isolation ({wouldPct.toFixed(0)}%)"
+                  ></div>
+                  <div
+                    class="cov-bar-first"
+                    style="width: {firstPct}%"
+                    title="Routes {row.first_match} samples at this position ({firstPct.toFixed(0)}%)"
+                  ></div>
+                </div>
+                <div class="cov-counts">
+                  <span class="cov-num">{row.first_match}</span>
+                  <span class="cov-sep">/</span>
+                  <span class="cov-num would">{row.would_match}</span>
+                </div>
+              </li>
+            {/each}
+            <li class="cov-row fallthrough">
+              <div class="cov-name">
+                <span class="cov-idx">—</span>
+                <span class="cov-rname">Fall-through to watch defaults</span>
+              </div>
+              <div class="cov-bar">
+                <div
+                  class="cov-bar-fall"
+                  style="width: {fallthroughPercent(coverage)}%"
+                  title="{coverage.fallthrough} samples ({fallthroughPercent(coverage).toFixed(0)}%) fell through to the watch defaults"
+                ></div>
+              </div>
+              <div class="cov-counts">
+                <span class="cov-num fall">{coverage.fallthrough}</span>
+              </div>
+            </li>
+          </ul>
+          <p class="cov-legend">
+            Solid bar = samples this rule actually routes (first-match).
+            Lighter overlay = samples it would catch in isolation.
+            <strong>Dead at position</strong> means the rule never fires
+            because an earlier rule wins first; move it up to fix.
+          </p>
+        {/if}
+      {/if}
+    </section>
+  {/if}
 </section>
 
 {#if backfillOpen}
@@ -898,5 +1097,228 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* v3.40 Slice 82 — coverage panel ---------------------------------- */
+  .coverage {
+    margin-top: 14px;
+    padding: 12px 14px 14px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 12px;
+    animation: cov-in 140ms ease-out;
+  }
+  @keyframes cov-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .cov-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .cov-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .cov-title h4 {
+    margin: 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-strong, #fff);
+  }
+  .cov-summary {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.62);
+  }
+  .cov-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .cov-limit {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .cov-limit input {
+    width: 64px;
+    padding: 4px 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: inherit;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+  }
+
+  .cov-error {
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, #ff5d6c 14%, transparent);
+    border: 1px solid color-mix(in srgb, #ff5d6c 38%, transparent);
+    color: #ffb8be;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .cov-empty {
+    padding: 18px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .cov-empty code {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .cov-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cov-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 22%) 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid transparent;
+    transition: background 120ms, border-color 120ms;
+  }
+  .cov-row:hover { background: rgba(255, 255, 255, 0.04); }
+  .cov-row.dead {
+    border-color: color-mix(in srgb, #ff7b56 40%, transparent);
+    background: color-mix(in srgb, #ff7b56 6%, transparent);
+  }
+  .cov-row.fallthrough {
+    margin-top: 6px;
+    background: rgba(255, 255, 255, 0.015);
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 0;
+    padding-top: 10px;
+  }
+
+  .cov-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .cov-idx {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    min-width: 22px;
+  }
+  .cov-rname {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cov-chip {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .cov-chip.dead {
+    background: color-mix(in srgb, #ff7b56 28%, transparent);
+    color: #ffc1a8;
+    border: 1px solid color-mix(in srgb, #ff7b56 55%, transparent);
+  }
+  .cov-chip.shadow {
+    background: color-mix(in srgb, #d9b04c 22%, transparent);
+    color: #f4d986;
+    border: 1px solid color-mix(in srgb, #d9b04c 45%, transparent);
+  }
+  .cov-chip.zero {
+    background: color-mix(in srgb, white 8%, transparent);
+    color: rgba(255, 255, 255, 0.55);
+    border: 1px solid color-mix(in srgb, white 15%, transparent);
+  }
+
+  .cov-bar {
+    position: relative;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .cov-bar-would,
+  .cov-bar-first,
+  .cov-bar-fall {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    transition: width 220ms ease-out;
+    border-radius: 6px;
+  }
+  .cov-bar-would {
+    background: color-mix(in srgb, #7c8cff 22%, transparent);
+  }
+  .cov-bar-first {
+    background: color-mix(in srgb, #7c8cff 75%, transparent);
+  }
+  .cov-bar-fall {
+    background: color-mix(in srgb, #888 35%, transparent);
+  }
+  .cov-row.dead .cov-bar-would {
+    background: color-mix(in srgb, #ff7b56 24%, transparent);
+  }
+
+  .cov-counts {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.78);
+    white-space: nowrap;
+    min-width: 64px;
+    text-align: right;
+  }
+  .cov-num.would {
+    color: rgba(255, 255, 255, 0.45);
+  }
+  .cov-num.fall {
+    color: rgba(255, 255, 255, 0.6);
+  }
+  .cov-sep {
+    color: rgba(255, 255, 255, 0.3);
+    margin: 0 2px;
+  }
+
+  .cov-legend {
+    margin: 10px 2px 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.48);
+    line-height: 1.5;
+  }
+  .cov-legend strong {
+    color: #ffc1a8;
+    font-weight: 600;
+  }
+
+  .ghost.active {
+    background: rgba(124, 140, 255, 0.18);
+    border-color: rgba(124, 140, 255, 0.42);
   }
 </style>
