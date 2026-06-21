@@ -556,6 +556,108 @@ fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
+// ─── Export serialisers (Slice 59) ───────────────────────────────────
+
+/// Header row for the RFC-4180 CSV export. Kept as a module constant so
+/// the tests (and any future column-reorder) have a single source of
+/// truth.
+pub const INSTALL_LOG_CSV_HEADER: &str =
+    "id,plugin_id,version,action,occurred_at_unix,occurred_at_iso,source,bytes_written,files_extracted,replaced_existing,prior_version,error_msg";
+
+/// Render a slice of [`InstallEvent`] rows as RFC-4180 CSV. Columns
+/// match what the Recent installs drawer + PluginDetailDrawer
+/// Activity section show, plus the canonical audit-trail fields a
+/// compliance auditor needs:
+///
+/// `id, plugin_id, version, action, occurred_at_unix, occurred_at_iso,
+///  source, bytes_written, files_extracted, replaced_existing,
+///  prior_version, error_msg`
+///
+/// Two timestamp columns — the raw unix-seconds value (machine-friendly
+/// for joining with other audit logs) and the ISO-8601 UTC string
+/// (human-friendly for direct review in Excel). Both come from the
+/// same `occurred_at` field so they can't drift.
+///
+/// Escaping policy (RFC 4180 §2):
+/// - Fields containing `,`, `"`, `\r`, `\n` are wrapped in `"`.
+/// - Embedded `"` is doubled (`""`).
+/// - NULL-able columns render as empty when missing — never the
+///   string "None" or "null" which would trip downstream parsers.
+/// - Boolean `replaced_existing` renders as `true`/`false` when
+///   present, empty when NULL.
+///
+/// Pure function — never touches the filesystem. The Tauri command
+/// layer (Slice 61) owns disk I/O.
+pub fn install_log_to_csv(events: &[InstallEvent], include_header: bool) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(INSTALL_LOG_CSV_HEADER);
+        out.push('\n');
+    }
+    for ev in events {
+        let row = [
+            ev.id.to_string(),
+            csv_escape(&ev.plugin_id),
+            csv_escape(&ev.version),
+            ev.action.as_str().to_string(),
+            ev.occurred_at.to_string(),
+            csv_escape(&iso8601_utc(ev.occurred_at)),
+            csv_escape(ev.source.as_deref().unwrap_or("")),
+            opt_i64_to_string(ev.bytes_written),
+            opt_i64_to_string(ev.files_extracted),
+            opt_bool_to_string(ev.replaced_existing),
+            csv_escape(ev.prior_version.as_deref().unwrap_or("")),
+            csv_escape(ev.error_msg.as_deref().unwrap_or("")),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+/// Escape a single CSV field per RFC 4180. Only wraps in quotes when
+/// the field actually contains a special char so the common case of
+/// bare plugin ids and ASCII versions stays human-readable.
+fn csv_escape(field: &str) -> String {
+    let needs_quoting =
+        field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r');
+    if !needs_quoting {
+        return field.to_string();
+    }
+    let escaped = field.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}
+
+fn opt_i64_to_string(v: Option<i64>) -> String {
+    match v {
+        Some(n) => n.to_string(),
+        None => String::new(),
+    }
+}
+
+fn opt_bool_to_string(v: Option<bool>) -> String {
+    match v {
+        Some(true) => "true".to_string(),
+        Some(false) => "false".to_string(),
+        None => String::new(),
+    }
+}
+
+/// Render a unix-seconds value as a canonical ISO-8601 UTC string
+/// (`2024-09-15T13:47:02Z`). Used as the `occurred_at_iso` column
+/// so a CSV opened in Excel is readable without a formula. Falls
+/// back to the empty string for the (pathological) case where the
+/// value can't be represented — keeps the column shape consistent.
+fn iso8601_utc(unix_seconds: i64) -> String {
+    // chrono is already a transitive dep across the workspace; the
+    // hopper module uses it for its own timestamps. We use the
+    // low-level `from_timestamp` form so a negative or out-of-range
+    // value gracefully degrades to empty rather than panicking.
+    chrono::DateTime::<chrono::Utc>::from_timestamp(unix_seconds, 0)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -942,5 +1044,174 @@ mod tests {
         assert!(zero.is_empty());
         let neg = log.list_events_between(None, None, -3).unwrap();
         assert!(neg.is_empty());
+    }
+
+    // ─── CSV serialiser (Slice 59) ───────────────────────────────────
+
+    fn sample_install_event(id: i64, plugin_id: &str, at: i64) -> InstallEvent {
+        InstallEvent {
+            id,
+            plugin_id: plugin_id.into(),
+            version: "1.2.3".into(),
+            action: InstallAction::Install,
+            occurred_at: at,
+            source: Some("marketplace".into()),
+            bytes_written: Some(42_000),
+            files_extracted: Some(7),
+            replaced_existing: Some(false),
+            prior_version: None,
+            error_msg: None,
+        }
+    }
+
+    #[test]
+    fn csv_header_inclusion_is_caller_controlled() {
+        let events = vec![sample_install_event(1, "com.x", 1_700_000_000)];
+        let with_header = install_log_to_csv(&events, true);
+        assert!(with_header.starts_with(INSTALL_LOG_CSV_HEADER));
+        let lines: Vec<_> = with_header.lines().collect();
+        assert_eq!(lines.len(), 2); // header + one row
+
+        let without = install_log_to_csv(&events, false);
+        assert!(!without.starts_with("id,plugin_id"));
+        assert_eq!(without.lines().count(), 1);
+    }
+
+    #[test]
+    fn csv_empty_with_header_is_header_only() {
+        let csv = install_log_to_csv(&[], true);
+        assert_eq!(csv, format!("{}\n", INSTALL_LOG_CSV_HEADER));
+        let bare = install_log_to_csv(&[], false);
+        assert!(bare.is_empty());
+    }
+
+    #[test]
+    fn csv_renders_iso_and_unix_timestamps_in_pair() {
+        // Pin a well-known unix-seconds value to a known ISO string.
+        // 1_700_000_000 = 2023-11-14T22:13:20Z.
+        let events = vec![sample_install_event(99, "com.x", 1_700_000_000)];
+        let csv = install_log_to_csv(&events, false);
+        assert!(csv.contains("1700000000"));
+        assert!(csv.contains("2023-11-14T22:13:20Z"));
+    }
+
+    #[test]
+    fn csv_null_columns_render_as_empty_not_string_none() {
+        // Uninstall row carries empty source, bytes_written, files_extracted,
+        // replaced_existing, prior_version, error_msg.
+        let uninstall = InstallEvent {
+            id: 5,
+            plugin_id: "com.x".into(),
+            version: "0.1".into(),
+            action: InstallAction::Uninstall,
+            occurred_at: 1_700_000_000,
+            source: None,
+            bytes_written: None,
+            files_extracted: None,
+            replaced_existing: None,
+            prior_version: None,
+            error_msg: None,
+        };
+        let csv = install_log_to_csv(&[uninstall], false);
+        // Cells are comma-separated. No "None", no "null".
+        assert!(!csv.contains("None"));
+        assert!(!csv.to_lowercase().contains("null"));
+        // Tail of the row should be the six trailing empties separated
+        // by commas — "uninstall,1700000000,2023-11-14T22:13:20Z,,,,,,\n"
+        // (source,bytes,files,replaced,prior,error all empty).
+        assert!(csv.trim_end().ends_with(",,,,,,"));
+    }
+
+    #[test]
+    fn csv_escapes_commas_and_quotes_and_newlines() {
+        let nasty = InstallEvent {
+            id: 7,
+            plugin_id: "com.acme,inc".into(), // comma
+            version: "1.0\"beta\"".into(),    // quotes
+            action: InstallAction::Failed,
+            occurred_at: 1_700_000_000,
+            source: None,
+            bytes_written: None,
+            files_extracted: None,
+            replaced_existing: None,
+            prior_version: None,
+            error_msg: Some("line1\nline2".into()), // newline
+        };
+        let csv = install_log_to_csv(&[nasty], false);
+        // Comma in plugin_id forces quotes.
+        assert!(csv.contains("\"com.acme,inc\""));
+        // Embedded quotes are doubled.
+        assert!(csv.contains("\"1.0\"\"beta\"\"\""));
+        // Newline in error_msg forces quotes around the whole field.
+        assert!(csv.contains("\"line1\nline2\""));
+    }
+
+    #[test]
+    fn csv_action_column_matches_serde_vocabulary() {
+        // All four action kinds should round-trip the canonical
+        // serde-string value used in JSON elsewhere.
+        let mut events = Vec::new();
+        for (i, action) in [
+            (1, InstallAction::Install),
+            (2, InstallAction::Update),
+            (3, InstallAction::Uninstall),
+            (4, InstallAction::Failed),
+        ] {
+            events.push(InstallEvent {
+                id: i,
+                plugin_id: "com.x".into(),
+                version: "1.0".into(),
+                action,
+                occurred_at: 1_700_000_000,
+                source: None,
+                bytes_written: None,
+                files_extracted: None,
+                replaced_existing: None,
+                prior_version: None,
+                error_msg: None,
+            });
+        }
+        let csv = install_log_to_csv(&events, false);
+        let lines: Vec<_> = csv.lines().collect();
+        assert_eq!(lines.len(), 4);
+        // Column 4 (0-indexed: 3) is the action; verify it's lowercase
+        // and matches the four canonical tokens.
+        for (line, want) in lines
+            .iter()
+            .zip(["install", "update", "uninstall", "failed"])
+        {
+            let cells: Vec<_> = line.split(',').collect();
+            assert_eq!(cells[3], want);
+        }
+    }
+
+    #[test]
+    fn csv_boolean_column_renders_true_false_or_empty() {
+        let install_update = InstallEvent {
+            id: 1,
+            plugin_id: "com.x".into(),
+            version: "2.0".into(),
+            action: InstallAction::Update,
+            occurred_at: 1_700_000_000,
+            source: Some("marketplace".into()),
+            bytes_written: Some(1),
+            files_extracted: Some(1),
+            replaced_existing: Some(true),
+            prior_version: Some("1.0".into()),
+            error_msg: None,
+        };
+        let install_fresh = sample_install_event(2, "com.y", 1_700_000_001);
+        // 3rd row mimics an uninstall — replaced_existing = NULL.
+        let uninstall = InstallEvent {
+            replaced_existing: None,
+            ..sample_install_event(3, "com.z", 1_700_000_002)
+        };
+        let csv = install_log_to_csv(&[install_update, install_fresh, uninstall], false);
+        let lines: Vec<_> = csv.lines().collect();
+        // Column 10 (0-indexed: 9) is replaced_existing.
+        let col9 = |row: &str| -> String { row.split(',').nth(9).unwrap_or_default().to_string() };
+        assert_eq!(col9(lines[0]), "true");
+        assert_eq!(col9(lines[1]), "false");
+        assert_eq!(col9(lines[2]), "");
     }
 }
