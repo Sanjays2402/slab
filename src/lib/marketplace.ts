@@ -558,3 +558,196 @@ export function suggestInstallLogExportFilename(
   const today = iso(todaySec);
   return `marketplace-history_${window}_${today}.${ext}`;
 }
+
+// ─── Install log retention policy (v3.40 Slice 65) ──────────────────
+
+/**
+ * Effective retention policy for the install log.
+ *
+ * `retain_days` is the user-modifiable window (defaults to 365 when
+ * never set). `last_auto_prune_at` is the unix-seconds stamp from the
+ * most recent auto-prune execution, or `null` if it has never run on
+ * this install — the UI uses it to render a "Last auto-prune:
+ * <relative>" line and to compute "Next auto-prune in <duration>".
+ *
+ * The three `*_*` capability fields surface the backend's policy
+ * constants (default, floor, debounce interval) so the UI doesn't
+ * have to hard-code them — bumping `DEFAULT_RETAIN_DAYS` in Rust
+ * flows through here transparently.
+ */
+export interface InstallLogRetentionPolicy {
+  retain_days: number;
+  last_auto_prune_at: number | null;
+  default_retain_days: number;
+  min_retain_days: number;
+  auto_prune_interval_secs: number;
+}
+
+/**
+ * Discriminated union returned by `runInstallLogAutoPrune`. Matches the
+ * Rust `AutoPruneOutcome` shape (snake_case tagged enum):
+ *
+ * - `{ outcome: "pruned", rows_removed, retain_days, cutoff_unix }` —
+ *   the prune ran (either because it had never run before, the
+ *   debounce window had elapsed, or `force` was passed).
+ * - `{ outcome: "skipped", next_due_unix }` — the debounce window had
+ *   not yet elapsed; no rows were touched. `next_due_unix` is when the
+ *   next unforced call will actually prune.
+ */
+export type InstallLogAutoPruneOutcome =
+  | {
+      outcome: "pruned";
+      rows_removed: number;
+      retain_days: number;
+      cutoff_unix: number;
+    }
+  | { outcome: "skipped"; next_due_unix: number };
+
+const BROWSER_FALLBACK_POLICY: InstallLogRetentionPolicy = {
+  retain_days: 365,
+  last_auto_prune_at: null,
+  default_retain_days: 365,
+  min_retain_days: 1,
+  auto_prune_interval_secs: 86_400,
+};
+
+/**
+ * Read the current retention policy. Cheap (two key-value queries on
+ * the backend); safe to call on every drawer mount. In browser mode
+ * returns the fallback policy that mirrors the Rust constants so the
+ * UI renders consistently for dev / preview builds.
+ */
+export async function getInstallLogRetentionPolicy(): Promise<InstallLogRetentionPolicy> {
+  if (!isInTauri()) return { ...BROWSER_FALLBACK_POLICY };
+  return invoke<InstallLogRetentionPolicy>(
+    "slab_marketplace_install_log_retention_policy",
+  );
+}
+
+/**
+ * Persist a new retention window in days. Returns the value actually
+ * stored after the backend's `MIN_RETAIN_DAYS` clamp — when the user
+ * types 0 the backend stores 1 and we surface 1 here, so the input
+ * field can correct itself inline without an extra round-trip.
+ *
+ * Does NOT immediately run a prune — that is a separate user action
+ * via `runInstallLogAutoPrune`. Changing the policy and applying it
+ * are independent so the user can edit + cancel without altering the
+ * log.
+ *
+ * In browser mode returns the requested value (clamped at >= 1) so
+ * the UI's optimistic update reads consistently.
+ */
+export async function setInstallLogRetentionDays(days: number): Promise<number> {
+  if (!isInTauri()) return Math.max(1, Math.trunc(days));
+  return invoke<number>("slab_marketplace_install_log_set_retention_days", {
+    days,
+  });
+}
+
+/**
+ * Run the retention auto-prune if the 24-hour debounce window has
+ * elapsed (or unconditionally if `force` is true). Returns the
+ * outcome discriminator so the UI can either surface
+ * "Auto-pruned N events" or "Next auto-prune due in X" depending on
+ * which branch fired.
+ *
+ * The force path is for the user-clicked "Run auto-prune now" button;
+ * the natural-debounce path is for the startup wiring. Both paths
+ * re-stamp `last_auto_prune_at` after a prune, so a forced run still
+ * resets the 24h debounce.
+ *
+ * In browser mode returns a synthetic "skipped" outcome dated 1 day
+ * out so the UI's "Next auto-prune" copy reads sensibly without a
+ * real backend.
+ */
+export async function runInstallLogAutoPrune(
+  force = false,
+): Promise<InstallLogAutoPruneOutcome> {
+  if (!isInTauri()) {
+    return {
+      outcome: "skipped",
+      next_due_unix: Math.floor(Date.now() / 1000) + 86_400,
+    };
+  }
+  return invoke<InstallLogAutoPruneOutcome>(
+    "slab_marketplace_install_log_auto_prune",
+    { force },
+  );
+}
+
+/**
+ * Human-friendly subtitle for the Retention section. Renders one of:
+ *
+ * - "Never auto-pruned"                 — last_auto_prune_at is null
+ * - "Last auto-prune: 2h ago"           — pruned recently
+ * - "Last auto-prune: yesterday"        — within 7 days
+ * - "Last auto-prune: 2026-06-15"       — older than 7 days
+ *
+ * Accepts an injectable `now` (unix seconds) for deterministic unit
+ * tests. Pure helper — no I/O, no Tauri.
+ */
+export function formatLastAutoPrune(
+  lastUnix: number | null,
+  now?: number,
+): string {
+  if (lastUnix === null) return "Never auto-pruned";
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = Math.max(0, nowSec - lastUnix);
+  if (delta < 90) return "Last auto-prune: just now";
+  if (delta < 3_600) {
+    const m = Math.floor(delta / 60);
+    return `Last auto-prune: ${m}m ago`;
+  }
+  if (delta < 86_400) {
+    const h = Math.floor(delta / 3_600);
+    return `Last auto-prune: ${h}h ago`;
+  }
+  if (delta < 86_400 * 2) return "Last auto-prune: yesterday";
+  if (delta < 86_400 * 7) {
+    const d = Math.floor(delta / 86_400);
+    return `Last auto-prune: ${d}d ago`;
+  }
+  const date = new Date(lastUnix * 1000);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `Last auto-prune: ${y}-${m}-${day}`;
+}
+
+/**
+ * Human-friendly "Next auto-prune in X" subtitle for the Retention
+ * section's debounce indicator. Returns:
+ *
+ * - "Due now"                          — at or past the due time
+ * - "Next auto-prune in 4h 12m"         — same-day, hours+minutes
+ * - "Next auto-prune in 23m"            — same-hour, minutes only
+ * - "Next auto-prune in 1d 3h"          — across day boundary
+ *
+ * Accepts an injectable `now` for deterministic unit tests.
+ */
+export function formatNextAutoPrune(
+  nextDueUnix: number,
+  now?: number,
+): string {
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = nextDueUnix - nowSec;
+  if (delta <= 0) return "Due now";
+  if (delta < 60) return "Next auto-prune in <1m";
+  if (delta < 3_600) {
+    const m = Math.floor(delta / 60);
+    return `Next auto-prune in ${m}m`;
+  }
+  if (delta < 86_400) {
+    const h = Math.floor(delta / 3_600);
+    const m = Math.floor((delta % 3_600) / 60);
+    return m > 0
+      ? `Next auto-prune in ${h}h ${m}m`
+      : `Next auto-prune in ${h}h`;
+  }
+  const d = Math.floor(delta / 86_400);
+  const h = Math.floor((delta % 86_400) / 3_600);
+  return h > 0
+    ? `Next auto-prune in ${d}d ${h}h`
+    : `Next auto-prune in ${d}d`;
+}
