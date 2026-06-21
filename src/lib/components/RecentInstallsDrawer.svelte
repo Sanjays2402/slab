@@ -1,5 +1,5 @@
 <script lang="ts">
-  // RecentInstallsDrawer — v3.39 Slice 57 + Slice 62.
+  // RecentInstallsDrawer — v3.39 Slice 57 + Slice 62 + Slice 77.
   //
   // 460px right-side slide-in drawer surfacing the corpus-wide
   // marketplace install log: every install / update / uninstall /
@@ -14,12 +14,23 @@
   // exported. The export goes through a native save-as dialog; the
   // Tauri layer owns the actual file write.
   //
+  // Slice 77 (Install-log filter bar) adds a filter strip BELOW the
+  // window strip with action chips ("Installs / Updates / Uninstalls /
+  // Failures") that act as a multi-select toggle group AND a plugin
+  // search input with autocomplete from the recent-activity history.
+  // The filter runs server-side via slab_marketplace_install_log_list_filtered
+  // (slice 73 reader, slice 74 command) so the result reflects the
+  // full log, not just the most-recent 100 the drawer initially fetched
+  // for the "All" window.
+  //
   // The drawer is otherwise purely presentational — the parent owns
   // the open state, toast wiring, and the post-prune refresh.
 
   import { onMount } from "svelte";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import {
+    ALL_INSTALL_ACTIONS,
+    describeActionSet,
     exportInstallLogCsv,
     exportInstallLogJson,
     formatBytes,
@@ -30,12 +41,16 @@
     getInstallLogRetentionPolicy,
     installEventGlyph,
     installLogSummary,
+    listInstallEventsFiltered,
     listRecentInstallEvents,
+    pluginQueryActiveLabel,
     pruneInstallLog,
+    recentInstallPluginIds,
     runInstallLogAutoPrune,
     setInstallLogRetentionDays,
     suggestInstallLogExportFilename,
     type InstallEvent,
+    type InstallEventQuery,
     type InstallLogExportFilter,
     type InstallLogRetentionPolicy,
     type InstallLogSummary,
@@ -73,6 +88,38 @@
   let exporting = $state(false);
   /** Slim 4-second toast for export success. */
   let exportToast = $state<string | null>(null);
+
+  // ─── Action + plugin-id filter state (Slice 77) ───────────────────
+  //
+  // The action chips are a multi-select toggle group. An empty set
+  // means "all actions" — same semantics as the backend's None.
+  // The plugin substring search is debounced so a fast typist
+  // doesn't fire one IPC per keystroke. The autocomplete suggestion
+  // list (recently-active plugin ids) is fetched once on mount and
+  // re-fetched after each prune so the source of suggestions stays
+  // honest.
+
+  /** Selected action set; empty == "all actions". */
+  let actionFilter = $state<Set<InstallEvent["action"]>>(new Set());
+  /** Raw text in the plugin search input — bound to the field. */
+  let pluginQueryDraft = $state<string>("");
+  /** Debounced copy that actually feeds the backend query. */
+  let pluginQueryActive = $state<string>("");
+  /** Recently-active plugin ids for autocomplete; loaded once on mount. */
+  let pluginSuggestions = $state<string[]>([]);
+  /** Open state of the autocomplete dropdown. */
+  let suggestOpen = $state<boolean>(false);
+  /** Debounce timer for the plugin-search input. */
+  let queryDebounce: ReturnType<typeof setTimeout> | null = null;
+  /** True when ANY of the filter axes (action / plugin) narrow. */
+  let filterNarrowing = $derived.by<boolean>(() => {
+    const fullActionSet =
+      actionFilter.size === ALL_INSTALL_ACTIONS.length &&
+      ALL_INSTALL_ACTIONS.every((a) => actionFilter.has(a));
+    const actionNarrows = actionFilter.size > 0 && !fullActionSet;
+    const pluginNarrows = pluginQueryActive.trim() !== "";
+    return actionNarrows || pluginNarrows;
+  });
 
   // ─── Retention policy section (Slice 67) ──────────────────────────
   //
@@ -115,6 +162,12 @@
     return formatNextAutoPrune(nextDue);
   });
 
+  /**
+   * Filtered events. With slice 77 the action + plugin axes are
+   * applied SERVER-SIDE by reload (the events array IS the filtered
+   * set); the window axis is still applied client-side from the
+   * loaded buffer so toggling between 7d / 30d / All is instant.
+   */
   let filteredEvents = $derived.by<InstallEvent[]>(() => {
     if (windowChoice === "all") return events;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -135,10 +188,21 @@
 
   /**
    * "N events across X days" subtitle from the summary, plus the
-   * filtered-count addendum when the window narrows the visible set.
+   * filtered-count addendum when the window narrows the visible set
+   * OR when the action/plugin filter is active.
    */
   let subtitleText = $derived.by<string>(() => {
     const base = formatLogSpan(summary);
+    const filterLabel = pluginQueryActiveLabel({
+      since_unix: windowSinceUnix,
+      actions:
+        actionFilter.size > 0 ? [...actionFilter] : null,
+      plugin_id_substr: pluginQueryActive,
+    });
+    if (filterLabel) {
+      // "23 events across 12d · showing 4 (3 filters active)"
+      return `${base} · showing ${filteredEvents.length} (${filterLabel})`;
+    }
     if (windowChoice === "all" || filteredEvents.length === events.length) {
       return base;
     }
@@ -149,15 +213,34 @@
     loading = true;
     err = null;
     try {
-      const [es, sm, pol] = await Promise.all([
-        listRecentInstallEvents(100),
+      const useFiltered = filterNarrowing;
+      const filterQuery: InstallEventQuery = {
+        // Window axis is applied client-side too; keeping it
+        // server-side as well so a filtered + windowed query
+        // doesn't accidentally hit the row cap on the All window
+        // and miss recent rows.
+        since_unix: windowSinceUnix,
+        actions:
+          actionFilter.size > 0 ? [...actionFilter] : null,
+        plugin_id_substr: pluginQueryActive || null,
+      };
+      const [eventsResp, sm, pol, ids] = await Promise.all([
+        useFiltered
+          ? listInstallEventsFiltered(filterQuery).then((r) => r.events)
+          : listRecentInstallEvents(100),
         installLogSummary(),
         getInstallLogRetentionPolicy(),
+        // Don't refetch suggestions if we already have them — the
+        // recent-active set is stable across action-filter toggles.
+        pluginSuggestions.length === 0
+          ? recentInstallPluginIds(25)
+          : Promise.resolve(pluginSuggestions),
       ]);
-      events = es;
+      events = eventsResp;
       summary = sm;
       policy = pol;
       retainDaysDraft = pol.retain_days;
+      pluginSuggestions = ids;
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
     } finally {
@@ -167,17 +250,98 @@
 
   onMount(() => {
     void load();
+    return () => {
+      if (queryDebounce) clearTimeout(queryDebounce);
+    };
   });
+
+  // ─── Slice 77: filter-driven reload ──────────────────────────────
+  //
+  // Reload events whenever the action set or the debounced plugin
+  // query changes. Window changes don't trigger a reload — the
+  // client-side filter is instant from the loaded buffer, AND a
+  // server-side window refetch would lose context if the user is
+  // mid-typing in the plugin search.
+
+  let lastReloadKey = $state<string>("");
+  $effect(() => {
+    // Stringify the filter-narrowing inputs so we only refetch when
+    // they actually change (not on every reactive ripple).
+    const key = [...actionFilter].sort().join(",") + "|" + pluginQueryActive;
+    if (key !== lastReloadKey) {
+      lastReloadKey = key;
+      // Skip the very first effect run — load() in onMount already
+      // ran with the default empty filter.
+      if (events.length === 0 && !loading && summary.total_events === 0) return;
+      void load();
+    }
+  });
+
+  /** Toggle a single action chip on/off. */
+  function toggleAction(a: InstallEvent["action"]) {
+    const next = new Set(actionFilter);
+    if (next.has(a)) {
+      next.delete(a);
+    } else {
+      next.add(a);
+    }
+    actionFilter = next;
+  }
+
+  /** Clear all filter axes at once. Wired to the "Clear filters"
+   *  affordance in the filter strip when at least one axis narrows. */
+  function clearFilters() {
+    actionFilter = new Set();
+    pluginQueryDraft = "";
+    pluginQueryActive = "";
+    if (queryDebounce) {
+      clearTimeout(queryDebounce);
+      queryDebounce = null;
+    }
+  }
+
+  /** Debounced commit of the plugin-search draft into the active query. */
+  function onPluginQueryInput(value: string) {
+    pluginQueryDraft = value;
+    if (queryDebounce) clearTimeout(queryDebounce);
+    queryDebounce = setTimeout(() => {
+      pluginQueryActive = pluginQueryDraft.trim();
+    }, 220);
+  }
+
+  /** Filtered autocomplete: recent ids that match the current draft. */
+  let suggestionMatches = $derived.by<string[]>(() => {
+    const q = pluginQueryDraft.trim().toLowerCase();
+    if (q === "") return pluginSuggestions.slice(0, 8);
+    return pluginSuggestions
+      .filter((id) => id.toLowerCase().includes(q))
+      .slice(0, 8);
+  });
+
+  /** Apply a suggestion as the active query. */
+  function applySuggestion(id: string) {
+    pluginQueryDraft = id;
+    pluginQueryActive = id;
+    suggestOpen = false;
+    if (queryDebounce) {
+      clearTimeout(queryDebounce);
+      queryDebounce = null;
+    }
+  }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
-      if (exportMenuOpen) {
+      if (suggestOpen) {
+        suggestOpen = false;
+      } else if (exportMenuOpen) {
         exportMenuOpen = false;
       } else if (confirmingPrune) {
         confirmingPrune = false;
       } else if (retentionOpen) {
         retentionOpen = false;
+      } else if (filterNarrowing) {
+        clearFilters();
       } else {
         onClose();
       }
@@ -359,6 +523,119 @@
       {/each}
     </div>
 
+    <section class="filter-strip" aria-label="Filter install log">
+      <div class="action-chips" role="group" aria-label="Filter by action">
+        {#each ALL_INSTALL_ACTIONS as a (a)}
+          {@const chipLabel =
+            a === "install"
+              ? "Installs"
+              : a === "update"
+                ? "Updates"
+                : a === "uninstall"
+                  ? "Uninstalls"
+                  : "Failures"}
+          <button
+            type="button"
+            class="chip"
+            class:on={actionFilter.has(a)}
+            data-action={a}
+            aria-pressed={actionFilter.has(a)}
+            onclick={() => toggleAction(a)}
+            title={actionFilter.has(a)
+              ? `Hide ${chipLabel.toLowerCase()}`
+              : `Show only ${chipLabel.toLowerCase()} (combine with others to widen)`}
+          >
+            <span class="chip-glyph" aria-hidden="true">{installEventGlyph(a)}</span>
+            <span class="chip-label">{chipLabel}</span>
+          </button>
+        {/each}
+      </div>
+
+      <div class="plugin-search">
+        <span class="search-glyph" aria-hidden="true">⌕</span>
+        <input
+          type="text"
+          role="combobox"
+          class="search-input"
+          placeholder="Filter by plugin id…"
+          value={pluginQueryDraft}
+          oninput={(e) => onPluginQueryInput(e.currentTarget.value)}
+          onfocus={() => (suggestOpen = true)}
+          onblur={() => {
+            // 120ms delay so a click on the suggestion below resolves
+            // before blur dismisses the dropdown.
+            setTimeout(() => (suggestOpen = false), 120);
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Escape") {
+              if (suggestOpen) {
+                suggestOpen = false;
+              } else if (pluginQueryDraft !== "") {
+                onPluginQueryInput("");
+              }
+            }
+            if (e.key === "Enter" && suggestionMatches.length === 1) {
+              applySuggestion(suggestionMatches[0]);
+            }
+          }}
+          aria-label="Filter events by plugin id (case-insensitive substring)"
+          aria-autocomplete="list"
+          aria-controls="plugin-suggest-list"
+          aria-expanded={suggestOpen &&
+            (suggestionMatches.length > 0 || pluginQueryDraft.trim() !== "")}
+        />
+        {#if pluginQueryDraft !== ""}
+          <button
+            type="button"
+            class="search-clear"
+            aria-label="Clear plugin filter"
+            onclick={() => onPluginQueryInput("")}>✕</button
+          >
+        {/if}
+        {#if suggestOpen && suggestionMatches.length > 0}
+          <ul class="suggest-list" id="plugin-suggest-list" role="listbox">
+            {#each suggestionMatches as id (id)}
+              <li>
+                <button
+                  type="button"
+                  class="suggest-item"
+                  role="option"
+                  aria-selected={pluginQueryActive === id}
+                  onmousedown={(e) => {
+                    // Use mousedown not click — blur fires before click,
+                    // and the 120ms delay we already have on blur is
+                    // belt-and-suspenders. mousedown commits immediately.
+                    e.preventDefault();
+                    applySuggestion(id);
+                  }}
+                >
+                  <span class="suggest-id">{id}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+
+      {#if filterNarrowing}
+        <div class="filter-summary">
+          <span class="filter-desc"
+            >{describeActionSet([...actionFilter])}{pluginQueryActive
+              ? ` matching "${pluginQueryActive}"`
+              : ""}</span
+          >
+          <button
+            type="button"
+            class="ghost mini"
+            onclick={clearFilters}
+            title="Clear all filters"
+          >
+            Clear filters
+          </button>
+        </div>
+      {/if}
+    </section>
+
     {#if policy}
       <section class="retention-block" aria-labelledby="retention-heading">
         <button
@@ -443,9 +720,14 @@
       <p class="loading">Loading history…</p>
     {:else if filteredEvents.length === 0}
       <p class="empty">
-        {events.length === 0
-          ? "No install history yet. Browse the Marketplace tab to install your first plugin."
-          : `No events in the last ${windowChoice}. Try widening the window.`}
+        {#if events.length === 0 && summary.total_events === 0}
+          No install history yet. Browse the Marketplace tab to install your first plugin.
+        {:else if filterNarrowing}
+          No events match the current filter. Try widening with another action chip or clearing
+          the plugin search.
+        {:else}
+          No events in the last {windowChoice}. Try widening the window.
+        {/if}
       </p>
     {:else}
       <ul class="event-list" aria-label="Install events (newest first)">
@@ -655,6 +937,174 @@
     background: var(--bg-3);
     color: var(--text);
   }
+
+  /* ─── Filter strip (Slice 77) ─────────────────────────────────── */
+  .filter-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+  }
+  .action-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-1);
+    color: var(--text-3);
+    font: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .chip:hover:not(.on) {
+    background: var(--bg-2);
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .chip.on {
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-1));
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  /* Action-specific glyph tint when chip is ON so the four chips
+     read as four flavours, not a uniform "selected" block. */
+  .chip.on[data-action="install"] .chip-glyph {
+    color: #3fc88c;
+  }
+  .chip.on[data-action="update"] .chip-glyph {
+    color: var(--accent);
+  }
+  .chip.on[data-action="uninstall"] .chip-glyph {
+    color: #e0b450;
+  }
+  .chip.on[data-action="failed"] .chip-glyph {
+    color: #ff6b6b;
+  }
+  .chip-glyph {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .chip-label {
+    font-weight: 500;
+  }
+
+  .plugin-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-1);
+  }
+  .plugin-search:focus-within {
+    border-color: var(--accent);
+  }
+  .search-glyph {
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+  }
+  .search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 0;
+  }
+  .search-input::placeholder {
+    color: var(--text-3);
+  }
+  .search-clear {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .search-clear:hover {
+    background: var(--bg-2);
+    color: var(--text);
+  }
+
+  .suggest-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .suggest-list li {
+    margin: 0;
+  }
+  .suggest-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .suggest-item:hover,
+  .suggest-item[aria-selected="true"] {
+    background: var(--bg-3);
+  }
+  .suggest-id {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+    font-size: 11.5px;
+    color: var(--text);
+  }
+
+  .filter-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 4px 0;
+  }
+  .filter-desc {
+    font-size: 11.5px;
+    color: var(--text-3);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .event-list {
     list-style: none;
     padding: 0;
