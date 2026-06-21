@@ -55,8 +55,34 @@ use thiserror::Error;
 
 /// Schema version stamped into `PRAGMA user_version`. Bump + add a
 /// migration arm in [`InstallLog::init_schema`] when changing the
-/// table shape. v1: initial `install_events` table.
-const SCHEMA_VERSION: u32 = 1;
+/// table shape.
+///
+/// - v1: initial `install_events` table.
+/// - v2: `install_log_settings` key-value table for retention policy
+///   (retain_days + last_auto_prune_at). Pure additive — every v1 row
+///   stays valid; the new table starts empty and the policy reader
+///   falls back to [`DEFAULT_RETAIN_DAYS`] when unset.
+const SCHEMA_VERSION: u32 = 2;
+
+/// Default retention window when the user has never explicitly set
+/// one. 365 days picked to match the round-12 design note: long
+/// enough that quarterly + annual audits still resolve, short enough
+/// that an installer-heavy workstation doesn't accumulate years of
+/// dead rows. Same value the round-12 doc-comment on
+/// [`InstallLog::prune_older_than`] recommends.
+pub const DEFAULT_RETAIN_DAYS: i64 = 365;
+
+/// Minimum days between auto-prune executions. The startup auto-prune
+/// reads `last_auto_prune_at` and skips the prune call if the last
+/// run was within this window — keeps the prune to roughly daily
+/// even when the app is launched many times per day.
+pub const AUTO_PRUNE_INTERVAL_SECS: i64 = 86_400; // 24h
+
+/// Minimum allowed retain_days. Mirrors the floor
+/// [`crate::slab_marketplace_install_log_prune`] enforces (the manual
+/// "Clear older than" affordance also clamps at >=1) so the policy
+/// surface and the one-shot prune share one floor.
+pub const MIN_RETAIN_DAYS: i64 = 1;
 
 /// Discriminator for what kind of event a row represents. Serialised
 /// as the lowercase string the SQL column stores ("install" /
@@ -217,6 +243,10 @@ impl InstallLog {
                 ON install_events(plugin_id, occurred_at DESC);
             CREATE INDEX IF NOT EXISTS install_events_occurred_idx
                 ON install_events(occurred_at DESC);
+            CREATE TABLE IF NOT EXISTS install_log_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             "#,
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -529,6 +559,144 @@ impl InstallLog {
         }
         Ok(out)
     }
+
+    // ─── Retention policy storage (Slice 63) ─────────────────────────
+    //
+    // Key/value rows in `install_log_settings` back the retention
+    // policy surface. Two keys today:
+    //
+    //   retain_days          → i64; clamped to >= MIN_RETAIN_DAYS on
+    //                          write so a malformed setter can't
+    //                          accidentally disable retention.
+    //   last_auto_prune_at   → i64 unix seconds; written by the startup
+    //                          auto-prune to debounce repeated launches.
+    //
+    // Keys are intentionally plain strings (not an enum) so v3+
+    // policy additions (e.g. a per-plugin retention override) are a
+    // pure data migration with no enum bump.
+
+    /// Read the user's retention window in days, or
+    /// [`DEFAULT_RETAIN_DAYS`] if no row has been written yet.
+    /// Never returns less than [`MIN_RETAIN_DAYS`] — a stored value
+    /// below the floor (theoretically possible if a future bug or
+    /// downgrade wrote one) clamps up so the auto-prune never wipes
+    /// the entire log.
+    pub fn retain_days(&self) -> Result<i64, InstallLogError> {
+        let raw = self.read_setting_i64("retain_days")?;
+        Ok(raw.unwrap_or(DEFAULT_RETAIN_DAYS).max(MIN_RETAIN_DAYS))
+    }
+
+    /// Persist the retention window. Clamps `days` to
+    /// [`MIN_RETAIN_DAYS`] so the floor is enforced at the storage
+    /// boundary (commands also clamp; double-defence is cheap).
+    /// Returns the value actually stored after clamping so the caller
+    /// can surface the corrected value in the UI without re-reading.
+    pub fn set_retain_days(&mut self, days: i64) -> Result<i64, InstallLogError> {
+        let clamped = days.max(MIN_RETAIN_DAYS);
+        self.write_setting("retain_days", &clamped.to_string())?;
+        Ok(clamped)
+    }
+
+    /// Unix seconds when the startup auto-prune last ran, or `None`
+    /// if it has never run on this install. Used by
+    /// [`auto_prune_if_due`] to debounce repeated launches.
+    pub fn last_auto_prune_at(&self) -> Result<Option<i64>, InstallLogError> {
+        self.read_setting_i64("last_auto_prune_at")
+    }
+
+    /// Mark the auto-prune as having just run at `at_unix`. Public so
+    /// tests can pin the timestamp; production callers go through
+    /// [`auto_prune_if_due`] which stamps `unix_now()`.
+    pub fn set_last_auto_prune_at(&mut self, at_unix: i64) -> Result<(), InstallLogError> {
+        self.write_setting("last_auto_prune_at", &at_unix.to_string())
+    }
+
+    fn read_setting_i64(&self, key: &str) -> Result<Option<i64>, InstallLogError> {
+        let v: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM install_log_settings WHERE key = ?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.and_then(|s| s.parse::<i64>().ok()))
+    }
+
+    fn write_setting(&mut self, key: &str, value: &str) -> Result<(), InstallLogError> {
+        self.conn.execute(
+            "INSERT INTO install_log_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    // ─── Auto-prune driver (Slice 64) ────────────────────────────────
+
+    /// Run the retention policy if the debounce window has elapsed.
+    ///
+    /// - If `last_auto_prune_at` is missing or older than
+    ///   `now_unix - AUTO_PRUNE_INTERVAL_SECS`, prune rows older
+    ///   than `retain_days()` and stamp `last_auto_prune_at = now_unix`.
+    /// - Otherwise, no-op (returns
+    ///   [`AutoPruneOutcome::Skipped { next_due_unix }`]).
+    ///
+    /// Designed to be called once on app startup. The debounce keeps
+    /// the auto-prune to roughly daily even when the user launches
+    /// the app many times per day (CI-style restarts, dev iteration).
+    /// `now_unix` is an explicit parameter so tests can pin it
+    /// deterministically; the production wrapper uses
+    /// [`auto_prune_if_due_now`].
+    pub fn auto_prune_if_due(
+        &mut self,
+        now_unix: i64,
+    ) -> Result<AutoPruneOutcome, InstallLogError> {
+        let last = self.last_auto_prune_at()?;
+        let due_at = last.map(|t| t + AUTO_PRUNE_INTERVAL_SECS);
+        if let Some(due) = due_at {
+            if now_unix < due {
+                return Ok(AutoPruneOutcome::Skipped { next_due_unix: due });
+            }
+        }
+        let retain_days = self.retain_days()?;
+        let cutoff = now_unix - retain_days * 86_400;
+        let pruned = self.prune_older_than(cutoff)?;
+        self.set_last_auto_prune_at(now_unix)?;
+        Ok(AutoPruneOutcome::Pruned {
+            rows_removed: pruned,
+            retain_days,
+            cutoff_unix: cutoff,
+        })
+    }
+
+    /// Convenience wrapper that stamps `now` from the system clock.
+    /// Production callers (lib.rs startup wiring + the Tauri command)
+    /// use this; tests use [`auto_prune_if_due`] directly.
+    pub fn auto_prune_if_due_now(&mut self) -> Result<AutoPruneOutcome, InstallLogError> {
+        self.auto_prune_if_due(unix_now())
+    }
+}
+
+/// Outcome of [`InstallLog::auto_prune_if_due`]. Returned to the
+/// caller so the startup wiring can log what happened (or the UI can
+/// surface "Next auto-prune in 4h" when the user opens the Retention
+/// section before the debounce elapses).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum AutoPruneOutcome {
+    /// The prune ran. `rows_removed` is the delete count; the other
+    /// fields describe what window was applied so the UI can show
+    /// "Auto-pruned 23 events older than 2025-06-21 (365d)".
+    Pruned {
+        rows_removed: usize,
+        retain_days: i64,
+        cutoff_unix: i64,
+    },
+    /// The debounce window had not yet elapsed; no rows were
+    /// touched. `next_due_unix` is when the next call will actually
+    /// prune (== last_auto_prune_at + AUTO_PRUNE_INTERVAL_SECS).
+    Skipped { next_due_unix: i64 },
 }
 
 fn row_to_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<InstallEvent> {
@@ -765,10 +933,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_v1_pragma_pinned() {
+    fn schema_pragma_pinned() {
         let log = InstallLog::open_in_memory().unwrap();
         assert_eq!(log.schema_version().unwrap(), SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 1);
+        // v2: install_log_settings table added (round-14 retention
+        // policy storage). Bump in lockstep with init_schema arms.
+        assert_eq!(SCHEMA_VERSION, 2);
     }
 
     #[test]
@@ -1405,5 +1575,176 @@ mod tests {
         assert!(s.contains("\"action\": \"install\""));
         assert!(s.contains("\"action\": \"failed\""));
         assert!(s.contains("\"error_msg\": \"verify failed\""));
+    }
+
+    // ─── Slice 63: retention policy storage ──────────────────────────
+
+    #[test]
+    fn retain_days_defaults_when_unset() {
+        let log = InstallLog::open_in_memory().unwrap();
+        assert_eq!(log.retain_days().unwrap(), DEFAULT_RETAIN_DAYS);
+        assert_eq!(DEFAULT_RETAIN_DAYS, 365);
+    }
+
+    #[test]
+    fn set_retain_days_persists_round_trip() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let stored = log.set_retain_days(30).unwrap();
+        assert_eq!(stored, 30);
+        assert_eq!(log.retain_days().unwrap(), 30);
+        // Overwrite cleanly.
+        let stored = log.set_retain_days(180).unwrap();
+        assert_eq!(stored, 180);
+        assert_eq!(log.retain_days().unwrap(), 180);
+    }
+
+    #[test]
+    fn set_retain_days_clamps_below_floor() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // Storing 0 or a negative value must clamp up to
+        // MIN_RETAIN_DAYS so the auto-prune can never wipe the entire
+        // log (cutoff = now - 0 * 86_400 == now → deletes everything).
+        let stored = log.set_retain_days(0).unwrap();
+        assert_eq!(stored, MIN_RETAIN_DAYS);
+        assert_eq!(log.retain_days().unwrap(), MIN_RETAIN_DAYS);
+        let stored = log.set_retain_days(-9999).unwrap();
+        assert_eq!(stored, MIN_RETAIN_DAYS);
+    }
+
+    #[test]
+    fn last_auto_prune_at_round_trip() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        assert_eq!(log.last_auto_prune_at().unwrap(), None);
+        log.set_last_auto_prune_at(1_700_000_000).unwrap();
+        assert_eq!(log.last_auto_prune_at().unwrap(), Some(1_700_000_000));
+        // Overwrites cleanly.
+        log.set_last_auto_prune_at(1_700_086_400).unwrap();
+        assert_eq!(log.last_auto_prune_at().unwrap(), Some(1_700_086_400));
+    }
+
+    #[test]
+    fn install_log_settings_table_present_at_schema_v2() {
+        // Existence check via a write+read round-trip — the migration
+        // arm that creates install_log_settings is the only path that
+        // gets us here without a sqlite error.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.write_setting("probe", "v").unwrap();
+        let v = log.read_setting_i64("nonexistent_int_key").unwrap();
+        assert_eq!(v, None); // missing key → None, not error
+    }
+
+    #[test]
+    fn read_setting_i64_returns_none_for_malformed_value() {
+        // If somehow a non-numeric string lands in the settings table
+        // (downgrade, future schema, manual sqlite poke), the reader
+        // surfaces None rather than panicking. The caller falls back
+        // to the default.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.write_setting("retain_days", "not_a_number").unwrap();
+        // retain_days() reads raw via read_setting_i64; malformed → None → default.
+        assert_eq!(log.retain_days().unwrap(), DEFAULT_RETAIN_DAYS);
+    }
+
+    // ─── Slice 64: auto-prune driver ─────────────────────────────────
+
+    #[test]
+    fn auto_prune_first_call_prunes_and_stamps() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // Three events: one ancient, one boundary, one recent.
+        // retain_days = 30 → cutoff = now - 30*86_400.
+        // ancient < cutoff → pruned; boundary == cutoff and recent > cutoff → kept.
+        let now: i64 = 1_700_000_000;
+        let cutoff = now - 30 * 86_400;
+        insert_at(&mut log, "com.a", "1", cutoff - 1); // pruned
+        insert_at(&mut log, "com.a", "2", cutoff); // kept (>= cutoff)
+        insert_at(&mut log, "com.a", "3", now); // kept
+        log.set_retain_days(30).unwrap();
+
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                retain_days,
+                cutoff_unix,
+            } => {
+                assert_eq!(rows_removed, 1);
+                assert_eq!(retain_days, 30);
+                assert_eq!(cutoff_unix, cutoff);
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("first call must prune, not skip"),
+        }
+        assert_eq!(log.last_auto_prune_at().unwrap(), Some(now));
+        assert_eq!(log.total_event_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn auto_prune_debounces_within_24h() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now: i64 = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        // First call: stamps last_auto_prune_at = now.
+        log.auto_prune_if_due(now).unwrap();
+        // Insert a fresh prunable event right after.
+        insert_at(&mut log, "com.a", "1", now - 100 * 86_400);
+        // Second call within the 24h debounce window must skip.
+        let outcome = log.auto_prune_if_due(now + 100).unwrap();
+        match outcome {
+            AutoPruneOutcome::Skipped { next_due_unix } => {
+                assert_eq!(next_due_unix, now + AUTO_PRUNE_INTERVAL_SECS);
+            }
+            AutoPruneOutcome::Pruned { .. } => panic!("debounce should have skipped"),
+        }
+        // The prunable row is still there because the prune didn't run.
+        assert_eq!(log.total_event_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn auto_prune_runs_again_after_debounce_window() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now: i64 = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        log.auto_prune_if_due(now).unwrap();
+        insert_at(&mut log, "com.a", "1", now - 100 * 86_400);
+        // Advance the clock past the debounce; the prune runs again.
+        let later = now + AUTO_PRUNE_INTERVAL_SECS;
+        let outcome = log.auto_prune_if_due(later).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned { rows_removed, .. } => {
+                assert_eq!(rows_removed, 1);
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("should have pruned after debounce"),
+        }
+        assert_eq!(log.last_auto_prune_at().unwrap(), Some(later));
+    }
+
+    #[test]
+    fn auto_prune_with_no_events_succeeds_zero_rows() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let outcome = log.auto_prune_if_due(1_700_000_000).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned { rows_removed, .. } => assert_eq!(rows_removed, 0),
+            AutoPruneOutcome::Skipped { .. } => panic!("first call on empty log must prune"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_outcome_serde_tag_is_snake_case() {
+        let pruned = AutoPruneOutcome::Pruned {
+            rows_removed: 5,
+            retain_days: 30,
+            cutoff_unix: 1_700_000_000,
+        };
+        let s = serde_json::to_string(&pruned).unwrap();
+        assert!(s.contains("\"outcome\":\"pruned\""), "got {s}");
+        let back: AutoPruneOutcome = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, pruned);
+
+        let skipped = AutoPruneOutcome::Skipped {
+            next_due_unix: 1_700_086_400,
+        };
+        let s = serde_json::to_string(&skipped).unwrap();
+        assert!(s.contains("\"outcome\":\"skipped\""), "got {s}");
+        let back: AutoPruneOutcome = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, skipped);
     }
 }
