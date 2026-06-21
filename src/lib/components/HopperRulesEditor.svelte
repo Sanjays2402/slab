@@ -26,10 +26,16 @@
     slabHopperTestRules,
     slabHopperListRuns,
     slabHopperRuleCoverage,
+    slabHopperSampleDrilldown,
     fallthroughPercent,
     ruleMatchPercent,
     ruleCoverageDiagnostic,
     summarizeCoverage,
+    ruleBucket,
+    FALLTHROUGH_BUCKET,
+    sampleBucketEquals,
+    describeDrilldown,
+    describeBucket,
     PREDICATE_KINDS,
     predicateLabel,
     emptyPredicate,
@@ -40,6 +46,8 @@
     type RulePredicate,
     type RuleTestResult,
     type RuleCoverageReport,
+    type SampleBucket,
+    type SampleDrilldown,
   } from "$lib/hopper";
   import HopperBackfillPanel from "./HopperBackfillPanel.svelte";
 
@@ -96,6 +104,24 @@
   let coverageError = $state<string | null>(null);
   let coverageSampleLimit = $state<number>(100);
   let coverageDebounce: ReturnType<typeof setTimeout> | null = null;
+
+  /** v3.40 Slice 86 — sample drilldown state.
+   *  When the user clicks a coverage row, we fetch the list of files
+   *  in that bucket and surface them in an in-panel popover. State:
+   *  - `openBucket`: which bucket's popover is currently open (null
+   *    when nothing is). Identity-stable via `sampleBucketEquals`.
+   *  - `drilldown`: the result for `openBucket`, or null while
+   *    loading / on error.
+   *  - `drilldownLoading` / `drilldownError`: loader status.
+   *  - `drilldownPreviewCap`: payload-sized cap, separate from the
+   *    coverage `sampleLimit`. Defaults to 25 (matches the server
+   *    default); user can bump to see more without re-walking the
+   *    sample input. */
+  let openBucket = $state<SampleBucket | null>(null);
+  let drilldown = $state<SampleDrilldown | null>(null);
+  let drilldownLoading = $state(false);
+  let drilldownError = $state<string | null>(null);
+  let drilldownPreviewCap = $state<number>(25);
 
   /** v3.22.0 Hopper Loop — when true, the BackfillPanel overlay is
    *  mounted. Driven by the "Test on this folder" button below and by
@@ -229,12 +255,79 @@
   }
 
   // -------------------------------------------------------------------
+  // v3.40 Slice 86 — sample drilldown
+  // -------------------------------------------------------------------
+  //
+  // Click a coverage row to fetch the files in its bucket. Loader
+  // shares wire semantics with `refreshCoverage` (same candidate
+  // rules, same sample_limit) so the drilldown evaluates the EXACT
+  // same chain + samples the coverage counted. Auto-refreshes when
+  // the rule set changes (via `scheduleSave`) so the user sees the
+  // bucket reshape live alongside the bars above.
+
+  async function openDrilldown(bucket: SampleBucket) {
+    // Toggle off if clicking the already-open bucket — matches the
+    // Notion-style "click row, then click again to close" pattern.
+    if (openBucket && sampleBucketEquals(openBucket, bucket)) {
+      closeDrilldown();
+      return;
+    }
+    openBucket = bucket;
+    await refreshDrilldown();
+  }
+
+  async function refreshDrilldown() {
+    if (openBucket === null) return;
+    drilldownLoading = true;
+    drilldownError = null;
+    try {
+      drilldown = await slabHopperSampleDrilldown(watchId, openBucket, {
+        candidateRules: rules,
+        sampleLimit: coverageSampleLimit,
+        previewCap: drilldownPreviewCap,
+      });
+    } catch (e) {
+      drilldownError = `Failed to load drilldown: ${String(e)}`;
+      drilldown = null;
+    } finally {
+      drilldownLoading = false;
+    }
+  }
+
+  function closeDrilldown() {
+    openBucket = null;
+    drilldown = null;
+    drilldownError = null;
+  }
+
+  function setDrilldownPreviewCap(next: number) {
+    const clamped = Math.max(1, Math.min(1000, Math.round(next)));
+    if (clamped === drilldownPreviewCap) return;
+    drilldownPreviewCap = clamped;
+    if (openBucket !== null) refreshDrilldown();
+  }
+
+  /** Window-level Escape closes the drilldown popover. We don't
+   *  install a click-outside listener — clicking elsewhere on the
+   *  page is typically a deliberate navigation, and the explicit
+   *  Close button is always visible inside the popover. */
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && openBucket !== null) {
+      e.stopPropagation();
+      closeDrilldown();
+    }
+  }
+
+  // -------------------------------------------------------------------
   // Save (debounced)
   // -------------------------------------------------------------------
 
   function scheduleSave() {
     schedulePreview();
     scheduleCoverage();
+    // If a drilldown is open, refresh it too so the bucket reshapes
+    // as the user edits. Cheap (cap of 25 samples vs 100 for coverage).
+    if (openBucket !== null) refreshDrilldown();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
       saving = true;
@@ -321,6 +414,8 @@
     return "Saved";
   }
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <section class="rules-editor" data-tour="hopper-rules">
   <header class="head">
@@ -637,55 +732,102 @@
               {@const wouldPct = coverage.total_samples
                 ? (row.would_match / coverage.total_samples) * 100
                 : 0}
-              <li class="cov-row" class:dead={diagnostic === "dead"}>
+              {@const bucket = ruleBucket(row.index)}
+              {@const isOpen = openBucket !== null && sampleBucketEquals(openBucket, bucket)}
+              <li class="cov-row-wrap">
+                <button
+                  type="button"
+                  class="cov-row"
+                  class:dead={diagnostic === "dead"}
+                  class:open={isOpen}
+                  onclick={() => openDrilldown(bucket)}
+                  aria-expanded={isOpen}
+                  aria-controls="hopper-drilldown-rule-{row.index}"
+                  title={row.first_match === 0
+                    ? `${row.name || "(unnamed)"} — no samples in this bucket; click for empty-state details`
+                    : `Show the ${row.first_match} sample${row.first_match === 1 ? "" : "s"} this rule routed`}
+                >
+                  <div class="cov-name">
+                    <span class="cov-idx">#{row.index + 1}</span>
+                    <span class="cov-rname">{row.name || "(unnamed)"}</span>
+                    {#if diagnostic === "dead"}
+                      <span class="cov-chip dead" title="No samples reach this rule — shadowed by an earlier rule. Reorder it earlier to fire."
+                        >Dead at position</span>
+                    {:else if diagnostic === "zero"}
+                      <span class="cov-chip zero" title="Predicate too narrow — matches none of the sampled files in isolation either."
+                        >No matches</span>
+                    {:else if diagnostic === "shadowed"}
+                      <span class="cov-chip shadow" title="Predicate matches {row.would_match} samples in isolation but only routes {row.first_match} at this position — partly shadowed by an earlier rule."
+                        >Partly shadowed</span>
+                    {/if}
+                  </div>
+                  <div class="cov-bar">
+                    <div
+                      class="cov-bar-would"
+                      style="width: {wouldPct}%"
+                      title="Would match {row.would_match} samples in isolation ({wouldPct.toFixed(0)}%)"
+                    ></div>
+                    <div
+                      class="cov-bar-first"
+                      style="width: {firstPct}%"
+                      title="Routes {row.first_match} samples at this position ({firstPct.toFixed(0)}%)"
+                    ></div>
+                  </div>
+                  <div class="cov-counts">
+                    <span class="cov-num">{row.first_match}</span>
+                    <span class="cov-sep">/</span>
+                    <span class="cov-num would">{row.would_match}</span>
+                    <span class="cov-chev" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>
+                  </div>
+                </button>
+                {#if isOpen}
+                  <div
+                    id="hopper-drilldown-rule-{row.index}"
+                    class="cov-drilldown"
+                    role="region"
+                    aria-label="Files in {describeBucket(bucket, rules.map((r) => r.name))}"
+                  >
+                    {@render renderDrilldownBody()}
+                  </div>
+                {/if}
+              </li>
+            {/each}
+            <li class="cov-row-wrap">
+              <button
+                type="button"
+                class="cov-row fallthrough"
+                class:open={openBucket !== null && sampleBucketEquals(openBucket, FALLTHROUGH_BUCKET)}
+                onclick={() => openDrilldown(FALLTHROUGH_BUCKET)}
+                aria-expanded={openBucket !== null && sampleBucketEquals(openBucket, FALLTHROUGH_BUCKET)}
+                aria-controls="hopper-drilldown-fallthrough"
+                title="Show the {coverage.fallthrough} file{coverage.fallthrough === 1 ? '' : 's'} that fell through to the watch defaults"
+              >
                 <div class="cov-name">
-                  <span class="cov-idx">#{row.index + 1}</span>
-                  <span class="cov-rname">{row.name || "(unnamed)"}</span>
-                  {#if diagnostic === "dead"}
-                    <span class="cov-chip dead" title="No samples reach this rule — shadowed by an earlier rule. Reorder it earlier to fire."
-                      >Dead at position</span>
-                  {:else if diagnostic === "zero"}
-                    <span class="cov-chip zero" title="Predicate too narrow — matches none of the sampled files in isolation either."
-                      >No matches</span>
-                  {:else if diagnostic === "shadowed"}
-                    <span class="cov-chip shadow" title="Predicate matches {row.would_match} samples in isolation but only routes {row.first_match} at this position — partly shadowed by an earlier rule."
-                      >Partly shadowed</span>
-                  {/if}
+                  <span class="cov-idx">—</span>
+                  <span class="cov-rname">Fall-through to watch defaults</span>
                 </div>
                 <div class="cov-bar">
                   <div
-                    class="cov-bar-would"
-                    style="width: {wouldPct}%"
-                    title="Would match {row.would_match} samples in isolation ({wouldPct.toFixed(0)}%)"
-                  ></div>
-                  <div
-                    class="cov-bar-first"
-                    style="width: {firstPct}%"
-                    title="Routes {row.first_match} samples at this position ({firstPct.toFixed(0)}%)"
+                    class="cov-bar-fall"
+                    style="width: {fallthroughPercent(coverage)}%"
+                    title="{coverage.fallthrough} samples ({fallthroughPercent(coverage).toFixed(0)}%) fell through to the watch defaults"
                   ></div>
                 </div>
                 <div class="cov-counts">
-                  <span class="cov-num">{row.first_match}</span>
-                  <span class="cov-sep">/</span>
-                  <span class="cov-num would">{row.would_match}</span>
+                  <span class="cov-num fall">{coverage.fallthrough}</span>
+                  <span class="cov-chev" aria-hidden="true">{openBucket !== null && sampleBucketEquals(openBucket, FALLTHROUGH_BUCKET) ? "▾" : "▸"}</span>
                 </div>
-              </li>
-            {/each}
-            <li class="cov-row fallthrough">
-              <div class="cov-name">
-                <span class="cov-idx">—</span>
-                <span class="cov-rname">Fall-through to watch defaults</span>
-              </div>
-              <div class="cov-bar">
+              </button>
+              {#if openBucket !== null && sampleBucketEquals(openBucket, FALLTHROUGH_BUCKET)}
                 <div
-                  class="cov-bar-fall"
-                  style="width: {fallthroughPercent(coverage)}%"
-                  title="{coverage.fallthrough} samples ({fallthroughPercent(coverage).toFixed(0)}%) fell through to the watch defaults"
-                ></div>
-              </div>
-              <div class="cov-counts">
-                <span class="cov-num fall">{coverage.fallthrough}</span>
-              </div>
+                  id="hopper-drilldown-fallthrough"
+                  class="cov-drilldown"
+                  role="region"
+                  aria-label="Files that fell through to the watch defaults"
+                >
+                  {@render renderDrilldownBody()}
+                </div>
+              {/if}
             </li>
           </ul>
           <p class="cov-legend">
@@ -693,12 +835,86 @@
             Lighter overlay = samples it would catch in isolation.
             <strong>Dead at position</strong> means the rule never fires
             because an earlier rule wins first; move it up to fix.
+            Click any row to see which files landed in that bucket.
           </p>
         {/if}
       {/if}
     </section>
   {/if}
 </section>
+
+{#snippet renderDrilldownBody()}
+  <header class="drill-head">
+    <div class="drill-title">
+      <strong>{openBucket ? describeBucket(openBucket, rules.map((r) => r.name)) : ""}</strong>
+      <span class="drill-sub">
+        {drilldown ? describeDrilldown(drilldown) : (drilldownLoading ? "Loading…" : "")}
+      </span>
+    </div>
+    <div class="drill-actions">
+      <label class="drill-cap">
+        Show
+        <input
+          type="number"
+          min="1"
+          max="1000"
+          step="5"
+          value={drilldownPreviewCap}
+          onchange={(e) =>
+            setDrilldownPreviewCap(
+              Number((e.currentTarget as HTMLInputElement).value),
+            )}
+        />
+      </label>
+      <button
+        type="button"
+        class="ghost mini"
+        onclick={() => void refreshDrilldown()}
+        disabled={drilldownLoading}
+        title="Reload this bucket"
+      >Reload</button>
+      <button
+        type="button"
+        class="ghost mini"
+        onclick={closeDrilldown}
+        title="Close drilldown (Esc)"
+        aria-label="Close drilldown"
+      >Close</button>
+    </div>
+  </header>
+  {#if drilldownError}
+    <p class="drill-error" role="alert">{drilldownError}</p>
+  {:else if drilldownLoading && !drilldown}
+    <p class="drill-loading">Loading sample files…</p>
+  {:else if drilldown}
+    {#if drilldown.samples.length === 0}
+      <p class="drill-empty">
+        {#if openBucket?.kind === "fallthrough"}
+          No samples fell through — every recent file matched at least one rule.
+        {:else}
+          No samples in this bucket. Either no recent files matched this rule, or
+          an earlier rule won first (look for the "Dead at position" / "Partly shadowed"
+          chips above).
+        {/if}
+      </p>
+    {:else}
+      <ul class="drill-list" aria-label="Files in this bucket">
+        {#each drilldown.samples as s (s.filename)}
+          <li class="drill-item" title={s.filename}>
+            <span class="drill-glyph" aria-hidden="true">▸</span>
+            <span class="drill-fname">{s.filename}</span>
+          </li>
+        {/each}
+      </ul>
+      {#if drilldown.truncated}
+        <p class="drill-trunc">
+          Showing {drilldown.samples.length} of {drilldown.total_in_bucket}.
+          Increase “Show” above to see more.
+        </p>
+      {/if}
+    {/if}
+  {/if}
+{/snippet}
 
 {#if backfillOpen}
   <HopperBackfillPanel
@@ -1191,6 +1407,11 @@
     flex-direction: column;
     gap: 4px;
   }
+  .cov-row-wrap {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+  }
   .cov-row {
     display: grid;
     grid-template-columns: minmax(180px, 22%) 1fr auto;
@@ -1201,11 +1422,30 @@
     background: rgba(255, 255, 255, 0.02);
     border: 1px solid transparent;
     transition: background 120ms, border-color 120ms;
+    /* Button reset so .cov-row reads like a row, not a button. */
+    width: 100%;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
   .cov-row:hover { background: rgba(255, 255, 255, 0.04); }
+  .cov-row:focus-visible {
+    outline: none;
+    border-color: rgba(124, 140, 255, 0.55);
+    box-shadow: 0 0 0 2px rgba(124, 140, 255, 0.18);
+  }
+  .cov-row.open {
+    background: rgba(124, 140, 255, 0.08);
+    border-color: rgba(124, 140, 255, 0.32);
+  }
   .cov-row.dead {
     border-color: color-mix(in srgb, #ff7b56 40%, transparent);
     background: color-mix(in srgb, #ff7b56 6%, transparent);
+  }
+  .cov-row.dead.open {
+    border-color: color-mix(in srgb, #ff7b56 70%, transparent);
+    background: color-mix(in srgb, #ff7b56 12%, transparent);
   }
   .cov-row.fallthrough {
     margin-top: 6px;
@@ -1213,6 +1453,12 @@
     border-top: 1px dashed rgba(255, 255, 255, 0.1);
     border-radius: 0;
     padding-top: 10px;
+  }
+  .cov-row.fallthrough.open {
+    background: rgba(124, 140, 255, 0.06);
+    border-color: rgba(124, 140, 255, 0.28);
+    border-radius: 0 0 8px 8px;
+    border-top-style: solid;
   }
 
   .cov-name {
@@ -1315,6 +1561,141 @@
   .cov-legend strong {
     color: #ffc1a8;
     font-weight: 600;
+  }
+
+  .cov-chev {
+    display: inline-block;
+    width: 12px;
+    margin-left: 8px;
+    color: rgba(255, 255, 255, 0.35);
+    transition: color 120ms;
+  }
+  .cov-row.open .cov-chev,
+  .cov-row:hover .cov-chev {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  /* ── Slice 86 — drilldown popover ─────────────────────────────── */
+  .cov-drilldown {
+    margin: 0 6px 6px;
+    padding: 10px 12px 12px;
+    background: rgba(124, 140, 255, 0.045);
+    border: 1px solid rgba(124, 140, 255, 0.18);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .drill-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .drill-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .drill-title strong {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.88);
+  }
+  .drill-sub {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    font-variant-numeric: tabular-nums;
+  }
+  .drill-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .drill-cap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .drill-cap input {
+    width: 56px;
+    padding: 3px 5px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    color: inherit;
+    font: inherit;
+    font-size: 11px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .drill-cap input:focus {
+    outline: none;
+    border-color: rgba(124, 140, 255, 0.5);
+  }
+  .ghost.mini {
+    padding: 3px 9px;
+    font-size: 11px;
+  }
+  .drill-error {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: rgb(255, 180, 180);
+    background: rgba(240, 80, 80, 0.1);
+    border-radius: 4px;
+  }
+  .drill-loading,
+  .drill-empty {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    line-height: 1.5;
+  }
+  .drill-list {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.18);
+  }
+  .drill-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.82);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .drill-item:last-child { border-bottom: none; }
+  .drill-item:hover { background: rgba(255, 255, 255, 0.03); }
+  .drill-glyph {
+    color: rgba(124, 140, 255, 0.55);
+    flex-shrink: 0;
+    width: 10px;
+  }
+  .drill-fname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .drill-trunc {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.48);
+    font-style: italic;
   }
 
   .ghost.active {
