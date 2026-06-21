@@ -1,6 +1,320 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 08:36 PT by Cake (cron) — round-16 BATCH shipped: 5 slices closing two genuine gaps. Install-log filter arc (slices 73-75 + 77): server-side filtered reader with action set + plugin-id substring (LIKE-escape-correct), Tauri command surface emitting InstallEventFilteredResult, TS client + describeActionSet + pluginQueryActiveLabel helpers, and the demo-able filter bar in the Recent installs drawer with four-action chip group + autocompleting plugin search. Personal-preset CRUD parity arc (slice 76): rename + duplicate verbs in personal_presets.rs mirroring saved_views' verbs, Tauri commands wired, TS wrappers in library.ts. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 14.6s, cargo test --lib 2233 passed / 0 failed (round-15 baseline 2208 + 14 from slice 73 + 11 from slice 76 = 2233), pnpm check 0 errors / 104 warnings (round-15 baseline preserved EXACTLY). Pushed + verified (local==origin b74a749).
+Last updated: 2026-06-21 11:31 PT by Cake (cron) — round-17 BATCH shipped: 5 slices closing two cohesive arcs. SmartFoldersHubPanel row-level CRUD (slice 78): personal-preset rows grow a per-row ... menu surfacing Rename / Duplicate / Delete from the slice-76 verbs, with inline rename input, six-column grid, busy-row state, Notion-style popover, and Escape-ladder (menu -> rename -> close); built-in rows stay immutable with a placeholder cell for layout alignment. Hopper rule coverage arc (slices 79-82): pure-data coverage.rs primitive computing first_match + would_match + dead_at_position per rule with O(rules*samples) two-pass scan and 15 tests pinning conservation invariants and the dead-rule diagnostic shape, slab_hopper_rule_coverage Tauri command sourcing samples from HopperLog::list_recent with 3 testable helpers (clamp_sample_limit / sample_over_read / samples_from_runs) and 13 helper tests, TS client + 4 pure helpers (fallthroughPercent / ruleMatchPercent / ruleCoverageDiagnostic / summarizeCoverage) with 17 inline-expect tests, and the demo-able coverage panel in HopperRulesEditor with two-layer per-rule bars (would-match overlay + first-match solid), diagnostic chips (Dead at position / Partly shadowed / No matches), fall-through row, sample-size number input clamped to [1, 1000], and Coverage button in the header. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 15.17s, cargo test --lib 2261 passed / 0 failed (round-16 baseline 2233 + 15 from slice 79 + 13 from slice 80 = 2261), pnpm check 0 errors / 104 warnings (round-16 baseline preserved EXACTLY). Pushed + verified (local==origin 8467fc4).
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+
+**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
+src-tauri/tauri.conf.json, Cargo.lock.
+
+Latest commit: `8467fc4` — "feat(hopper): rule coverage panel in HopperRulesEditor".
+
+### What round-17 (2026-06-21 11:31 PT) just shipped
+
+Five slices across two cohesive arcs. Before this tick the
+SmartFoldersHubPanel surfaced personal-preset rows with Apply + pin
+only — the rename/duplicate verbs shipped in slice 76 had no UI
+surface in the Hub (round 16 explicitly deferred this). And the
+Hopper rule editor's live-preview pane could answer "did rule X
+match THIS file?" for up to five sample filenames (round 15 work)
+but had no way to answer the more useful question "across my last N
+real files, how many would each rule catch and how many fall
+through?" — the gap that lets a paralegal spot a dead rule shadowed
+by an earlier Always before saving. Tonight both gaps close.
+
+- Slice 78: personal-preset row menu in Smart Folders Hub
+  (ddfd6ec, 351 LOC). Grid widened from five to six columns
+  (drag handle / icon / body / pin / ... menu / apply) with a
+  placeholder cell on built-in rows so the Apply button stays
+  column-aligned across both kinds. Personal rows grow the ...
+  button (hidden until row-hover; visible while the menu is open);
+  the Notion-style popover surfaces Rename / Duplicate / Delete
+  with a divider above the danger-tinted Delete. Rename runs
+  INLINE in the row body (replaces the name + kind line with a
+  focused input) — Enter commits, Escape cancels, blur commits if
+  changed + non-empty else cancels, drag disabled while
+  mid-rename. Collision errors surface inline beside the input
+  (red-tinted border + small error span) so the user can correct
+  without losing focus context. busyRowKey gives per-row in-flight
+  state (the row hosting the operation dims to 0.7 with cursor:
+  progress); two rows can spin independently. Escape ladder grows
+  one level: menu -> rename -> Hub close. Window-level click
+  listener closes any open popover when a click lands outside any
+  row; toggleMenu uses stopPropagation so the open click doesn't
+  immediately re-close. a11y: aria-haspopup="menu" + aria-expanded
+  on the ... button, role="menu" + role="menuitem" on the popover,
+  aria-label on the rename input.
+- Slice 79: Hopper rule coverage analyzer primitive (7613923,
+  531 LOC). New pure-data module pdf::hopper::coverage with
+  compute_coverage(rules, samples) returning a RuleCoverageReport
+  carrying per-rule first_match + would_match + dead_at_position
+  + the fall-through count + total_samples. Algorithm:
+  O(rules*samples) — scans every sample through the FULL chain
+  (no first-match short-circuit) so it can populate would_match
+  per rule. Conservation invariant: rules.sum(first_match) +
+  fallthrough == total_samples by construction; pinned by a test.
+  Dead-at-position is the actionable insight: first_match=0 AND
+  would_match>0 means the rule never wins at its current index
+  but would catch at least one sample if moved earlier (shadowed
+  by an earlier rule). A zero-coverage rule (matches nothing in
+  isolation) is NOT flagged dead-at-position — it's a different
+  diagnostic (zero) the UI surfaces separately. 15 tests pin
+  empty inputs (both, rules-only, samples-only), single-rule
+  chain (first_match == would_match), Always rule (catches all),
+  first-match-wins semantics, fully-shadowed rule flagged dead,
+  partially-shadowed disjoint chain NOT flagged, zero-coverage
+  rule NOT flagged dead, conservation invariant on mixed chain,
+  predicate axes wired through (PageCountBetween / SizeOver /
+  TextContainsAll), serde wire smoke + minimal-payload defaults.
+- Slice 80: rule coverage Tauri command surface (4bf519f,
+  +261 LOC in cmds.rs + lib.rs). New command
+  slab_hopper_rule_coverage(watch_id, candidate_rules?, samples?,
+  sample_limit?) -> RuleCoverageReport sources samples from the
+  watch's recent run log by default via HopperLog::list_recent
+  with a cap*4 over-read (clamped at 10_000) then filters to
+  watch_id. Sample limit clamped to [1, 1000] (default 100).
+  Each run row contributes its input_path basename with
+  size_bytes=0 and page_count=None (the run log doesn't persist
+  either) — known limitation matching the existing live preview,
+  documented at the call site. Refactored into three testable
+  helpers: clamp_sample_limit (defaults + bounds), sample_over_read
+  (4x with 10_000 ceiling guarded against i64 overflow),
+  samples_from_runs (filter + basename reduce). 13 new helper
+  tests pin clamp defaults + below-1 floor + above-1000 ceiling
+  + i64::MAX boundary, over_read 4x linear + 10_000 ceiling on
+  100k + i64::MAX inputs, samples_from_runs watch-id filter +
+  basename for abs/var/bare paths + cap honouring 50-rec input +
+  empty + no-match + size/page/text axes zeroed + invalid-utf8
+  basename fall-back. Command registered alongside
+  slab_hopper_test_rules in invoke_handler.
+- Slice 81: rule coverage TS client + diagnostic helpers
+  (c9e9b03, 268 LOC across hopper.ts + hopper.test.ts). Wire
+  types RuleSample / RuleCoverage / RuleCoverageReport mirror the
+  Rust serde shape verbatim; slabHopperRuleCoverage wrapper takes
+  watchId + opts {candidateRules?, samples?, sampleLimit?} so the
+  typical call shape is just the id. Four pure helpers:
+  fallthroughPercent (guarded against 0/0 NaN), ruleMatchPercent
+  (same guard), ruleCoverageDiagnostic ("dead" | "zero" |
+  "shadowed" | null with dead-at-position winning over other
+  signals when the server flag is set), summarizeCoverage
+  (one-line header copy "<N> of <M> samples routed (<P>%)" with
+  Math.round for the pct; empty-state branch). 17 new pure-
+  helper tests in src/lib/hopper.test.ts following the existing
+  quill.test.ts / fuzzy.test.ts inline-expect convention (no
+  runner dep; runs as `pnpm exec tsx`).
+- Slice 82: coverage panel in HopperRulesEditor (8467fc4,
+  422 LOC). The demo-able payoff tying slices 79-81 together.
+  Coverage button in header alongside "Test on this folder…",
+  highlighted with .ghost.active when open; live sample count
+  ("Coverage · 100") once loaded. Section appears BELOW the rule +
+  preview split (full width) so the bars get horizontal real
+  estate. Header sub-bar: live summary via summarizeCoverage,
+  sample-size number input clamped to [1, 1000] step 10 (matches
+  the server clamp_sample_limit so a misaligned client can't shoot
+  past wire bounds), Refresh button. Body: per-rule three-column
+  grid (name+chip / overlay bar / counts). Each row carries
+  diagnostic chip via ruleCoverageDiagnostic ("Dead at position"
+  red / "Partly shadowed" amber / "No matches" neutral; nothing
+  when healthy) and a 12px bar with TWO stacked layers — lighter
+  "would match" overlay + solid "first match" on top. The visual
+  relationship between layers IS the shadow diagnostic at a
+  glance. Dead rows get a red border + 6% red tint. Counts in
+  monospace right-aligned, would-count dimmed as secondary info.
+  Fall-through row appended after a dashed separator with a grey
+  bar (fall-through is the default-recipe path, not a "bad"
+  route). Empty states: zero samples ("Drop a file into <source>
+  and re-open coverage") + zero rules ("Add a rule above to start
+  routing"). Legend footer explains the two-bar model + the
+  dead-at-position fix. Coverage hidden by default; first toggle
+  triggers refreshCoverage; scheduleSave (debounced 600ms) also
+  calls scheduleCoverage (debounced 400ms) so bars reshape live
+  alongside the existing live-preview chips. ~210 lines scoped
+  CSS following the dark-glass token vocabulary
+  (color-mix(#7c8cff) for accent / #ff7b56 dead / #d9b04c shadow /
+  #ff5d6c error). a11y: aria-expanded + aria-controls on the
+  toggle button.
+
+Gates result: cargo fmt clean (cargo fmt --all --check exit 0),
+cargo clippy --lib -- -D warnings PASSED CLEAN in 15.17s (matches
+the round-16 14.6s baseline — coverage.rs adds only pure-data
+logic with no new clippy surface), cargo test --lib 2261 passed
+/ 0 failed (round-16 baseline 2233 + 15 from slice 79 + 13 from
+slice 80 = 2261), pnpm check 0 errors / 104 warnings (round-16
+baseline preserved EXACTLY — zero new warnings from the row menu,
+inline rename, coverage panel, two-layer bars, diagnostic chips,
+or scoped CSS).
+
+PROCESS NOTES:
+- The round-16 "Next subsystem candidates" list opened with
+  "Smart Folders Hub ... menu wiring (Rename / Duplicate / Delete
+  on personal rows)" as the natural follow-up — slice 78 closes
+  it verbatim. The round-16 closing notes also listed
+  "Hopper rule-test panel Test against last 100 files surface
+  extension beyond the current 5" as a candidate. Inspection
+  found the test_rules path only does per-filename evaluation
+  (not aggregation across many files), so the right framing
+  wasn't "extend the existing surface to 100" but "build a new
+  coverage analyzer that gives aggregate statistics over the
+  run log". The four coverage slices (79-82) split cleanly along
+  pure-data primitive -> command -> TS client -> UI, matching the
+  round-15 bulk-update arc (68-72) and round-16 install-log filter
+  arc (73-77) cadence.
+- Five slices, five commits, two logical subsystems. Slice 78 is
+  a single UI-only commit because the verbs already shipped in
+  slice 76; the coverage arc fans out into four because each
+  layer is genuinely separable and revertable.
+- The coverage primitive's two-count model (first_match vs
+  would_match) was the key design call: first_match alone shows
+  what runs at runtime but buries the shadow diagnostic; emitting
+  both lets the panel surface dead/shadowed/zero diagnostics from
+  one IPC. Conservation invariant (first_match.sum() +
+  fallthrough == total_samples) is the test that protects future
+  refactors from silently dropping rows.
+- samples_from_runs in slice 80 reduces input_path to its
+  basename to match the live watcher pipeline's RuleContext
+  shape — otherwise glob predicates against "tax_*.pdf" would
+  fail when the log carries "/Users/x/Documents/tax_2026.pdf".
+  Tested with three path styles + a "/" edge case that falls
+  back to the original string via unwrap_or_else.
+- summarizeCoverage's "No recent runs to analyse" empty-state
+  copy is the right framing for the most common cold-start case:
+  a freshly-added watch with no runs yet. Skipping the empty
+  state and rendering "0 of 0 samples routed (0%)" looked like
+  a bug; the explicit copy reads like guidance.
+- The two-bar visualisation (would-overlay + first-solid) was
+  the alternative to two parallel bars per row. One row, two
+  layers reads as "this rule's potential AND its actual" in a
+  single eye-trip; two rows would have doubled the panel height
+  for the same information density.
+
+DESIGN NOTES:
+- Row ... menu on personal rows only (no menu on built-ins)
+  because the verbs the menu surfaces (rename / duplicate /
+  delete) are personal-only by definition. A menu with all-disabled
+  options on built-ins would be busy + confusing; the placeholder
+  cell keeps the grid aligned without exposing dead affordance.
+- Inline rename (vs modal dialog) for personal-preset rename
+  matches the Smart Folders Hub's lightweight feel and the
+  saved-views rail's existing pattern. A modal would have been
+  heavier than the action warrants — rename is a one-keystroke
+  decision.
+- Coverage panel below the split (vs in the right preview pane)
+  because (a) the bars need ~600px of horizontal width to be
+  readable at typical rule counts, which the right pane doesn't
+  have; (b) coverage is a sometimes-used diagnostic, not a
+  continuously-visible workflow surface like the live preview.
+  Hidden-by-default + toggle-to-open keeps the editor's default
+  appearance unchanged for users who don't need it.
+- Coverage button copy "Coverage · 100" once loaded (vs "Coverage
+  (100)") because the dot-separator reads as a status fragment
+  ("coverage, 100 samples") not as a count badge. Matches the
+  Recent installs drawer's "Last 7d · 3 events" copy from round
+  15.
+- Sample-size input as a number field (vs a chip strip of 50 /
+  100 / 200 / All) because the analyzer's cost is sub-millisecond
+  for the [1, 1000] range so there's no slow-path that would
+  motivate stepping. Free-form input is more honest about what's
+  configurable; the min/max attributes give browser-native
+  clamping for keyboard arrows.
+- Dead-at-position chip in red (not amber) because dead rules
+  are actionable + fixable (move up), not "warning"-level
+  ambiguity. Partly-shadowed is amber because it MIGHT be
+  intentional (the user might want a tight rule to catch a
+  subset before a broader rule). Zero-coverage is neutral
+  because it's purely informational ("nothing for this rule to
+  catch in the sample window").
+- Two-layer bar uses color depth (75% vs 22% alpha on the same
+  accent hue) rather than two different hues so the visual
+  relationship reads as "more of the same thing", not "two
+  different things". Dead rows swap the would-overlay to red so
+  the bar visual reinforces the chip color without changing the
+  pattern.
+- Fall-through row's grey bar (not blue) because fall-through
+  isn't a "good" or "bad" route; it's the watch defaults firing.
+  Grey reads as "neutral existing behaviour" — matches the
+  install-log drawer's grey for the un-tinted event row.
+
+## Roadmap — round 17 (Personal Preset Row Menu + Hopper Coverage) — ALL DONE
+
+Round 17 batched FIVE feature slices into one cron tick. One slice
+closed the round-16 deferred item (the Smart Folders Hub's per-row
+... menu for personal presets), and four slices built the Hopper
+rule coverage analyzer end-to-end (pure-data primitive -> Tauri
+command -> TS client -> coverage panel in HopperRulesEditor).
+
+78. ~~**personal-preset row menu in Smart Folders Hub**~~ —
+    DONE (2026-06-21 11:31 PT, ddfd6ec, single commit, 351 LOC).
+    Six-column grid (drag / icon / body / pin / menu / apply) with
+    placeholder on built-in rows; personal rows grow a ... button
+    (hover-visible) and Notion-style popover (Rename / Duplicate /
+    Delete with divider). Inline rename in row body (Enter commits /
+    Escape cancels / blur smart-commits / drag disabled during).
+    busyRowKey for per-row in-flight state. Escape ladder grows one
+    level. Window click listener closes popover on outside click.
+    a11y: aria-haspopup / aria-expanded / role=menu / role=menuitem.
+79. ~~**Hopper rule coverage analyzer primitive**~~ —
+    DONE (2026-06-21 11:31 PT, 7613923, single commit, 531 LOC).
+    Pure-data hopper::coverage module with compute_coverage(rules,
+    samples) returning RuleCoverageReport {rules, fallthrough,
+    total_samples}. Per-rule first_match + would_match counts +
+    dead_at_position flag (true when first_match=0 AND would_match>0
+    — actionable shadow detection). O(rules*samples) two-pass scan
+    (full chain per sample to populate would_match). 15 new tests
+    pin empty inputs, single rule, first-match semantics, fully-
+    shadowed dead flag, partial-shadow disjoint NOT dead, zero-
+    coverage NOT dead, conservation invariant, predicate axes,
+    serde wire shape + minimal-payload defaults.
+80. ~~**Hopper rule coverage Tauri command surface**~~ —
+    DONE (2026-06-21 11:31 PT, 4bf519f, single commit, +261 LOC).
+    slab_hopper_rule_coverage(watch_id, candidate_rules?, samples?,
+    sample_limit?). Sources samples from HopperLog::list_recent with
+    cap*4 over-read (10_000 ceiling) filtered to watch_id; sample
+    limit clamped to [1, 1000] (default 100). Refactored into three
+    testable helpers (clamp_sample_limit / sample_over_read /
+    samples_from_runs). 13 new tests pin clamp defaults + bounds +
+    i64::MAX boundary, over-read linearity + ceiling, watch-id
+    filter + basename reduction (abs/var/bare paths) + cap + empty
+    + invalid-utf8 fallback.
+81. ~~**Hopper rule coverage TS client + diagnostic helpers**~~ —
+    DONE (2026-06-21 11:31 PT, c9e9b03, single commit, 268 LOC).
+    RuleSample / RuleCoverage / RuleCoverageReport wire types,
+    slabHopperRuleCoverage wrapper. Four pure helpers:
+    fallthroughPercent + ruleMatchPercent (both div-zero guarded),
+    ruleCoverageDiagnostic ("dead" | "zero" | "shadowed" | null with
+    dead winning), summarizeCoverage (header copy with empty-state
+    branch). 17 new pure-helper tests in src/lib/hopper.test.ts
+    following the inline-expect convention.
+82. ~~**rule coverage panel in HopperRulesEditor**~~ —
+    DONE (2026-06-21 11:31 PT, 8467fc4, single commit, 422 LOC).
+    The demo-able payoff. Coverage button in header (highlighted
+    when open, shows live sample count). Section appears full-width
+    below the split with header sub-bar (live summary + sample-size
+    number input + Refresh). Per-rule three-col grid: name + chip,
+    two-layer bar (would-overlay + first-solid), monospace counts
+    (first / would dimmed). Diagnostic chips (Dead red / Shadowed
+    amber / No-matches neutral; healthy unchipped). Dead rows get
+    red border + 6% red tint. Fall-through row after dashed
+    separator with grey bar. Empty states for zero samples + zero
+    rules. Coverage hidden by default; toggle triggers initial
+    refresh; scheduleSave wires scheduleCoverage so bars reshape
+    live alongside live-preview chips on every edit. a11y:
+    aria-expanded + aria-controls.
+
+    With round 17 done, the Smart Folders Hub closes the round-16
+    deferred CRUD parity (personal-preset rename + duplicate + delete
+    are now reachable from the same surface that lists them), and
+    the Hopper rule editor gains the coverage diagnostic that turns
+    "did this one file match" preview into "did my chain handle 100
+    real runs". Next subsystem candidates: Loom-grade tagging
+    explorer, doc-detail metadata editor read/write surface, Beacon
+    cache inspector polish (column sort by basename / model facet),
+    Quill multi-document field-detect queueing, install-log
+    drawer's coverage-like aggregate ("which plugins did you install
+    the most this month?"), Hopper sample-set explorer (drill into
+    "show me the 23 fall-through files" from a coverage row).
+
+
+
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
