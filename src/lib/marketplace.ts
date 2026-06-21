@@ -403,6 +403,181 @@ export function installEventGlyph(action: InstallEvent["action"]): string {
   }
 }
 
+// ─── Install log filter surface (v3.39 Slice 75) ────────────────────
+
+/**
+ * The complete InstallAction vocabulary as a readonly tuple. Useful for
+ * exhaustive UI iteration (filter chips, action legends) — order is the
+ * "natural" reading order matching how the Recent installs drawer
+ * lists action filter chips (success-shaped first, failure-shaped last).
+ */
+export const ALL_INSTALL_ACTIONS: readonly InstallEvent["action"][] = [
+  "install",
+  "update",
+  "uninstall",
+  "failed",
+] as const;
+
+/**
+ * Four-axis filter for the Recent installs drawer. Mirrors the
+ * Rust-side `slab_marketplace_install_log_list_filtered` command:
+ *
+ * - `since_unix` / `until_unix`: optional inclusive time-window
+ *   boundaries. `null`/missing == no bound on that side.
+ * - `actions`: optional subset of `ALL_INSTALL_ACTIONS`. An empty
+ *   array OR `null`/missing both mean "no action filter". Unknown
+ *   tokens are silently dropped server-side so a typo can't widen
+ *   the result.
+ * - `plugin_id_substr`: optional case-insensitive substring against
+ *   plugin_id. Whitespace-only strings are treated as "no filter"
+ *   (the backend trims+normalises before matching).
+ * - `limit`: row cap. Defaults to 500 server-side.
+ *
+ * All four axes compose via AND so a "Last 7d failures for
+ * com.acme.\*" query reads naturally.
+ */
+export interface InstallEventQuery {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  actions?: readonly InstallEvent["action"][] | null;
+  plugin_id_substr?: string | null;
+  limit?: number | null;
+}
+
+/**
+ * Wire payload returned by [`listInstallEventsFiltered`].
+ * `total_returned` is the row count actually delivered; `limit_used`
+ * echoes the effective limit so the UI can render a "Limit reached
+ * (500) — narrow the filter to see more" hint when the two are equal.
+ */
+export interface InstallEventFilteredResult {
+  events: InstallEvent[];
+  total_returned: number;
+  limit_used: number;
+}
+
+const EMPTY_QUERY: InstallEventQuery = {};
+const EMPTY_FILTERED_RESULT: InstallEventFilteredResult = {
+  events: [],
+  total_returned: 0,
+  limit_used: 0,
+};
+
+/**
+ * Read the install log with the four-axis filter. Returns an empty
+ * result in browser mode (no Tauri context) so the drawer's
+ * `filteredEvents` reducer doesn't have to special-case the dev
+ * environment.
+ */
+export async function listInstallEventsFiltered(
+  query: InstallEventQuery = EMPTY_QUERY,
+): Promise<InstallEventFilteredResult> {
+  if (!isInTauri()) return { ...EMPTY_FILTERED_RESULT };
+  return invoke<InstallEventFilteredResult>(
+    "slab_marketplace_install_log_list_filtered",
+    {
+      sinceUnix: query.since_unix ?? null,
+      untilUnix: query.until_unix ?? null,
+      actions: query.actions && query.actions.length > 0 ? [...query.actions] : null,
+      pluginIdSubstr: query.plugin_id_substr ?? null,
+      limit: query.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Return the most-recently-active distinct plugin_ids in the install
+ * log, newest activity first. Powers the filter bar's plugin
+ * autocomplete in the Recent installs drawer. Returns an empty array
+ * in browser mode.
+ */
+export async function recentInstallPluginIds(limit?: number): Promise<string[]> {
+  if (!isInTauri()) return [];
+  return invoke<string[]>("slab_marketplace_install_log_recent_plugin_ids", {
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Human-friendly label for a set of action filters. Used in the
+ * "Showing X of Y events" subtitle and the filter-bar empty-state.
+ * The canonical render:
+ *
+ *   ∅                              → "all actions"
+ *   ALL_INSTALL_ACTIONS            → "all actions"
+ *   { "failed" }                   → "failures only"
+ *   { "install", "update" }        → "installs and updates"
+ *   { "install", "update", ... }   → "installs, updates and uninstalls"
+ *
+ * Single-action plurals use the action's natural plural (install →
+ * installs); "failed" pluralises to "failures" for cleaner copy. The
+ * three-or-more form uses Oxford-style "X, Y and Z" without a comma
+ * before the final "and" (matches the surrounding app voice — see
+ * formatUpdateSummary in slice 70).
+ */
+export function describeActionSet(
+  actions: readonly InstallEvent["action"][] | null | undefined,
+): string {
+  // Treat missing / empty / full-set as "all actions".
+  if (!actions || actions.length === 0) return "all actions";
+  if (actions.length === ALL_INSTALL_ACTIONS.length) {
+    // De-dupe + size check — a caller might pass duplicates.
+    const set = new Set(actions);
+    if (ALL_INSTALL_ACTIONS.every((a) => set.has(a))) return "all actions";
+  }
+  // Stable plural forms. "failed" → "failures" for readable copy.
+  const plurals: Record<InstallEvent["action"], string> = {
+    install: "installs",
+    update: "updates",
+    uninstall: "uninstalls",
+    failed: "failures",
+  };
+  // Single-action specialisation: "failures only" reads better than
+  // "failures" as a chip subtitle.
+  if (actions.length === 1) {
+    const only = plurals[actions[0]];
+    return `${only} only`;
+  }
+  // Deterministic order — match the canonical ALL_INSTALL_ACTIONS
+  // sequence so two callers with the same set always render the same
+  // string regardless of input order.
+  const ordered = ALL_INSTALL_ACTIONS.filter((a) =>
+    actions.includes(a),
+  ).map((a) => plurals[a]);
+  if (ordered.length === 2) return `${ordered[0]} and ${ordered[1]}`;
+  // 3+: Oxford-style "X, Y and Z" (no Oxford comma — matches the app's
+  // existing copy in formatUpdateSummary).
+  const head = ordered.slice(0, -1).join(", ");
+  return `${head} and ${ordered[ordered.length - 1]}`;
+}
+
+/**
+ * Compact label for the active filter state, suitable for a footer
+ * subtitle in the drawer ("3 filters active") or a chip count badge.
+ * Counts the number of axes (out of four) that are narrowing the result:
+ * window, action set, plugin substring. The window axis counts as ONE
+ * narrowing axis even when both since+until are set (a single semantic
+ * choice from the user). Returns `null` when no axis narrows — the
+ * caller can hide the subtitle entirely on a clean filter.
+ */
+export function pluginQueryActiveLabel(
+  query: InstallEventQuery,
+): string | null {
+  let n = 0;
+  if (query.since_unix != null || query.until_unix != null) n++;
+  if (query.actions && query.actions.length > 0) {
+    // A full-set explicit pick reads as "no action filter" too.
+    const set = new Set(query.actions);
+    const isFullSet =
+      query.actions.length === ALL_INSTALL_ACTIONS.length &&
+      ALL_INSTALL_ACTIONS.every((a) => set.has(a));
+    if (!isFullSet) n++;
+  }
+  if (query.plugin_id_substr && query.plugin_id_substr.trim() !== "") n++;
+  if (n === 0) return null;
+  return `${n} filter${n === 1 ? "" : "s"} active`;
+}
+
 // ─── Install log retention surface (v3.39 Slice 56) ─────────────────
 
 /**
