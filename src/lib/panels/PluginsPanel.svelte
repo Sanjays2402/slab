@@ -40,6 +40,7 @@
     installLogSummary,
     listUpdateTargets,
     updateAllPlugins,
+    listenUpdateProgress,
     pluralizeUpdates,
     formatUpdateSummary,
     type IndexEntry,
@@ -48,6 +49,7 @@
     type UpdatePlan,
     type UpdateTarget,
     type BatchUpdateReport,
+    type UpdateProgress,
   } from "$lib/marketplace";
   import { notify } from "$lib/notify";
   import { tStore, t } from "$lib/i18n";
@@ -56,6 +58,9 @@
   import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
   import UninstallConfirmModal from "$lib/components/UninstallConfirmModal.svelte";
   import PluginConsentModal from "$lib/components/PluginConsentModal.svelte";
+  import BulkUpdateProgressOverlay, {
+    type BulkUpdateRowState,
+  } from "$lib/components/BulkUpdateProgressOverlay.svelte";
   import { fuzzyMatchEntry, highlightHTML, type EntryFuzzyResult } from "$lib/marketplace/fuzzy";
 
   // ---------------- Installed-tab state (unchanged from Foundry) ----
@@ -123,6 +128,20 @@
    *  ignore but never permanently kill". */
   let updatesDismissed = $state(false);
 
+  // ---------------- v3.39 Round-15 — Bulk-update overlay state -----
+  /** Type-tagged so the overlay can render the right state per row
+   *  without re-importing the union from the marketplace module. */
+  type OverlayState = {
+    rows: BulkUpdateRowState[];
+    currentIndex: number;
+    finished: boolean;
+    summary: string;
+    batchId: number;
+  } | null;
+  /** When non-null, render the BulkUpdateProgressOverlay component.
+   *  Slice 72 surface for the per-step live progress. */
+  let bulkOverlay = $state<OverlayState>(null);
+
   /** True iff the banner should render: a plan exists, has targets,
    *  and the user hasn't dismissed it this session. */
   let showUpdatesBanner = $derived(
@@ -169,25 +188,87 @@
 
   /** Shared runner for both Update-all and single-row Update. Owns
    *  the busy flag transitions, toast notifications, and post-run
-   *  refresh of the plan + registry + install log. Slice 72 layers
-   *  the per-step progress overlay on top of this; slice 71 keeps it
-   *  to a single toast on completion. */
+   *  refresh of the plan + registry + install log. The slice-72
+   *  overlay state is also driven here — we set up the per-row
+   *  reducer + subscribe to `marketplace://update-progress` BEFORE
+   *  firing the backend call so early `starting` events are
+   *  captured. */
   async function runUpdateBatch(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
+    if (ids.length === 0 || !updatePlan) return;
+
+    // Resolve UpdateTarget rows from the current plan; ids not in
+    // the plan are silently skipped (shouldn't happen in practice).
+    const planById = new Map<string, UpdateTarget>(
+      updatePlan.targets.map((t: UpdateTarget) => [t.id, t]),
+    );
+    const initialRows: BulkUpdateRowState[] = ids
+      .map((id) => planById.get(id))
+      .filter((t): t is UpdateTarget => t !== undefined)
+      .map((target) => ({ target, phase: "pending", error: null }));
+    if (initialRows.length === 0) return;
+
     updateBusy = true;
     for (const id of ids) updateRowBusy[id] = true;
+
+    const batchId = Date.now();
+    bulkOverlay = {
+      rows: initialRows,
+      currentIndex: 0,
+      finished: false,
+      summary: "",
+      batchId,
+    };
+
+    // Subscribe to the progress channel BEFORE firing the backend
+    // call. The handler mutates bulkOverlay.rows in place so the
+    // overlay re-renders per event.
+    const unlisten = await listenUpdateProgress((progress: UpdateProgress) => {
+      // Filter out events from other in-flight batches (the UI
+      // never fires more than one at a time, but the contract
+      // honours batch_id correlation).
+      if (!bulkOverlay || progress.batch_id !== bulkOverlay.batchId) return;
+      const rowIdx = bulkOverlay.rows.findIndex(
+        (r) => r.target.id === progress.plugin_id,
+      );
+      if (rowIdx === -1) return;
+      const nextRows = bulkOverlay.rows.slice();
+      const existing = nextRows[rowIdx];
+      if (progress.phase === "starting") {
+        nextRows[rowIdx] = { ...existing, phase: "updating", error: null };
+      } else if (progress.phase === "done") {
+        nextRows[rowIdx] = { ...existing, phase: "done", error: null };
+      } else if (progress.phase === "error") {
+        nextRows[rowIdx] = {
+          ...existing,
+          phase: "failed",
+          error: progress.error ?? "Unknown error",
+        };
+      }
+      bulkOverlay = {
+        ...bulkOverlay,
+        rows: nextRows,
+        currentIndex: progress.index,
+      };
+    });
+
     try {
-      const batchId = Date.now();
       const report = await updateAllPlugins(batchId, ids);
       // Pull fresh data after the batch — registry first so the
       // installed list shows bumped versions, then the plan so the
-      // banner re-derives (and likely hides) based on the new
-      // state.
+      // banner re-derives (and likely hides) based on the new state.
       await refreshPlugins();
       void refreshInstallLog();
       await refreshUpdateTargets();
-      // Toast summary. Distinct grammar per outcome path.
+      // Finalise the overlay summary + mark finished. The user
+      // dismisses the overlay manually so they can read the per-row
+      // outcomes after the batch lands.
       const summary = formatUpdateSummary(report);
+      if (bulkOverlay && bulkOverlay.batchId === batchId) {
+        bulkOverlay = { ...bulkOverlay, finished: true, summary };
+      }
+      // Toast summary mirrors the overlay summary so the user gets a
+      // bottom-right confirmation too. Distinct grammar per outcome
+      // path matches the round-15 design.
       if (report.failed === 0) {
         notify.success(summary);
       } else if (report.succeeded === 0) {
@@ -202,9 +283,28 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       notify.error("Bulk update failed", { detail: msg });
+      // Surface the error on the overlay too (and mark finished so
+      // the user can dismiss).
+      if (bulkOverlay && bulkOverlay.batchId === batchId) {
+        bulkOverlay = {
+          ...bulkOverlay,
+          finished: true,
+          summary: "Bulk update failed",
+        };
+      }
     } finally {
+      await unlisten();
       updateBusy = false;
       for (const id of ids) delete updateRowBusy[id];
+    }
+  }
+
+  /** Dismiss the bulk-update overlay. The overlay's own button
+   *  refuses to fire this while `finished === false`, but we keep
+   *  the guard here too as defence-in-depth. */
+  function dismissBulkOverlay(): void {
+    if (bulkOverlay && bulkOverlay.finished) {
+      bulkOverlay = null;
     }
   }
 
@@ -1454,6 +1554,16 @@
     busy={uninstallModal.busy}
     onConfirm={confirmUninstall}
     onCancel={dismissUninstallModal}
+  />
+{/if}
+
+{#if bulkOverlay}
+  <BulkUpdateProgressOverlay
+    rows={bulkOverlay.rows}
+    currentIndex={bulkOverlay.currentIndex}
+    finished={bulkOverlay.finished}
+    summary={bulkOverlay.summary}
+    onDismiss={dismissBulkOverlay}
   />
 {/if}
 
