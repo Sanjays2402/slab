@@ -397,6 +397,96 @@ fn samples_from_runs(
         .collect()
 }
 
+// ─── Slice 84 — sample drilldown command surface ─────────────────────
+//
+// `slab_hopper_sample_drilldown` lets the coverage panel answer
+// "show me the files in this bucket" when the user clicks a row.
+// The command:
+//
+// 1. Resolves the rule chain (caller-supplied in-flight rules win;
+//    else reads from the registry, matching slab_hopper_rule_coverage).
+// 2. Resolves the samples (caller wins; else pulls from the run log
+//    via the same samples_from_runs helper as the coverage command).
+// 3. Calls compute_sample_drilldown(rules, samples, bucket, cap).
+//
+// We deliberately reuse the same sample/limit semantics as the
+// coverage command (clamp_sample_limit + sample_over_read +
+// samples_from_runs) so a click on a coverage row drills into the
+// EXACT same sample set the coverage report counted — anything else
+// would surface "27 fall-throughs" in the header but only show 23
+// in the drilldown, which would read as a bug.
+
+/// Clamp the caller's preview cap to `[1, 1000]`, defaulting to 25.
+/// Lower ceiling than the analyzer's `[1, 5000]` because the IPC
+/// payload here is heavier — each sample carries the full filename +
+/// the size/page/text axes, vs the coverage report's per-rule
+/// counts. 25 default matches a typical popover "first page" and
+/// stays well under the dropdown's scroll budget.
+fn clamp_preview_cap(input: Option<i64>) -> i64 {
+    input.unwrap_or(25).clamp(1, 1000)
+}
+
+/// `slab_hopper_sample_drilldown` — evaluate a rule chain against
+/// the watch's recent run log (or a caller-supplied sample list)
+/// and return the samples in a specific bucket (one rule's
+/// first-match list, or the fall-through list).
+///
+/// `bucket` is a [`super::coverage::SampleBucket`]: either
+/// `{kind: "rule", index: N}` to drill into rule N's first_match
+/// pool, or `{kind: "fallthrough"}` to see what fell through to the
+/// watch defaults.
+///
+/// `candidate_rules`, `samples`, and `sample_limit` mirror
+/// [`slab_hopper_rule_coverage`] so a click on a coverage row drills
+/// into the EXACT same sample set the coverage report counted.
+///
+/// `preview_cap` (default 25, clamped to [1, 1000]) is the maximum
+/// number of samples returned in the drilldown payload — independent
+/// of `sample_limit` (which caps the chain-walk input size).
+#[tauri::command]
+pub fn slab_hopper_sample_drilldown(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    bucket: super::coverage::SampleBucket,
+    candidate_rules: Option<Vec<Rule>>,
+    samples: Option<Vec<super::coverage::RuleSample>>,
+    sample_limit: Option<i64>,
+    preview_cap: Option<i64>,
+) -> CmdResult<super::coverage::SampleDrilldown> {
+    // Resolve the rule chain — same precedence as the coverage cmd.
+    let rules = match candidate_rules {
+        Some(rs) => rs,
+        None => {
+            let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.get_rules(watch_id)
+                .map_err(|e| format!("registry get_rules: {e}"))?
+        }
+    };
+
+    // Resolve the sample list — same precedence as the coverage cmd.
+    let resolved_samples: Vec<super::coverage::RuleSample> = match samples {
+        Some(s) => s,
+        None => {
+            let cap = clamp_sample_limit(sample_limit);
+            let over_read = sample_over_read(cap);
+            let runs = {
+                let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
+                log.list_recent(over_read)
+                    .map_err(|e| format!("hopper log list_recent: {e}"))?
+            };
+            samples_from_runs(&runs, watch_id, cap as usize)
+        }
+    };
+
+    let preview = clamp_preview_cap(preview_cap) as usize;
+    Ok(super::coverage::compute_sample_drilldown(
+        &rules,
+        &resolved_samples,
+        bucket,
+        preview,
+    ))
+}
+
 // ---------------------------------------------------------------------
 // v3.22.0 — Hopper Loop: batch backfill commands
 // ---------------------------------------------------------------------
@@ -947,5 +1037,44 @@ mod tests {
         let samples = samples_from_runs(&runs, 1, 100);
         // Path::new("/").file_name() returns None -> falls back to "/".
         assert_eq!(samples[0].filename, "/");
+    }
+
+    // ── Slice 84 — sample drilldown preview cap helper tests ──────────
+
+    #[test]
+    fn clamp_preview_cap_defaults_to_twenty_five() {
+        assert_eq!(clamp_preview_cap(None), 25);
+    }
+
+    #[test]
+    fn clamp_preview_cap_clamps_below_one_to_one() {
+        assert_eq!(clamp_preview_cap(Some(0)), 1);
+        assert_eq!(clamp_preview_cap(Some(-1)), 1);
+        assert_eq!(clamp_preview_cap(Some(i64::MIN)), 1);
+    }
+
+    #[test]
+    fn clamp_preview_cap_clamps_above_ceiling_to_one_thousand() {
+        assert_eq!(clamp_preview_cap(Some(1001)), 1000);
+        assert_eq!(clamp_preview_cap(Some(10_000)), 1000);
+        assert_eq!(clamp_preview_cap(Some(i64::MAX)), 1000);
+    }
+
+    #[test]
+    fn clamp_preview_cap_passes_in_range_through() {
+        assert_eq!(clamp_preview_cap(Some(1)), 1);
+        assert_eq!(clamp_preview_cap(Some(25)), 25);
+        assert_eq!(clamp_preview_cap(Some(100)), 100);
+        assert_eq!(clamp_preview_cap(Some(1000)), 1000);
+    }
+
+    #[test]
+    fn clamp_preview_cap_default_is_lower_than_coverage_default() {
+        // The drilldown carries the FULL filename + axes per sample
+        // (heavier per-row than the coverage report's counts) so its
+        // default is a smaller "first page" preview. Pin the relationship
+        // so a future tweak that breaks the ordering shows up as a test
+        // failure rather than a silent regression.
+        assert!(clamp_preview_cap(None) < clamp_sample_limit(None));
     }
 }
