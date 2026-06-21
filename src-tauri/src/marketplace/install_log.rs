@@ -560,6 +560,129 @@ impl InstallLog {
         Ok(out)
     }
 
+    // ─── Filtered reader (Slice 73) ──────────────────────────────────
+
+    /// Like [`list_events_between`] but with two additional axes for the
+    /// Recent installs drawer's filter bar:
+    ///
+    /// - `actions`: when `Some`, only rows whose action is in the set are
+    ///   returned. `None` (or an empty slice — both behave the same) keeps
+    ///   every action kind. Useful for "show me only failures" or
+    ///   "installs+updates only".
+    /// - `plugin_id_substr`: when `Some`, a case-INSENSITIVE substring
+    ///   match against `plugin_id`. Empty / whitespace-only strings behave
+    ///   like `None` so the UI can hand the raw input field through
+    ///   without trimming first. The match is non-glob, anchored anywhere
+    ///   in the id — a user typing "ocr" matches both `com.acme.ocr-pro`
+    ///   and `org.studio.ocr-batch`.
+    ///
+    /// All three axes (time window, action set, plugin substring) compose
+    /// via AND so a "Last 7d failures for com.acme.\*" query reads
+    /// naturally: `list_events_filtered(Some(7d_ago), None, Some([Failed]),
+    /// Some("com.acme"), 100)`.
+    ///
+    /// Same LIMIT semantics as [`list_events_between`]: a negative limit
+    /// clamps to zero. Same ordering (occurred_at DESC, id DESC).
+    pub fn list_events_filtered(
+        &self,
+        since_unix: Option<i64>,
+        until_unix: Option<i64>,
+        actions: Option<&[InstallAction]>,
+        plugin_id_substr: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<InstallEvent>, InstallLogError> {
+        let limit = limit.max(0);
+
+        // Normalise the substring axis: trim, treat empty as "no filter".
+        let substr = plugin_id_substr
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase());
+
+        // Normalise the action axis: treat an empty slice as "no filter".
+        let actions = actions.filter(|s| !s.is_empty());
+
+        // Assemble the WHERE clause dynamically. The shape mirrors
+        // list_events_between so a query plan walker would see the same
+        // index usage (occurred_at DESC); the action / substring filters
+        // are tail-scan predicates that the sqlite planner applies after
+        // the index seek.
+        let mut sql = String::from(
+            "SELECT id, plugin_id, version, action, occurred_at, source,
+                    bytes_written, files_extracted, replaced_existing,
+                    prior_version, error_msg
+             FROM install_events",
+        );
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        let mut clauses: Vec<String> = Vec::new();
+        if let Some(since) = since_unix {
+            clauses.push("occurred_at >= ?".into());
+            params.push(rusqlite::types::Value::Integer(since));
+        }
+        if let Some(until) = until_unix {
+            clauses.push("occurred_at <= ?".into());
+            params.push(rusqlite::types::Value::Integer(until));
+        }
+        if let Some(actions) = actions {
+            // IN (?,?,?,?) — one placeholder per action. Always =< 4
+            // (the enum has four variants) so the placeholder explosion
+            // sqlite warns about doesn't apply.
+            let placeholders: Vec<&str> = actions.iter().map(|_| "?").collect();
+            clauses.push(format!("action IN ({})", placeholders.join(",")));
+            for a in actions {
+                params.push(rusqlite::types::Value::Text(a.as_str().into()));
+            }
+        }
+        if let Some(s) = &substr {
+            // Case-insensitive substring via LOWER(plugin_id) LIKE
+            // '%needle%'. The LIKE escape characters (%, _, \) are
+            // doubled up so a user typing "100%" doesn't accidentally
+            // turn the second % into a wildcard. Same convention the
+            // Hopper rule UI uses for its filename predicates.
+            let escaped = like_escape(s);
+            clauses.push("LOWER(plugin_id) LIKE ? ESCAPE '\\'".into());
+            params.push(rusqlite::types::Value::Text(format!("%{escaped}%")));
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY occurred_at DESC, id DESC LIMIT ?");
+        params.push(rusqlite::types::Value::Integer(limit));
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), row_to_event)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Return the most-recently-active `limit` distinct plugin_ids in
+    /// the log, newest activity first. Powers the filter bar's plugin
+    /// autocomplete in the Recent installs drawer so a user typing the
+    /// first few characters of a plugin id sees the recently-active set
+    /// as suggestions instead of having to remember the full id. Uses a
+    /// SUBQUERY-per-plugin shape so the GROUP BY collapses each id to
+    /// its newest occurrence, then orders the result newest-first.
+    /// Negative limit clamps to zero.
+    pub fn recent_plugin_ids(&self, limit: i64) -> Result<Vec<String>, InstallLogError> {
+        let limit = limit.max(0);
+        let mut stmt = self.conn.prepare(
+            "SELECT plugin_id FROM install_events
+             GROUP BY plugin_id
+             ORDER BY MAX(occurred_at) DESC, plugin_id ASC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     // ─── Retention policy storage (Slice 63) ─────────────────────────
     //
     // Key/value rows in `install_log_settings` back the retention
@@ -722,6 +845,20 @@ fn unix_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Escape the three special characters in a SQLite LIKE pattern so a
+/// user-supplied substring stays a literal match. The companion ESCAPE
+/// clause in the prepared statement (`ESCAPE '\\'`) tells SQLite to
+/// treat the backslash as the escape character. Matches the convention
+/// the Hopper rule filter uses for its substring predicates.
+///
+/// Order matters: backslash MUST be replaced FIRST so we don't escape
+/// the backslashes we're about to insert in front of `%` and `_`.
+fn like_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 // ─── Export serialisers (Slice 59) ───────────────────────────────────
@@ -1316,6 +1453,351 @@ mod tests {
         assert!(zero.is_empty());
         let neg = log.list_events_between(None, None, -3).unwrap();
         assert!(neg.is_empty());
+    }
+
+    // ─── Filtered reader (Slice 73) ──────────────────────────────────
+
+    /// Test helper that lets us pin both action and `occurred_at` so the
+    /// filter tests don't have to race the clock OR call four different
+    /// `record_*` writers to seed a mixed-action fixture.
+    fn insert_at_action(
+        log: &mut InstallLog,
+        plugin_id: &str,
+        version: &str,
+        action: InstallAction,
+        at: i64,
+    ) {
+        log.conn
+            .execute(
+                "INSERT INTO install_events
+                    (plugin_id, version, action, occurred_at, source,
+                     bytes_written, files_extracted, replaced_existing,
+                     prior_version, error_msg)
+                 VALUES (?1, ?2, ?3, ?4, NULL, NULL, NULL, NULL, NULL, NULL)",
+                params![plugin_id, version, action.as_str(), at],
+            )
+            .unwrap();
+    }
+
+    fn seed_mixed_log() -> InstallLog {
+        // 8 rows, four plugins, all four actions represented:
+        //   com.acme.ocr       install    @ 100
+        //   com.acme.ocr-pro   update     @ 101
+        //   org.studio.batch   uninstall  @ 102
+        //   com.acme.ocr       failed     @ 103
+        //   org.studio.batch   install    @ 104
+        //   com.acme.ocr-pro   failed     @ 105
+        //   org.other.app      install    @ 106
+        //   com.acme.ocr       update     @ 107
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at_action(&mut log, "com.acme.ocr", "1.0", InstallAction::Install, 100);
+        insert_at_action(
+            &mut log,
+            "com.acme.ocr-pro",
+            "2.0",
+            InstallAction::Update,
+            101,
+        );
+        insert_at_action(
+            &mut log,
+            "org.studio.batch",
+            "0.1",
+            InstallAction::Uninstall,
+            102,
+        );
+        insert_at_action(&mut log, "com.acme.ocr", "1.1", InstallAction::Failed, 103);
+        insert_at_action(
+            &mut log,
+            "org.studio.batch",
+            "0.2",
+            InstallAction::Install,
+            104,
+        );
+        insert_at_action(
+            &mut log,
+            "com.acme.ocr-pro",
+            "2.1",
+            InstallAction::Failed,
+            105,
+        );
+        insert_at_action(
+            &mut log,
+            "org.other.app",
+            "9.9",
+            InstallAction::Install,
+            106,
+        );
+        insert_at_action(&mut log, "com.acme.ocr", "1.2", InstallAction::Update, 107);
+        log
+    }
+
+    #[test]
+    fn list_events_filtered_no_axes_matches_list_recent() {
+        // With all three filter axes set to None, the reader degenerates
+        // to a plain newest-first scan equivalent to `list_recent`.
+        let log = seed_mixed_log();
+        let recent = log.list_recent(100).unwrap();
+        let filtered = log
+            .list_events_filtered(None, None, None, None, 100)
+            .unwrap();
+        assert_eq!(recent.len(), filtered.len());
+        for (a, b) in recent.iter().zip(filtered.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.occurred_at, b.occurred_at);
+            assert_eq!(a.action, b.action);
+        }
+    }
+
+    #[test]
+    fn list_events_filtered_actions_single_kind() {
+        // Single-action filter: "only failures".
+        let log = seed_mixed_log();
+        let failures = log
+            .list_events_filtered(None, None, Some(&[InstallAction::Failed]), None, 100)
+            .unwrap();
+        assert_eq!(failures.len(), 2);
+        assert!(failures.iter().all(|e| e.action == InstallAction::Failed));
+        // Newest first.
+        assert_eq!(failures[0].occurred_at, 105);
+        assert_eq!(failures[1].occurred_at, 103);
+    }
+
+    #[test]
+    fn list_events_filtered_actions_set_with_multiple() {
+        // "Installs + updates" excludes uninstall and failed.
+        let log = seed_mixed_log();
+        let want = log
+            .list_events_filtered(
+                None,
+                None,
+                Some(&[InstallAction::Install, InstallAction::Update]),
+                None,
+                100,
+            )
+            .unwrap();
+        assert_eq!(want.len(), 5);
+        for e in &want {
+            assert!(matches!(
+                e.action,
+                InstallAction::Install | InstallAction::Update
+            ));
+        }
+    }
+
+    #[test]
+    fn list_events_filtered_empty_action_set_is_no_filter() {
+        // Empty slice MUST behave the same as None — the UI may hand
+        // through an empty selection rather than special-casing it.
+        let log = seed_mixed_log();
+        let all = log
+            .list_events_filtered(None, None, None, None, 100)
+            .unwrap();
+        let with_empty = log
+            .list_events_filtered(None, None, Some(&[]), None, 100)
+            .unwrap();
+        assert_eq!(all.len(), with_empty.len());
+    }
+
+    #[test]
+    fn list_events_filtered_plugin_substr_anchored_anywhere() {
+        // Substring match — "acme" matches both com.acme.ocr and com.acme.ocr-pro.
+        let log = seed_mixed_log();
+        let acme = log
+            .list_events_filtered(None, None, None, Some("acme"), 100)
+            .unwrap();
+        // 3 ocr rows + 2 ocr-pro rows = 5.
+        assert_eq!(acme.len(), 5);
+        for e in &acme {
+            assert!(e.plugin_id.contains("acme"));
+        }
+    }
+
+    #[test]
+    fn list_events_filtered_plugin_substr_case_insensitive() {
+        let log = seed_mixed_log();
+        let upper = log
+            .list_events_filtered(None, None, None, Some("ACME"), 100)
+            .unwrap();
+        let lower = log
+            .list_events_filtered(None, None, None, Some("acme"), 100)
+            .unwrap();
+        assert_eq!(upper.len(), lower.len());
+        assert!(upper.len() > 0);
+    }
+
+    #[test]
+    fn list_events_filtered_plugin_substr_empty_or_whitespace_is_no_filter() {
+        let log = seed_mixed_log();
+        let all = log
+            .list_events_filtered(None, None, None, None, 100)
+            .unwrap();
+        let empty = log
+            .list_events_filtered(None, None, None, Some(""), 100)
+            .unwrap();
+        let spaces = log
+            .list_events_filtered(None, None, None, Some("   "), 100)
+            .unwrap();
+        assert_eq!(empty.len(), all.len());
+        assert_eq!(spaces.len(), all.len());
+    }
+
+    #[test]
+    fn list_events_filtered_plugin_substr_no_match_returns_empty() {
+        let log = seed_mixed_log();
+        let none = log
+            .list_events_filtered(None, None, None, Some("xyzzy"), 100)
+            .unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn list_events_filtered_plugin_substr_escapes_like_wildcards() {
+        // A user pasting a literal "%" in the search box must NOT
+        // accidentally become a SQL wildcard. Insert two ids — one
+        // containing "%", one not — and confirm only the literal match
+        // comes back.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at_action(
+            &mut log,
+            "com.literal%percent",
+            "1",
+            InstallAction::Install,
+            100,
+        );
+        insert_at_action(
+            &mut log,
+            "com.regular.name",
+            "1",
+            InstallAction::Install,
+            101,
+        );
+        // Searching for "%percent" must find ONLY the literal-percent row.
+        let hits = log
+            .list_events_filtered(None, None, None, Some("%percent"), 100)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].plugin_id, "com.literal%percent");
+        // And the underscore wildcard is also escaped.
+        let mut log2 = InstallLog::open_in_memory().unwrap();
+        insert_at_action(
+            &mut log2,
+            "com.literal_under",
+            "1",
+            InstallAction::Install,
+            100,
+        );
+        insert_at_action(
+            &mut log2,
+            "com.regular.name",
+            "1",
+            InstallAction::Install,
+            101,
+        );
+        let hits = log2
+            .list_events_filtered(None, None, None, Some("l_under"), 100)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].plugin_id, "com.literal_under");
+    }
+
+    #[test]
+    fn list_events_filtered_composes_all_axes_with_and() {
+        // "Last events since t=102 (inclusive), failures only, plugin
+        // id containing 'acme'" → only the row at 105 (com.acme.ocr-pro
+        // failed) qualifies. 103 is also a failure on com.acme.ocr but
+        // it's at t=103 ≥ 102 too — so two should match.
+        let log = seed_mixed_log();
+        let hits = log
+            .list_events_filtered(
+                Some(102),
+                None,
+                Some(&[InstallAction::Failed]),
+                Some("acme"),
+                100,
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].occurred_at, 105);
+        assert_eq!(hits[1].occurred_at, 103);
+        // Narrow the window to exclude the t=103 row.
+        let hits = log
+            .list_events_filtered(
+                Some(104),
+                None,
+                Some(&[InstallAction::Failed]),
+                Some("acme"),
+                100,
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].occurred_at, 105);
+    }
+
+    #[test]
+    fn list_events_filtered_limit_clamps() {
+        let log = seed_mixed_log();
+        let two = log.list_events_filtered(None, None, None, None, 2).unwrap();
+        assert_eq!(two.len(), 2);
+        let zero = log.list_events_filtered(None, None, None, None, 0).unwrap();
+        assert!(zero.is_empty());
+        let neg = log
+            .list_events_filtered(None, None, None, None, -1)
+            .unwrap();
+        assert!(neg.is_empty());
+    }
+
+    #[test]
+    fn recent_plugin_ids_returns_distinct_newest_first() {
+        let log = seed_mixed_log();
+        // 4 distinct plugin ids in the seed. Newest activity per plugin:
+        //   com.acme.ocr     @ 107
+        //   org.other.app    @ 106
+        //   com.acme.ocr-pro @ 105
+        //   org.studio.batch @ 104
+        let ids = log.recent_plugin_ids(10).unwrap();
+        assert_eq!(
+            ids,
+            vec![
+                "com.acme.ocr",
+                "org.other.app",
+                "com.acme.ocr-pro",
+                "org.studio.batch",
+            ]
+        );
+    }
+
+    #[test]
+    fn recent_plugin_ids_caps_limit() {
+        let log = seed_mixed_log();
+        let two = log.recent_plugin_ids(2).unwrap();
+        assert_eq!(two.len(), 2);
+        // Top two newest-active ids.
+        assert_eq!(two[0], "com.acme.ocr");
+        assert_eq!(two[1], "org.other.app");
+        let zero = log.recent_plugin_ids(0).unwrap();
+        assert!(zero.is_empty());
+        let neg = log.recent_plugin_ids(-1).unwrap();
+        assert!(neg.is_empty());
+    }
+
+    #[test]
+    fn recent_plugin_ids_empty_log_returns_empty() {
+        let log = InstallLog::open_in_memory().unwrap();
+        let ids = log.recent_plugin_ids(10).unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn like_escape_doubles_special_chars_in_order() {
+        // The order matters — backslash MUST be first so we don't
+        // re-escape our own escapes.
+        assert_eq!(like_escape("plain"), "plain");
+        assert_eq!(like_escape("100%"), "100\\%");
+        assert_eq!(like_escape("a_b"), "a\\_b");
+        assert_eq!(like_escape(r"raw\path"), r"raw\\path");
+        // All three together — the backslash from the raw string gets
+        // doubled, the % gets prefixed with a fresh backslash.
+        assert_eq!(like_escape(r"a\b_c%d"), r"a\\b\_c\%d");
     }
 
     // ─── CSV serialiser (Slice 59) ───────────────────────────────────
