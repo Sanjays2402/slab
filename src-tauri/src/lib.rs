@@ -5224,9 +5224,7 @@ fn slab_marketplace_uninstall(
 ) -> Result<bool, String> {
     // Capture prior version BEFORE removing — once the dir is gone
     // the registry can't tell us what version we just deleted.
-    let prior_version = reg
-        .get(&id)
-        .and_then(|p| p.manifest.map(|m| m.version));
+    let prior_version = reg.get(&id).and_then(|p| p.manifest.map(|m| m.version));
 
     let plugins_root = plugins::default_plugins_root()
         .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
@@ -5268,9 +5266,10 @@ where
 /// swallowed — we never want a logging failure to mask the install
 /// failure being reported back to the user.
 fn record_install_failure(plugin_id: &str, version: &str, error_msg: &str) {
-    if let Err(e) =
-        open_install_log_and(|log| log.record_failure(plugin_id, version, error_msg).map(|_| ()))
-    {
+    if let Err(e) = open_install_log_and(|log| {
+        log.record_failure(plugin_id, version, error_msg)
+            .map(|_| ())
+    }) {
         eprintln!("[slab] install log failure write failed: {e}");
     }
 }
