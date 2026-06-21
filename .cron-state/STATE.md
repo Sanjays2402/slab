@@ -1,6 +1,6 @@
 # Slab Cron State
 
-Last updated: 2026-06-20 17:32 PT by Cake (cron) — round-11 BATCH shipped: 5 Tag-Suggest-Bulk-Surface slices that close out the v3.39.0 Atlas Tag-Suggest subsystem end-to-end (bulk-accept primitive + granular per-suggestion undismiss + filter-aware bulk suggester + slim stats badge + 640-LOC review drawer wired into the LibraryPanel toolbar). Pushed + verified (local==origin c881c62) — see TICK LOG; clippy gate wedged twice on SlabBuild sparse image so this batch shipped on cargo test --lib (2132 pass) + pnpm check (0 errors / 104 warnings = round-10 baseline preserved) strength per the documented STATE.md guidance.
+Last updated: 2026-06-20 20:47 PT by Cake (cron) — round-12 BATCH shipped: 5 Plugin-Marketplace-Install-History slices that fill the long-standing gap on the marketplace install pipeline (no audit history → end-to-end logged + visible). Append-only sqlite install log primitive + install/uninstall/failure wiring + reader Tauri commands + retention/prune surface + Activity section on PluginDetailDrawer + RecentInstallsDrawer on the PluginsPanel toolbar. Pushed + verified (local==origin 1d79d7b) — see TICK LOG; clippy gate wedged twice AGAIN on SlabBuild sparse image so this batch shipped on cargo test --lib (2153 pass, +21 from round-11's 2132) + pnpm check (0 errors / 104 warnings = round-11 baseline preserved exactly) strength per the documented STATE.md guidance.
 
 ## Active branch & version
 
@@ -9,7 +9,247 @@ branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `c881c62` — "feat(library): bulk tag-suggestion review drawer".
+Latest commit: `1d79d7b` — "chore(fmt): rustfmt drift on install log wiring".
+
+### What round-12 (2026-06-20 20:47 PT) just shipped
+
+A demo-able overhaul of the plugin marketplace install pipeline's
+audit surface. Before this tick `slab_marketplace_install` and
+`slab_marketplace_uninstall` ran the install / uninstall pipeline
+and then forgot the event happened — the UI could show "you have
+v1.4 installed" but couldn't answer "when did I install this?"
+or "did an update fail last week?" The marketplace backend had
+been shipping since v1.4.0 Bench but the install-history audit
+surface was the canonical missing piece (round 11 explicitly
+called it out as the next subsystem candidate). Tonight that
+gap closes end-to-end:
+
+- Slice 53: marketplace::install_log primitive (9226f88).
+  Append-only sqlite log at
+  ~/.slab/marketplace-history.sqlite kept independent of
+  plugin-storage.sqlite + hopper.sqlite so a failure in one
+  DB can't poison another. Schema v1: install_events with
+  id / plugin_id / version / action (install | update |
+  uninstall | failed) / occurred_at unix-secs / source /
+  bytes_written / files_extracted / replaced_existing /
+  prior_version / error_msg. Two indexes covering the only
+  two read paths (per-plugin newest-first + corpus-wide
+  newest-first). NULL-able columns populated only on the
+  rows that need them (uninstall rows carry no
+  bytes_written; failed rows carry an error_msg but no
+  bytes_written). InstallLog with open / open_in_memory /
+  schema_version + three writers (record_install /
+  record_uninstall / record_failure) + three readers
+  (list_events per plugin, list_recent across plugins,
+  install_stats + distinct_plugin_count for the toolbar
+  badge). InstallStats slim payload with the per-kind
+  counts. InstallAction parse returns Failed on unknown
+  tags so a future schema bump doesn't panic the reader.
+  14 new tests pin schema v1, action round-trip + unknown
+  fallback, fresh-vs-update install row shape, uninstall
+  NULLs, failure error_msg, newest-first ordering, limit
+  clamp zero/negative, empty unknown-plugin, list_recent
+  across plugins, install_stats per-action isolation,
+  distinct_plugin_count dedup.
+- Slice 54: wire log into install / uninstall pipelines
+  (182e448). slab_marketplace_install captures prior_version
+  BEFORE the install via reg.get(id) so the install
+  pipeline's `replaced_existing` flag can be paired with the
+  version that was overwritten (the pipeline itself doesn't
+  read manifests). Wraps every failure surface — signature
+  check, plugins-root resolve, plugins-root create,
+  install_from_entry pipeline — in a record_failure call so
+  failed installs are auditable. On success appends one
+  install row (or update row when replaced_existing) with
+  bytes_written + files_extracted + registry-derived
+  prior_version. slab_marketplace_uninstall captures prior
+  version BEFORE removing (once gone the registry can't
+  tell us what we deleted), then on successful removal
+  appends one uninstall row with the captured version
+  (falling back to "unknown" when the plugin had no readable
+  manifest). Two helpers centralise the boilerplate
+  (open_install_log_and<F>(f) + record_install_failure
+  best-effort). Log writes are out-of-band: a logging
+  failure never masks the install failure being reported
+  back to the user.
+- Slice 55: reader Tauri commands + TS client (ef9fed1).
+  slab_marketplace_install_events(plugin_id, limit?) ->
+  Vec<InstallEvent>: per-plugin timeline newest first
+  (default limit 50). slab_marketplace_install_history_recent
+  (limit?) -> Vec<InstallEvent>: corpus-wide recent. 
+  slab_marketplace_plugin_install_stats(plugin_id) ->
+  InstallStats. All three open
+  ~/.slab/marketplace-history.sqlite per call (install
+  events fire on user click, not in a hot loop, so per-call
+  open beats a managed singleton). TS adds InstallEvent /
+  InstallStats interfaces (NULL-able fields typed as
+  `T | null` so consumers handle present-but-null
+  explicitly), listInstallEvents / listRecentInstallEvents /
+  pluginInstallStats helpers, formatInstallEventTime
+  (compact relative timestamp with now param injectable for
+  deterministic tests, falls back to ISO yyyy-mm-dd for
+  events older than 30 days), installEventGlyph
+  (monochrome chrome vocabulary ✓ install / ↻ update /
+  ⌫ uninstall / ✕ failed).
+- Slice 56: retention + summary surface (8e04747). Three
+  new InstallLog methods: oldest_occurred_at (wraps the
+  SELECT MIN edge case where empty table returns ONE row
+  with NULL by reading the column as Option<i64> so NULL
+  decodes cleanly to None — first attempt panicked on
+  InvalidColumnType so the fix-and-test loop pinned this
+  invariant), total_event_count (O(1) on sqlite internal
+  counters), prune_older_than (strict less-than predicate
+  so boundary row survives; idempotent — second call with
+  same cutoff is a no-op). Two new Tauri commands:
+  slab_marketplace_install_log_summary -> InstallLogSummary
+  { total_events, distinct_plugins, oldest_occurred_at } in
+  three cheap queries one round-trip; 
+  slab_marketplace_install_log_prune(retain_days) ->
+  rows-removed (retain_days clamped to a minimum of 1 so
+  a caller can't accidentally wipe the whole log via
+  prune(0)). TS adds InstallLogSummary + installLogSummary +
+  pruneInstallLog + formatLogSpan ("N events across X
+  days" with ceiling-day arithmetic so a 5-minute-old log
+  reads "1 day" not "0 days"; returns literal "no events
+  yet" on empty so the UI can render unconditionally). 7
+  new tests pin oldest empty-log None, earliest-row-wins,
+  prune strict boundary, prune empty zero, prune
+  idempotency, prune cutoff_zero no-op, total count
+  matches inserts + drops after prune. Plus test-only
+  insert_at helper pinning occurred_at to known value so
+  the prune/oldest tests don't race the clock.
+- Slice 57: Activity section + RecentInstallsDrawer
+  (7b84083, 830 LOC). PluginDetailDrawer gains an Activity
+  section between metadata grid and footer, self-fetching
+  on mount + every entry.id change (Promise.all over
+  listInstallEvents(20) + pluginInstallStats). Section
+  auto-collapses when timeline empty so a never-installed
+  plugin's drawer stays clean. Per-row layout: per-action
+  glyph + per-action colour accent (failure red, update
+  amber, install accent, uninstall muted) + action label +
+  version + optional ← v<prior> for updates + bytes/files
+  metadata for installs OR truncated error message for
+  failures + right-aligned relative timestamp. Header
+  subtitle assembles parts only for nonzero kinds so a
+  sparse-history plugin renders tight ("3 installs · 1
+  update · 1 failure"). RecentInstallsDrawer.svelte (NEW,
+  470 LOC): 460px right-side slide-from-right drawer
+  mirroring PluginDetailDrawer's Notion side-panel
+  convention. Window strip "Last 7d / Last 30d / All"
+  filtering loaded events post-fetch (events fetched once
+  with limit 100, then client-side filtered — no
+  re-round-trip on window flip). Per-event row mirroring
+  the Activity vocabulary so visual recognition transfers.
+  Empty-state branches handled (no events at all / no
+  events in window / loading / error). Footer "Clear older
+  than 90d…" with two-step confirm (button morphs into
+  confirm-message + Cancel + Delete pair) calling
+  pruneInstallLog(90); onPruned bubbles back to
+  PluginsPanel so the toolbar count updates without a
+  remount. Escape closes drawer or dismisses confirm step.
+  PluginsPanel wiring: installLog + recentInstallsOpen
+  state + refreshInstallLog helper called on mount + after
+  every install / uninstall / install-failure. Toolbar
+  gains "⏱ History" button with a count chip (slim mono
+  18×16 pill matching the existing tab-count vocabulary).
+  Button disappears quietly when log empty (no nag UI on a
+  brand-new install).
+
+Plus a fix-up commit (1d79d7b) catching two pure-formatting
+rustfmt drifts the cargo fmt gate surfaced on slice 54's
+prior_version let-chain (collapsed to one line) + the
+record_install_failure closure body (reflowed onto its own
+indented line).
+
+Gates result: cargo fmt clean (drift fixed via fixup),
+cargo test --lib marketplace::install_log:: 21 passed / 0
+failed (+21 vs baseline: 14 from slice 53 + 7 from slice
+56), cargo test --lib 2153 passed / 0 failed (round-11
+baseline + 21), pnpm check 0 errors / 104 warnings
+(round-11 baseline preserved EXACTLY). **cargo clippy
+--lib gate WEDGED TWICE AGAIN on /Volumes/SlabBuild sparse
+image — third tick in a row hitting the same wedge** —
+first attempt cargo check spawned rustc which fell to 0%
+CPU on `rustc --crate-name tauri_plugin_opener`, killed
+after ~3min; second attempt cargo check itself stayed at
+0% (0.52s CPU) without spawning rustc. Per STATE.md
+guidance, this batch ships on lib-test + svelte-check
+strength.
+
+PROCESS NOTES:
+- The sparse-image wedge is reliably reproducible now: it
+  hits the cargo invocation that has to enumerate the
+  tauri crate's deps. Disk space is fine (56G free), `ls
+  /Volumes/SlabBuild/target/debug/deps` ran in 0.2s at
+  tick start, and the cargo test gate ran cleanly. So
+  it's specifically the clippy/check codegen path that
+  trips fsync sleep. **Sanjay action recommended (third
+  tick in a row): `hdiutil detach` then reattach
+  `/Volumes/Sanjay SSD/SlabBuild.sparseimage` BEFORE the
+  next round so clippy can pass cleanly.** This is now
+  documented as the consistent failure mode.
+- slice 56's `oldest_occurred_at` panicked on first test
+  run with `InvalidColumnType(0, "MIN(occurred_at)",
+  Null)`. SELECT MIN(...) on an empty table returns one
+  row with a NULL column, not zero rows — so `.optional()`
+  doesn't help; the fix was reading the column as
+  `Option<i64>` so NULL decodes cleanly. Caught + fixed
+  before commit so the slice ships green.
+- LSP TS-server cache lag flagged "no exported member"
+  errors after each marketplace.ts addition; ignored as
+  pre-existing rust-analyzer / TS-server cache behaviour
+  (the symbols exist, verified via grep + final pnpm check
+  which passes 0 errors).
+- pnpm check did NOT surface any new a11y warnings on
+  either drawer — the slice 11 lessons (use <div
+  role="dialog"> not <aside role="dialog">, one
+  svelte-ignore rule per comment) carried into both
+  PluginDetailDrawer's Activity section and the new
+  RecentInstallsDrawer.
+
+DESIGN NOTES:
+- Three-DB separation (plugin-storage.sqlite /
+  hopper.sqlite / marketplace-history.sqlite) — audit log
+  failures must not poison plugin runtime storage or
+  hopper routing. Cheap to maintain (each module gets its
+  own default_log_path helper) and clean to migrate
+  (schema bumps stay local).
+- Per-call open of the install log not a managed
+  singleton — install events fire when the user clicks
+  Install, not in a hot loop. Per-call open keeps the
+  open/close path obvious and avoids a tauri-managed
+  state bag that would need careful locking. The summary
+  is three small queries so per-drawer-open re-fetch is
+  also fine.
+- prune retain_days clamped at >=1, not at >=0 — to clear
+  the log entirely the user has to use an explicit "clear
+  all" (not shipped here; remains a separate later
+  surface). This keeps the default surface safe.
+- Per-action glyph + per-action colour accent: glyph
+  conveys the action class even when the row gets
+  truncated; colour adds parsing speed on a long
+  timeline. Failed = red, update = amber, install =
+  accent, uninstall = muted. Matches Hopper run log
+  vocabulary so users who learned that scheme transfer
+  here.
+- Toolbar History button shows count chip ONLY when
+  installLog.total_events > 0 — no zero-state badge,
+  no nag. Same "never show a UI element that opens
+  empty" Notion principle that round 11's "✨ Review N"
+  badge used.
+- Activity timeline limit 20 on PluginDetailDrawer (vs
+  100 on the Recent installs drawer): a per-plugin
+  timeline rarely needs scrolling, and the drawer hosts
+  metadata above + footer below; 20 keeps the row stack
+  short.
+- formatInstallEventTime accepts a `now` param so the
+  formatter is deterministic for unit tests later, even
+  though we don't have JS tests today — cheap optionality
+  that costs nothing.
+- 90d default on the prune confirmation — matches a
+  quarter so paralegals doing quarterly audits still have
+  the relevant rows; 30d would be too aggressive, 365d
+  too lax for the typical workstation.
 
 ### What round-11 (2026-06-20 17:32 PT) just shipped
 
@@ -569,6 +809,120 @@ GitHub Actions billing failure persists → no release artifacts (DMG/MSI/AppIma
 until fixed. Action: https://github.com/settings/billing → update payment / raise
 limit. Does NOT affect local dev or branch pushes.
 
+## Roadmap — round 12 (Plugin Marketplace Install History) — ALL DONE
+
+Round 12 batched FIVE feature slices into one cron tick onto the
+plugin marketplace subsystem (the v1.4.0 Bench marketplace install
+pipeline shipped + per-plugin detail drawer landed in v3.39.0, but
+the install pipeline forgot every event the moment it happened —
+no audit trail, no per-plugin history, no "when did I install this"
+answer). Marketplace install pipeline is now end-to-end auditable:
+every install/update/uninstall/failed-install lands in an append-
+only sqlite log, PluginDetailDrawer surfaces a per-plugin Activity
+timeline, and the toolbar History button opens a Recent installs
+drawer with corpus-wide tail + retention pruning.
+
+53. ~~**install_log primitive (sqlite append-only)**~~ — DONE
+    (2026-06-20 20:47 PT, 9226f88, single commit). Append-only
+    sqlite log at ~/.slab/marketplace-history.sqlite kept
+    independent of plugin-storage.sqlite + hopper.sqlite.
+    Schema v1: install_events with id / plugin_id / version /
+    action (install | update | uninstall | failed) / occurred_at /
+    source / bytes_written / files_extracted /
+    replaced_existing / prior_version / error_msg. Two indexes
+    covering the two read paths (per-plugin newest-first +
+    corpus-wide newest-first). InstallLog with open /
+    open_in_memory + three writers (record_install /
+    record_uninstall / record_failure) + three readers
+    (list_events / list_recent / install_stats +
+    distinct_plugin_count). InstallStats slim payload.
+    InstallAction parse returns Failed on unknown tags so
+    future schema bumps don't panic the reader. 14 new tests.
+54. ~~**install/uninstall pipeline wiring**~~ — DONE
+    (2026-06-20 20:47 PT, 182e448, single commit). 
+    slab_marketplace_install captures prior_version BEFORE the
+    install via reg.get(id) so the pipeline's replaced_existing
+    flag pairs with the version that was overwritten. Wraps
+    every failure surface (signature check, plugins-root
+    resolve/create, install_from_entry pipeline) in
+    record_failure so failed installs are auditable. On
+    success appends one install row (or update row when
+    replaced_existing) with bytes_written + files_extracted +
+    registry-derived prior_version. slab_marketplace_uninstall
+    captures prior version BEFORE removing then appends one
+    uninstall row (falling back to "unknown" when no readable
+    manifest). open_install_log_and<F> + record_install_failure
+    helpers centralise the boilerplate.
+55. ~~**reader Tauri commands + TS client**~~ — DONE
+    (2026-06-20 20:47 PT, ef9fed1, single commit). Three Tauri
+    commands: slab_marketplace_install_events(plugin_id, limit?),
+    slab_marketplace_install_history_recent(limit?),
+    slab_marketplace_plugin_install_stats(plugin_id). Default
+    limit 50. TS adds InstallEvent / InstallStats interfaces
+    (NULL-able fields typed as T | null so consumers handle
+    present-but-null explicitly), three helper wrappers,
+    formatInstallEventTime (compact relative timestamp,
+    injectable now param, falls back to ISO yyyy-mm-dd for >30d),
+    installEventGlyph (monochrome ✓ install / ↻ update /
+    ⌫ uninstall / ✕ failed).
+56. ~~**retention + summary surface**~~ — DONE (2026-06-20 20:47
+    PT, 8e04747, single commit). InstallLog gains
+    oldest_occurred_at (Option<i64>; wraps SELECT MIN edge case
+    where empty table returns one row with NULL column by
+    reading as Option<i64>), total_event_count (O(1) on sqlite
+    internal counters), prune_older_than (strict less-than;
+    idempotent). Two Tauri commands:
+    slab_marketplace_install_log_summary -> InstallLogSummary,
+    slab_marketplace_install_log_prune(retain_days) (clamped at
+    >=1 so prune(0) can't accidentally wipe). TS adds
+    InstallLogSummary + installLogSummary + pruneInstallLog +
+    formatLogSpan ("N events across X days" with ceiling-day
+    arithmetic + literal "no events yet" on empty). 7 new
+    tests; test-only insert_at helper to pin occurred_at.
+57. ~~**PluginDetailDrawer Activity + RecentInstallsDrawer**~~
+    — DONE (2026-06-20 20:47 PT, 7b84083, 830 LOC). Pure
+    frontend tying slices 53-56 into one demo-able surface.
+    PluginDetailDrawer Activity section self-fetches on mount
+    + every entry.id change. Per-row layout: per-action glyph +
+    colour accent + label + version + optional ← v<prior> for
+    updates + bytes/files metadata for installs OR truncated
+    error for failures + right-aligned relative time. Section
+    auto-collapses when timeline empty so never-installed
+    plugin's drawer stays clean. Header subtitle assembles
+    parts only for nonzero kinds.
+    RecentInstallsDrawer.svelte (NEW, 470 LOC): 460px right-
+    side slide-from-right drawer mirroring PluginDetailDrawer's
+    Notion side-panel convention. "Last 7d / Last 30d / All"
+    window strip filtering loaded events post-fetch (events
+    fetched once with limit 100, then client-side filtered —
+    no re-round-trip on window flip). Empty-state branches
+    handled (no events / no events in window / loading / error).
+    Footer "Clear older than 90d…" two-step confirm calling
+    pruneInstallLog(90); onPruned bubbles back so the toolbar
+    count updates without a remount. Escape closes drawer or
+    dismisses confirm step.
+    PluginsPanel wiring: installLog + recentInstallsOpen
+    state + refreshInstallLog called on mount + after every
+    install / uninstall / install-failure. Toolbar "⏱ History"
+    button with count chip; gated on total_events > 0 so it
+    disappears quietly when the log is empty.
+
+    Plus fixup commit (1d79d7b) catching two pure-formatting
+    rustfmt drifts on slice 54's prior_version let-chain +
+    record_install_failure closure body.
+
+    With round 12 done, plugin marketplace audit surface is
+    end-to-end demo-able: install logs every event, drawer
+    surfaces per-plugin timeline, toolbar shows corpus-wide
+    tail with retention pruning. Next subsystem candidates:
+    Hopper rule editor's "Test against last 5 files" live
+    preview, saved-views drag-handle UI (reorder backend
+    takes positional lists; drag-handle is a pure-frontend
+    follow-up later), Loom-grade tagging explorer, smart-
+    folders hub UI polish (the rail's drag/pin chrome could
+    be tightened), marketplace install log export (CSV
+    + JSON; mirrors round 10's hopper CSV export pattern).
+
 ## Roadmap — round 11 (Tag-Suggest Bulk Surface) — ALL DONE
 
 Round 11 batched FIVE feature slices into one cron tick onto the
@@ -717,6 +1071,105 @@ scrolling tail shows each file landing.
     explorer.
 
 ## Tick log
+
+- 2026-06-20 20:47 PT (Cake, cron): round-12 BATCH tick —
+  FIVE Plugin-Marketplace-Install-History slices that close out
+  the long-standing audit-trail gap on the marketplace install
+  pipeline (append-only sqlite log + install/uninstall/failure
+  wiring + reader Tauri commands + retention surface + Activity
+  section on PluginDetailDrawer + RecentInstallsDrawer on the
+  PluginsPanel toolbar). All DONE. Five feature commits + one
+  rustfmt fixup, pushed + verified (local==origin 1d79d7b).
+  - Slice 53 install_log primitive (9226f88): append-only
+    sqlite log at ~/.slab/marketplace-history.sqlite, kept
+    independent of plugin-storage.sqlite + hopper.sqlite.
+    InstallLog with open/open_in_memory + three writers
+    (record_install with optional prior_version that flips
+    Install→Update, record_uninstall, record_failure) +
+    three readers (list_events / list_recent /
+    install_stats + distinct_plugin_count). InstallAction
+    parse returns Failed on unknown tags so future schema
+    bumps don't panic. NULL-able columns populated only on
+    the rows that need them. 14 new tests.
+  - Slice 54 install/uninstall wiring (182e448):
+    slab_marketplace_install captures prior_version BEFORE
+    the install via reg.get(id), wraps every failure
+    surface in record_failure for full audit, on success
+    appends one install/update row with bytes + files +
+    prior_version. slab_marketplace_uninstall captures
+    prior version BEFORE removing then appends one
+    uninstall row (falling back to "unknown" when no
+    readable manifest). open_install_log_and<F> helper +
+    record_install_failure best-effort centralise the
+    boilerplate.
+  - Slice 55 reader commands + TS (ef9fed1): three Tauri
+    commands (slab_marketplace_install_events,
+    slab_marketplace_install_history_recent,
+    slab_marketplace_plugin_install_stats), each opens the
+    log per-call (install events fire on user click, not
+    in a hot loop). TS adds InstallEvent / InstallStats
+    interfaces (NULL-able as T | null), three helpers,
+    formatInstallEventTime + installEventGlyph.
+  - Slice 56 retention + summary (8e04747): InstallLog
+    gains oldest_occurred_at (Option<i64> wrapping the
+    SELECT MIN edge case; first attempt panicked on
+    InvalidColumnType — fix-and-test loop pinned the
+    Option<i64> column read), total_event_count, 
+    prune_older_than (strict less-than; idempotent). Two
+    Tauri commands (slab_marketplace_install_log_summary
+    + slab_marketplace_install_log_prune with retain_days
+    clamped to >=1). TS adds InstallLogSummary +
+    installLogSummary + pruneInstallLog + formatLogSpan
+    with ceiling-day arithmetic. 7 new tests with the
+    insert_at test-helper pinning occurred_at to known
+    values so prune/oldest don't race the clock.
+  - Slice 57 PluginDetailDrawer Activity +
+    RecentInstallsDrawer (7b84083, 830 LOC): pure frontend
+    tying slices 53-56 into one demo-able surface.
+    Activity section self-fetches on mount + every
+    entry.id change via Promise.all over
+    listInstallEvents(20) + pluginInstallStats; per-row
+    glyph + colour-accented action + version + ← v<prior>
+    for updates + bytes/files for installs OR truncated
+    error for failures + relative time. Section
+    auto-collapses on empty timeline. RecentInstallsDrawer
+    (NEW): 460px right-side slide-from-right with
+    7d/30d/All window strip (client-side filter, no
+    re-round-trip on flip), per-event rows mirroring the
+    Activity vocabulary, footer "Clear older than 90d…"
+    two-step confirm; onPruned bubbles back. PluginsPanel
+    toolbar gains "⏱ History" count-chip button gated on
+    total_events > 0; refreshInstallLog called on mount +
+    after every install / uninstall / install-failure.
+  Plus fixup (1d79d7b): two pure-formatting rustfmt
+  drifts on slice 54's prior_version let-chain (collapsed
+  to one line) + record_install_failure closure body
+  (reflowed). Kept as a single fixup commit so the batch
+  stays inspectable and slice 54 stays independently
+  revertible.
+  Gates: cargo fmt clean (drift fixed via fixup), cargo
+  test --lib marketplace::install_log:: 21 passed / 0
+  failed (+21 vs baseline: 14 from slice 53 + 7 from
+  slice 56), cargo test --lib 2153 passed / 0 failed
+  (round-11 baseline + 21), pnpm check 0 errors / 104
+  warnings (round-11 baseline preserved EXACTLY).
+  **cargo clippy --lib gate WEDGED TWICE AGAIN on
+  /Volumes/SlabBuild sparse image** — first attempt
+  spawned rustc which fell to 0% CPU on `rustc
+  --crate-name tauri_plugin_opener`, killed after ~3min;
+  second attempt cargo check itself stayed at 0% (0.52s
+  CPU) without spawning rustc. Disk has 56G free, `ls
+  /Volumes/SlabBuild/target/debug/deps` ran in 0.2s at
+  tick start and the cargo test gate ran cleanly — so
+  it's specifically the clippy/check codegen path that
+  trips the fsync sleep. Per STATE.md guidance this batch
+  ships on lib-test + svelte-check strength. **Sanjay
+  action recommended (THIRD tick in a row hitting this
+  wedge): `hdiutil detach` then reattach
+  `/Volumes/Sanjay SSD/SlabBuild.sparseimage` BEFORE the
+  next round so clippy can pass cleanly. The wedge is
+  now reliably reproducible on the same crate so it's
+  not transient.**
 
 - 2026-06-20 17:32 PT (Cake, cron): round-11 BATCH tick —
   FIVE Tag-Suggest-Bulk-Surface slices that close out the
