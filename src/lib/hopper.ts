@@ -226,6 +226,106 @@ export const slabHopperTestRules = (
   });
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 81 — rule coverage analyzer
+// ---------------------------------------------------------------------
+
+/** One sample file the coverage analyzer evaluates against the rule
+ *  chain. Mirrors `pdf::hopper::coverage::RuleSample`. The Rust side
+ *  defaults size/page/text to zero/null so the most common call shape
+ *  (filename-only from the run log) can omit them. */
+export interface RuleSample {
+  filename: string;
+  size_bytes?: number;
+  page_count?: number | null;
+  text_sample?: string | null;
+}
+
+/** Per-rule coverage counts. Mirrors `pdf::hopper::coverage::RuleCoverage`.
+ *  `first_match` is the actual routing volume at runtime; `would_match`
+ *  is the count in isolation — when strictly larger than `first_match`
+ *  the rule is shadowed by an earlier rule. When `first_match` is zero
+ *  but `would_match` is positive, `dead_at_position` is true and the UI
+ *  surfaces a dead-rule chip. */
+export interface RuleCoverage {
+  index: number;
+  name: string;
+  first_match: number;
+  would_match: number;
+  dead_at_position: boolean;
+}
+
+/** Full coverage report for one chain against one sample set. Mirrors
+ *  `pdf::hopper::coverage::RuleCoverageReport`. By construction,
+ *  `rules.sum(first_match) + fallthrough === total_samples`. */
+export interface RuleCoverageReport {
+  rules: RuleCoverage[];
+  fallthrough: number;
+  total_samples: number;
+}
+
+/** Evaluate a rule chain against the watch's recent run log (or an
+ *  explicit sample list) and return the per-rule coverage report. When
+ *  `candidateRules` is set, evaluates the in-flight unsaved chain (so
+ *  the editor can show live coverage without a save round-trip).
+ *  When `samples` is set, uses those instead of the log-sourced
+ *  default. `sampleLimit` defaults to 100 server-side and is clamped
+ *  to [1, 1000]. */
+export const slabHopperRuleCoverage = (
+  watchId: number,
+  opts: {
+    candidateRules?: Rule[];
+    samples?: RuleSample[];
+    sampleLimit?: number;
+  } = {},
+): Promise<RuleCoverageReport> =>
+  invoke("slab_hopper_rule_coverage", {
+    watchId,
+    candidateRules: opts.candidateRules ?? null,
+    samples: opts.samples ?? null,
+    sampleLimit: opts.sampleLimit ?? null,
+  });
+
+/** Compute the fall-through percentage of a coverage report as a
+ *  number in `[0, 100]`. Returns `0` on an empty report so an "0 of 0"
+ *  edge case doesn't render NaN. */
+export const fallthroughPercent = (report: RuleCoverageReport): number => {
+  if (report.total_samples === 0) return 0;
+  return (report.fallthrough / report.total_samples) * 100;
+};
+
+/** Compute the share of samples a rule actually routes at runtime,
+ *  as a number in `[0, 100]`. */
+export const ruleMatchPercent = (
+  rule: RuleCoverage,
+  report: RuleCoverageReport,
+): number => {
+  if (report.total_samples === 0) return 0;
+  return (rule.first_match / report.total_samples) * 100;
+};
+
+/** Diagnostic label for a single rule's coverage row. Returns null
+ *  when the rule has no notable diagnostic (a "healthy" first-match
+ *  count); the UI hides the chip when the helper returns null. */
+export const ruleCoverageDiagnostic = (
+  rule: RuleCoverage,
+): "dead" | "zero" | "shadowed" | null => {
+  if (rule.dead_at_position) return "dead";
+  if (rule.would_match === 0) return "zero";
+  if (rule.would_match > rule.first_match) return "shadowed";
+  return null;
+};
+
+/** One-line summary copy for the coverage panel header. Returns a
+ *  friendly empty-state string when no samples were scanned. */
+export const summarizeCoverage = (report: RuleCoverageReport): string => {
+  const n = report.total_samples;
+  if (n === 0) return "No recent runs to analyse";
+  const routed = n - report.fallthrough;
+  const pct = Math.round((routed / n) * 100);
+  return `${routed} of ${n} samples routed (${pct}%)`;
+};
+
+// ---------------------------------------------------------------------
 // Predicate helpers — small but worth their weight in keystroke-saving
 // when the editor wires up 6 different predicate kinds.
 // ---------------------------------------------------------------------
