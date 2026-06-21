@@ -5315,6 +5315,54 @@ fn slab_marketplace_plugin_install_stats(
     log.install_stats(&plugin_id).map_err(|e| e.to_string())
 }
 
+/// Slim summary of the install log as a whole. Used by the Recent
+/// installs drawer's header to render "N events across X days"
+/// without paging the timeline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallLogSummary {
+    pub total_events: i64,
+    pub distinct_plugins: i64,
+    /// Unix seconds of the oldest row, or `None` if the log is
+    /// empty.
+    pub oldest_occurred_at: Option<i64>,
+}
+
+/// Summary of the install log — total event count, distinct plugin
+/// count, oldest event timestamp. Cheap (three small queries) and
+/// safe to call on every drawer open.
+#[tauri::command]
+fn slab_marketplace_install_log_summary() -> Result<InstallLogSummary, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    Ok(InstallLogSummary {
+        total_events: log.total_event_count().map_err(|e| e.to_string())?,
+        distinct_plugins: log.distinct_plugin_count().map_err(|e| e.to_string())?,
+        oldest_occurred_at: log.oldest_occurred_at().map_err(|e| e.to_string())?,
+    })
+}
+
+/// Trim the install log to events newer than `retain_days` days
+/// before now. Returns the number of rows pruned. Used by the
+/// Recent installs drawer's "Clear older than 90d" affordance and
+/// (later) by a background task on app start.
+///
+/// `retain_days` is clamped to a minimum of 1 so a caller can't
+/// accidentally wipe the whole log via `prune(0)` — to clear it
+/// entirely, the user uses the explicit "Clear all" action (not
+/// shipped here; pruning is the safer default surface).
+#[tauri::command]
+fn slab_marketplace_install_log_prune(retain_days: i64) -> Result<usize, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let days = retain_days.max(1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cutoff = now - days * 86_400;
+    log.prune_older_than(cutoff).map_err(|e| e.to_string())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Beacon Voice Mode (v1.9.0 Slice 15) — Tauri command surface.
 // ─────────────────────────────────────────────────────────────────────
@@ -6300,6 +6348,8 @@ pub fn run() {
             slab_marketplace_install_events,
             slab_marketplace_install_history_recent,
             slab_marketplace_plugin_install_stats,
+            slab_marketplace_install_log_summary,
+            slab_marketplace_install_log_prune,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,

@@ -401,3 +401,65 @@ export function installEventGlyph(action: InstallEvent["action"]): string {
       return "✕";
   }
 }
+
+// ─── Install log retention surface (v3.39 Slice 56) ─────────────────
+
+/**
+ * Slim summary of the install log as a whole. Mirrors
+ * `InstallLogSummary` on the Rust side. Drives the Recent installs
+ * drawer's header "N events across X days" subtitle.
+ */
+export interface InstallLogSummary {
+  total_events: number;
+  distinct_plugins: number;
+  /** Unix seconds of the oldest row, or null if the log is empty. */
+  oldest_occurred_at: number | null;
+}
+
+const EMPTY_INSTALL_LOG_SUMMARY: InstallLogSummary = {
+  total_events: 0,
+  distinct_plugins: 0,
+  oldest_occurred_at: null,
+};
+
+/**
+ * Fetch a one-shot summary of the install log. Cheap (three small
+ * queries) and safe to call on every drawer open. Returns the empty
+ * summary in browser mode so the UI renders consistently.
+ */
+export async function installLogSummary(): Promise<InstallLogSummary> {
+  if (!isInTauri()) return { ...EMPTY_INSTALL_LOG_SUMMARY };
+  return invoke<InstallLogSummary>("slab_marketplace_install_log_summary");
+}
+
+/**
+ * Trim the install log to events newer than `retainDays` days
+ * before now. Returns the number of rows pruned.
+ *
+ * `retainDays` is clamped on the backend to a minimum of 1, so a
+ * caller can't accidentally wipe the whole log via `prune(0)`.
+ * Returns 0 in browser mode (no-op).
+ */
+export async function pruneInstallLog(retainDays: number): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_prune", { retainDays });
+}
+
+/**
+ * Human-friendly "log spans X days" subtitle. Returns the literal
+ * "no events yet" when the summary is empty so the UI can render the
+ * subtitle unconditionally without an extra empty-state branch.
+ *
+ * Uses ceiling-day arithmetic so a log opened 5 minutes ago still
+ * reads "1 day" rather than the awkward "0 days".
+ */
+export function formatLogSpan(summary: InstallLogSummary, now?: number): string {
+  if (summary.total_events === 0 || summary.oldest_occurred_at === null) {
+    return "no events yet";
+  }
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const span = Math.max(1, Math.ceil((nowSec - summary.oldest_occurred_at) / 86_400));
+  const events = `${summary.total_events} event${summary.total_events === 1 ? "" : "s"}`;
+  const days = `${span} day${span === 1 ? "" : "s"}`;
+  return `${events} across ${days}`;
+}

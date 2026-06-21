@@ -418,6 +418,56 @@ impl InstallLog {
             .optional()?;
         Ok(n.unwrap_or(0))
     }
+
+    // ─── Retention / pruning surface (Slice 56) ──────────────────────
+
+    /// Unix seconds of the oldest row in the log, or `None` if the
+    /// log is empty. Powers the UI's "Log spans X days" affordance
+    /// in the Recent installs drawer so users know how far back the
+    /// history goes.
+    pub fn oldest_occurred_at(&self) -> Result<Option<i64>, InstallLogError> {
+        // SELECT MIN(...) on an empty table returns ONE row whose
+        // column is NULL — not zero rows. So `.optional()` doesn't
+        // help here; we need the closure to read the column as
+        // `Option<i64>` so NULL decodes cleanly to None.
+        let n: Option<i64> =
+            self.conn
+                .query_row("SELECT MIN(occurred_at) FROM install_events", [], |r| {
+                    r.get::<_, Option<i64>>(0)
+                })?;
+        Ok(n)
+    }
+
+    /// Delete all rows with `occurred_at < cutoff_unix`. Returns the
+    /// number of rows removed. Idempotent: calling twice with the
+    /// same cutoff is a no-op on the second call (the rows are
+    /// already gone).
+    ///
+    /// Use this to bound on-disk audit-log growth. A reasonable
+    /// retention policy is 365 days — long enough that "did I install
+    /// this for the Q3 audit" still works, short enough that an
+    /// installer-heavy workstation doesn't accumulate years of dead
+    /// rows. The retention policy is a UI/settings concern; this
+    /// primitive is just the executor.
+    pub fn prune_older_than(&mut self, cutoff_unix: i64) -> Result<usize, InstallLogError> {
+        let n = self.conn.execute(
+            "DELETE FROM install_events WHERE occurred_at < ?1",
+            params![cutoff_unix],
+        )?;
+        Ok(n)
+    }
+
+    /// Total row count in the install log. Cheap O(1) on sqlite's
+    /// internal counters (no full-table scan). Used by the UI to
+    /// pair with `oldest_occurred_at` for a "N events across X
+    /// days" subtitle in the Recent installs drawer.
+    pub fn total_event_count(&self) -> Result<i64, InstallLogError> {
+        let n: Option<i64> = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM install_events", [], |r| r.get(0))
+            .optional()?;
+        Ok(n.unwrap_or(0))
+    }
 }
 
 fn row_to_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<InstallEvent> {
@@ -656,5 +706,98 @@ mod tests {
         log.record_install("com.b", "1", "marketplace", 1, 1, None)
             .unwrap();
         assert_eq!(log.distinct_plugin_count().unwrap(), 2);
+    }
+
+    // ─── Retention / pruning (Slice 56) ──────────────────────────────
+
+    /// Test-only writer that lets us pin `occurred_at` to a known
+    /// unix-seconds value. We bypass the public writers (which call
+    /// `unix_now()`) so the prune / oldest tests don't have to
+    /// race the clock.
+    fn insert_at(log: &mut InstallLog, plugin_id: &str, version: &str, at: i64) {
+        log.conn
+            .execute(
+                "INSERT INTO install_events
+                    (plugin_id, version, action, occurred_at, source,
+                     bytes_written, files_extracted, replaced_existing,
+                     prior_version, error_msg)
+                 VALUES (?1, ?2, 'install', ?3, 'marketplace', 1, 1, 0, NULL, NULL)",
+                params![plugin_id, version, at],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn oldest_occurred_at_empty_is_none() {
+        let log = InstallLog::open_in_memory().unwrap();
+        assert_eq!(log.oldest_occurred_at().unwrap(), None);
+    }
+
+    #[test]
+    fn oldest_occurred_at_returns_earliest_row() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 1_000);
+        insert_at(&mut log, "com.b", "1", 2_000);
+        insert_at(&mut log, "com.c", "1", 500);
+        assert_eq!(log.oldest_occurred_at().unwrap(), Some(500));
+    }
+
+    #[test]
+    fn prune_older_than_removes_strict_predecessors() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        insert_at(&mut log, "com.b", "1", 200);
+        insert_at(&mut log, "com.c", "1", 300);
+        // Cutoff 200 — only the row at 100 deletes (row at 200 is
+        // boundary and survives by the strict `<` predicate).
+        let removed = log.prune_older_than(200).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(log.total_event_count().unwrap(), 2);
+        assert_eq!(log.oldest_occurred_at().unwrap(), Some(200));
+    }
+
+    #[test]
+    fn prune_older_than_empty_log_returns_zero() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let removed = log.prune_older_than(123_456_789).unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn prune_older_than_is_idempotent() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        let first = log.prune_older_than(150).unwrap();
+        let second = log.prune_older_than(150).unwrap();
+        assert_eq!(first, 1);
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn prune_older_than_cutoff_zero_removes_nothing() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at(&mut log, "com.a", "1", 100);
+        // No row has occurred_at < 0 since unix-seconds are
+        // non-negative for any wall-clock event.
+        let removed = log.prune_older_than(0).unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(log.total_event_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn total_event_count_matches_inserts() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        assert_eq!(log.total_event_count().unwrap(), 0);
+        log.record_install("com.a", "1", "marketplace", 1, 1, None)
+            .unwrap();
+        assert_eq!(log.total_event_count().unwrap(), 1);
+        log.record_install("com.b", "1", "marketplace", 1, 1, None)
+            .unwrap();
+        log.record_uninstall("com.a", "1").unwrap();
+        assert_eq!(log.total_event_count().unwrap(), 3);
+        // After pruning, the count drops by the same number returned.
+        let removed = log.prune_older_than(unix_now() + 100).unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(log.total_event_count().unwrap(), 0);
     }
 }
