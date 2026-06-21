@@ -333,6 +333,70 @@ pub fn suggest_for_filter(
     Ok(out)
 }
 
+/// Compact statistics for the tag-suggest review badge — the
+/// toolbar/sidebar can show "12" next to a sparkle glyph without
+/// loading the full bulk payload.
+///
+/// `untagged_docs_with_suggestions` is the count of docs that wear
+/// zero tags AND would yield at least one suggestion right now (so
+/// the badge maps directly to "things worth reviewing"). Pre-filter
+/// docs that wouldn't have any suggestion so the badge never lures
+/// the user into a panel that opens empty.
+///
+/// `dismissed_total` is the corpus-wide dismissal count — the
+/// settings escape hatch surfaces this so the user can audit how
+/// much they've explicitly hidden across the whole library.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TagSuggestionStats {
+    pub untagged_docs_with_suggestions: usize,
+    pub dismissed_total: usize,
+}
+
+/// Compute the badge stats. Bounded by `sample_cap` so on a
+/// 50,000-doc library we don't walk every row — the badge truncates
+/// at `sample_cap` and renders as e.g. "200+" upstream. Picks the
+/// `sample_cap` most-recently-seen untagged docs so the count
+/// reflects the active working set, not legacy backlog.
+pub fn suggestion_stats(
+    db: &LibraryDb,
+    sample_cap: usize,
+) -> Result<TagSuggestionStats, LibraryError> {
+    let conn = db.conn();
+
+    // Dismissed total is one COUNT — always cheap.
+    let dismissed_total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM library_tag_suggestion_dismissed",
+        [],
+        |r| r.get(0),
+    )?;
+
+    // Pull the most-recently-seen untagged doc ids up to sample_cap,
+    // then probe the suggester for each. Probing is cheap (vocab +
+    // co-occurrence queries are indexed); the cap keeps it bounded.
+    let candidate_ids: Vec<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT d.id
+             FROM library_documents d
+             LEFT JOIN library_doc_tags dt ON dt.doc_id = d.id
+             WHERE dt.tag_id IS NULL
+             ORDER BY d.last_seen_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![sample_cap as i64], |r| r.get::<_, i64>(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let mut untagged_docs_with_suggestions = 0usize;
+    for doc_id in candidate_ids {
+        if !suggest_tags_for_doc(db, doc_id)?.is_empty() {
+            untagged_docs_with_suggestions += 1;
+        }
+    }
+    Ok(TagSuggestionStats {
+        untagged_docs_with_suggestions,
+        dismissed_total: dismissed_total as usize,
+    })
+}
+
 /// Accept a suggestion: find-or-create the tag (auto-coloring new ones with
 /// a deterministic pastel) and attach it to the doc, unioned with whatever
 /// tags the doc already has.
@@ -1148,5 +1212,63 @@ mod tests {
         assert_eq!(out[0].doc_id, a);
         // `b` is not in the candidate set even though it had suggestions.
         assert!(out.iter().all(|x| x.doc_id != b));
+    }
+
+    // ---- Slice 51: suggestion_stats ----
+
+    #[test]
+    fn suggestion_stats_empty_library() {
+        let d = db();
+        let s = suggestion_stats(&d, 200).unwrap();
+        assert_eq!(s.untagged_docs_with_suggestions, 0);
+        assert_eq!(s.dismissed_total, 0);
+    }
+
+    #[test]
+    fn suggestion_stats_counts_only_untagged_with_suggestions() {
+        let mut d = db();
+        add_doc(&mut d, "Invoice", "/tmp/a.pdf"); // Untagged + domain hint.
+        add_doc(&mut d, "Receipt", "/tmp/b.pdf"); // Untagged + domain hint.
+        add_doc(&mut d, "", "/tmp/zzz.pdf"); // Untagged but no plausible tag.
+        let tagged = add_doc(&mut d, "Tax", "/tmp/c.pdf");
+        tag_doc(&mut d, tagged, &["filed"]); // Tagged → skipped entirely.
+        let s = suggestion_stats(&d, 200).unwrap();
+        assert_eq!(s.untagged_docs_with_suggestions, 2);
+    }
+
+    #[test]
+    fn suggestion_stats_respects_sample_cap() {
+        let mut d = db();
+        for i in 0..10 {
+            add_doc(&mut d, "Invoice", &format!("/tmp/inv{i}.pdf"));
+        }
+        // Cap below the real count → at most `sample_cap`.
+        let s = suggestion_stats(&d, 3).unwrap();
+        assert!(s.untagged_docs_with_suggestions <= 3);
+    }
+
+    #[test]
+    fn suggestion_stats_counts_dismissals_across_docs() {
+        let mut d = db();
+        let a = add_doc(&mut d, "Invoice", "/tmp/a.pdf");
+        let b = add_doc(&mut d, "Receipt", "/tmp/b.pdf");
+        dismiss_tag_suggestion(&d, a, "invoice").unwrap();
+        dismiss_tag_suggestion(&d, b, "receipt").unwrap();
+        dismiss_tag_suggestion(&d, b, "billing").unwrap();
+        let s = suggestion_stats(&d, 200).unwrap();
+        assert_eq!(s.dismissed_total, 3);
+    }
+
+    #[test]
+    fn suggestion_stats_dismissed_pair_drops_from_count() {
+        let mut d = db();
+        let id = add_doc(&mut d, "Invoice", "/tmp/a.pdf");
+        let before = suggestion_stats(&d, 200).unwrap();
+        assert_eq!(before.untagged_docs_with_suggestions, 1);
+        // Dismiss the only candidate so the doc has no surviving suggestion.
+        dismiss_tag_suggestion(&d, id, "invoice").unwrap();
+        let after = suggestion_stats(&d, 200).unwrap();
+        assert_eq!(after.untagged_docs_with_suggestions, 0);
+        assert_eq!(after.dismissed_total, 1);
     }
 }

@@ -4153,6 +4153,21 @@ fn slab_library_tag_suggestions_bulk_for_filter(
     result.into()
 }
 
+/// Compact stats for the tag-suggest review badge — `untagged_docs_with_
+/// suggestions` powers the toolbar count; `dismissed_total` shows up in
+/// the settings escape hatch. `sample_cap` defaults to 200 so the badge
+/// renders e.g. "200+" upstream when the working set is huge.
+#[tauri::command]
+fn slab_library_tag_suggestion_stats(
+    sample_cap: Option<usize>,
+) -> CmdResult<pdf::library::tag_suggest::TagSuggestionStats> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggestion_stats(&db, sample_cap.unwrap_or(200))
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -6094,6 +6109,7 @@ pub fn run() {
             slab_library_tag_suggestions_list_dismissed,
             slab_library_tag_suggestion_undismiss_one,
             slab_library_tag_suggestions_bulk_for_filter,
+            slab_library_tag_suggestion_stats,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_tag_color,

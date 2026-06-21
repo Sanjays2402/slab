@@ -1608,3 +1608,30 @@ export async function tagSuggestionsBulkForFilter(
   );
   return unwrap(res);
 }
+
+/**
+ * Compact stats for the tag-suggest review badge. Mirrors
+ * `pdf::library::tag_suggest::TagSuggestionStats`.
+ */
+export interface TagSuggestionStats {
+  untagged_docs_with_suggestions: number;
+  dismissed_total: number;
+}
+
+/**
+ * Cheap probe for the toolbar badge — the count of recently-seen
+ * untagged docs that would yield at least one suggestion right now,
+ * plus the corpus-wide dismissal count.
+ *
+ * `sampleCap` defaults to 200 server-side; the UI renders `200+` when
+ * the working set saturates the cap.
+ */
+export async function tagSuggestionStats(
+  sampleCap?: number,
+): Promise<TagSuggestionStats> {
+  const res = await invoke<CmdResult<TagSuggestionStats>>(
+    "slab_library_tag_suggestion_stats",
+    { sampleCap },
+  );
+  return unwrap(res);
+}
