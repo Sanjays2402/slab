@@ -1,5 +1,5 @@
 <script lang="ts">
-  // RecentInstallsDrawer — v3.39 Slice 57.
+  // RecentInstallsDrawer — v3.39 Slice 57 + Slice 62.
   //
   // 460px right-side slide-in drawer surfacing the corpus-wide
   // marketplace install log: every install / update / uninstall /
@@ -8,25 +8,30 @@
   // log having at least one event (no nag UI on a brand-new install
   // with empty history).
   //
-  // The drawer is purely presentational — the parent owns the open
-  // state and toast wiring. Its only external dependencies are the
-  // four marketplace helpers (listRecentInstallEvents,
-  // installLogSummary, pruneInstallLog, formatInstallEventTime).
+  // Slice 62 (Install-log export round-13) adds an "Export…" menu in
+  // the footer with CSV and JSON entries that respect the currently
+  // selected window (7d / 30d / All) so what you see is what gets
+  // exported. The export goes through a native save-as dialog; the
+  // Tauri layer owns the actual file write.
   //
-  // Layout matches PluginDetailDrawer's Notion-side-panel convention
-  // so the two drawers feel like siblings: backdrop + slide-from-right,
-  // header with title + close button, content scrollable, footer with
-  // close-only action (every other action is row-local).
+  // The drawer is otherwise purely presentational — the parent owns
+  // the open state, toast wiring, and the post-prune refresh.
 
   import { onMount } from "svelte";
+  import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import {
+    exportInstallLogCsv,
+    exportInstallLogJson,
+    formatBytes,
     formatInstallEventTime,
     formatLogSpan,
     installEventGlyph,
     installLogSummary,
     listRecentInstallEvents,
     pruneInstallLog,
+    suggestInstallLogExportFilename,
     type InstallEvent,
+    type InstallLogExportFilter,
     type InstallLogSummary,
   } from "$lib/marketplace";
 
@@ -56,12 +61,29 @@
   /** The pruning is gated behind this small confirm dialog. */
   let confirmingPrune = $state(false);
   let pruning = $state(false);
+  /** Open state for the footer Export… popover (Slice 62). */
+  let exportMenuOpen = $state(false);
+  /** True while a save-as dialog or backend write is in flight. */
+  let exporting = $state(false);
+  /** Slim 4-second toast for export success. */
+  let exportToast = $state<string | null>(null);
 
   let filteredEvents = $derived.by<InstallEvent[]>(() => {
     if (windowChoice === "all") return events;
     const nowSec = Math.floor(Date.now() / 1000);
     const cutoff = nowSec - (windowChoice === "7d" ? 7 : 30) * 86_400;
     return events.filter((ev) => ev.occurred_at >= cutoff);
+  });
+
+  /**
+   * The since-unix cutoff implied by the current window choice — fed
+   * into the export filter so a "Last 7d" export ships only the 7d
+   * window rather than the whole loaded buffer.
+   */
+  let windowSinceUnix = $derived.by<number | null>(() => {
+    if (windowChoice === "all") return null;
+    const nowSec = Math.floor(Date.now() / 1000);
+    return nowSec - (windowChoice === "7d" ? 7 : 30) * 86_400;
   });
 
   /**
@@ -100,7 +122,9 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
-      if (confirmingPrune) {
+      if (exportMenuOpen) {
+        exportMenuOpen = false;
+      } else if (confirmingPrune) {
         confirmingPrune = false;
       } else {
         onClose();
@@ -121,9 +145,62 @@
       pruning = false;
     }
   }
+
+  function flashToast(msg: string): void {
+    exportToast = msg;
+    window.setTimeout(() => {
+      exportToast = null;
+    }, 4000);
+  }
+
+  async function runExport(kind: "csv" | "json"): Promise<void> {
+    exportMenuOpen = false;
+    exporting = true;
+    try {
+      const filter: InstallLogExportFilter = {
+        since_unix: windowSinceUnix,
+      };
+      const defaultPath = suggestInstallLogExportFilename(filter, kind);
+      const target = await saveDialog({
+        defaultPath,
+        filters: [
+          kind === "csv"
+            ? { name: "CSV", extensions: ["csv"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        kind === "csv"
+          ? await exportInstallLogCsv(target, filter)
+          : await exportInstallLogJson(target, filter);
+      const count = filteredEvents.length;
+      flashToast(
+        `Exported ${count} event${count === 1 ? "" : "s"} (${formatBytes(bytes)})`,
+      );
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    } finally {
+      exporting = false;
+    }
+  }
+
+  /**
+   * Dismiss the export popover on outside click — matches the
+   * Notion / Linear convention. The check uses .closest() on the
+   * anchor wrapper so clicks INSIDE the menu (its buttons) don't
+   * dismiss it before the handler fires.
+   */
+  function onWindowClick(e: MouseEvent): void {
+    if (!exportMenuOpen) return;
+    const target = e.target as HTMLElement | null;
+    if (target && !target.closest(".export-anchor")) {
+      exportMenuOpen = false;
+    }
+  }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onclick={onWindowClick} />
 
 <div
   class="backdrop"
@@ -202,16 +279,62 @@
     {/if}
 
     <footer class="drawer-foot">
+      {#if exportToast}
+        <span class="export-toast" role="status">{exportToast}</span>
+      {/if}
       {#if !confirmingPrune}
+        <div class="export-anchor">
+          <button
+            type="button"
+            class="ghost"
+            onclick={() => (exportMenuOpen = !exportMenuOpen)}
+            disabled={summary.total_events === 0 || pruning || exporting}
+            aria-haspopup="menu"
+            aria-expanded={exportMenuOpen}
+          >
+            {exporting ? "Exporting…" : "Export…"}
+          </button>
+          {#if exportMenuOpen}
+            <div class="export-menu" role="menu" aria-label="Export install log">
+              <button type="button" role="menuitem" onclick={() => void runExport("csv")}>
+                <span class="menu-glyph" aria-hidden="true">⤓</span>
+                <span class="menu-body">
+                  <span class="menu-title">Export as CSV…</span>
+                  <span class="menu-sub">
+                    {windowChoice === "all"
+                      ? "Whole log · spreadsheet-friendly"
+                      : `Last ${windowChoice} · spreadsheet-friendly`}
+                  </span>
+                </span>
+              </button>
+              <button type="button" role="menuitem" onclick={() => void runExport("json")}>
+                <span class="menu-glyph" aria-hidden="true">⤓</span>
+                <span class="menu-body">
+                  <span class="menu-title">Export as JSON…</span>
+                  <span class="menu-sub">
+                    {windowChoice === "all"
+                      ? "Whole log · with envelope metadata"
+                      : `Last ${windowChoice} · with envelope metadata`}
+                  </span>
+                </span>
+              </button>
+            </div>
+          {/if}
+        </div>
         <button
           type="button"
           class="ghost"
           onclick={() => (confirmingPrune = true)}
-          disabled={summary.total_events === 0 || pruning}
+          disabled={summary.total_events === 0 || pruning || exporting}
         >
           Clear older than 90d…
         </button>
-        <button type="button" class="primary" onclick={onClose} disabled={pruning}>Close</button>
+        <button
+          type="button"
+          class="primary"
+          onclick={onClose}
+          disabled={pruning || exporting}>Close</button
+        >
       {:else}
         <span class="confirm-msg">Delete log entries older than 90 days?</span>
         <button
@@ -481,5 +604,72 @@
     flex: 1;
     color: var(--text);
     font-size: 12px;
+  }
+  .export-anchor {
+    position: relative;
+    margin-right: auto;
+  }
+  .export-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    min-width: 260px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    z-index: 10;
+  }
+  .export-menu button {
+    background: transparent;
+    color: var(--text);
+    border: none;
+    border-radius: 6px;
+    padding: 8px 10px;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+  }
+  .export-menu button:hover {
+    background: var(--bg-2);
+  }
+  .menu-glyph {
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1.4;
+    text-align: center;
+  }
+  .menu-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .menu-title {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .menu-sub {
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .export-toast {
+    color: var(--text-2);
+    font-size: 11.5px;
+    line-height: 1.3;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-2);
   }
 </style>
