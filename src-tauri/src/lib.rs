@@ -5440,6 +5440,85 @@ fn slab_marketplace_install_log_export_json(
     Ok(bytes.len() as u64)
 }
 
+// ─── Install log retention policy surface (v3.40 Slice 64) ──────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
+/// Carries the user-visible retention window plus the floor + interval
+/// constants so the UI doesn't have to hard-code them on the TS side.
+/// The `last_auto_prune_at` slot reads `None` until the first auto-prune
+/// runs; the UI uses it to render a "Last auto-prune: <relative>" line
+/// in the Retention section.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallLogRetentionPolicy {
+    pub retain_days: i64,
+    pub last_auto_prune_at: Option<i64>,
+    pub default_retain_days: i64,
+    pub min_retain_days: i64,
+    pub auto_prune_interval_secs: i64,
+}
+
+/// Read the current install-log retention policy. Cheap (two key-value
+/// queries) and idempotent. The UI calls this on mount of the Retention
+/// section in RecentInstallsDrawer; the startup wiring uses
+/// [`slab_marketplace_install_log_auto_prune`] which has its own
+/// effective-policy logic.
+#[tauri::command]
+fn slab_marketplace_install_log_retention_policy() -> Result<InstallLogRetentionPolicy, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    Ok(InstallLogRetentionPolicy {
+        retain_days: log.retain_days().map_err(|e| e.to_string())?,
+        last_auto_prune_at: log.last_auto_prune_at().map_err(|e| e.to_string())?,
+        default_retain_days: marketplace::DEFAULT_RETAIN_DAYS,
+        min_retain_days: marketplace::MIN_RETAIN_DAYS,
+        auto_prune_interval_secs: marketplace::AUTO_PRUNE_INTERVAL_SECS,
+    })
+}
+
+/// Persist a new retention window in days. The storage layer clamps
+/// `days` to [`marketplace::MIN_RETAIN_DAYS`]; the command returns the
+/// stored value so the UI can surface the corrected value if the user
+/// typed something the floor rejects (e.g. 0 → clamps to 1).
+///
+/// Does NOT immediately run a prune — that's the user's separate
+/// action via [`slab_marketplace_install_log_auto_prune`] (or the
+/// existing `slab_marketplace_install_log_prune` for one-shot windows).
+/// Splitting the two responsibilities keeps "change the policy"
+/// reversible without altering the log.
+#[tauri::command]
+fn slab_marketplace_install_log_set_retention_days(days: i64) -> Result<i64, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.set_retain_days(days).map_err(|e| e.to_string())
+}
+
+/// Run the retention policy if the debounce window has elapsed.
+/// Returns the [`marketplace::AutoPruneOutcome`] (snake_case tagged
+/// "pruned" with rows_removed/retain_days/cutoff_unix, or "skipped"
+/// with next_due_unix). The startup wiring (Slice 66) calls this on
+/// app boot; the UI's "Run auto-prune now" affordance calls it on
+/// user click — both paths share the debounce so a recently-pruned
+/// log skips both the boot pass AND the manual click.
+///
+/// `force = Some(true)` bypasses the debounce — used by the UI's
+/// "Run now" button when the user explicitly wants to overwrite the
+/// debounce stamp. `None` or `Some(false)` preserves the debounce.
+#[tauri::command]
+fn slab_marketplace_install_log_auto_prune(
+    force: Option<bool>,
+) -> Result<marketplace::AutoPruneOutcome, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    if force.unwrap_or(false) {
+        // Force path: clear the debounce stamp so the next call
+        // executes the prune regardless of when the last one ran.
+        // The stamp gets re-written by the prune itself, so the next
+        // *unforced* call still honours the 24h window from this run.
+        log.set_last_auto_prune_at(0).map_err(|e| e.to_string())?;
+    }
+    log.auto_prune_if_due_now().map_err(|e| e.to_string())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Beacon Voice Mode (v1.9.0 Slice 15) — Tauri command surface.
 // ─────────────────────────────────────────────────────────────────────
@@ -6429,6 +6508,9 @@ pub fn run() {
             slab_marketplace_install_log_prune,
             slab_marketplace_install_log_export_csv,
             slab_marketplace_install_log_export_json,
+            slab_marketplace_install_log_retention_policy,
+            slab_marketplace_install_log_set_retention_days,
+            slab_marketplace_install_log_auto_prune,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,

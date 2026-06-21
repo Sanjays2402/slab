@@ -31,7 +31,8 @@ pub use install::{
     MAX_UNCOMPRESSED_BYTES,
 };
 pub use install_log::{
-    default_log_path, InstallAction, InstallEvent, InstallLog, InstallLogError, InstallStats,
+    default_log_path, AutoPruneOutcome, InstallAction, InstallEvent, InstallLog, InstallLogError,
+    InstallStats, AUTO_PRUNE_INTERVAL_SECS, DEFAULT_RETAIN_DAYS, MIN_RETAIN_DAYS,
 };
 pub use verify::{
     verify_entry, verify_with_maintainer_key, VerifyError, MAINTAINER_KEY_ID, MAINTAINER_PUBLIC_KEY,
