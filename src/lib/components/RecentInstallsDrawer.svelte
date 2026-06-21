@@ -39,6 +39,7 @@
     formatLogSpan,
     formatNextAutoPrune,
     getInstallLogRetentionPolicy,
+    getPluginInstallHistogram,
     installEventGlyph,
     installLogSummary,
     listInstallEventsFiltered,
@@ -49,11 +50,13 @@
     runInstallLogAutoPrune,
     setInstallLogRetentionDays,
     suggestInstallLogExportFilename,
+    summarizeHistogram,
     type InstallEvent,
     type InstallEventQuery,
     type InstallLogExportFilter,
     type InstallLogRetentionPolicy,
     type InstallLogSummary,
+    type PluginHistogramResult,
   } from "$lib/marketplace";
 
   type Props = {
@@ -142,6 +145,26 @@
   let retentionBusy = $state(false);
   /** Slim auto-clear toast for retention-section feedback. */
   let retentionToast = $state<string | null>(null);
+
+  // ─── Top plugins histogram (Slice 87) ─────────────────────────────
+  //
+  // Collapsible "Top plugins" section under the retention block
+  // showing per-plugin activity bars within the currently-selected
+  // window. Same window axis as the timeline above; auto-refreshes
+  // when the window changes. Defaults closed so the timeline stays
+  // the primary content; cheap fetch (one GROUP BY scan + sort) so
+  // the open/close is snappy with no spinner thrash.
+
+  /** Section expand/collapse. Defaults closed. */
+  let topPluginsOpen = $state(false);
+  /** Loaded histogram. Null until the first fetch resolves. */
+  let histogram = $state<PluginHistogramResult | null>(null);
+  /** True while a histogram fetch is in flight. */
+  let histogramLoading = $state(false);
+  /** Last error from the histogram loader, surfaced inline. */
+  let histogramError = $state<string | null>(null);
+  /** How many plugins to load — matches the server default. */
+  let histogramLimit = $state<number>(25);
 
   /** Dirty when the draft diverges from the persisted policy. */
   let retentionDirty = $derived.by<boolean>(() => {
@@ -253,6 +276,47 @@
     return () => {
       if (queryDebounce) clearTimeout(queryDebounce);
     };
+  });
+
+  // ─── Slice 87: top-plugins histogram loader ───────────────────────
+  //
+  // Fetched on demand when the user expands the section; refreshed
+  // automatically when the window choice changes (since the
+  // histogram's since_unix is bound to it). Window changes that
+  // happen while the section is closed don't trigger a fetch — the
+  // next open will use the current window.
+
+  async function refreshHistogram(): Promise<void> {
+    if (!topPluginsOpen) return;
+    histogramLoading = true;
+    histogramError = null;
+    try {
+      histogram = await getPluginInstallHistogram({
+        sinceUnix: windowSinceUnix,
+        limit: histogramLimit,
+      });
+    } catch (e) {
+      histogramError = e instanceof Error ? e.message : String(e);
+      histogram = null;
+    } finally {
+      histogramLoading = false;
+    }
+  }
+
+  function toggleTopPlugins() {
+    topPluginsOpen = !topPluginsOpen;
+    if (topPluginsOpen && histogram === null) {
+      void refreshHistogram();
+    }
+  }
+
+  // Refresh the histogram when the window choice changes (if open).
+  let lastHistogramKey = $state<string>("");
+  $effect(() => {
+    const key = `${topPluginsOpen ? 1 : 0}|${windowSinceUnix ?? "all"}|${histogramLimit}`;
+    if (key === lastHistogramKey) return;
+    lastHistogramKey = key;
+    if (topPluginsOpen) void refreshHistogram();
   });
 
   // ─── Slice 77: filter-driven reload ──────────────────────────────
@@ -713,6 +777,95 @@
         {/if}
       </section>
     {/if}
+
+    <section class="top-plugins-block" aria-labelledby="top-plugins-heading">
+      <button
+        type="button"
+        class="top-plugins-toggle"
+        aria-expanded={topPluginsOpen}
+        aria-controls="top-plugins-body"
+        onclick={toggleTopPlugins}
+      >
+        <span class="top-plugins-chevron" aria-hidden="true">
+          {topPluginsOpen ? "▾" : "▸"}
+        </span>
+        <span class="top-plugins-label" id="top-plugins-heading">Top plugins</span>
+        <span class="top-plugins-meta">
+          {#if histogram}
+            {summarizeHistogram(histogram)} · {windowChoice}
+          {:else if histogramLoading}
+            Loading…
+          {:else}
+            Click to expand
+          {/if}
+        </span>
+      </button>
+      {#if topPluginsOpen}
+        <div class="top-plugins-body" id="top-plugins-body">
+          {#if histogramError}
+            <p class="top-plugins-error" role="alert">
+              Could not load histogram: {histogramError}
+            </p>
+          {:else if histogramLoading && !histogram}
+            <p class="top-plugins-loading">Aggregating plugin activity…</p>
+          {:else if histogram}
+            {#if histogram.rows.length === 0}
+              <p class="top-plugins-empty">
+                No plugin activity in the last {windowChoice}. Try widening the window
+                or installing a plugin from the Marketplace tab.
+              </p>
+            {:else}
+              {@const maxTotal = histogram.rows[0]?.total ?? 1}
+              <ul class="top-plugins-list" aria-label="Plugins by activity">
+                {#each histogram.rows as row (row.plugin_id)}
+                  {@const widthPct = maxTotal > 0 ? (row.total / maxTotal) * 100 : 0}
+                  {@const installPct = row.total > 0 ? (row.installs / row.total) * widthPct : 0}
+                  {@const updatePct = row.total > 0 ? (row.updates / row.total) * widthPct : 0}
+                  {@const uninstallPct = row.total > 0 ? (row.uninstalls / row.total) * widthPct : 0}
+                  {@const failedPct = row.total > 0 ? (row.failures / row.total) * widthPct : 0}
+                  <li class="top-plugin-row">
+                    <div class="tp-name" title={row.plugin_id}>
+                      <span class="tp-id">{row.plugin_id}</span>
+                      <span class="tp-time">
+                        {formatInstallEventTime(row.last_occurred_at)}
+                      </span>
+                    </div>
+                    <div class="tp-bar" title="{row.total} events: {row.installs}i {row.updates}u {row.uninstalls}x {row.failures}f">
+                      {#if row.installs > 0}
+                        <div class="tp-seg seg-install" style="width: {installPct}%"></div>
+                      {/if}
+                      {#if row.updates > 0}
+                        <div class="tp-seg seg-update" style="width: {updatePct}%"></div>
+                      {/if}
+                      {#if row.uninstalls > 0}
+                        <div class="tp-seg seg-uninstall" style="width: {uninstallPct}%"></div>
+                      {/if}
+                      {#if row.failures > 0}
+                        <div class="tp-seg seg-failed" style="width: {failedPct}%"></div>
+                      {/if}
+                    </div>
+                    <div class="tp-counts">
+                      <span class="tp-total">{row.total}</span>
+                      <span class="tp-breakdown">
+                        {#if row.installs > 0}<span class="tp-glyph seg-install" title="{row.installs} install{row.installs === 1 ? '' : 's'}">{installEventGlyph("install")}{row.installs}</span>{/if}
+                        {#if row.updates > 0}<span class="tp-glyph seg-update" title="{row.updates} update{row.updates === 1 ? '' : 's'}">{installEventGlyph("update")}{row.updates}</span>{/if}
+                        {#if row.uninstalls > 0}<span class="tp-glyph seg-uninstall" title="{row.uninstalls} uninstall{row.uninstalls === 1 ? '' : 's'}">{installEventGlyph("uninstall")}{row.uninstalls}</span>{/if}
+                        {#if row.failures > 0}<span class="tp-glyph seg-failed" title="{row.failures} failure{row.failures === 1 ? '' : 's'}">{installEventGlyph("failed")}{row.failures}</span>{/if}
+                      </span>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+              <p class="top-plugins-legend">
+                Each row's bar is scaled relative to the most-active plugin. Stacked
+                segments break down by action — installs (green), updates (accent),
+                uninstalls (amber), failures (red).
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/if}
+    </section>
 
     {#if err}
       <p class="err">Could not load history: {err}</p>
@@ -1463,5 +1616,157 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     background: var(--bg-2);
+  }
+
+  /* ─── Top plugins histogram (Slice 87) ────────────────────────── */
+  .top-plugins-block {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-1);
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .top-plugins-toggle {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    padding: 8px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    display: grid;
+    grid-template-columns: 14px auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+  .top-plugins-toggle:hover {
+    background: var(--bg-2);
+    color: var(--text);
+  }
+  .top-plugins-chevron {
+    color: var(--text-3);
+    font-size: 10px;
+    line-height: 1;
+  }
+  .top-plugins-label {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .top-plugins-meta {
+    color: var(--text-3);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+  }
+  .top-plugins-body {
+    padding: 8px 10px 10px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .top-plugins-loading,
+  .top-plugins-empty {
+    margin: 0;
+    color: var(--text-3);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .top-plugins-error {
+    margin: 0;
+    padding: 6px 10px;
+    color: #ffb4b4;
+    background: rgba(240, 80, 80, 0.1);
+    border: 1px solid rgba(240, 80, 80, 0.3);
+    border-radius: 5px;
+    font-size: 11.5px;
+  }
+  .top-plugins-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .top-plugin-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 30%) 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 4px 0;
+  }
+  .tp-name {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+  }
+  .tp-id {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11.5px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tp-time {
+    font-size: 10.5px;
+    color: var(--text-3);
+  }
+  .tp-bar {
+    display: flex;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 5px;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .tp-seg {
+    height: 100%;
+    transition: width 220ms ease-out;
+  }
+  .seg-install { background: color-mix(in srgb, #6dd49a 75%, transparent); color: #6dd49a; }
+  .seg-update  { background: color-mix(in srgb, #7c8cff 75%, transparent); color: #7c8cff; }
+  .seg-uninstall { background: color-mix(in srgb, #d9b04c 75%, transparent); color: #d9b04c; }
+  .seg-failed  { background: color-mix(in srgb, #ff5d6c 75%, transparent); color: #ff5d6c; }
+  .tp-counts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tp-total {
+    font-size: 12px;
+    color: var(--text);
+    font-weight: 600;
+    min-width: 28px;
+    text-align: right;
+  }
+  .tp-breakdown {
+    display: inline-flex;
+    gap: 4px;
+    font-size: 10.5px;
+  }
+  .tp-glyph {
+    display: inline-flex;
+    gap: 1px;
+    align-items: center;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
+    /* Color comes from .seg-*; background uses a faint neutral. */
+  }
+  .top-plugins-legend {
+    margin: 4px 0 0;
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.5;
   }
 </style>

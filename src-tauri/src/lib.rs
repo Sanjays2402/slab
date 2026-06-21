@@ -5566,6 +5566,54 @@ fn slab_marketplace_install_log_recent_plugin_ids(
         .map_err(|e| e.to_string())
 }
 
+// ─── Per-plugin histogram aggregate (v3.40 Slice 87) ────────────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_plugin_histogram`].
+/// Carries the rows plus the effective window + limit used, so the UI
+/// can render "Showing top 25 plugins in the last 30d" without remembering
+/// which defaults ran when the caller left the args unset.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginHistogramResult {
+    pub rows: Vec<marketplace::PluginHistogramRow>,
+    pub since_unix: Option<i64>,
+    pub until_unix: Option<i64>,
+    pub limit_used: i64,
+    /// Sum of every row's `total` — the grand total of events within
+    /// the window across the returned plugins. Lets the UI render
+    /// "12 events across 3 plugins" without re-summing client-side.
+    pub grand_total: i64,
+}
+
+/// Aggregate the install log by plugin_id within an optional time
+/// window. Returns the per-plugin counts (installs / updates /
+/// uninstalls / failures / total / last_occurred_at) ordered by
+/// total activity descending, capped at `limit` (default 25).
+///
+/// Powers the Recent installs drawer's "Top plugins" panel — the
+/// answer to "which plugins did I install the most this month?".
+/// Cheap (one indexed GROUP BY scan + a small in-memory sort).
+#[tauri::command]
+fn slab_marketplace_install_log_plugin_histogram(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<PluginHistogramResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .plugin_histogram(since_unix, until_unix, limit)
+        .map_err(|e| e.to_string())?;
+    let grand_total = rows.iter().map(|r| r.total).sum();
+    Ok(PluginHistogramResult {
+        rows,
+        since_unix,
+        until_unix,
+        limit_used: limit,
+        grand_total,
+    })
+}
+
 // ─── Install log retention policy surface (v3.40 Slice 64) ──────────
 
 /// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
@@ -7186,6 +7234,7 @@ pub fn run() {
             slab_marketplace_install_log_export_json,
             slab_marketplace_install_log_list_filtered,
             slab_marketplace_install_log_recent_plugin_ids,
+            slab_marketplace_install_log_plugin_histogram,
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,

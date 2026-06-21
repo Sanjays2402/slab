@@ -498,6 +498,84 @@ export async function recentInstallPluginIds(limit?: number): Promise<string[]> 
   });
 }
 
+// ─── Per-plugin histogram aggregate (v3.40 Slice 87) ────────────────
+
+/**
+ * One row of the per-plugin histogram aggregate. Mirrors
+ * `marketplace::PluginHistogramRow`. `total` is precomputed so the UI's
+ * bar-width and sort don't have to re-add four columns per row;
+ * `last_occurred_at` is the unix-seconds of this plugin's most recent
+ * event within the queried window.
+ */
+export interface PluginHistogramRow {
+  plugin_id: string;
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+  total: number;
+  last_occurred_at: number;
+}
+
+/**
+ * Wire payload returned by [`getPluginInstallHistogram`]. Echoes the
+ * effective window + limit so the UI can render "Showing top 25 plugins
+ * in the last 30d" without remembering which defaults ran when the
+ * caller left the args unset. `grand_total` is the sum of every row's
+ * `total` — the corpus-wide event count within the window across all
+ * returned plugins.
+ */
+export interface PluginHistogramResult {
+  rows: PluginHistogramRow[];
+  since_unix: number | null;
+  until_unix: number | null;
+  limit_used: number;
+  grand_total: number;
+}
+
+const EMPTY_HISTOGRAM_RESULT: PluginHistogramResult = {
+  rows: [],
+  since_unix: null,
+  until_unix: null,
+  limit_used: 0,
+  grand_total: 0,
+};
+
+/**
+ * Aggregate the install log by plugin_id within an optional time
+ * window. Returns the per-plugin counts ordered by total activity
+ * descending, capped at `limit` (default 25). Powers the Recent
+ * installs drawer's "Top plugins" panel — the answer to "which
+ * plugins did I install the most this month?". Returns an empty
+ * result in browser mode.
+ */
+export async function getPluginInstallHistogram(opts: {
+  sinceUnix?: number | null;
+  untilUnix?: number | null;
+  limit?: number | null;
+} = {}): Promise<PluginHistogramResult> {
+  if (!isInTauri()) return { ...EMPTY_HISTOGRAM_RESULT };
+  return invoke<PluginHistogramResult>(
+    "slab_marketplace_install_log_plugin_histogram",
+    {
+      sinceUnix: opts.sinceUnix ?? null,
+      untilUnix: opts.untilUnix ?? null,
+      limit: opts.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Compose a one-line summary copy for the histogram header. Returns
+ * a friendly empty-state string when no events were aggregated.
+ */
+export function summarizeHistogram(result: PluginHistogramResult): string {
+  const n = result.rows.length;
+  if (n === 0) return "No plugins active in this window";
+  const events = result.grand_total;
+  return `${events} event${events === 1 ? "" : "s"} across ${n} plugin${n === 1 ? "" : "s"}`;
+}
+
 /**
  * Human-friendly label for a set of action filters. Used in the
  * "Showing X of Y events" subtitle and the filter-bar empty-state.

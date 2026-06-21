@@ -173,6 +173,28 @@ pub struct InstallStats {
     pub failures: i64,
 }
 
+/// One row of the per-plugin histogram aggregate (Slice 87). Carries
+/// the same per-action counts as [`InstallStats`] plus the plugin id,
+/// the precomputed total (sum of all four buckets) for sort + bar
+/// scaling, and the last activity timestamp so the UI can render
+/// "Last activity: 3d ago" next to each row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginHistogramRow {
+    pub plugin_id: String,
+    pub installs: i64,
+    pub updates: i64,
+    pub uninstalls: i64,
+    pub failures: i64,
+    /// Sum of installs + updates + uninstalls + failures within the
+    /// queried window. Precomputed so the UI's bar-width and sort
+    /// don't have to re-add four columns per row.
+    pub total: i64,
+    /// Unix seconds of the most recent event for this plugin within
+    /// the queried window. The UI renders this as a relative "Xd
+    /// ago" chip beside the bar.
+    pub last_occurred_at: i64,
+}
+
 #[derive(Debug, Error)]
 pub enum InstallLogError {
     #[error("sqlite: {0}")]
@@ -680,6 +702,113 @@ impl InstallLog {
         for r in rows {
             out.push(r?);
         }
+        Ok(out)
+    }
+
+    // ─── Per-plugin histogram aggregate (Slice 87) ───────────────────
+
+    /// Aggregate install-log activity grouped by plugin_id within an
+    /// optional time window. Returns one [`PluginHistogramRow`] per
+    /// distinct plugin, ordered by total activity (descending) so the
+    /// most-active plugin lands first — matches the "which plugins did
+    /// I install the most this month?" question the UI surfaces.
+    ///
+    /// `since_unix` / `until_unix` are inclusive boundaries (same
+    /// shape as [`list_events_between`]); pass `None` for either to
+    /// disable that side of the window.
+    ///
+    /// `limit` clamps the number of returned plugins; negative
+    /// clamps to zero. The default UI call uses 25, large enough that
+    /// the typical paralegal install footprint fits but small enough
+    /// that an enormous corpus doesn't drag a giant grid into IPC.
+    ///
+    /// Stable secondary sort: when two plugins have the same total
+    /// activity, ties break ASC on plugin_id so the order is
+    /// reproducible across calls — the UI's "Top plugins" list
+    /// shouldn't reshuffle on a refresh.
+    pub fn plugin_histogram(
+        &self,
+        since_unix: Option<i64>,
+        until_unix: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<PluginHistogramRow>, InstallLogError> {
+        let limit = limit.max(0);
+
+        // Build the optional WHERE clause for the time-window axis.
+        // Mirrors the list_events_between shape so the query plan
+        // walker reuses the same occurred_at index.
+        let mut sql = String::from(
+            "SELECT plugin_id, action, COUNT(*) AS n, MAX(occurred_at) AS last
+             FROM install_events",
+        );
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        let mut clauses: Vec<&'static str> = Vec::new();
+        if let Some(since) = since_unix {
+            clauses.push("occurred_at >= ?");
+            params.push(rusqlite::types::Value::Integer(since));
+        }
+        if let Some(until) = until_unix {
+            clauses.push("occurred_at <= ?");
+            params.push(rusqlite::types::Value::Integer(until));
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" GROUP BY plugin_id, action");
+
+        // Walk the (plugin_id, action) grid and reduce into per-plugin
+        // rows. We do the action-bucket reduction in code rather than
+        // SQL (CASE WHEN action = 'install' THEN COUNT...) so the
+        // column shape is symmetric with InstallStats and a future
+        // action addition is a one-line match arm rather than a SQL
+        // schema bump.
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+
+        let mut acc: std::collections::HashMap<String, PluginHistogramRow> =
+            std::collections::HashMap::new();
+        for r in rows {
+            let (plugin_id, action_str, n, last) = r?;
+            let row = acc
+                .entry(plugin_id.clone())
+                .or_insert_with(|| PluginHistogramRow {
+                    plugin_id: plugin_id.clone(),
+                    installs: 0,
+                    updates: 0,
+                    uninstalls: 0,
+                    failures: 0,
+                    total: 0,
+                    last_occurred_at: 0,
+                });
+            match InstallAction::parse(&action_str) {
+                InstallAction::Install => row.installs = n,
+                InstallAction::Update => row.updates = n,
+                InstallAction::Uninstall => row.uninstalls = n,
+                InstallAction::Failed => row.failures = n,
+            }
+            row.total += n;
+            if last > row.last_occurred_at {
+                row.last_occurred_at = last;
+            }
+        }
+
+        let mut out: Vec<PluginHistogramRow> = acc.into_values().collect();
+        // Primary sort: total activity DESC. Secondary: plugin_id ASC
+        // so ties are deterministic across calls.
+        out.sort_by(|a, b| {
+            b.total
+                .cmp(&a.total)
+                .then_with(|| a.plugin_id.cmp(&b.plugin_id))
+        });
+        out.truncate(limit as usize);
         Ok(out)
     }
 
@@ -2228,5 +2357,225 @@ mod tests {
         assert!(s.contains("\"outcome\":\"skipped\""), "got {s}");
         let back: AutoPruneOutcome = serde_json::from_str(&s).unwrap();
         assert_eq!(back, skipped);
+    }
+
+    // ─── Per-plugin histogram aggregate (Slice 87) ────────────────────
+
+    /// Compose a small histogram-shaped fixture. Three plugins with
+    /// different total activity counts so a sort + cap is meaningfully
+    /// observable.
+    fn seed_histogram_log() -> InstallLog {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // com.acme.ocr: 3 installs + 1 update + 1 failed = 5 (top)
+        insert_at_action(&mut log, "com.acme.ocr", "1", InstallAction::Install, 100);
+        insert_at_action(&mut log, "com.acme.ocr", "2", InstallAction::Install, 101);
+        insert_at_action(&mut log, "com.acme.ocr", "3", InstallAction::Install, 102);
+        insert_at_action(&mut log, "com.acme.ocr", "3", InstallAction::Update, 110);
+        insert_at_action(&mut log, "com.acme.ocr", "3", InstallAction::Failed, 111);
+        // org.studio.batch: 2 installs + 1 uninstall = 3
+        insert_at_action(
+            &mut log,
+            "org.studio.batch",
+            "1",
+            InstallAction::Install,
+            200,
+        );
+        insert_at_action(
+            &mut log,
+            "org.studio.batch",
+            "2",
+            InstallAction::Install,
+            205,
+        );
+        insert_at_action(
+            &mut log,
+            "org.studio.batch",
+            "2",
+            InstallAction::Uninstall,
+            220,
+        );
+        // org.other.app: 1 install = 1
+        insert_at_action(
+            &mut log,
+            "org.other.app",
+            "0.1",
+            InstallAction::Install,
+            300,
+        );
+        log
+    }
+
+    #[test]
+    fn plugin_histogram_orders_by_total_desc() {
+        let log = seed_histogram_log();
+        let rows = log.plugin_histogram(None, None, 100).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].plugin_id, "com.acme.ocr");
+        assert_eq!(rows[0].total, 5);
+        assert_eq!(rows[1].plugin_id, "org.studio.batch");
+        assert_eq!(rows[1].total, 3);
+        assert_eq!(rows[2].plugin_id, "org.other.app");
+        assert_eq!(rows[2].total, 1);
+    }
+
+    #[test]
+    fn plugin_histogram_buckets_actions_per_plugin() {
+        let log = seed_histogram_log();
+        let rows = log.plugin_histogram(None, None, 100).unwrap();
+        let acme = &rows[0];
+        assert_eq!(acme.installs, 3);
+        assert_eq!(acme.updates, 1);
+        assert_eq!(acme.uninstalls, 0);
+        assert_eq!(acme.failures, 1);
+        let batch = &rows[1];
+        assert_eq!(batch.installs, 2);
+        assert_eq!(batch.updates, 0);
+        assert_eq!(batch.uninstalls, 1);
+        assert_eq!(batch.failures, 0);
+    }
+
+    #[test]
+    fn plugin_histogram_carries_last_occurred_at() {
+        let log = seed_histogram_log();
+        let rows = log.plugin_histogram(None, None, 100).unwrap();
+        // The newest event for each plugin:
+        //   com.acme.ocr: 111 (failed at 111)
+        //   org.studio.batch: 220 (uninstall at 220)
+        //   org.other.app: 300 (install at 300)
+        assert_eq!(rows[0].last_occurred_at, 111);
+        assert_eq!(rows[1].last_occurred_at, 220);
+        assert_eq!(rows[2].last_occurred_at, 300);
+    }
+
+    #[test]
+    fn plugin_histogram_window_filters_since() {
+        let log = seed_histogram_log();
+        // Filter to events at or after 200 — drops all 5 acme rows
+        // (occurred at 100-111). Only batch (200/205/220) and
+        // other (300) remain.
+        let rows = log.plugin_histogram(Some(200), None, 100).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].plugin_id, "org.studio.batch");
+        assert_eq!(rows[0].total, 3);
+        assert_eq!(rows[1].plugin_id, "org.other.app");
+        assert_eq!(rows[1].total, 1);
+    }
+
+    #[test]
+    fn plugin_histogram_window_filters_until() {
+        let log = seed_histogram_log();
+        // Filter to events <= 150 — keeps the three acme installs
+        // (100/101/102) and the acme update/failed (110/111). Drops
+        // batch (200+) and other (300).
+        let rows = log.plugin_histogram(None, Some(150), 100).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].plugin_id, "com.acme.ocr");
+        assert_eq!(rows[0].total, 5);
+    }
+
+    #[test]
+    fn plugin_histogram_window_filters_both_bounds() {
+        let log = seed_histogram_log();
+        // Closed interval [105, 220] keeps acme's update + failed
+        // (110/111), all of batch (200/205/220), drops everything
+        // else.
+        let rows = log.plugin_histogram(Some(105), Some(220), 100).unwrap();
+        assert_eq!(rows.len(), 2);
+        let acme = rows.iter().find(|r| r.plugin_id == "com.acme.ocr").unwrap();
+        assert_eq!(acme.total, 2);
+        assert_eq!(acme.updates, 1);
+        assert_eq!(acme.failures, 1);
+        let batch = rows
+            .iter()
+            .find(|r| r.plugin_id == "org.studio.batch")
+            .unwrap();
+        assert_eq!(batch.total, 3);
+    }
+
+    #[test]
+    fn plugin_histogram_empty_window_returns_empty() {
+        let log = seed_histogram_log();
+        // Window with no rows -> empty vec, not an error.
+        let rows = log.plugin_histogram(Some(1_000), Some(2_000), 100).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn plugin_histogram_empty_log_returns_empty() {
+        let log = InstallLog::open_in_memory().unwrap();
+        let rows = log.plugin_histogram(None, None, 100).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn plugin_histogram_limit_caps_results() {
+        let log = seed_histogram_log();
+        let two = log.plugin_histogram(None, None, 2).unwrap();
+        assert_eq!(two.len(), 2);
+        // Top 2 by total: acme (5), batch (3).
+        assert_eq!(two[0].plugin_id, "com.acme.ocr");
+        assert_eq!(two[1].plugin_id, "org.studio.batch");
+        let one = log.plugin_histogram(None, None, 1).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].plugin_id, "com.acme.ocr");
+    }
+
+    #[test]
+    fn plugin_histogram_negative_limit_clamps_to_zero() {
+        let log = seed_histogram_log();
+        let rows = log.plugin_histogram(None, None, -5).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn plugin_histogram_tiebreak_on_plugin_id_ascending() {
+        // Three plugins with equal totals — confirm the secondary
+        // ASCENDING sort on plugin_id pins a deterministic order so
+        // refreshes don't reshuffle the "Top plugins" list.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at_action(&mut log, "zzz.plug", "1", InstallAction::Install, 100);
+        insert_at_action(&mut log, "aaa.plug", "1", InstallAction::Install, 101);
+        insert_at_action(&mut log, "mmm.plug", "1", InstallAction::Install, 102);
+        let rows = log.plugin_histogram(None, None, 100).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].plugin_id, "aaa.plug");
+        assert_eq!(rows[1].plugin_id, "mmm.plug");
+        assert_eq!(rows[2].plugin_id, "zzz.plug");
+    }
+
+    #[test]
+    fn plugin_histogram_total_equals_sum_of_buckets() {
+        // Conservation invariant: total == installs + updates +
+        // uninstalls + failures. Protects future refactors from
+        // silently dropping a bucket.
+        let log = seed_histogram_log();
+        let rows = log.plugin_histogram(None, None, 100).unwrap();
+        for r in &rows {
+            assert_eq!(
+                r.total,
+                r.installs + r.updates + r.uninstalls + r.failures,
+                "plugin {} total mismatch",
+                r.plugin_id
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_histogram_serde_round_trip() {
+        let row = PluginHistogramRow {
+            plugin_id: "com.acme.ocr".into(),
+            installs: 3,
+            updates: 1,
+            uninstalls: 0,
+            failures: 2,
+            total: 6,
+            last_occurred_at: 1_700_000_000,
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("\"plugin_id\":\"com.acme.ocr\""));
+        assert!(json.contains("\"total\":6"));
+        assert!(json.contains("\"last_occurred_at\":1700000000"));
+        let back: PluginHistogramRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, row);
     }
 }
