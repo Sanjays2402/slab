@@ -16,6 +16,10 @@
     collectionList,
     collectionCreate,
     collectionDelete,
+    collectionRename,
+    collectionSetColor,
+    collectionReorder,
+    collectionDuplicate,
     collectionListDocs,
     collectionAddDocs,
     smartCollectionList,
@@ -29,6 +33,8 @@
   import SmartCollectionBuilder from "./SmartCollectionBuilder.svelte";
   import PresetPicker from "./PresetPicker.svelte";
   import SmartFoldersHubPanel from "./SmartFoldersHubPanel.svelte";
+  import OcrQueuePanel from "./OcrQueuePanel.svelte";
+  import BeaconCachePanel from "./BeaconCachePanel.svelte";
 
   type SelectPayload = {
     kind: "collection" | "smart";
@@ -71,6 +77,24 @@
     openSmartHub();
   }
 
+  // OCR Queue Panel (v3.52.0 Atlas OCR-Queue Slice 5)
+  let ocrQueueOpen = $state(false);
+  function openOcrQueue() {
+    ocrQueueOpen = true;
+  }
+  export function openOcrQueuePanel() {
+    openOcrQueue();
+  }
+
+  // Beacon Cache Inspector (v3.54.0 Atlas Beacon-Cache Slice 32)
+  let beaconCacheOpen = $state(false);
+  function openBeaconCache() {
+    beaconCacheOpen = true;
+  }
+  export function openBeaconCachePanel() {
+    openBeaconCache();
+  }
+
   function openNewSmart() {
     builderEditing = null;
     builderOpen = true;
@@ -106,6 +130,185 @@
   // delta on the next refresh and add a one-shot CSS class.
   let prevCounts = $state<Map<number, number>>(new Map());
   let pulsing = $state<Set<number>>(new Set());
+
+  // Inline rename state (v3.53.0 Atlas Collections — Slice 23). One
+  // collection at a time goes into edit mode; Enter commits, Escape/blur
+  // cancels, unchanged or empty short-circuits with no round-trip.
+  let renamingId = $state<number | null>(null);
+  let renameDraft = $state("");
+  let renameError = $state<string | null>(null);
+  let renameBusy = $state(false);
+
+  // Focus + select-all a freshly-mounted input — mirrors the LibraryPanel
+  // tag-rename action so users land typing-ready.
+  function focusSelect(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  function startRename(c: CollectionRecord, ev: MouseEvent) {
+    ev.stopPropagation();
+    renamingId = c.id;
+    renameDraft = c.name;
+    renameError = null;
+  }
+  function cancelRename() {
+    renamingId = null;
+    renameDraft = "";
+    renameError = null;
+  }
+  async function commitRename(c: CollectionRecord) {
+    const next = renameDraft.trim();
+    if (!next || next === c.name) {
+      cancelRename();
+      return;
+    }
+    renameBusy = true;
+    try {
+      const updated: CollectionRecord = await collectionRename(c.id, next);
+      // Swap the row in place so the rail reflects the new name without
+      // waiting for the library-changed refresh.
+      collections = collections.map((row): CollectionRecord => (row.id === c.id ? updated : row));
+      cancelRename();
+    } catch (e) {
+      renameError = (e as Error).message;
+    } finally {
+      renameBusy = false;
+    }
+  }
+
+  // -------- Color editor (v3.53.0 Atlas Collections — Slice 24) --------
+  const COLLECTION_PALETTE = [
+    "#ff7a59",
+    "#6ab7ff",
+    "#7ee787",
+    "#f5c518",
+    "#c084fc",
+    "#f47272",
+    "#79c0ff",
+    "#a4a4b0",
+  ];
+  let editColorCollection = $state<CollectionRecord | null>(null);
+  let editColorValue = $state<string | null>(null);
+  let editColorBusy = $state(false);
+  let editColorError = $state<string | null>(null);
+
+  function openEditColor(c: CollectionRecord, ev: MouseEvent) {
+    ev.stopPropagation();
+    editColorCollection = c;
+    editColorValue = c.color ?? null;
+    editColorError = null;
+  }
+  function closeEditColor() {
+    editColorCollection = null;
+    editColorValue = null;
+    editColorError = null;
+  }
+  async function commitEditColor() {
+    const target = editColorCollection;
+    if (!target) return;
+    editColorBusy = true;
+    try {
+      const updated: CollectionRecord = await collectionSetColor(
+        target.id,
+        editColorValue,
+      );
+      collections = collections.map((row): CollectionRecord =>
+        row.id === target.id ? updated : row,
+      );
+      closeEditColor();
+    } catch (e) {
+      editColorError = (e as Error).message;
+    } finally {
+      editColorBusy = false;
+    }
+  }
+
+  // -------- Drag-to-reorder (v3.53.0 Atlas Collections — Slice 25) --------
+  // HTML5 native drag with a dedicated payload type so the existing
+  // document-drop handler (which keys off application/x-slab-doc-ids)
+  // ignores reorder drags entirely. dragSourceId tracks the lifted row;
+  // dragTargetId paints the insertion-line affordance on hover.
+  let dragSourceId = $state<number | null>(null);
+  let dragTargetId = $state<number | null>(null);
+  let reorderBusy = $state(false);
+
+  function onReorderDragStart(e: DragEvent, c: CollectionRecord) {
+    if (!e.dataTransfer) return;
+    dragSourceId = c.id;
+    dragTargetId = null;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-slab-collection-id", String(c.id));
+  }
+  function onReorderDragOver(e: DragEvent, c: CollectionRecord) {
+    if (dragSourceId === null) return;
+    if (!e.dataTransfer?.types.includes("application/x-slab-collection-id")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    dragTargetId = c.id;
+  }
+  function onReorderDragLeave(c: CollectionRecord) {
+    if (dragTargetId === c.id) dragTargetId = null;
+  }
+  function onReorderDragEnd() {
+    dragSourceId = null;
+    dragTargetId = null;
+  }
+  async function onReorderDrop(e: DragEvent, target: CollectionRecord) {
+    e.preventDefault();
+    const src = dragSourceId;
+    dragSourceId = null;
+    dragTargetId = null;
+    if (src === null || src === target.id) return;
+    const sourceIdx = collections.findIndex((c) => c.id === src);
+    const targetIdx = collections.findIndex((c) => c.id === target.id);
+    if (sourceIdx < 0 || targetIdx < 0) return;
+    // Lift the source out, splice it in before the target (top-side drop).
+    // "Drop X on Y" means "X now sits where Y was" with everything below
+    // it shifted down — stable, predictable.
+    const next = collections.slice();
+    const [moved] = next.splice(sourceIdx, 1);
+    const insertAt = sourceIdx < targetIdx ? targetIdx - 1 : targetIdx;
+    next.splice(insertAt, 0, moved);
+    // Optimistic UI: swap the rail to the new order the instant the
+    // mouse releases. Persist in the background; rollback on failure.
+    const prev = collections;
+    collections = next;
+    reorderBusy = true;
+    try {
+      await collectionReorder(next.map((c) => c.id));
+    } catch (err) {
+      collections = prev;
+      error = (err as Error).message;
+    } finally {
+      reorderBusy = false;
+    }
+  }
+
+  // -------- Duplicate (v3.53.0 Atlas Collections — Slice 26) --------
+  let duplicateBusyId = $state<number | null>(null);
+
+  async function handleDuplicate(c: CollectionRecord, ev: MouseEvent) {
+    ev.stopPropagation();
+    if (duplicateBusyId !== null) return;
+    duplicateBusyId = c.id;
+    try {
+      const created: CollectionRecord = await collectionDuplicate(c.id);
+      // The new row sorts to the end of the rail — refreshAll already
+      // wires that in but we proactively splice it in so the toast and
+      // the rail update land together.
+      collections = [...collections, created];
+      toast(
+        `Duplicated “${c.name}” to “${created.name}” (${created.doc_count} doc${
+          created.doc_count === 1 ? "" : "s"
+        })`,
+      );
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      duplicateBusyId = null;
+    }
+  }
 
   async function refresh() {
     try {
@@ -151,6 +354,10 @@
       // Cmd/Ctrl + Shift + F → open Smart Folders Hub (v3.37.0).
       e.preventDefault();
       openSmartHub();
+    } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyO") {
+      // Cmd/Ctrl + Shift + O → open OCR Queue Panel (v3.52.0).
+      e.preventDefault();
+      openOcrQueue();
     } else if (e.key === "Escape" && menu) {
       menu = null;
     }
@@ -168,6 +375,10 @@
     window.addEventListener("slab:open-preset-picker", openPicker);
     window.addEventListener("slab:open-smart-builder", openBuilder);
     window.addEventListener("slab:open-smart-folders-hub", openHub);
+    const openOcrQ = () => openOcrQueue();
+    window.addEventListener("slab:open-ocr-queue", openOcrQ);
+    const openBeaconC = () => openBeaconCache();
+    window.addEventListener("slab:open-beacon-cache", openBeaconC);
     const clickAway = () => (menu = null);
     window.addEventListener("click", clickAway);
     return () => {
@@ -176,6 +387,8 @@
       window.removeEventListener("slab:open-preset-picker", openPicker);
       window.removeEventListener("slab:open-smart-builder", openBuilder);
       window.removeEventListener("slab:open-smart-folders-hub", openHub);
+      window.removeEventListener("slab:open-ocr-queue", openOcrQ);
+      window.removeEventListener("slab:open-beacon-cache", openBeaconC);
       window.removeEventListener("click", clickAway);
     };
   });
@@ -338,32 +551,102 @@
   {#if loading && collections.length === 0 && smart.length === 0}
     <div class="cs-empty">Loading…</div>
   {:else}
+    <!-- v3.53.0 Atlas Collections — Slice 25: role="list" wrapper so each
+         draggable .cs-row-wrap inside can carry role="listitem" without
+         tripping the a11y_no_static_element_interactions warning that
+         dragstart/drop on a bare <div> raises. -->
+    <div class="cs-list" role="list">
     {#each collections as c (c.id)}
       <div
         class="cs-row-wrap"
+        role="listitem"
         class:active={activeId === `c:${c.id}`}
         class:drag-over={dragOverId === c.id}
+        class:reorder-target={dragTargetId === c.id && dragSourceId !== c.id}
+        class:reorder-source={dragSourceId === c.id}
+        class:renaming={renamingId === c.id}
+        draggable={renamingId !== c.id && !reorderBusy}
+        ondragstart={(e) => onReorderDragStart(e, c)}
+        ondragover={(e) => onReorderDragOver(e, c)}
+        ondragleave={() => onReorderDragLeave(c)}
+        ondragend={onReorderDragEnd}
+        ondrop={(e) => onReorderDrop(e, c)}
       >
-        <button
-          class="cs-row"
-          class:active={activeId === `c:${c.id}`}
-          onclick={() => pickCollection(c)}
-          ondragover={(e) => onDocDragOver(e, c)}
-          ondragleave={() => onDocDragLeave(c)}
-          ondrop={(e) => onDocDrop(e, c)}
-          title={c.name}
-        >
-          <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
-          <span class="cs-label">{c.name}</span>
-          <span class="cs-count" class:pulse={pulsing.has(c.id)}>{c.doc_count}</span>
-        </button>
-        <button
-          class="cs-x"
-          aria-label="Delete {c.name}"
-          onclick={(e) => handleDelete(c, e)}
-        >×</button>
+        {#if renamingId === c.id}
+          <form
+            class="cs-rename"
+            onsubmit={(e) => {
+              e.preventDefault();
+              commitRename(c);
+            }}
+          >
+            <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
+            <input
+              class="cs-rename-input"
+              type="text"
+              aria-label="Rename collection"
+              bind:value={renameDraft}
+              use:focusSelect
+              maxlength={120}
+              disabled={renameBusy}
+              onkeydown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  cancelRename();
+                }
+              }}
+              onblur={() => {
+                // Defer so an Enter-driven submit lands first.
+                if (!renameError) setTimeout(() => commitRename(c), 0);
+              }}
+            />
+          </form>
+        {:else}
+          <button
+            class="cs-color-dot"
+            aria-label="Edit color for {c.name}"
+            title="Edit color"
+            onclick={(e) => openEditColor(c, e)}
+          >
+            <span class="cs-dot" style:background={c.color ?? "var(--text-3)"}></span>
+          </button>
+          <button
+            class="cs-row no-dot"
+            class:active={activeId === `c:${c.id}`}
+            onclick={() => pickCollection(c)}
+            ondragover={(e) => onDocDragOver(e, c)}
+            ondragleave={() => onDocDragLeave(c)}
+            ondrop={(e) => onDocDrop(e, c)}
+            title={c.name}
+          >
+            <span class="cs-label">{c.name}</span>
+            <span class="cs-count" class:pulse={pulsing.has(c.id)}>{c.doc_count}</span>
+          </button>
+          <button
+            class="cs-edit"
+            aria-label="Rename {c.name}"
+            title="Rename collection"
+            onclick={(e) => startRename(c, e)}
+          >&#9998;</button>
+          <button
+            class="cs-edit cs-duplicate"
+            aria-label="Duplicate {c.name}"
+            title="Duplicate collection"
+            disabled={duplicateBusyId !== null}
+            onclick={(e) => handleDuplicate(c, e)}
+          >&#10063;</button>
+          <button
+            class="cs-x"
+            aria-label="Delete {c.name}"
+            onclick={(e) => handleDelete(c, e)}
+          >×</button>
+        {/if}
       </div>
+      {#if renamingId === c.id && renameError}
+        <div class="cs-rename-err" role="alert">{renameError}</div>
+      {/if}
     {/each}
+    </div>
 
     <div class="cs-sub-row">
       <span class="cs-sub">Smart</span>
@@ -472,6 +755,71 @@
   open={smartHubOpen}
   onClose={() => (smartHubOpen = false)}
 />
+
+<OcrQueuePanel
+  open={ocrQueueOpen}
+  onClose={() => (ocrQueueOpen = false)}
+/>
+
+<BeaconCachePanel
+  open={beaconCacheOpen}
+  onClose={() => (beaconCacheOpen = false)}
+/>
+
+<!-- v3.53.0 Atlas Collections — Slice 24 color editor modal -->
+{#if editColorCollection}
+  <div
+    class="cs-modal-backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="Close"
+    onclick={closeEditColor}
+    onkeydown={(e) => {
+      if (e.key === "Escape") closeEditColor();
+    }}
+  >
+    <div
+      class="cs-modal"
+      role="dialog"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
+      <div class="cs-modal-title">Collection color</div>
+      <div class="cs-color-preview">
+        <span class="cs-dot preview" style:background={editColorValue ?? "var(--text-3)"}></span>
+        <span class="cs-color-preview-name">{editColorCollection.name}</span>
+      </div>
+      <div class="cs-palette">
+        {#each COLLECTION_PALETTE as c (c)}
+          <button
+            class="cs-swatch"
+            class:active={editColorValue === c}
+            style:background={c}
+            aria-label="Pick color {c}"
+            onclick={() => (editColorValue = c)}
+          ></button>
+        {/each}
+        <button
+          class="cs-swatch default-swatch"
+          class:active={editColorValue === null}
+          title="Default (automatic)"
+          aria-label="Use default color"
+          onclick={() => (editColorValue = null)}
+        >&#8856;</button>
+      </div>
+      {#if editColorError}
+        <div class="cs-modal-error" role="alert">{editColorError}</div>
+      {/if}
+      <div class="cs-modal-actions">
+        <button class="ghost" onclick={closeEditColor}>Cancel</button>
+        <button class="primary" onclick={commitEditColor} disabled={editColorBusy}>
+          {editColorBusy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .cs-rail {
@@ -610,11 +958,228 @@
     opacity: 0;
     transition: opacity 120ms ease, color 120ms ease;
   }
-  .cs-row:hover .cs-x {
+  .cs-row-wrap:hover .cs-x {
     opacity: 1;
   }
   .cs-x:hover {
     color: var(--danger, #f87171);
+  }
+  /* v3.53.0 Atlas Collections — Slice 23 inline rename */
+  .cs-edit {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 12px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease;
+  }
+  .cs-row-wrap:hover .cs-edit {
+    opacity: 1;
+  }
+  .cs-edit:hover {
+    color: var(--text-1);
+  }
+  .cs-rename {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 8px;
+  }
+  .cs-rename-input {
+    flex: 1;
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: var(--text-1);
+    font-size: 13px;
+    outline: none;
+    min-width: 0;
+  }
+  .cs-rename-input:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  .cs-rename-err {
+    margin: 2px 8px 4px 24px;
+    font-size: 11px;
+    color: var(--danger, #f87171);
+  }
+  .cs-row-wrap.renaming {
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+    border-radius: 6px;
+  }
+  /* v3.53.0 Atlas Collections — Slice 25 drag-to-reorder indicators */
+  .cs-row-wrap {
+    transition: background 120ms ease, opacity 120ms ease;
+  }
+  .cs-row-wrap.reorder-source {
+    opacity: 0.35;
+  }
+  .cs-row-wrap.reorder-target {
+    /* Insertion-line affordance above the target row, mirroring the
+       Notion/Linear pattern for drag-to-reorder lists. */
+    position: relative;
+  }
+  .cs-row-wrap.reorder-target::before {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: 6px;
+    right: 6px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 1px;
+    pointer-events: none;
+  }
+  /* v3.53.0 Atlas Collections — Slice 24 color-dot affordance & modal */
+  .cs-color-dot {
+    background: transparent;
+    border: none;
+    padding: 6px 2px 6px 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 6px;
+    transition: background 120ms ease, transform 120ms ease;
+  }
+  .cs-color-dot:hover {
+    background: var(--surface-2);
+    transform: scale(1.08);
+  }
+  .cs-row.no-dot {
+    padding-left: 4px;
+  }
+  .cs-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: default;
+  }
+  .cs-modal {
+    background: var(--panel-bg, rgba(22, 24, 33, 0.98));
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+    padding: 18px 18px 14px;
+    width: min(360px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: cs-pop-in 160ms ease-out;
+  }
+  @keyframes cs-pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .cs-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .cs-color-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--surface-2);
+    border-radius: 8px;
+  }
+  .cs-dot.preview {
+    width: 14px;
+    height: 14px;
+  }
+  .cs-color-preview-name {
+    color: var(--text-1);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cs-palette {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .cs-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    transition: transform 120ms ease, border-color 120ms ease;
+  }
+  .cs-swatch:hover {
+    transform: scale(1.1);
+  }
+  .cs-swatch.active {
+    border-color: var(--text-1);
+  }
+  .cs-swatch.default-swatch {
+    background: transparent;
+    border: 1.5px dashed var(--text-3);
+    color: var(--text-2);
+    font-size: 14px;
+    line-height: 24px;
+    text-align: center;
+  }
+  .cs-swatch.default-swatch.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .cs-modal-error {
+    color: var(--danger, #f87171);
+    font-size: 12px;
+  }
+  .cs-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .cs-modal-actions .ghost {
+    background: transparent;
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.1));
+    color: var(--text-2);
+    padding: 6px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .cs-modal-actions .ghost:hover {
+    color: var(--text-1);
+    background: var(--surface-2);
+  }
+  .cs-modal-actions .primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .cs-modal-actions .primary:disabled {
+    opacity: 0.6;
+    cursor: progress;
   }
   .cs-sub {
     padding: 12px 8px 4px;

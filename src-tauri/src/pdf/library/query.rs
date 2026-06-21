@@ -15,9 +15,16 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LibraryFilter {
     pub folder_id: Option<i64>,
-    /// All listed tag ids must be attached to the doc (AND match).
+    /// Tag ids to filter by. How they combine is governed by `tag_match`:
+    /// `All` (default) requires every listed tag (AND/intersection), `Any`
+    /// requires at least one (OR/union).
     #[serde(default)]
     pub tag_ids: Vec<i64>,
+    /// Combinator for `tag_ids`. Defaults to `All` so every pre-v3.48 stored
+    /// filter — which never carried this field — keeps its historical
+    /// intersection semantics byte-for-byte.
+    #[serde(default)]
+    pub tag_match: TagMatch,
     /// Case-insensitive substring match against either title or
     /// filename component of `path`. None = no title filter.
     pub title_substring: Option<String>,
@@ -31,6 +38,26 @@ pub struct LibraryFilter {
     /// working byte-for-byte. Forward + backward compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clauses: Option<FilterGroup>,
+    /// v3.55.0 Atlas Doc-Inspector: when `true`, only starred documents
+    /// match. AND-combined with every other constraint (flat tag_ids /
+    /// folder / title_substring or the clause tree). Defaults to `false`
+    /// so every pre-v3.55 stored filter — which never carried this field
+    /// — keeps its historical behaviour byte-for-byte.
+    #[serde(default)]
+    pub starred_only: bool,
+}
+
+/// Combinator for the flat `tag_ids` list. `All` (the default) keeps the
+/// historical AND/intersection behavior — a doc must wear every listed tag.
+/// `Any` switches to OR/union — a doc matching any one listed tag is
+/// returned. Serializes snake_case (`"all"` / `"any"`) to mirror
+/// `FilterCombinator` and `SortBy`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TagMatch {
+    #[default]
+    All,
+    Any,
 }
 
 /// Combinator for a `FilterGroup`. Default is `And` to match historical
@@ -60,6 +87,14 @@ pub enum FilterClause {
     TitleContains { value: String },
     /// Negation of TitleContains.
     TitleNotContains { value: String },
+    /// Document has NO tags at all (no `library_doc_tags` rows).
+    Untagged,
+    /// Document has at least one tag.
+    Tagged,
+    /// Document is starred (v3.55.0 Atlas Doc-Inspector).
+    Starred,
+    /// Document is NOT starred (v3.55.0 Atlas Doc-Inspector).
+    NotStarred,
     /// Nested group — enables `(A OR B) AND NOT C` style rules.
     Group(FilterGroup),
 }
@@ -99,7 +134,7 @@ pub fn query_documents(
     let conn = db.conn();
 
     let mut sql = String::from(
-        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path
+        "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes, starred
          FROM library_documents",
     );
     let mut where_clauses: Vec<String> = Vec::new();
@@ -130,24 +165,53 @@ pub fn query_documents(
             }
         }
         if !filter.tag_ids.is_empty() {
-            // Force AND-match across all tag ids: doc must have a
-            // doc_tags row for each requested tag. We do this with a
-            // subquery so we can keep one prepared statement.
+            // Combine the requested tag ids per `tag_match`. Both shapes use
+            // a single subquery so we keep one prepared statement.
             let placeholders = filter
                 .tag_ids
                 .iter()
                 .map(|_| "?")
                 .collect::<Vec<_>>()
                 .join(",");
-            where_clauses.push(format!(
-                "id IN (SELECT doc_id FROM library_doc_tags WHERE tag_id IN ({placeholders})
-                        GROUP BY doc_id HAVING COUNT(DISTINCT tag_id) = ?)",
-            ));
-            for tid in &filter.tag_ids {
-                params.push(Box::new(*tid));
+            match filter.tag_match {
+                TagMatch::All => {
+                    // AND/intersection: doc must carry a doc_tags row for
+                    // EACH requested tag. COUNT(DISTINCT) guards against a
+                    // duplicate id in the list inflating the match.
+                    where_clauses.push(format!(
+                        "id IN (SELECT doc_id FROM library_doc_tags WHERE tag_id IN ({placeholders})
+                                GROUP BY doc_id HAVING COUNT(DISTINCT tag_id) = ?)",
+                    ));
+                    for tid in &filter.tag_ids {
+                        params.push(Box::new(*tid));
+                    }
+                    // Distinct count so a repeated id doesn't raise the bar
+                    // past what any single doc can satisfy.
+                    let mut distinct = filter.tag_ids.clone();
+                    distinct.sort_unstable();
+                    distinct.dedup();
+                    params.push(Box::new(distinct.len() as i64));
+                }
+                TagMatch::Any => {
+                    // OR/union: doc matching ANY one requested tag is enough.
+                    where_clauses.push(format!(
+                        "id IN (SELECT doc_id FROM library_doc_tags WHERE tag_id IN ({placeholders}))",
+                    ));
+                    for tid in &filter.tag_ids {
+                        params.push(Box::new(*tid));
+                    }
+                }
             }
-            params.push(Box::new(filter.tag_ids.len() as i64));
         }
+    }
+
+    // starred_only is AND-combined with everything (flat or clause-tree).
+    // Lives at the top level so it's always re-asserted even when the user
+    // saved a clause-tree-only smart collection — useful as a "starred view"
+    // shortcut atop ANY existing filter without rewriting the tree. v3.55.0
+    // Atlas Doc-Inspector.
+    if filter.starred_only {
+        where_clauses.push("starred = 1".into());
     }
 
     if !where_clauses.is_empty() {
@@ -180,6 +244,9 @@ pub fn query_documents(
                 last_seen_at: row.get(9)?,
                 ocr_state: row.get(10)?,
                 ocr_output_path: row.get(11)?,
+                ocr_error: row.get(12)?,
+                notes: row.get(13)?,
+                starred: row.get::<_, i64>(14)? != 0,
                 tags: Vec::new(),
             })
         })?
@@ -196,7 +263,7 @@ pub fn query_documents(
         .collect::<Vec<_>>()
         .join(",");
     let mut tag_stmt = conn.prepare(&format!(
-        "SELECT dt.doc_id, t.id, t.name, t.color
+        "SELECT dt.doc_id, t.id, t.name, t.color, t.description
          FROM library_doc_tags dt
          INNER JOIN library_tags t ON t.id = dt.tag_id
          WHERE dt.doc_id IN ({id_list})
@@ -210,6 +277,7 @@ pub fn query_documents(
                 id: row.get(1)?,
                 name: row.get(2)?,
                 color: row.get(3)?,
+                description: row.get(4)?,
             },
         ))
     })?;
@@ -293,6 +361,10 @@ fn build_clause_sql(clause: &FilterClause, params: &mut Vec<Box<dyn ToSql>>) -> 
             params.push(Box::new(pat));
             "NOT (LOWER(COALESCE(title, '')) LIKE LOWER(?) OR LOWER(path) LIKE LOWER(?))".into()
         }
+        FilterClause::Untagged => "id NOT IN (SELECT doc_id FROM library_doc_tags)".into(),
+        FilterClause::Tagged => "id IN (SELECT doc_id FROM library_doc_tags)".into(),
+        FilterClause::Starred => "starred = 1".into(),
+        FilterClause::NotStarred => "starred = 0".into(),
         FilterClause::Group(g) => build_group_sql(g, params),
     }
 }
@@ -434,6 +506,126 @@ mod tests {
     }
 
     #[test]
+    fn query_tag_match_all_is_default_and_intersects() {
+        // Default TagMatch (All) over [research, urgent] → only alpha.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let urgent = tags.iter().find(|t| t.name == "urgent").unwrap().id;
+        let f = LibraryFilter {
+            tag_ids: vec![research, urgent],
+            ..Default::default()
+        };
+        assert_eq!(f.tag_match, TagMatch::All); // default
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/papers/alpha.pdf");
+    }
+
+    #[test]
+    fn query_tag_match_any_unions() {
+        // Any over [urgent, done] → alpha (urgent) + beta (done). lease has
+        // neither so it's excluded. This is the OR case the rail combinator
+        // toggle exposes.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let urgent = tags.iter().find(|t| t.name == "urgent").unwrap().id;
+        let done = tags.iter().find(|t| t.name == "done").unwrap().id;
+        let f = LibraryFilter {
+            tag_ids: vec![urgent, done],
+            tag_match: TagMatch::Any,
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 2);
+        let paths: Vec<_> = rows.iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains(&"/papers/alpha.pdf"));
+        assert!(paths.contains(&"/papers/beta.pdf"));
+        assert!(!paths.contains(&"/contracts/lease.pdf"));
+    }
+
+    #[test]
+    fn query_tag_match_any_vs_all_diverge_on_same_ids() {
+        // Same id set [research, urgent]; Any returns both papers (each has
+        // research), All returns only alpha (the one with both). Proves the
+        // toggle actually changes the result, not just the SQL shape.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let urgent = tags.iter().find(|t| t.name == "urgent").unwrap().id;
+
+        let any = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research, urgent],
+                tag_match: TagMatch::Any,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(any.len(), 2);
+
+        let all = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research, urgent],
+                tag_match: TagMatch::All,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, "/papers/alpha.pdf");
+    }
+
+    #[test]
+    fn query_tag_match_all_tolerates_duplicate_ids() {
+        // A duplicated id in the All list must not raise the HAVING bar past
+        // what a single doc can satisfy (regression guard: a naive len()
+        // count would require COUNT(DISTINCT)=2 for one real tag → 0 rows).
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let f = LibraryFilter {
+            tag_ids: vec![research, research],
+            tag_match: TagMatch::All,
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        // research is on alpha + beta → both returned despite the dup.
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn query_tag_match_any_single_tag_equals_all_single_tag() {
+        // With one tag id, Any and All must agree (no combinator can change
+        // a one-element set). Belt-and-suspenders on the boundary.
+        let db = seed();
+        let tags = db.list_tags().unwrap();
+        let research = tags.iter().find(|t| t.name == "research").unwrap().id;
+        let any = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research],
+                tag_match: TagMatch::Any,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let all = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![research],
+                tag_match: TagMatch::All,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(any.len(), 2);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
     fn query_sort_title_asc() {
         let db = seed();
         let rows = query_documents(
@@ -507,6 +699,23 @@ mod tests {
         assert_eq!(f.tag_ids, vec![1, 2]);
         assert_eq!(f.title_substring.as_deref(), Some("tax"));
         assert!(f.clauses.is_none());
+        // A pre-v3.48 blob has no `tag_match` → must default to All so old
+        // stored filters keep their historical intersection semantics.
+        assert_eq!(f.tag_match, TagMatch::All);
+    }
+
+    #[test]
+    fn tag_match_roundtrips_json_snake_case() {
+        let f = LibraryFilter {
+            tag_ids: vec![7, 8],
+            tag_match: TagMatch::Any,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        assert!(s.contains("\"tag_match\":\"any\""));
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.tag_match, TagMatch::Any);
+        assert_eq!(back.tag_ids, vec![7, 8]);
     }
 
     #[test]
@@ -682,5 +891,258 @@ mod tests {
         let rows = query_documents(&db, &f_not).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|r| r.folder_id == Some(papers)));
+    }
+
+    #[test]
+    fn query_untagged_clause_returns_only_untagged() {
+        // seed(): alpha + beta are tagged, lease has no tags.
+        let db = seed();
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Untagged],
+            }),
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/contracts/lease.pdf");
+        assert!(rows[0].tags.is_empty());
+    }
+
+    #[test]
+    fn query_tagged_clause_returns_only_tagged() {
+        let db = seed();
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Tagged],
+            }),
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| !r.tags.is_empty()));
+        let paths: Vec<_> = rows.iter().map(|r| r.path.as_str()).collect();
+        assert!(paths.contains(&"/papers/alpha.pdf"));
+        assert!(paths.contains(&"/papers/beta.pdf"));
+    }
+
+    #[test]
+    fn query_untagged_composes_with_folder_clause() {
+        // Untagged AND in /contracts → just lease. Untagged AND in
+        // /papers → nothing (both papers are tagged).
+        let db = seed();
+        let folders = db.list_folders().unwrap();
+        let papers = folders.iter().find(|f| f.path == "/papers").unwrap().id;
+        let contracts = folders.iter().find(|f| f.path == "/contracts").unwrap().id;
+
+        let f_contracts = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![
+                    FilterClause::Untagged,
+                    FilterClause::Folder { id: contracts },
+                ],
+            }),
+            ..Default::default()
+        };
+        let rows = query_documents(&db, &f_contracts).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/contracts/lease.pdf");
+
+        let f_papers = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Untagged, FilterClause::Folder { id: papers }],
+            }),
+            ..Default::default()
+        };
+        assert_eq!(query_documents(&db, &f_papers).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn untagged_clause_roundtrips_json() {
+        let f = LibraryFilter {
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::And,
+                clauses: vec![FilterClause::Untagged, FilterClause::Tagged],
+            }),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert_eq!(f.clauses, back.clauses);
+        // Unit variants serialize as `{"type":"untagged"}` (internally tagged).
+        assert!(s.contains("\"type\":\"untagged\""));
+        assert!(s.contains("\"type\":\"tagged\""));
+    }
+
+    // ─── v3.55.0 Atlas Doc-Inspector — starred_only + Starred clause ───
+
+    fn star_doc(db: &mut LibraryDb, path: &str) -> i64 {
+        let f = db.add_folder("/sf").ok();
+        let id = db
+            .upsert_document(f.map(|x| x.id), path, None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(id, true).unwrap();
+        id
+    }
+
+    fn unstar_doc(db: &mut LibraryDb, path: &str) -> i64 {
+        let f = db.add_folder("/sf").ok();
+        db.upsert_document(f.map(|x| x.id), path, None, "h", 1, 1, None, None)
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn starred_only_returns_only_starred_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        star_doc(&mut db, "/sf/a.pdf");
+        unstar_doc(&mut db, "/sf/b.pdf");
+        star_doc(&mut db, "/sf/c.pdf");
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                starred_only: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.starred));
+    }
+
+    #[test]
+    fn starred_only_false_is_a_noop() {
+        // Default LibraryFilter (starred_only=false) returns starred AND
+        // unstarred — the field is opt-in, never reduces results when off.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        star_doc(&mut db, "/sf/a.pdf");
+        unstar_doc(&mut db, "/sf/b.pdf");
+        let rows = query_documents(&db, &LibraryFilter::default()).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn starred_only_combines_with_tag_filter() {
+        // starred_only is AND-combined with tag filtering — a starred doc
+        // without the requested tag is still excluded.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let t = db.add_tag("urgent", None).unwrap();
+        let f = db.add_folder("/sf").unwrap();
+        let a = db
+            .upsert_document(Some(f.id), "/sf/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(a, true).unwrap();
+        db.set_doc_tags(a, &[t.id]).unwrap();
+        // Starred but no matching tag.
+        let b = db
+            .upsert_document(Some(f.id), "/sf/b.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(b, true).unwrap();
+        // Untagged starred + tag filter -> only `a` matches.
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                tag_ids: vec![t.id],
+                starred_only: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/sf/a.pdf");
+    }
+
+    #[test]
+    fn starred_clause_in_or_group() {
+        // `starred OR tag:urgent` returns docs that are starred OR carry
+        // the tag — the Starred/NotStarred clause variants slot into the
+        // clause tree like any other predicate.
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        let t = db.add_tag("urgent", None).unwrap();
+        let f = db.add_folder("/sf").unwrap();
+        // a: starred only
+        let a = db
+            .upsert_document(Some(f.id), "/sf/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_starred(a, true).unwrap();
+        // b: tagged only
+        let b = db
+            .upsert_document(Some(f.id), "/sf/b.pdf", None, "h", 1, 1, None, None)
+            .unwrap()
+            .id;
+        db.set_doc_tags(b, &[t.id]).unwrap();
+        // c: neither — should NOT match.
+        db.upsert_document(Some(f.id), "/sf/c.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                clauses: Some(FilterGroup {
+                    combinator: FilterCombinator::Or,
+                    clauses: vec![FilterClause::Starred, FilterClause::Tag { id: t.id }],
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        let mut paths: Vec<_> = rows.iter().map(|r| r.path.clone()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["/sf/a.pdf", "/sf/b.pdf"]);
+    }
+
+    #[test]
+    fn not_starred_clause_filters_out_starred_rows() {
+        let mut db = LibraryDb::open_in_memory().unwrap();
+        star_doc(&mut db, "/sf/a.pdf");
+        unstar_doc(&mut db, "/sf/b.pdf");
+        let rows = query_documents(
+            &db,
+            &LibraryFilter {
+                clauses: Some(FilterGroup {
+                    combinator: FilterCombinator::And,
+                    clauses: vec![FilterClause::NotStarred],
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "/sf/b.pdf");
+    }
+
+    #[test]
+    fn starred_filter_serde_round_trip() {
+        // starred_only + Starred clause both survive a JSON round-trip
+        // so pre-v3.55 saved smart collections that didn't carry the field
+        // still parse, and a v3.55+ one with the field re-serialises to
+        // exactly the same shape.
+        let f = LibraryFilter {
+            starred_only: true,
+            clauses: Some(FilterGroup {
+                combinator: FilterCombinator::Or,
+                clauses: vec![FilterClause::Starred, FilterClause::NotStarred],
+            }),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&f).unwrap();
+        let back: LibraryFilter = serde_json::from_str(&s).unwrap();
+        assert!(back.starred_only);
+        assert_eq!(f.clauses, back.clauses);
+        assert!(s.contains("\"starred_only\":true"));
+        assert!(s.contains("\"type\":\"starred\""));
+        assert!(s.contains("\"type\":\"not_starred\""));
+        // A pre-v3.55 filter that omits the field deserialises as false.
+        let legacy = r#"{"folder_id":null,"tag_ids":[],"title_substring":null,"limit":null,"sort":"added_desc"}"#;
+        let parsed: LibraryFilter = serde_json::from_str(legacy).unwrap();
+        assert!(!parsed.starred_only);
     }
 }

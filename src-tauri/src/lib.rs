@@ -24,7 +24,7 @@ use ai::config::{
 use ai::diff_summary::{beacon_diff_summary as do_beacon_diff_summary, BeaconDiffSummary};
 use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
-    IndexReport, IndexStats, SearchHit,
+    IndexReport, IndexStats, IndexedPdfRecord, ModelBucket, SearchHit,
 };
 use ai::glossary::{
     build_glossary_from_path as do_beacon_build_glossary, GlossaryOpts, GlossaryReport,
@@ -92,11 +92,14 @@ use pdf::legal_stamp::{
 };
 use pdf::library::{
     auto_tag_run_many as do_auto_tag_run_many, auto_tag_run_one as do_auto_tag_run_one,
-    default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
-    ocr_queue_run_all as do_ocr_queue_run_all, ocr_queue_run_one as do_ocr_queue_run_one,
+    default_db_path as library_default_db_path, ocr_queue_list_failed as do_ocr_queue_list_failed,
+    ocr_queue_list_pending as do_ocr_queue_list,
+    ocr_queue_requeue_all_failed as do_ocr_queue_requeue_all_failed,
+    ocr_queue_requeue_doc as do_ocr_queue_requeue_doc, ocr_queue_run_all as do_ocr_queue_run_all,
+    ocr_queue_run_one as do_ocr_queue_run_one, ocr_queue_stats as do_ocr_queue_stats,
     query_documents as do_query_documents, scan_folder as do_scan_folder, AutoTagRunResult,
     DocumentRecord, FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult,
-    ScanReport, TagRecord,
+    OcrQueueStats, ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
@@ -2948,6 +2951,85 @@ fn slab_beacon_index_forget(pdf_hash: String) -> CmdResult<()> {
     index.forget(&pdf_hash).into()
 }
 
+// ---------- Beacon Cache Inspector (v3.54.0 round-7) ----------
+
+/// List every PDF currently in the embedding index, newest first, with
+/// per-row chunk count joined in. Powers the inspector's main table.
+#[tauri::command]
+fn slab_beacon_index_list() -> CmdResult<Vec<IndexedPdfRecord>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.list_indexed().into()
+}
+
+/// Bulk-forget every PDF whose hash is in `pdf_hashes`. Returns the
+/// count actually removed; unknown hashes silently skip (tolerant wire
+/// contract for the inspector's multi-select).
+#[tauri::command]
+fn slab_beacon_index_forget_many(pdf_hashes: Vec<String>) -> CmdResult<usize> {
+    let mut index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget_many(&pdf_hashes).into()
+}
+
+/// Per-embed-model bucket counts in one round-trip. The inspector
+/// renders one tile per bucket and surfaces a "mixed model" warning
+/// when len() > 1.
+#[tauri::command]
+fn slab_beacon_index_stats_by_model() -> CmdResult<Vec<ModelBucket>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.stats_by_model().into()
+}
+
+/// Every indexed PDF whose `path` no longer points at a readable file.
+/// The inspector turns this into a "Forget all N stale" affordance.
+#[tauri::command]
+fn slab_beacon_index_find_stale() -> CmdResult<Vec<IndexedPdfRecord>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.find_stale().into()
+}
+
+/// Bulk-forget every stale (missing-on-disk) PDF in one transaction.
+/// Returns the count actually removed.
+#[tauri::command]
+fn slab_beacon_index_forget_stale() -> CmdResult<usize> {
+    let mut index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget_stale().into()
+}
+
 // ---------- Beacon PII Highlighter (Slice 8) ----------
 
 impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
@@ -3258,6 +3340,167 @@ fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
     result.into()
 }
 
+/// The most recently *applied* tags, newest first (each listed once by its
+/// newest application time). Powers the "Recently used" quick-chips when
+/// tagging a document so the common tags are one click away. `limit` defaults
+/// to 8 when omitted. v3.44.0 Atlas Recent-Tags.
+#[tauri::command]
+fn slab_library_recently_used_tags(limit: Option<u32>) -> CmdResult<Vec<TagRecord>> {
+    let result = (|| -> Result<Vec<TagRecord>, LibraryError> {
+        let db = open_library_db()?;
+        db.recently_used_tags(limit.unwrap_or(8) as usize)
+    })();
+    result.into()
+}
+
+/// Document count per tag as `(tag_id, count)` pairs (every tag once; unused
+/// tags report 0). Powers the muted usage count beside each tag in the rail and
+/// the "sort by most used" ordering. One GROUP BY round-trip, not N queries.
+/// v3.46.0 Atlas Tag-Usage-Counts.
+#[tauri::command]
+fn slab_library_tag_usage_counts() -> CmdResult<Vec<(i64, i64)>> {
+    let result = (|| -> Result<Vec<(i64, i64)>, LibraryError> {
+        let db = open_library_db()?;
+        db.tag_usage_counts()
+    })();
+    result.into()
+}
+
+/// Delete every tag attached to zero documents, returning the number removed.
+/// Reclaims the residue merges and bulk-removes leave behind (a tag whose last
+/// document link was detached lingers in the rail at count 0). Tags carrying
+/// even one document are untouched. Emits `library-changed` on a non-empty
+/// cleanup so the rail self-heals. v3.47.0 Atlas Tag-Cleanup.
+#[tauri::command]
+fn slab_library_delete_unused_tags(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        db.delete_unused_tags()
+    })();
+    if matches!(&result, Ok(removed) if *removed > 0) {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+// -----------------------------------------------------------------
+// v3.50.0 "Atlas Saved Views" — one-click restorable rail filters.
+// Distinct from personal_presets (which materialize into a smart
+// collection) and from smart_collections (which own a doc list) —
+// a saved view RESTORES the rail's LibraryFilter and re-runs it live.
+// -----------------------------------------------------------------
+
+#[tauri::command]
+fn slab_library_saved_view_save(
+    app: tauri::AppHandle,
+    spec: pdf::library::saved_views::NewSavedView,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::save_view(&mut db, &spec)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_list() -> CmdResult<Vec<pdf::library::saved_views::SavedViewRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::saved_views::list_views(&db)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::delete_view(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    new_name: String,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::rename_view(&mut db, id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_update_filter(
+    app: tauri::AppHandle,
+    id: i64,
+    filter: pdf::library::query::LibraryFilter,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::update_view_filter(&mut db, id, &filter)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_duplicate(
+    app: tauri::AppHandle,
+    id: i64,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::duplicate_view(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_set_pinned(
+    app: tauri::AppHandle,
+    id: i64,
+    pinned: bool,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::set_view_pinned(&mut db, id, pinned)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_reorder(app: tauri::AppHandle, order: Vec<i64>) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::reorder_views(&mut db, &order)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -3294,8 +3537,12 @@ fn slab_collection_list() -> CmdResult<Vec<pdf::library::collections::Collection
 }
 
 #[tauri::command]
-fn slab_collection_rename(app: tauri::AppHandle, id: i64, name: String) -> CmdResult<()> {
-    let result = (|| -> Result<(), LibraryError> {
+fn slab_collection_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    name: String,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
         let mut db = open_library_db()?;
         pdf::library::collections::rename_collection(&mut db, id, &name)
     })();
@@ -3310,6 +3557,52 @@ fn slab_collection_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         pdf::library::collections::delete_collection(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_set_color(
+    app: tauri::AppHandle,
+    id: i64,
+    color: Option<String>,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::set_collection_color(&mut db, id, color.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_reorder(app: tauri::AppHandle, ordered_ids: Vec<i64>) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::reorder_collections(&mut db, &ordered_ids)
+    })();
+    // Only emit if something actually moved; spamming library-changed for
+    // a no-op reorder would refresh every subscriber for nothing.
+    let did_move = matches!(&result, Ok(n) if *n > 0);
+    if did_move {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_duplicate(
+    app: tauri::AppHandle,
+    source_id: i64,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::duplicate_collection(&mut db, source_id)
     })();
     if result.is_ok() {
         emit_library_changed(&app);
@@ -3675,6 +3968,203 @@ fn slab_library_search_log_count() -> CmdResult<i64> {
     result.into()
 }
 
+/// Most-recent N library search rows from the rolling log, newest first.
+/// Powers the LibrarySearchPanel's "Recent searches" chip strip — one click
+/// to re-run a prior query. `limit` clamps to `1..=50`; default 8.
+/// v3.52.0 Atlas Recent-Searches.
+#[tauri::command]
+fn slab_library_recent_searches(
+    limit: Option<u32>,
+) -> CmdResult<Vec<pdf::library::search_log::QueryRow>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let cap = limit.unwrap_or(8).clamp(1, 50) as usize;
+        pdf::library::search_log::recent_queries(&db, cap)
+    })();
+    result.into()
+}
+
+/// Snapshot of the FTS5 index size: distinct indexed docs + total pages.
+/// Powers the LibrarySearchPanel's status footer so the user can see at
+/// a glance how much of their library is actually searchable. Two cheap
+/// COUNTs; safe to call on every panel mount + after every scan.
+/// v3.55.0 Atlas Index-Status.
+#[tauri::command]
+fn slab_library_index_stats() -> CmdResult<pdf::library::search::IndexStats> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::search::index_stats(db.conn())
+    })();
+    result.into()
+}
+
+/// Wipe every row from `library_search_log`. Returns the count removed so
+/// the UI can decide whether to toast or stay quiet. Suggestion-cluster
+/// dismissals live in a sibling table and are NOT touched.
+/// v3.52.0 Atlas Recent-Searches.
+#[tauri::command]
+fn slab_library_clear_search_history(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let n = pdf::library::search_log::clear(&db)?;
+        if n > 0 {
+            emit_library_changed(&app);
+        }
+        Ok(n)
+    })();
+    result.into()
+}
+
+// ---------------------------------------------------------------------
+// v3.39.0 "Atlas Tag-Suggest" — per-document heuristic tag suggestions.
+// ---------------------------------------------------------------------
+
+/// Suggest up to 5 tags for a single document, computed locally from its
+/// title/filename, the existing tag vocabulary, co-occurrence stats, and a
+/// built-in domain dictionary. Returns `[]` if nothing plausible.
+#[tauri::command]
+fn slab_library_tag_suggestions_for_doc(
+    doc_id: i64,
+) -> CmdResult<Vec<pdf::library::tag_suggest::TagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_tags_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Suggest tags for every untagged document (bulk). Skips docs that yield
+/// no suggestions. `limit` caps how many untagged docs are scanned.
+#[tauri::command]
+fn slab_library_tag_suggestions_bulk_for_untagged(
+    limit: Option<usize>,
+) -> CmdResult<Vec<pdf::library::tag_suggest::BulkTagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_for_untagged(&db, limit.unwrap_or(50))
+    })();
+    result.into()
+}
+
+/// Accept a suggested tag: find-or-create it (auto-colored) and attach it
+/// to the document, unioned with its existing tags.
+#[tauri::command]
+fn slab_library_tag_suggestion_accept(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    tag_name: String,
+) -> CmdResult<pdf::library::TagRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::tag_suggest::accept_tag_suggestion(&mut db, doc_id, &tag_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Dismiss a suggested tag for a document so it never resurfaces there.
+#[tauri::command]
+fn slab_library_tag_suggestion_dismiss(doc_id: i64, tag_name: String) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::dismiss_tag_suggestion(&db, doc_id, &tag_name)
+    })();
+    result.into()
+}
+
+/// Clear all dismissed tag suggestions for a document (settings escape
+/// hatch — "show me suggestions again").
+#[tauri::command]
+fn slab_library_tag_suggestion_undismiss_all(doc_id: i64) -> CmdResult<usize> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::undismiss_all_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Bulk-accept N (doc_id, tag_name) pairs in one round-trip. Per-item
+/// failure semantics — a malformed name in item 12 fails item 12 alone,
+/// the rest still attach. Emits a single `library-changed` event after
+/// the batch so the UI refreshes once instead of N times.
+#[tauri::command]
+fn slab_library_tag_suggestions_accept_bulk(
+    app: tauri::AppHandle,
+    items: Vec<pdf::library::tag_suggest::AcceptItem>,
+) -> CmdResult<pdf::library::tag_suggest::BulkAcceptResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::tag_suggest::accept_tag_suggestions_bulk(&mut db, &items)
+    })();
+    if let Ok(r) = &result {
+        if !r.attached.is_empty() {
+            emit_library_changed(&app);
+        }
+    }
+    result.into()
+}
+
+/// List every dismissed tag suggestion for a doc, newest first. Powers
+/// the inspector's "Hidden suggestions" disclosure so the user can
+/// review what they've explicitly hidden and undo a single dismissal
+/// without wiping the rest.
+#[tauri::command]
+fn slab_library_tag_suggestions_list_dismissed(
+    doc_id: i64,
+) -> CmdResult<Vec<pdf::library::tag_suggest::DismissedSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::list_dismissed_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Clear ONE dismissal for a (doc, tag) pair. Returns `true` if a row
+/// was deleted; `false` if no such dismissal existed. The next call to
+/// `suggest_tags_for_doc` will re-include that tag in the candidate set.
+#[tauri::command]
+fn slab_library_tag_suggestion_undismiss_one(doc_id: i64, tag_name: String) -> CmdResult<bool> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::undismiss_one_for_doc(&db, doc_id, &tag_name)
+    })();
+    result.into()
+}
+
+/// Bulk suggester over any [`LibraryFilter`]. Generalises
+/// `slab_library_tag_suggestions_bulk_for_untagged` so the review surface
+/// can aim at e.g. "Starred + tagged `discovery-2026`" rather than only
+/// the untagged shortcut. `limit` overrides any filter-embedded limit so
+/// the scan stays bounded.
+#[tauri::command]
+fn slab_library_tag_suggestions_bulk_for_filter(
+    filter: pdf::library::query::LibraryFilter,
+    limit: Option<usize>,
+) -> CmdResult<Vec<pdf::library::tag_suggest::BulkTagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_for_filter(&db, &filter, limit.unwrap_or(50))
+    })();
+    result.into()
+}
+
+/// Compact stats for the tag-suggest review badge — `untagged_docs_with_
+/// suggestions` powers the toolbar count; `dismissed_total` shows up in
+/// the settings escape hatch. `sample_cap` defaults to 200 so the badge
+/// renders e.g. "200+" upstream when the working set is huge.
+#[tauri::command]
+fn slab_library_tag_suggestion_stats(
+    sample_cap: Option<usize>,
+) -> CmdResult<pdf::library::tag_suggest::TagSuggestionStats> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggestion_stats(&db, sample_cap.unwrap_or(200))
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -3726,6 +4216,152 @@ fn slab_library_add_tag(
     result.into()
 }
 
+/// Update an existing tag's color (or clear it with `null`). Returns the
+/// updated tag row so the UI can swap it in without a full refetch. Rejects
+/// colors that aren't `#hex` / `hsl()` / `rgb()` shapes. v3.42.0 Atlas
+/// Tag-Color editing.
+#[tauri::command]
+fn slab_library_set_tag_color(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    color: Option<String>,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_tag_color(tag_id, color.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Rename a tag everywhere it is used. Returns the updated tag row so the UI
+/// can swap it in without a full refetch. Rejects an empty name or a name
+/// already taken by a different tag. v3.43.0 Atlas Tag-Rename.
+#[tauri::command]
+fn slab_library_rename_tag(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    new_name: String,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.rename_tag(tag_id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Set (or clear) the freeform description on a tag. Pass `null` — or any
+/// string that trims to empty — to clear it back to NULL. Returns the updated
+/// tag row so the UI can swap it in without a full refetch. The backend trims
+/// the input and rejects oversized text (cap is `MAX_TAG_DESCRIPTION_LEN`
+/// Unicode scalars). v3.51.0 Atlas Tag-Descriptions.
+#[tauri::command]
+fn slab_library_set_tag_description(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    description: Option<String>,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_tag_description(tag_id, description.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Override a library document's displayed `title`. Pass `null` — or any string
+/// that trims to empty — to clear it back to NULL so the LibraryPanel falls
+/// back to the file's basename. Returns the refreshed [`DocumentRecord`] (with
+/// tags eager-loaded) so the UI can splice the card without a full
+/// list_documents round-trip. The backend trims input and rejects oversized
+/// text (cap is `MAX_DOC_TITLE_LEN` Unicode scalars). v3.55.0 Atlas Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_title(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    title: Option<String>,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_title(doc_id, title.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Set (or clear) the freeform `notes` on a library document. Pass `null` — or
+/// any string that trims to empty — to clear the column back to NULL so the
+/// inspector falls back to the empty-state placeholder. Returns the refreshed
+/// [`DocumentRecord`] (with tags eager-loaded) so the Doc-Inspector drawer can
+/// repaint without an extra `listDocuments` round-trip. The backend trims input
+/// and rejects oversized text (cap is `MAX_DOC_NOTES_LEN` Unicode scalars).
+/// v3.55.0 Atlas Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_notes(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    notes: Option<String>,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_notes(doc_id, notes.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Toggle the `starred` flag on a library document. Idempotent. Returns the
+/// refreshed [`DocumentRecord`] (with tags eager-loaded) so the UI can splice
+/// the card without an extra `listDocuments` round-trip. v3.55.0 Atlas
+/// Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_starred(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    starred: bool,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_starred(doc_id, starred)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Fold `source_id` into `target_id`: re-point every document link from the
+/// source tag to the target, coalescing duplicates by the newer `applied_at`,
+/// then delete the source tag. Returns the surviving target row. This is the
+/// deliberate "make these the same tag" path that `rename_tag` rejects.
+/// v3.45.0 Atlas Tag-Merge.
+#[tauri::command]
+fn slab_library_merge_tags(
+    app: tauri::AppHandle,
+    source_id: i64,
+    target_id: i64,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.merge_tags(source_id, target_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_set_doc_tags(
     app: tauri::AppHandle,
@@ -3759,6 +4395,44 @@ fn slab_library_remove_tag(app: tauri::AppHandle, tag_id: i64) -> CmdResult<()> 
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         db.remove_tag(tag_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Bulk apply a tag (by name, find-or-created) across many documents in one
+/// atomic action. Returns the resolved tag plus affected/total counts so the
+/// UI can report "Applied to N of M". v3.41.0 Atlas Bulk Tag-Apply.
+#[tauri::command]
+fn slab_library_bulk_apply_tag(
+    app: tauri::AppHandle,
+    tag_name: String,
+    doc_ids: Vec<i64>,
+) -> CmdResult<pdf::library::bulk_tag::BulkTagResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::bulk_tag::apply_tag_to_docs(&mut db, &tag_name, &doc_ids)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Bulk remove a tag (by id) from many documents in one atomic action. The
+/// tag row itself is preserved — only the named doc links are detached.
+/// v3.41.0 Atlas Bulk Tag-Apply.
+#[tauri::command]
+fn slab_library_bulk_remove_tag(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    doc_ids: Vec<i64>,
+) -> CmdResult<pdf::library::bulk_tag::BulkTagResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::bulk_tag::remove_tag_from_docs(&mut db, tag_id, &doc_ids)
     })();
     if result.is_ok() {
         emit_library_changed(&app);
@@ -3839,6 +4513,61 @@ fn slab_library_ocr_queue_run_all(
     })();
     if result.is_ok() {
         emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Per-`ocr_state` count snapshot for the OCR Queue Panel's dashboard.
+/// Pure read; safe to poll. v3.52.0 Atlas OCR-Queue Slice 3.
+#[tauri::command]
+fn slab_library_ocr_queue_stats() -> CmdResult<OcrQueueStats> {
+    let result = (|| -> Result<OcrQueueStats, LibraryError> {
+        let db = open_library_db()?;
+        do_ocr_queue_stats(&db)
+    })();
+    result.into()
+}
+
+/// Every `ocr_failed` document, newest first, with `ocr_error`
+/// populated so the failure inbox can render a reason per row.
+/// v3.52.0 Atlas OCR-Queue Slice 4.
+#[tauri::command]
+fn slab_library_ocr_queue_list_failed() -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<Vec<DocumentRecord>, LibraryError> {
+        let db = open_library_db()?;
+        do_ocr_queue_list_failed(&db)
+    })();
+    result.into()
+}
+
+/// Re-queue one document — flip `ocr_done` / `ocr_failed` / `ocr_pending`
+/// back to `scanned` and clear `ocr_error` + `ocr_output_path` so the
+/// next `run_one` picks it up fresh. Returns the updated row.
+/// v3.52.0 Atlas OCR-Queue Slice 2.
+#[tauri::command]
+fn slab_library_ocr_queue_requeue(app: tauri::AppHandle, doc_id: i64) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_requeue_doc(&mut db, doc_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Re-queue every `ocr_failed` document in one shot. Returns the number
+/// of rows that flipped. v3.52.0 Atlas OCR-Queue Slice 2 companion.
+#[tauri::command]
+fn slab_library_ocr_queue_requeue_all_failed(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_requeue_all_failed(&mut db)
+    })();
+    if let Ok(n) = &result {
+        if *n > 0 {
+            emit_library_changed(&app);
+        }
     }
     result.into()
 }
@@ -4392,27 +5121,57 @@ async fn slab_marketplace_index() -> MarketplaceFetchResult {
 ///
 /// The frontend is expected to have already filtered out untrusted
 /// entries; we re-verify here as defence-in-depth.
+///
+/// Side effect (v3.39 Slice 54): every outcome (signature failure,
+/// download / extract failure, success / update success) is recorded
+/// as one row in [`marketplace::InstallLog`] at
+/// `~/.slab/marketplace-history.sqlite`. Log open failures are
+/// swallowed (warned to stderr) — losing audit history must never
+/// block an install the user just clicked.
 #[tauri::command]
 async fn slab_marketplace_install(
     entry: marketplace::IndexEntry,
     reg: tauri::State<'_, plugins::PluginRegistry>,
 ) -> Result<marketplace::InstallReport, String> {
+    // Capture prior version BEFORE the install (the install pipeline
+    // doesn't read manifests; the registry does). This is the value
+    // we'll log as `prior_version` on an update row.
+    let prior_version = reg
+        .get(&entry.id)
+        .and_then(|p| p.manifest.map(|m| m.version));
+
     // 1) Signature check — never trust unsigned input.
-    marketplace::verify_with_maintainer_key(&entry)
-        .map_err(|e| format!("signature check failed: {e}"))?;
+    if let Err(e) = marketplace::verify_with_maintainer_key(&entry) {
+        let msg = format!("signature check failed: {e}");
+        record_install_failure(&entry.id, &entry.version, &msg);
+        return Err(msg);
+    }
 
     // 2) Resolve plugins root (HOME-rooted).
-    let plugins_root = plugins::default_plugins_root()
-        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    let plugins_root = match plugins::default_plugins_root() {
+        Some(p) => p,
+        None => {
+            let msg = "HOME env var not set; cannot locate ~/.slab/plugins".to_string();
+            record_install_failure(&entry.id, &entry.version, &msg);
+            return Err(msg);
+        }
+    };
     if let Err(e) = std::fs::create_dir_all(&plugins_root) {
-        return Err(format!("could not create plugins dir: {e}"));
+        let msg = format!("could not create plugins dir: {e}");
+        record_install_failure(&entry.id, &entry.version, &msg);
+        return Err(msg);
     }
 
     // 3) Download + extract via the install pipeline.
     let client = marketplace::default_client();
-    let report = marketplace::install_from_entry(&client, &entry, &plugins_root)
-        .await
-        .map_err(|e| e.to_string())?;
+    let report = match marketplace::install_from_entry(&client, &entry, &plugins_root).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            record_install_failure(&entry.id, &entry.version, &msg);
+            return Err(msg);
+        }
+    };
 
     // 4) Refresh the registry so the new plugin appears in the UI.
     let enabled = plugins::default_state_path()
@@ -4421,6 +5180,31 @@ async fn slab_marketplace_install(
         .unwrap_or_default();
     reg.discover(&plugins_root, &enabled);
 
+    // 5) Append a success row. The install pipeline's
+    // `replaced_existing` flag is the source of truth for whether we
+    // overwrote a prior copy on disk; the registry-derived
+    // `prior_version` is what the UI displays. Both can drift if the
+    // user mutated `~/.slab/plugins/` out of band — we trust the
+    // pipeline flag for the action discriminant.
+    let logged_prior = if report.replaced_existing {
+        prior_version.as_deref()
+    } else {
+        None
+    };
+    if let Err(e) = open_install_log_and(|log| {
+        log.record_install(
+            &report.id,
+            &report.version,
+            "marketplace",
+            report.bytes_written,
+            report.files_extracted,
+            logged_prior,
+        )
+        .map(|_| ())
+    }) {
+        eprintln!("[slab] install log write failed: {e}");
+    }
+
     Ok(report)
 }
 
@@ -4428,11 +5212,20 @@ async fn slab_marketplace_install(
 /// the install module's uninstall is pure-filesystem. After removal,
 /// re-discover so the registry drops the entry. Returns `false` if the
 /// plugin wasn't installed in the first place.
+///
+/// Side effect (v3.39 Slice 54): on successful removal we append one
+/// `uninstall` row to [`marketplace::InstallLog`] carrying the version
+/// that was just deleted (resolved from the registry BEFORE
+/// removal). Log open failures are swallowed.
 #[tauri::command]
 fn slab_marketplace_uninstall(
     id: String,
     reg: tauri::State<'_, plugins::PluginRegistry>,
 ) -> Result<bool, String> {
+    // Capture prior version BEFORE removing — once the dir is gone
+    // the registry can't tell us what version we just deleted.
+    let prior_version = reg.get(&id).and_then(|p| p.manifest.map(|m| m.version));
+
     let plugins_root = plugins::default_plugins_root()
         .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
     let removed = marketplace::uninstall_plugin(&plugins_root, &id).map_err(|e| e.to_string())?;
@@ -4442,8 +5235,209 @@ fn slab_marketplace_uninstall(
             .map(plugins::read_enabled_state)
             .unwrap_or_default();
         reg.discover(&plugins_root, &enabled);
+
+        // Log the uninstall. If the plugin had no readable manifest
+        // (registry returned None for version), use the literal
+        // "unknown" so the row is still queryable by id.
+        let ver = prior_version.as_deref().unwrap_or("unknown");
+        if let Err(e) = open_install_log_and(|log| log.record_uninstall(&id, ver).map(|_| ())) {
+            eprintln!("[slab] install log write failed: {e}");
+        }
     }
     Ok(removed)
+}
+
+/// Open the default install log, run `f` against it, return the
+/// result. Centralises the open + path-resolve boilerplate so the
+/// install / uninstall commands stay tight. Errors propagate as
+/// [`marketplace::InstallLogError`] so the caller can decide whether
+/// to surface or swallow.
+fn open_install_log_and<F>(f: F) -> Result<(), marketplace::InstallLogError>
+where
+    F: FnOnce(&mut marketplace::InstallLog) -> Result<(), marketplace::InstallLogError>,
+{
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path)?;
+    f(&mut log)
+}
+
+/// Record an install/update failure to the install log. Best-effort:
+/// any failure to open or write the log is logged to stderr and
+/// swallowed — we never want a logging failure to mask the install
+/// failure being reported back to the user.
+fn record_install_failure(plugin_id: &str, version: &str, error_msg: &str) {
+    if let Err(e) = open_install_log_and(|log| {
+        log.record_failure(plugin_id, version, error_msg)
+            .map(|_| ())
+    }) {
+        eprintln!("[slab] install log failure write failed: {e}");
+    }
+}
+
+// ─── Install log read surface (v3.39 Slice 55) ──────────────────────
+
+/// Per-plugin install/uninstall/failure timeline, newest first,
+/// capped at `limit`. Returns an empty Vec for unknown plugin ids.
+/// Used by PluginDetailDrawer's Activity section.
+#[tauri::command]
+fn slab_marketplace_install_events(
+    plugin_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<marketplace::InstallEvent>, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.list_events(&plugin_id, limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
+}
+
+/// Corpus-wide recent install events, newest first, capped at `limit`.
+/// Used by the PluginsPanel toolbar "Recent installs" drawer.
+#[tauri::command]
+fn slab_marketplace_install_history_recent(
+    limit: Option<i64>,
+) -> Result<Vec<marketplace::InstallEvent>, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.list_recent(limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
+}
+
+/// Per-plugin counts of each install action kind. Powers the slim
+/// header pill on PluginDetailDrawer's Activity section
+/// ("Installed 3 · 1 update · 0 failures") in one round-trip.
+#[tauri::command]
+fn slab_marketplace_plugin_install_stats(
+    plugin_id: String,
+) -> Result<marketplace::InstallStats, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.install_stats(&plugin_id).map_err(|e| e.to_string())
+}
+
+/// Slim summary of the install log as a whole. Used by the Recent
+/// installs drawer's header to render "N events across X days"
+/// without paging the timeline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallLogSummary {
+    pub total_events: i64,
+    pub distinct_plugins: i64,
+    /// Unix seconds of the oldest row, or `None` if the log is
+    /// empty.
+    pub oldest_occurred_at: Option<i64>,
+}
+
+/// Summary of the install log — total event count, distinct plugin
+/// count, oldest event timestamp. Cheap (three small queries) and
+/// safe to call on every drawer open.
+#[tauri::command]
+fn slab_marketplace_install_log_summary() -> Result<InstallLogSummary, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    Ok(InstallLogSummary {
+        total_events: log.total_event_count().map_err(|e| e.to_string())?,
+        distinct_plugins: log.distinct_plugin_count().map_err(|e| e.to_string())?,
+        oldest_occurred_at: log.oldest_occurred_at().map_err(|e| e.to_string())?,
+    })
+}
+
+/// Trim the install log to events newer than `retain_days` days
+/// before now. Returns the number of rows pruned. Used by the
+/// Recent installs drawer's "Clear older than 90d" affordance and
+/// (later) by a background task on app start.
+///
+/// `retain_days` is clamped to a minimum of 1 so a caller can't
+/// accidentally wipe the whole log via `prune(0)` — to clear it
+/// entirely, the user uses the explicit "Clear all" action (not
+/// shipped here; pruning is the safer default surface).
+#[tauri::command]
+fn slab_marketplace_install_log_prune(retain_days: i64) -> Result<usize, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let days = retain_days.max(1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cutoff = now - days * 86_400;
+    log.prune_older_than(cutoff).map_err(|e| e.to_string())
+}
+
+// ─── Install log export surface (v3.39 Slice 61) ────────────────────
+
+/// Write the install log to disk as RFC-4180 CSV, filtered by an
+/// optional `[since_unix, until_unix]` window. The frontend gathers
+/// the destination from a native save-as dialog and passes the
+/// absolute path here so the Tauri layer owns the disk I/O (the
+/// frontend's @tauri-apps/plugin-fs scope doesn't cover arbitrary
+/// user-chosen paths). Same approach as
+/// `slab_hopper_export_backfill_csv`.
+///
+/// `limit` caps the number of rows written (default = 100_000); the
+/// install log is small in practice but a defensive cap protects
+/// against a runaway log eating a user's disk on export.
+///
+/// Returns the byte count actually written so the UI toast can say
+/// "Exported 42 events (3.1 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+fn slab_marketplace_install_log_export_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let events = log
+        .list_events_between(since_unix, until_unix, limit.unwrap_or(100_000))
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::install_log_to_csv(&events, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the install log to disk as a pretty-printed JSON envelope,
+/// filtered by an optional `[since_unix, until_unix]` window.
+/// Mirrors [`slab_marketplace_install_log_export_csv`] but emits the
+/// [`marketplace::install_log::InstallLogExportEnvelope`] shape (with
+/// schema_version + generated_at_iso + window-bounds + events array).
+///
+/// `limit` caps the number of rows written (same default as CSV).
+/// Returns the byte count actually written.
+///
+/// Idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let events = log
+        .list_events_between(since_unix, until_unix, limit.unwrap_or(100_000))
+        .map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::install_log_to_json(&events, since_unix, until_unix);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -5307,6 +6301,11 @@ pub fn run() {
             slab_beacon_search,
             slab_beacon_index_stats,
             slab_beacon_index_forget,
+            slab_beacon_index_list,
+            slab_beacon_index_forget_many,
+            slab_beacon_index_stats_by_model,
+            slab_beacon_index_find_stale,
+            slab_beacon_index_forget_stale,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
@@ -5319,10 +6318,24 @@ pub fn run() {
             slab_library_list_docs,
             slab_library_search,
             slab_library_list_tags,
+            slab_library_recently_used_tags,
+            slab_library_tag_usage_counts,
+            slab_library_delete_unused_tags,
+            slab_library_saved_view_save,
+            slab_library_saved_view_list,
+            slab_library_saved_view_delete,
+            slab_library_saved_view_rename,
+            slab_library_saved_view_update_filter,
+            slab_library_saved_view_duplicate,
+            slab_library_saved_view_set_pinned,
+            slab_library_saved_view_reorder,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,
             slab_collection_delete,
+            slab_collection_set_color,
+            slab_collection_reorder,
+            slab_collection_duplicate,
             slab_collection_add_docs,
             slab_collection_remove_docs,
             slab_collection_list_docs,
@@ -5346,15 +6359,41 @@ pub fn run() {
             slab_library_suggestions_dismiss,
             slab_library_suggestions_accept,
             slab_library_search_log_count,
+            slab_library_recent_searches,
+            slab_library_clear_search_history,
+            slab_library_index_stats,
+            slab_library_tag_suggestions_for_doc,
+            slab_library_tag_suggestions_bulk_for_untagged,
+            slab_library_tag_suggestion_accept,
+            slab_library_tag_suggestion_dismiss,
+            slab_library_tag_suggestion_undismiss_all,
+            slab_library_tag_suggestions_accept_bulk,
+            slab_library_tag_suggestions_list_dismissed,
+            slab_library_tag_suggestion_undismiss_one,
+            slab_library_tag_suggestions_bulk_for_filter,
+            slab_library_tag_suggestion_stats,
             slab_smart_collection_update,
             slab_library_add_tag,
+            slab_library_set_tag_color,
+            slab_library_rename_tag,
+            slab_library_set_tag_description,
+            slab_library_set_doc_title,
+            slab_library_set_doc_notes,
+            slab_library_set_doc_starred,
+            slab_library_merge_tags,
             slab_library_set_doc_tags,
+            slab_library_bulk_apply_tag,
+            slab_library_bulk_remove_tag,
             slab_library_remove_document,
             slab_library_remove_tag,
             slab_library_rescan_all,
             slab_library_ocr_queue_list_pending,
             slab_library_ocr_queue_run_one,
             slab_library_ocr_queue_run_all,
+            slab_library_ocr_queue_stats,
+            slab_library_ocr_queue_list_failed,
+            slab_library_ocr_queue_requeue,
+            slab_library_ocr_queue_requeue_all_failed,
             slab_library_auto_tag_one,
             slab_library_auto_tag_many,
             windows::slab_window_open,
@@ -5383,6 +6422,13 @@ pub fn run() {
             slab_marketplace_index,
             slab_marketplace_install,
             slab_marketplace_uninstall,
+            slab_marketplace_install_events,
+            slab_marketplace_install_history_recent,
+            slab_marketplace_plugin_install_stats,
+            slab_marketplace_install_log_summary,
+            slab_marketplace_install_log_prune,
+            slab_marketplace_install_log_export_csv,
+            slab_marketplace_install_log_export_json,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,
@@ -5416,7 +6462,10 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_test_rules,
             crate::pdf::hopper::cmds::slab_hopper_plan_backfill,
             crate::pdf::hopper::cmds::slab_hopper_execute_backfill,
+            crate::pdf::hopper::cmds::slab_hopper_execute_backfill_async,
+            crate::pdf::hopper::cmds::slab_hopper_cancel_backfill,
             crate::pdf::hopper::cmds::slab_hopper_list_backfill_runs,
+            crate::pdf::hopper::cmds::slab_hopper_export_backfill_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

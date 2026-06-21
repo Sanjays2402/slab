@@ -31,6 +31,9 @@ export interface TagRecord {
   id: number;
   name: string;
   color: string | null;
+  /** Optional freeform note about the tag (rail + chip tooltip). Trimmed,
+   * `null` when unset. v3.51.0 Atlas Tag-Descriptions. */
+  description: string | null;
 }
 
 /** OCR pipeline state for a document. Mirror of `OCR_STATE_*` constants
@@ -60,6 +63,19 @@ export interface DocumentRecord {
   ocr_state: OcrState;
   /** Where the OCR'd searchable PDF lives, when `ocr_state === "ocr_done"`. */
   ocr_output_path: string | null;
+  /** When `ocr_state === "ocr_failed"`, the captured reason (e.g. "tesseract
+   * not on PATH"). Cleared back to null on a successful re-OCR. Surfaced by
+   * the OCR Queue Panel's failure inbox. v3.52.0 Atlas OCR-Queue. */
+  ocr_error: string | null;
+  /** Per-doc freeform notes shown in the Doc-Inspector drawer. Trimmed,
+   * `null` when unset. Cap is 4000 Unicode scalars at the backend.
+   * v3.55.0 Atlas Doc-Inspector. */
+  notes: string | null;
+  /** Whether the user has starred this document. Defaults to `false` for
+   * pre-v14 rows. Surfaced as a ★ glyph on the card and filterable via
+   * `starred_only` / the `starred` clause variant. v3.55.0 Atlas
+   * Doc-Inspector. */
+  starred: boolean;
   tags: TagRecord[];
 }
 
@@ -82,6 +98,13 @@ export type LibrarySortBy = "added_desc" | "title_asc" | "last_seen_desc";
 export type FilterCombinator = "and" | "or";
 
 /**
+ * Mirror of `pdf::library::query::TagMatch`. Governs how the flat
+ * `tag_ids` list combines: `"all"` requires every tag (AND/intersection,
+ * the historical default), `"any"` requires at least one (OR/union).
+ */
+export type TagMatch = "all" | "any";
+
+/**
  * Mirror of `pdf::library::query::FilterClause`. Tagged with `type` so
  * the frontend can dispatch with a single switch — much friendlier than
  * sniffing for the presence of fields.
@@ -93,6 +116,10 @@ export type FilterClause =
   | { type: "not_folder"; id: number }
   | { type: "title_contains"; value: string }
   | { type: "title_not_contains"; value: string }
+  | { type: "untagged" }
+  | { type: "tagged" }
+  | { type: "starred" }
+  | { type: "not_starred" }
   | { type: "group"; combinator: FilterCombinator; clauses: FilterClause[] };
 
 /** Mirror of `pdf::library::query::FilterGroup`. */
@@ -105,6 +132,12 @@ export interface FilterGroup {
 export interface LibraryFilter {
   folder_id?: number | null;
   tag_ids?: number[];
+  /**
+   * v3.48.0 Atlas Tag-Combinator: how `tag_ids` combine. `"all"` (default,
+   * omitted on the wire) intersects; `"any"` unions. Absent on legacy
+   * filters, which the backend reads as `"all"`.
+   */
+  tag_match?: TagMatch;
   title_substring?: string | null;
   limit?: number | null;
   sort?: LibrarySortBy;
@@ -117,6 +150,13 @@ export interface LibraryFilter {
    * so the JSON matches `FilterClause::Group(FilterGroup)`.
    */
   clauses?: FilterGroup | null;
+  /**
+   * v3.55.0 Atlas Doc-Inspector: when `true`, only starred documents
+   * match. AND-combined with every other constraint (flat fields OR
+   * clause tree). Defaults to `false`; omit on the wire for legacy
+   * compatibility — the backend reads a missing field as `false`.
+   */
+  starred_only?: boolean;
 }
 
 /**
@@ -245,10 +285,124 @@ export async function librarySearch(
 }
 
 
+/**
+ * One row from the rolling library search history.
+ * Newest first when returned from {@link recentLibrarySearches}.
+ * v3.52.0 Atlas Recent-Searches.
+ */
+export interface RecentSearch {
+  id: number;
+  query: string;
+  /** Unix seconds. */
+  ts: number;
+  /** How many hits this query produced the last time it ran. */
+  resultCount: number;
+}
+
+/**
+ * Most-recent N library search rows, newest first. Powers the
+ * LibrarySearchPanel's "Recent searches" chip strip — one click to re-run
+ * a prior query. `limit` clamps backend-side to `1..=50`; default 8.
+ * v3.52.0 Atlas Recent-Searches.
+ */
+export async function recentLibrarySearches(
+  limit?: number,
+): Promise<RecentSearch[]> {
+  const res = await invoke<
+    CmdResult<
+      Array<{ id: number; query: string; ts: number; result_count: number }>
+    >
+  >("slab_library_recent_searches", { limit: limit ?? null });
+  const rows = unwrap(res);
+  return rows.map((r) => ({
+    id: r.id,
+    query: r.query,
+    ts: r.ts,
+    resultCount: r.result_count,
+  }));
+}
+
+/**
+ * Wipe every row from the rolling search log. Returns the number removed
+ * (0 if the log was already empty). Cluster-dismissals (the Atlas-suggest
+ * "don't show me this again" memory) live in a sibling table and are NOT
+ * touched. v3.52.0 Atlas Recent-Searches.
+ */
+export async function clearLibrarySearchHistory(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_clear_search_history",
+  );
+  return unwrap(res);
+}
+
+/**
+ * Snapshot of the FTS5 library index size. Powers the LibrarySearchPanel
+ * status footer so the user can see at-a-glance how many docs + pages
+ * are searchable. Two cheap COUNTs server-side; safe to call frequently.
+ * v3.55.0 Atlas Index-Status.
+ */
+export interface LibraryIndexStats {
+  /** Distinct doc_ids present in library_fts. */
+  docs: number;
+  /** Total fts rows (one per indexed page) across every doc. */
+  pages: number;
+}
+
+export async function libraryIndexStats(): Promise<LibraryIndexStats> {
+  const res = await invoke<CmdResult<{ docs: number; pages: number }>>(
+    "slab_library_index_stats",
+  );
+  return unwrap(res);
+}
+
+
 // ---------- Tags ----------
 
 export async function listTags(): Promise<TagRecord[]> {
   const res = await invoke<CmdResult<TagRecord[]>>("slab_library_list_tags");
+  return unwrap(res);
+}
+
+/**
+ * The most recently *applied* tags, newest first (each listed once by its
+ * newest application time). Surfaced as "Recently used" quick-chips when
+ * tagging a document so the tags you reach for most are one click away.
+ * `limit` defaults to 8 on the backend when omitted.
+ * v3.44.0 Atlas Recent-Tags.
+ */
+export async function recentlyUsedTags(limit?: number): Promise<TagRecord[]> {
+  const res = await invoke<CmdResult<TagRecord[]>>(
+    "slab_library_recently_used_tags",
+    { limit: limit ?? null },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Document count per tag, as a `Map<tagId, count>`. Every tag in the library
+ * is present; a tag attached to no document maps to 0 (the backend LEFT JOINs
+ * so unused tags aren't dropped). One GROUP BY round-trip, not N queries.
+ * Powers the muted usage count beside each tag in the rail and the
+ * "sort by most used" ordering. v3.46.0 Atlas Tag-Usage-Counts.
+ */
+export async function tagUsageCounts(): Promise<Map<number, number>> {
+  const res = await invoke<CmdResult<[number, number][]>>(
+    "slab_library_tag_usage_counts",
+  );
+  return new Map(unwrap(res));
+}
+
+/**
+ * Delete every tag attached to zero documents, returning the number removed.
+ * Reclaims the residue merges and bulk-removes leave behind — a tag whose last
+ * document link was detached lingers in the rail at count 0 until something
+ * prunes it. Tags carrying even one document are untouched, so no document
+ * loses a tag it actually wears. v3.47.0 Atlas Tag-Cleanup.
+ */
+export async function deleteUnusedTags(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_delete_unused_tags",
+  );
   return unwrap(res);
 }
 
@@ -263,6 +417,148 @@ export async function addTag(
   return unwrap(res);
 }
 
+/**
+ * Update an existing tag's color (pass `null` to clear it back to the default
+ * deterministic rendering). Returns the updated tag row. The backend rejects
+ * anything that isn't a `#hex` / `hsl()` / `rgb()` color.
+ * v3.42.0 Atlas Tag-Color editing.
+ */
+export async function setTagColor(
+  tagId: number,
+  color: string | null,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>("slab_library_set_tag_color", {
+    tagId,
+    color,
+  });
+  return unwrap(res);
+}
+
+/**
+ * Rename a tag everywhere it is used. Documents are linked to tags by id, so
+ * the new name shows up on every document and in tag co-occurrence without a
+ * migration. Returns the updated tag row so callers can swap it in without a
+ * full refetch. The backend rejects an empty name or a name already taken by a
+ * different tag. v3.43.0 Atlas Tag-Rename.
+ */
+export async function renameTag(
+  tagId: number,
+  newName: string,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>("slab_library_rename_tag", {
+    tagId,
+    newName,
+  });
+  return unwrap(res);
+}
+
+/**
+ * Set (or clear) the optional freeform description on a tag. Pass `null` — or
+ * any string that trims to empty — to clear the column back to `null`. The
+ * backend trims the input and rejects oversized text (cap is 500 Unicode
+ * scalars). Returns the updated row so callers can swap it in without a
+ * refetch. v3.51.0 Atlas Tag-Descriptions.
+ */
+export async function setTagDescription(
+  tagId: number,
+  description: string | null,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>(
+    "slab_library_set_tag_description",
+    {
+      tagId,
+      description,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Override a library document's displayed `title`. Pass `null` — or any string
+ * that trims to empty on the backend — to clear the column back to `null` so
+ * the basename fallback resumes. Returns the refreshed `DocumentRecord` (with
+ * tags eager-loaded) so the LibraryPanel can splice the card back into the
+ * grid without a full `listDocuments` refetch. The backend trims input and
+ * rejects oversized text (cap is 500 Unicode scalars). v3.55.0 Atlas
+ * Doc-Inspector.
+ */
+export async function setDocumentTitle(
+  docId: number,
+  title: string | null,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_title",
+    {
+      docId,
+      title,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Set (or clear) the freeform `notes` on a library document. Pass `null` — or
+ * any string that trims to empty on the backend — to clear the column back to
+ * `null`. Returns the refreshed `DocumentRecord` (with tags eager-loaded) so
+ * the Doc-Inspector drawer can repaint without an extra `listDocuments`
+ * round-trip. The backend trims input and rejects oversized text (cap is
+ * 4000 Unicode scalars). v3.55.0 Atlas Doc-Inspector.
+ */
+export async function setDocumentNotes(
+  docId: number,
+  notes: string | null,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_notes",
+    {
+      docId,
+      notes,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Toggle the `starred` flag on a library document. Idempotent (setting an
+ * already-`true` flag to `true` returns the row unchanged). Returns the
+ * refreshed `DocumentRecord` (with tags eager-loaded) so the LibraryPanel
+ * can splice the card without an extra `listDocuments` round-trip. v3.55.0
+ * Atlas Doc-Inspector.
+ */
+export async function setDocumentStarred(
+  docId: number,
+  starred: boolean,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_starred",
+    {
+      docId,
+      starred,
+    },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Fold the `sourceId` tag into `targetId`: every document that wore the source
+ * tag ends up wearing the target, duplicate links collapse keeping the newer
+ * `applied_at` (so recently-used order survives), and the source tag row is
+ * deleted. Returns the surviving target row. This is the deliberate "these are
+ * actually the same tag" path — `renameTag` rejects a name collision rather
+ * than merging. The backend errors on an unknown id or merging a tag into
+ * itself. v3.45.0 Atlas Tag-Merge.
+ */
+export async function mergeTags(
+  sourceId: number,
+  targetId: number,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>("slab_library_merge_tags", {
+    sourceId,
+    targetId,
+  });
+  return unwrap(res);
+}
+
 export async function setDocumentTags(
   docId: number,
   tagIds: number[],
@@ -272,6 +568,48 @@ export async function setDocumentTags(
     tagIds,
   });
   unwrap(res);
+}
+
+/** Outcome of a bulk tag apply/remove (mirror of `bulk_tag::BulkTagResult`). */
+export interface BulkTagResult {
+  /** The tag that was applied or removed (resolved / created). */
+  tag: TagRecord;
+  /** Documents whose tag set actually changed. */
+  affected: number;
+  /** Document ids in the request, including no-ops and stale ids. */
+  total: number;
+}
+
+/**
+ * Apply a tag (by name, find-or-created) across many documents in one
+ * atomic action. Returns the resolved tag plus affected/total counts.
+ * v3.41.0 Atlas Bulk Tag-Apply.
+ */
+export async function bulkApplyTag(
+  tagName: string,
+  docIds: number[],
+): Promise<BulkTagResult> {
+  const res = await invoke<CmdResult<BulkTagResult>>(
+    "slab_library_bulk_apply_tag",
+    { tagName, docIds },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Remove a tag (by id) from many documents in one atomic action. The tag
+ * row itself is preserved — only the named doc links are detached.
+ * v3.41.0 Atlas Bulk Tag-Apply.
+ */
+export async function bulkRemoveTag(
+  tagId: number,
+  docIds: number[],
+): Promise<BulkTagResult> {
+  const res = await invoke<CmdResult<BulkTagResult>>(
+    "slab_library_bulk_remove_tag",
+    { tagId, docIds },
+  );
+  return unwrap(res);
 }
 
 export async function removeDocument(docId: number): Promise<void> {
@@ -350,6 +688,79 @@ export async function ocrQueueRunAll(
   const res = await invoke<CmdResult<OcrQueueResult[]>>(
     "slab_library_ocr_queue_run_all",
     { opts: opts ?? null },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Per-`ocr_state` count snapshot for the OCR Queue Panel's dashboard.
+ * v3.52.0 Atlas OCR-Queue Slice 3.
+ */
+export interface OcrQueueStats {
+  /** Pre-classification — legacy import or scanner hasn't seen it. */
+  unknown: number;
+  /** Scanner decided no OCR needed. */
+  text_native: number;
+  /** Image-only PDFs awaiting OCR. */
+  scanned: number;
+  /** Mixed text + scanned pages. */
+  mixed: number;
+  /** Currently being OCR'd. */
+  pending: number;
+  /** OCR succeeded — `ocr_output_path` should be set. */
+  done: number;
+  /** Last OCR attempt failed — `ocr_error` carries the reason. */
+  failed: number;
+  /** scanned + mixed — what the queue would pull next. */
+  pending_total: number;
+  /** Every doc, regardless of state. */
+  total: number;
+}
+
+/** Fetch the queue dashboard counts. Safe to poll; pure read. */
+export async function ocrQueueStats(): Promise<OcrQueueStats> {
+  const res = await invoke<CmdResult<OcrQueueStats>>(
+    "slab_library_ocr_queue_stats",
+  );
+  return unwrap(res);
+}
+
+/**
+ * Every `ocr_failed` document, newest first, with `ocr_error`
+ * populated. Powers the failure inbox on the OCR Queue Panel.
+ * v3.52.0 Atlas OCR-Queue Slice 4.
+ */
+export async function ocrQueueListFailed(): Promise<DocumentRecord[]> {
+  const res = await invoke<CmdResult<DocumentRecord[]>>(
+    "slab_library_ocr_queue_list_failed",
+  );
+  return unwrap(res);
+}
+
+/**
+ * Re-queue a single document by flipping `ocr_done` / `ocr_failed` /
+ * `ocr_pending` back to `scanned` and clearing both the persisted
+ * error and any stale output path. Returns the updated row so callers
+ * can patch their local doc list in place. v3.52.0 Atlas OCR-Queue
+ * Slice 2.
+ */
+export async function ocrQueueRequeue(
+  docId: number,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_ocr_queue_requeue",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Re-queue every `ocr_failed` document in one shot. Returns the count
+ * of rows that flipped. v3.52.0 Atlas OCR-Queue Slice 2 companion.
+ */
+export async function ocrQueueRequeueAllFailed(): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_ocr_queue_requeue_all_failed",
   );
   return unwrap(res);
 }
@@ -471,17 +882,62 @@ export async function collectionList(): Promise<CollectionRecord[]> {
 export async function collectionRename(
   id: number,
   name: string,
-): Promise<void> {
-  const res = await invoke<CmdResult<null>>("slab_collection_rename", {
+): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>("slab_collection_rename", {
     id,
     name,
   });
-  unwrap(res);
+  return unwrap(res);
 }
 
 export async function collectionDelete(id: number): Promise<void> {
   const res = await invoke<CmdResult<null>>("slab_collection_delete", { id });
   unwrap(res);
+}
+
+/**
+ * Update a collection's color (or clear it back to `null`). Returns the
+ * updated row so the caller can swap it into the rail in place without a
+ * round-trip. Pass `null` to clear. v3.53.0 Atlas Collections — Slice 24.
+ */
+export async function collectionSetColor(
+  id: number,
+  color: string | null,
+): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>("slab_collection_set_color", {
+    id,
+    color,
+  });
+  return unwrap(res);
+}
+
+/**
+ * Persist a new rail order for manual collections. Pass the ids in the
+ * order they should appear top-to-bottom. Returns the count of rows whose
+ * sort_order actually changed (so the caller can suppress a refresh when
+ * nothing moved). Unknown ids are silently skipped — a stale id from a
+ * list-vs-reorder race won't crash the UI. v3.53.0 Atlas Collections —
+ * Slice 25.
+ */
+export async function collectionReorder(orderedIds: number[]): Promise<number> {
+  const res = await invoke<CmdResult<number>>("slab_collection_reorder", {
+    orderedIds,
+  });
+  return unwrap(res);
+}
+
+/**
+ * Clone a manual collection — name, icon, color, AND its current document
+ * membership — under a new auto-suffixed name (`"X (copy)"`, `"X (copy 2)"`,
+ * …). The new row lands at the end of the rail's sort order. Returns the
+ * freshly-created row with `doc_count` already populated. v3.53.0 Atlas
+ * Collections — Slice 26.
+ */
+export async function collectionDuplicate(sourceId: number): Promise<CollectionRecord> {
+  const res = await invoke<CmdResult<CollectionRecord>>("slab_collection_duplicate", {
+    sourceId,
+  });
+  return unwrap(res);
 }
 
 export async function collectionAddDocs(
@@ -721,6 +1177,147 @@ export async function personalPresetsImport(
 }
 
 // -----------------------------------------------------------------
+// v3.50.0 "Atlas Saved Views" — one-click restorable rail filters.
+//
+// A saved view is just a NAMED LibraryFilter. Distinct from
+// personalPreset (which materializes into a smart collection) and
+// from smartCollection (which owns a doc list) — a view simply
+// RE-RUNS the saved filter live whenever the user clicks it.
+// The whole filter (folder + tag set + match mode + untagged toggle
+// + sort) round-trips through serde_json on the backend, so a
+// restored view reproduces exactly the same doc set the user pinned.
+// -----------------------------------------------------------------
+
+/** Row of `library_saved_views` as decoded for the frontend. */
+export interface SavedViewRecord {
+  id: number;
+  name: string;
+  filter: LibraryFilter;
+  created_at: number;
+  sort_order: number;
+  /** v3.56.0 — true when the user has pinned this view to the top of
+   *  the rail. Pre-v3.56 snapshots (without the field) decode as false. */
+  pinned?: boolean;
+}
+
+/** Spec for `savedViewSave`. Mirrors `NewSavedView` on Rust side. */
+export interface NewSavedView {
+  name: string;
+  filter: LibraryFilter;
+}
+
+export async function savedViewSave(
+  spec: NewSavedView,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_save",
+    { spec },
+  );
+  return unwrap(res);
+}
+
+export async function savedViewList(): Promise<SavedViewRecord[]> {
+  const res = await invoke<CmdResult<SavedViewRecord[]>>(
+    "slab_library_saved_view_list",
+  );
+  return unwrap(res);
+}
+
+export async function savedViewDelete(id: number): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_saved_view_delete", {
+    id,
+  });
+  unwrap(res);
+}
+
+/**
+ * Rename a saved view. Trims the name; empty rejected; an unchanged
+ * name (post-trim) is a no-op returning the existing row; a name that
+ * collides with another view's name is rejected by the UNIQUE
+ * constraint — both rows are left intact.
+ */
+export async function savedViewRename(
+  id: number,
+  newName: string,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_rename",
+    { id, newName },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Re-pin a saved view's filter in place. Preserves id, name, created_at,
+ * and sort_order; only the saved filter blob is swapped. Lets the user
+ * tweak the rail (folder / tags / sort / untagged / starred / search) and
+ * push the new shape onto an existing pinned view with one click — no
+ * delete-and-recreate, no churn on sort_order, no broken id references.
+ * Errors if the id no longer exists.
+ */
+export async function savedViewUpdateFilter(
+  id: number,
+  filter: LibraryFilter,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_update_filter",
+    { id, filter },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Duplicate an existing saved view. Filter is copied byte-for-byte; the
+ * new row gets a fresh id, fresh created_at, and a fresh sort_order at
+ * the bottom of the rail. The duplicate's name is `"<source> (copy)"` (or
+ * `"<source> (copy N)"` if the simple "(copy)" is already taken — walked
+ * up to 999 to dodge the UNIQUE constraint). The duplicate is independent:
+ * editing it later does NOT mutate the source. Errors if the source id no
+ * longer exists.
+ */
+export async function savedViewDuplicate(
+  id: number,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_duplicate",
+    { id },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Pin or unpin a saved view. Pinned views surface at the top of the
+ * rail; the API is idempotent (setting the same value twice succeeds
+ * without churn). Errors if the id no longer exists. v3.56.0 Atlas
+ * Saved-Views-Polish.
+ */
+export async function savedViewSetPinned(
+  id: number,
+  pinned: boolean,
+): Promise<SavedViewRecord> {
+  const res = await invoke<CmdResult<SavedViewRecord>>(
+    "slab_library_saved_view_set_pinned",
+    { id, pinned },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Re-stamp `sort_order` for the supplied view ids: each id's zero-based
+ * position becomes its new sort_order. Runs in a single SQLite transaction
+ * so partial failures can't leave the rail mid-shuffle. Empty input is a
+ * zero no-op. Rejects duplicate or unknown ids (no rows mutated on
+ * rejection). The pinned flag is NOT touched — the rail's pinned-first
+ * sort order keeps working transparently. v3.56.0 Atlas Saved-Views-Polish.
+ */
+export async function savedViewReorder(order: number[]): Promise<void> {
+  const res = await invoke<CmdResult<null>>("slab_library_saved_view_reorder", {
+    order,
+  });
+  unwrap(res);
+}
+
+// -----------------------------------------------------------------
 // v3.37.0 "Atlas Smart Folders Hub" — merged built-in + personal preset
 // list with persisted display order and pin flags.
 // -----------------------------------------------------------------
@@ -836,5 +1433,205 @@ export async function librarySuggestionsAccept(
 /** Total rows in the rolling search log (capped at 500). */
 export async function librarySearchLogCount(): Promise<number> {
   const res = await invoke<CmdResult<number>>("slab_library_search_log_count");
+  return unwrap(res);
+}
+
+// -----------------------------------------------------------------
+// v3.39.0 Atlas Tag-Suggest — per-document heuristic tag suggestions.
+// -----------------------------------------------------------------
+
+/**
+ * One suggested tag for a document, produced locally from the doc's
+ * title/filename, the existing tag vocabulary, co-occurrence stats, and
+ * a built-in domain dictionary. Mirrors
+ * `pdf::library::tag_suggest::TagSuggestion` 1:1.
+ */
+export interface TagSuggestion {
+  tag_name: string;
+  score: number;
+  source: "vocabulary" | "cooccurrence" | "domain";
+  existing: boolean;
+}
+
+/** A document plus its suggested tags (bulk endpoint). */
+export interface BulkTagSuggestion {
+  doc_id: number;
+  title: string | null;
+  path: string;
+  suggestions: TagSuggestion[];
+}
+
+/** Up to 5 suggested tags for one document; `[]` if nothing plausible. */
+export async function tagSuggestionsForDoc(
+  docId: number,
+): Promise<TagSuggestion[]> {
+  const res = await invoke<CmdResult<TagSuggestion[]>>(
+    "slab_library_tag_suggestions_for_doc",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/** Suggest tags for every untagged document (skips zero-suggestion docs). */
+export async function tagSuggestionsBulk(
+  limit = 50,
+): Promise<BulkTagSuggestion[]> {
+  const res = await invoke<CmdResult<BulkTagSuggestion[]>>(
+    "slab_library_tag_suggestions_bulk_for_untagged",
+    { limit },
+  );
+  return unwrap(res);
+}
+
+/** Accept a suggested tag: find-or-create it and attach it to the doc. */
+export async function acceptTagSuggestion(
+  docId: number,
+  tagName: string,
+): Promise<TagRecord> {
+  const res = await invoke<CmdResult<TagRecord>>(
+    "slab_library_tag_suggestion_accept",
+    { docId, tagName },
+  );
+  return unwrap(res);
+}
+
+/** Dismiss a suggested tag so it never resurfaces for this doc. */
+export async function dismissTagSuggestion(
+  docId: number,
+  tagName: string,
+): Promise<void> {
+  const res = await invoke<CmdResult<null>>(
+    "slab_library_tag_suggestion_dismiss",
+    { docId, tagName },
+  );
+  unwrap(res);
+}
+
+/** Clear all dismissed tag suggestions for a doc (settings escape hatch). */
+export async function undismissAllTagSuggestions(
+  docId: number,
+): Promise<number> {
+  const res = await invoke<CmdResult<number>>(
+    "slab_library_tag_suggestion_undismiss_all",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/**
+ * One element of a bulk-accept request. Mirrors
+ * `pdf::library::tag_suggest::AcceptItem`.
+ */
+export interface TagSuggestionAcceptItem {
+  doc_id: number;
+  tag_name: string;
+}
+
+/**
+ * Outcome of a bulk-accept call. `attached` is `[doc_id, TagRecord]` per
+ * successful pair; `failed` is `[doc_id, tag_name, reason]` per failure.
+ * Per-item failure semantics — a typo in item 12 doesn't undo the 49
+ * good accepts. Mirrors `pdf::library::tag_suggest::BulkAcceptResult`.
+ */
+export interface BulkTagAcceptResult {
+  attached: Array<[number, TagRecord]>;
+  failed: Array<[number, string, string]>;
+}
+
+/**
+ * Bulk-accept N (doc_id, tag_name) pairs in one round-trip. Per-item
+ * failure semantics; the backend dedupes case- and whitespace-equivalent
+ * pairs before applying. Emits a single `library-changed` event after
+ * the batch.
+ */
+export async function acceptTagSuggestionsBulk(
+  items: TagSuggestionAcceptItem[],
+): Promise<BulkTagAcceptResult> {
+  const res = await invoke<CmdResult<BulkTagAcceptResult>>(
+    "slab_library_tag_suggestions_accept_bulk",
+    { items },
+  );
+  return unwrap(res);
+}
+
+/**
+ * One dismissed tag-suggestion row. `dismissed_at` is unix seconds.
+ * Mirrors `pdf::library::tag_suggest::DismissedSuggestion`.
+ */
+export interface DismissedTagSuggestion {
+  tag_name: string;
+  dismissed_at: number;
+}
+
+/** List every dismissed tag-suggestion for a doc, newest first. */
+export async function listDismissedTagSuggestions(
+  docId: number,
+): Promise<DismissedTagSuggestion[]> {
+  const res = await invoke<CmdResult<DismissedTagSuggestion[]>>(
+    "slab_library_tag_suggestions_list_dismissed",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Undo ONE dismissal — the next call to `tagSuggestionsForDoc` will
+ * re-include this tag in the candidate set. Returns `true` if a row
+ * was actually deleted; `false` if no such dismissal existed.
+ */
+export async function undismissOneTagSuggestion(
+  docId: number,
+  tagName: string,
+): Promise<boolean> {
+  const res = await invoke<CmdResult<boolean>>(
+    "slab_library_tag_suggestion_undismiss_one",
+    { docId, tagName },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Bulk-suggest over any `LibraryFilter`. The untagged-shortcut
+ * `tagSuggestionsBulk` covers the lightest case; this is the proper
+ * review-surface entry point that lets a saved view, smart-collection
+ * clause tree, or starred-only toggle pre-narrow the candidate set.
+ *
+ * `limit` overrides any filter-embedded limit so the scan stays bounded.
+ */
+export async function tagSuggestionsBulkForFilter(
+  filter: LibraryFilter,
+  limit = 50,
+): Promise<BulkTagSuggestion[]> {
+  const res = await invoke<CmdResult<BulkTagSuggestion[]>>(
+    "slab_library_tag_suggestions_bulk_for_filter",
+    { filter, limit },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Compact stats for the tag-suggest review badge. Mirrors
+ * `pdf::library::tag_suggest::TagSuggestionStats`.
+ */
+export interface TagSuggestionStats {
+  untagged_docs_with_suggestions: number;
+  dismissed_total: number;
+}
+
+/**
+ * Cheap probe for the toolbar badge — the count of recently-seen
+ * untagged docs that would yield at least one suggestion right now,
+ * plus the corpus-wide dismissal count.
+ *
+ * `sampleCap` defaults to 200 server-side; the UI renders `200+` when
+ * the working set saturates the cap.
+ */
+export async function tagSuggestionStats(
+  sampleCap?: number,
+): Promise<TagSuggestionStats> {
+  const res = await invoke<CmdResult<TagSuggestionStats>>(
+    "slab_library_tag_suggestion_stats",
+    { sampleCap },
+  );
   return unwrap(res);
 }

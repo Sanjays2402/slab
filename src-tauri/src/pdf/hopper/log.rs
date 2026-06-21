@@ -190,8 +190,39 @@ impl HopperLog {
         folder: Option<&str>,
         limit: i64,
     ) -> rusqlite::Result<Vec<super::backfill::BackfillRun>> {
-        let rows = match folder {
-            Some(f) => {
+        // Delegate to the time-window variant with `since_unix = None`
+        // (no temporal floor) so the two paths stay behaviour-identical.
+        self.list_backfill_runs_since(folder, None, limit)
+    }
+
+    /// List backfill runs that *finished* at or after `since_unix`
+    /// (inclusive unix-seconds), newest first. `None` for `since_unix`
+    /// disables the temporal filter (equivalent to [`list_backfill_runs`]).
+    ///
+    /// Powers the panel's "Last 24h / Last 7d / All" history filter
+    /// chips. Filtering happens in SQL so the panel doesn't pull
+    /// thousands of rows over the wire just to drop them client-side.
+    ///
+    /// Both filters AND together when set: `folder = Some("/in/A")` +
+    /// `since_unix = Some(...)` returns only runs in `/in/A` finished
+    /// in the window.
+    pub fn list_backfill_runs_since(
+        &self,
+        folder: Option<&str>,
+        since_unix: Option<i64>,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<super::backfill::BackfillRun>> {
+        let rows = match (folder, since_unix) {
+            (Some(f), Some(since)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT report_json FROM backfill_runs \
+                     WHERE folder = ?1 AND finished_at >= ?2 \
+                     ORDER BY id DESC LIMIT ?3",
+                )?;
+                let mapped = stmt.query_map(params![f, since, limit], |r| r.get::<_, String>(0))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            (Some(f), None) => {
                 let mut stmt = self.conn.prepare(
                     "SELECT report_json FROM backfill_runs \
                      WHERE folder = ?1 ORDER BY id DESC LIMIT ?2",
@@ -199,7 +230,16 @@ impl HopperLog {
                 let mapped = stmt.query_map(params![f, limit], |r| r.get::<_, String>(0))?;
                 mapped.collect::<rusqlite::Result<Vec<_>>>()?
             }
-            None => {
+            (None, Some(since)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT report_json FROM backfill_runs \
+                     WHERE finished_at >= ?1 \
+                     ORDER BY id DESC LIMIT ?2",
+                )?;
+                let mapped = stmt.query_map(params![since, limit], |r| r.get::<_, String>(0))?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            (None, None) => {
                 let mut stmt = self.conn.prepare(
                     "SELECT report_json FROM backfill_runs \
                      ORDER BY id DESC LIMIT ?1",
@@ -371,5 +411,101 @@ mod tests {
         assert_eq!(two.len(), 2);
         assert_eq!(two[0].applied, 4);
         assert_eq!(two[1].applied, 3);
+    }
+
+    // ── v3.39 round-10: time-window history filter ──────────────────
+
+    fn run_with_finished(
+        folder: &str,
+        applied: usize,
+        finished_at: u64,
+    ) -> super::super::backfill::BackfillRun {
+        super::super::backfill::BackfillRun {
+            folder: folder.into(),
+            scanned: applied + 1,
+            applied,
+            skipped: 1,
+            errored: 0,
+            started_at: finished_at.saturating_sub(10),
+            finished_at,
+            per_file: vec![],
+        }
+    }
+
+    /// `since_unix = None` is behaviour-identical to the legacy
+    /// `list_backfill_runs`. Pins the back-compat delegation.
+    #[test]
+    fn list_backfill_runs_since_with_none_matches_legacy() {
+        let (_g, path) = tmp_db();
+        let mut log = HopperLog::open(&path).unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 1, 100))
+            .unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 2, 200))
+            .unwrap();
+
+        let legacy = log.list_backfill_runs(None, 10).unwrap();
+        let windowed = log.list_backfill_runs_since(None, None, 10).unwrap();
+        assert_eq!(legacy, windowed);
+    }
+
+    /// `since_unix = Some(t)` returns only runs finished at or after
+    /// `t`. The boundary is inclusive — a run that finished exactly
+    /// at the cutoff still appears.
+    #[test]
+    fn list_backfill_runs_since_filters_by_finished_at() {
+        let (_g, path) = tmp_db();
+        let mut log = HopperLog::open(&path).unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 1, 100))
+            .unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 2, 200))
+            .unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 3, 300))
+            .unwrap();
+
+        let window = log.list_backfill_runs_since(None, Some(200), 10).unwrap();
+        assert_eq!(window.len(), 2);
+        // Newest first.
+        assert_eq!(window[0].applied, 3);
+        assert_eq!(window[1].applied, 2);
+
+        // Boundary inclusive — exact-match cutoff still appears.
+        let boundary = log.list_backfill_runs_since(None, Some(300), 10).unwrap();
+        assert_eq!(boundary.len(), 1);
+        assert_eq!(boundary[0].applied, 3);
+    }
+
+    /// Both filters AND together — folder + since combine into one
+    /// SQL where-clause, not two passes. Pins the panel's combined
+    /// "/in/A in last 24h" lookup.
+    #[test]
+    fn list_backfill_runs_since_combines_with_folder() {
+        let (_g, path) = tmp_db();
+        let mut log = HopperLog::open(&path).unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 1, 100))
+            .unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 2, 200))
+            .unwrap();
+        log.record_backfill_run(&run_with_finished("/in/B", 5, 250))
+            .unwrap();
+
+        let win = log
+            .list_backfill_runs_since(Some("/in/A"), Some(150), 10)
+            .unwrap();
+        assert_eq!(win.len(), 1);
+        assert_eq!(win[0].applied, 2);
+        assert_eq!(win[0].folder, "/in/A");
+    }
+
+    /// A future cutoff returns an empty list — no false positives.
+    #[test]
+    fn list_backfill_runs_since_returns_empty_for_future_cutoff() {
+        let (_g, path) = tmp_db();
+        let mut log = HopperLog::open(&path).unwrap();
+        log.record_backfill_run(&run_with_finished("/in/A", 1, 100))
+            .unwrap();
+        let nothing = log
+            .list_backfill_runs_since(None, Some(1_000_000), 10)
+            .unwrap();
+        assert!(nothing.is_empty());
     }
 }

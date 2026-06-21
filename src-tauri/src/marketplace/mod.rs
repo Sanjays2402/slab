@@ -12,10 +12,13 @@
 //! - [`verify`] — Ed25519 signature verification
 //! - [`fetch`] — HTTP client + offline cache (Slice 3)
 //! - [`install`] — download, sha256 verify, atomic extract (Slice 4)
+//! - [`install_log`] — append-only sqlite history of install / update /
+//!   uninstall / failed events (v3.39 Slice 53)
 
 pub mod fetch;
 pub mod index;
 pub mod install;
+pub mod install_log;
 pub mod verify;
 
 pub use fetch::{
@@ -26,6 +29,9 @@ pub use index::{Index, IndexEntry, IndexEntryUnsigned, CURRENT_SCHEMA_VERSION, M
 pub use install::{
     install_from_bytes, install_from_entry, uninstall_plugin, InstallError, InstallReport,
     MAX_UNCOMPRESSED_BYTES,
+};
+pub use install_log::{
+    default_log_path, InstallAction, InstallEvent, InstallLog, InstallLogError, InstallStats,
 };
 pub use verify::{
     verify_entry, verify_with_maintainer_key, VerifyError, MAINTAINER_KEY_ID, MAINTAINER_PUBLIC_KEY,

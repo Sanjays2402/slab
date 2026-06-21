@@ -275,3 +275,286 @@ export function compareSemver(a: string, b: string): number {
   if (pb.pre === null) return -1;
   return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
 }
+
+// ─── Install log read surface (v3.39 Slice 55) ──────────────────────
+
+/**
+ * One persisted row in the marketplace install-log table. Mirrors
+ * `marketplace::install_log::InstallEvent` on the Rust side.
+ *
+ * The NULL-able fields are populated only on the row kinds that need
+ * them: `bytes_written` / `files_extracted` / `source` /
+ * `replaced_existing` arrive on install/update rows; `error_msg`
+ * arrives on failed rows; `prior_version` arrives on update rows.
+ */
+export interface InstallEvent {
+  id: number;
+  plugin_id: string;
+  version: string;
+  action: "install" | "update" | "uninstall" | "failed";
+  /** Unix seconds (UTC). */
+  occurred_at: number;
+  source: string | null;
+  bytes_written: number | null;
+  files_extracted: number | null;
+  replaced_existing: boolean | null;
+  prior_version: string | null;
+  error_msg: string | null;
+}
+
+/**
+ * Per-plugin counts of each install-log action kind. Mirrors
+ * `marketplace::install_log::InstallStats`.
+ */
+export interface InstallStats {
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+}
+
+const EMPTY_INSTALL_STATS: InstallStats = {
+  installs: 0,
+  updates: 0,
+  uninstalls: 0,
+  failures: 0,
+};
+
+/**
+ * Per-plugin timeline of install/update/uninstall/failure events,
+ * newest first, capped at `limit` (default 50). Returns an empty
+ * array in browser mode and for unknown plugin ids.
+ *
+ * Used by PluginDetailDrawer's Activity section.
+ */
+export async function listInstallEvents(
+  pluginId: string,
+  limit?: number,
+): Promise<InstallEvent[]> {
+  if (!isInTauri()) return [];
+  return invoke<InstallEvent[]>("slab_marketplace_install_events", {
+    pluginId,
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Corpus-wide recent install events, newest first, capped at `limit`
+ * (default 50). Drives the PluginsPanel toolbar "Recent installs"
+ * drawer. Returns an empty array in browser mode.
+ */
+export async function listRecentInstallEvents(limit?: number): Promise<InstallEvent[]> {
+  if (!isInTauri()) return [];
+  return invoke<InstallEvent[]>("slab_marketplace_install_history_recent", {
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Per-plugin counts of each install-log action kind. Returns an
+ * all-zeroes payload in browser mode or for an unknown plugin id.
+ *
+ * Powers the slim header pill on PluginDetailDrawer's Activity
+ * section ("Installed 3 · 1 update · 0 failures") in one round-trip.
+ */
+export async function pluginInstallStats(pluginId: string): Promise<InstallStats> {
+  if (!isInTauri()) return { ...EMPTY_INSTALL_STATS };
+  return invoke<InstallStats>("slab_marketplace_plugin_install_stats", { pluginId });
+}
+
+/**
+ * Format an `InstallEvent.occurred_at` (unix seconds) as a compact
+ * human-friendly relative timestamp ("just now", "3m ago", "2h ago",
+ * "5d ago"), falling back to ISO yyyy-mm-dd for events older than 30
+ * days. UTC arithmetic so the result is timezone-stable.
+ *
+ * Used by both the Activity rows and the Recent installs drawer so
+ * they share one timestamp vocabulary.
+ */
+export function formatInstallEventTime(occurredAt: number, now?: number): string {
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = Math.max(0, nowSec - occurredAt);
+  if (delta < 60) return "just now";
+  if (delta < 60 * 60) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 60 * 60 * 24) return `${Math.floor(delta / 3600)}h ago`;
+  if (delta < 60 * 60 * 24 * 30) return `${Math.floor(delta / 86400)}d ago`;
+  // ≥30 days — fall back to ISO date (UTC) so the cell is stable
+  // across timezone changes.
+  const iso = new Date(occurredAt * 1000).toISOString();
+  return iso.slice(0, 10);
+}
+
+/**
+ * Glyph hint for an install-log action, matching Slab's monochrome
+ * chrome vocabulary (no emoji in app surfaces — but unicode glyphs
+ * like ✓ / ✕ / ↻ / ⌫ are app-chrome and are fine).
+ */
+export function installEventGlyph(action: InstallEvent["action"]): string {
+  switch (action) {
+    case "install":
+      return "✓";
+    case "update":
+      return "↻";
+    case "uninstall":
+      return "⌫";
+    case "failed":
+      return "✕";
+  }
+}
+
+// ─── Install log retention surface (v3.39 Slice 56) ─────────────────
+
+/**
+ * Slim summary of the install log as a whole. Mirrors
+ * `InstallLogSummary` on the Rust side. Drives the Recent installs
+ * drawer's header "N events across X days" subtitle.
+ */
+export interface InstallLogSummary {
+  total_events: number;
+  distinct_plugins: number;
+  /** Unix seconds of the oldest row, or null if the log is empty. */
+  oldest_occurred_at: number | null;
+}
+
+const EMPTY_INSTALL_LOG_SUMMARY: InstallLogSummary = {
+  total_events: 0,
+  distinct_plugins: 0,
+  oldest_occurred_at: null,
+};
+
+/**
+ * Fetch a one-shot summary of the install log. Cheap (three small
+ * queries) and safe to call on every drawer open. Returns the empty
+ * summary in browser mode so the UI renders consistently.
+ */
+export async function installLogSummary(): Promise<InstallLogSummary> {
+  if (!isInTauri()) return { ...EMPTY_INSTALL_LOG_SUMMARY };
+  return invoke<InstallLogSummary>("slab_marketplace_install_log_summary");
+}
+
+/**
+ * Trim the install log to events newer than `retainDays` days
+ * before now. Returns the number of rows pruned.
+ *
+ * `retainDays` is clamped on the backend to a minimum of 1, so a
+ * caller can't accidentally wipe the whole log via `prune(0)`.
+ * Returns 0 in browser mode (no-op).
+ */
+export async function pruneInstallLog(retainDays: number): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_prune", { retainDays });
+}
+
+/**
+ * Human-friendly "log spans X days" subtitle. Returns the literal
+ * "no events yet" when the summary is empty so the UI can render the
+ * subtitle unconditionally without an extra empty-state branch.
+ *
+ * Uses ceiling-day arithmetic so a log opened 5 minutes ago still
+ * reads "1 day" rather than the awkward "0 days".
+ */
+export function formatLogSpan(summary: InstallLogSummary, now?: number): string {
+  if (summary.total_events === 0 || summary.oldest_occurred_at === null) {
+    return "no events yet";
+  }
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const span = Math.max(1, Math.ceil((nowSec - summary.oldest_occurred_at) / 86_400));
+  const events = `${summary.total_events} event${summary.total_events === 1 ? "" : "s"}`;
+  const days = `${span} day${span === 1 ? "" : "s"}`;
+  return `${events} across ${days}`;
+}
+
+// ─── Install log export surface (v3.39 Slice 61) ────────────────────
+
+/**
+ * Optional time-window + row-cap filter for an install-log export.
+ * Mirrors the backend `list_events_between` boundaries. Either or
+ * both of `since_unix` / `until_unix` may be omitted for "no
+ * lower / no upper bound"; both omitted exports the whole log.
+ *
+ * `limit` clamps the number of rows written (defaults to 100_000 on
+ * the backend); the install log is small in practice but a defensive
+ * cap protects against a runaway log eating a user's disk.
+ */
+export interface InstallLogExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  limit?: number | null;
+}
+
+const EMPTY_FILTER: InstallLogExportFilter = {};
+
+/**
+ * Write the install log to `path` as RFC-4180 CSV. The path is an
+ * absolute filesystem path that the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()` so it bypasses the default
+ * plugin-fs scope.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported N events (X.X KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op).
+ */
+export async function exportInstallLogCsv(
+  path: string,
+  filter: InstallLogExportFilter = EMPTY_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_csv", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Write the install log to `path` as a pretty-printed JSON envelope.
+ * Mirrors `exportInstallLogCsv` but emits the `InstallLogExportEnvelope`
+ * shape (schema_version + generated_at_iso + window-bounds + events).
+ */
+export async function exportInstallLogJson(
+  path: string,
+  filter: InstallLogExportFilter = EMPTY_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_json", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Suggest a default filename for an install-log export. Mirrors the
+ * hopper backfill CSV convention so paralegals see one consistent
+ * naming pattern across the audit-export surfaces.
+ *
+ * Format: `marketplace-history_<window>_<YYYY-MM-DD>.<ext>`. The
+ * window slot reads "all" when both bounds are unset, "from-YYYYMMDD"
+ * when only `since` is set, "to-YYYYMMDD" when only `until` is set,
+ * and "YYYYMMDD-YYYYMMDD" when both are set. Pure helper — no I/O,
+ * no Tauri.
+ */
+export function suggestInstallLogExportFilename(
+  filter: InstallLogExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-history_${window}_${today}.${ext}`;
+}

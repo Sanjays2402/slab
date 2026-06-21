@@ -86,6 +86,43 @@ pub struct IndexStats {
     pub chunks: u32,
 }
 
+/// Per-PDF record returned by [`EmbeddingIndex::list_indexed`]. Powers the
+/// Beacon Cache Inspector's full table — every PDF currently in the
+/// embedding index, with the per-row chunk count joined in so the panel
+/// never makes one round-trip per row. v3.54.0 Atlas Beacon-Cache —
+/// Slice 28.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IndexedPdfRecord {
+    /// SHA-256 of the PDF file contents (hex). Stable cache key — also
+    /// the `forget`/`forget_many` argument.
+    pub pdf_hash: String,
+    /// On-disk path captured at index time. May no longer exist — see
+    /// [`EmbeddingIndex::find_stale`].
+    pub pdf_path: String,
+    pub pages: u32,
+    /// Name of the embed model used at index time. The inspector
+    /// surfaces a "mixed model" warning when more than one bucket is
+    /// non-empty.
+    pub embed_model: String,
+    /// Unix-seconds timestamp the row was first written.
+    pub indexed_at: i64,
+    /// Number of chunk rows pinned to this PDF — joined in once so the
+    /// table never has to do a per-row COUNT.
+    pub chunks: u32,
+}
+
+/// Aggregate row from [`EmbeddingIndex::stats_by_model`]. The Beacon
+/// Cache Inspector renders one tile per bucket so a user with a stale
+/// `nomic-embed` cache next to a fresh `mxbai-embed-large` cache sees
+/// both side-by-side and can prune the loser. v3.54.0 Atlas
+/// Beacon-Cache — Slice 30.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelBucket {
+    pub embed_model: String,
+    pub pdfs: u32,
+    pub chunks: u32,
+}
+
 /// Result of an indexing call.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IndexReport {
@@ -177,6 +214,116 @@ impl EmbeddingIndex {
         self.conn
             .execute("DELETE FROM pdfs WHERE hash = ?1", params![pdf_hash])?;
         Ok(())
+    }
+
+    /// Bulk-delete every PDF named in `pdf_hashes` plus its chunks, in
+    /// one transaction. Returns the count of rows actually removed —
+    /// unknown hashes are silently skipped (tolerant wire contract so a
+    /// stale hash from a list-vs-forget race can't crash the inspector).
+    /// v3.54.0 Atlas Beacon-Cache — Slice 29.
+    pub fn forget_many(&mut self, pdf_hashes: &[String]) -> Result<usize, IndexError> {
+        if pdf_hashes.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.conn.transaction()?;
+        let mut removed = 0usize;
+        {
+            let mut stmt = tx.prepare("DELETE FROM pdfs WHERE hash = ?1")?;
+            for h in pdf_hashes {
+                removed += stmt.execute(params![h])?;
+            }
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// Return every indexed PDF, newest first, with per-row chunk count
+    /// joined in via a single LEFT JOIN + GROUP BY round-trip. LEFT JOIN
+    /// keeps a PDF whose chunks got zeroed by a partial-write recovery
+    /// visible in the inspector — an INNER JOIN would silently hide it.
+    /// `ORDER BY indexed_at DESC, hash ASC` matches Slab's house style
+    /// for activity feeds and gives a stable tie-break across same-second
+    /// re-indexes. v3.54.0 Atlas Beacon-Cache — Slice 28.
+    pub fn list_indexed(&self) -> Result<Vec<IndexedPdfRecord>, IndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT pdfs.hash, pdfs.path, pdfs.pages, pdfs.embed_model, pdfs.indexed_at,
+                    COALESCE(COUNT(chunks.id), 0) AS chunk_count
+             FROM pdfs
+             LEFT JOIN chunks ON chunks.pdf_hash = pdfs.hash
+             GROUP BY pdfs.hash
+             ORDER BY pdfs.indexed_at DESC, pdfs.hash ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(IndexedPdfRecord {
+                    pdf_hash: r.get(0)?,
+                    pdf_path: r.get(1)?,
+                    pages: r.get(2)?,
+                    embed_model: r.get(3)?,
+                    indexed_at: r.get(4)?,
+                    chunks: r.get::<_, i64>(5)? as u32,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Per-`embed_model` bucket counts in one GROUP BY round-trip. The
+    /// inspector dashboard renders one tile per bucket so a user can
+    /// see at a glance whether the cache has gone mixed-model (Beacon
+    /// search's existing dim-mismatch skip would silently drop the
+    /// loser's chunks at query time). Empty index returns an empty
+    /// Vec; a single-model index returns a one-element Vec. Sorted by
+    /// chunk count DESC, model name ASC tie-break. v3.54.0 Atlas
+    /// Beacon-Cache — Slice 30.
+    pub fn stats_by_model(&self) -> Result<Vec<ModelBucket>, IndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT pdfs.embed_model,
+                    COUNT(DISTINCT pdfs.hash) AS pdf_count,
+                    COALESCE(COUNT(chunks.id), 0) AS chunk_count
+             FROM pdfs
+             LEFT JOIN chunks ON chunks.pdf_hash = pdfs.hash
+             GROUP BY pdfs.embed_model
+             ORDER BY chunk_count DESC, pdfs.embed_model ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ModelBucket {
+                    embed_model: r.get(0)?,
+                    pdfs: r.get::<_, i64>(1)? as u32,
+                    chunks: r.get::<_, i64>(2)? as u32,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Walk every indexed PDF and return the subset whose `path` no
+    /// longer points at a readable file (renamed, deleted, on an
+    /// unmounted volume). The inspector turns this into a "Forget all
+    /// N stale" affordance. Symlinks are followed by `metadata()`; a
+    /// broken symlink reports as missing (which is the right call —
+    /// the embed_index can't search what it can't read). Same shape as
+    /// [`list_indexed`] so the inspector renders both with one
+    /// component. v3.54.0 Atlas Beacon-Cache — Slice 31.
+    pub fn find_stale(&self) -> Result<Vec<IndexedPdfRecord>, IndexError> {
+        let all = self.list_indexed()?;
+        let stale: Vec<IndexedPdfRecord> = all
+            .into_iter()
+            .filter(|r| !Path::new(&r.pdf_path).exists())
+            .collect();
+        Ok(stale)
+    }
+
+    /// Bulk-forget every stale PDF in one transaction. Returns the
+    /// count actually removed. A path that became readable between
+    /// the `find_stale` scan and the delete is left alone (the missing
+    /// check runs once up front so we never delete a freshly-restored
+    /// file). v3.54.0 Atlas Beacon-Cache — Slice 31 companion.
+    pub fn forget_stale(&mut self) -> Result<usize, IndexError> {
+        let stale = self.find_stale()?;
+        let hashes: Vec<String> = stale.into_iter().map(|r| r.pdf_hash).collect();
+        self.forget_many(&hashes)
     }
 
     /// Insert chunks + embeddings for a PDF. Replaces any prior rows
@@ -777,5 +924,285 @@ mod tests {
         assert_ne!(h1, h2);
         // hex SHA-256 is 64 chars
         assert_eq!(h1.len(), 64);
+    }
+
+    // ---------- Beacon Cache Inspector (v3.54.0 round-7) ----------
+
+    /// Helper: seed `n` PDFs with `chunks_per_pdf` chunks each, under a
+    /// shared `embed_model`. Returns the inserted hashes in insertion order.
+    /// File contents include `embed_model` so two model buckets seeded in
+    /// the same test get distinct content hashes (the index keys by hash,
+    /// so colliding content would collapse one model into the other).
+    fn seed_pdfs(
+        idx: &mut EmbeddingIndex,
+        n: usize,
+        chunks_per_pdf: usize,
+        embed_model: &str,
+        dir: &Path,
+    ) -> Vec<String> {
+        let mut hashes = Vec::with_capacity(n);
+        for i in 0..n {
+            let path = dir.join(format!("doc-{i}.pdf"));
+            // Write distinct bytes so each gets a distinct content hash.
+            std::fs::write(&path, format!("pdf-bytes-{embed_model}-{i}").as_bytes()).unwrap();
+            let hash = EmbeddingIndex::hash_file(&path).unwrap();
+            let chunks: Vec<Chunk> = (0..chunks_per_pdf)
+                .map(|k| Chunk {
+                    page: 1,
+                    idx_in_page: k as u32,
+                    text: format!("doc {i} chunk {k}"),
+                })
+                .collect();
+            let embeddings: Vec<Vec<f32>> = (0..chunks_per_pdf)
+                .map(|_| vec![1.0f32, 0.0, 0.0])
+                .collect();
+            idx.write_pdf(
+                &hash,
+                &path,
+                1,
+                embed_model,
+                chunks.as_slice(),
+                embeddings.as_slice(),
+            )
+            .unwrap();
+            hashes.push(hash);
+        }
+        hashes
+    }
+
+    #[test]
+    fn list_indexed_empty_is_empty() {
+        let idx = EmbeddingIndex::open_in_memory().unwrap();
+        assert!(idx.list_indexed().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_indexed_returns_one_row_per_pdf_with_joined_chunk_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 3, 2, "m", dir.path());
+        let listed = idx.list_indexed().unwrap();
+        assert_eq!(listed.len(), 3);
+        // One row per PDF, every chunk count joined in as 2 (the seed).
+        for row in &listed {
+            assert_eq!(row.chunks, 2);
+            assert_eq!(row.embed_model, "m");
+            assert!(hashes.contains(&row.pdf_hash));
+        }
+        // Hashes cover the seeded set exactly.
+        let listed_hashes: std::collections::HashSet<_> =
+            listed.iter().map(|r| r.pdf_hash.clone()).collect();
+        let seed_hashes: std::collections::HashSet<_> = hashes.into_iter().collect();
+        assert_eq!(listed_hashes, seed_hashes);
+    }
+
+    #[test]
+    fn list_indexed_orders_newest_first() {
+        // write_pdf stamps `indexed_at` from SystemTime. Same-second writes
+        // tie-break on hash ASC; cross-second writes order DESC by stamp.
+        // We exercise the tie-break (same second) which is the realistic
+        // hot-path the inspector hits.
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 4, 1, "m", dir.path());
+        let listed = idx.list_indexed().unwrap();
+        // Within the same indexed_at second, ascending hash order is
+        // deterministic and stable across re-runs.
+        let mut sorted = listed.clone();
+        sorted.sort_by(|a, b| {
+            b.indexed_at
+                .cmp(&a.indexed_at)
+                .then(a.pdf_hash.cmp(&b.pdf_hash))
+        });
+        assert_eq!(listed, sorted, "list_indexed must be newest-first");
+    }
+
+    #[test]
+    fn list_indexed_keeps_zero_chunk_pdfs_via_left_join() {
+        // A direct INSERT with no chunks should still surface in the
+        // inspector (LEFT JOIN), reporting chunks == 0. An INNER JOIN
+        // would silently hide it — exactly what the inspector exists
+        // to prevent.
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let path = dir.path().join("solo.pdf");
+        std::fs::write(&path, b"x").unwrap();
+        let hash = EmbeddingIndex::hash_file(&path).unwrap();
+        idx.conn
+            .execute(
+                "INSERT INTO pdfs (hash, path, pages, embed_model, indexed_at)
+                 VALUES (?1, ?2, 1, 'm', 0)",
+                params![hash, path.to_string_lossy().as_ref()],
+            )
+            .unwrap();
+        let listed = idx.list_indexed().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].chunks, 0);
+    }
+
+    #[test]
+    fn list_indexed_roundtrips_through_serde_snake_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        let listed = idx.list_indexed().unwrap();
+        let json = serde_json::to_string(&listed).unwrap();
+        // Field names land snake_case so the TS mirror's interface
+        // doesn't need renames.
+        assert!(json.contains("\"pdf_hash\""));
+        assert!(json.contains("\"pdf_path\""));
+        assert!(json.contains("\"embed_model\""));
+        assert!(json.contains("\"indexed_at\""));
+        let back: Vec<IndexedPdfRecord> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, listed);
+    }
+
+    #[test]
+    fn forget_many_removes_named_hashes_in_one_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 4, 2, "m", dir.path());
+        let to_drop: Vec<String> = hashes[..2].to_vec();
+        let removed = idx.forget_many(&to_drop).unwrap();
+        assert_eq!(removed, 2);
+        let remaining = idx.list_indexed().unwrap();
+        assert_eq!(remaining.len(), 2);
+        for r in &remaining {
+            assert!(!to_drop.contains(&r.pdf_hash));
+        }
+        // CASCADE handled chunk rows.
+        assert_eq!(idx.stats().unwrap().pdfs, 2);
+        assert_eq!(idx.stats().unwrap().chunks, 4);
+    }
+
+    #[test]
+    fn forget_many_silently_skips_unknown_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 2, 1, "m", dir.path());
+        let mix = vec![hashes[0].clone(), "deadbeef".repeat(8), hashes[1].clone()];
+        let removed = idx.forget_many(&mix).unwrap();
+        assert_eq!(removed, 2, "the bogus hash is silently skipped");
+        assert_eq!(idx.list_indexed().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn forget_many_empty_is_zero_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        assert_eq!(idx.forget_many(&[]).unwrap(), 0);
+        assert_eq!(idx.list_indexed().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stats_by_model_buckets_per_embed_model() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 2, 3, "nomic-embed", dir_a.path());
+        seed_pdfs(&mut idx, 3, 1, "mxbai-large", dir_b.path());
+        let buckets = idx.stats_by_model().unwrap();
+        assert_eq!(buckets.len(), 2);
+        // Ordering: chunks DESC (6 vs 3), then model ASC tie-break.
+        assert_eq!(buckets[0].embed_model, "nomic-embed");
+        assert_eq!(buckets[0].pdfs, 2);
+        assert_eq!(buckets[0].chunks, 6);
+        assert_eq!(buckets[1].embed_model, "mxbai-large");
+        assert_eq!(buckets[1].pdfs, 3);
+        assert_eq!(buckets[1].chunks, 3);
+    }
+
+    #[test]
+    fn stats_by_model_empty_index_returns_empty_vec() {
+        let idx = EmbeddingIndex::open_in_memory().unwrap();
+        assert!(idx.stats_by_model().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stats_by_model_single_model_returns_one_bucket() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 3, 2, "only-model", dir.path());
+        let buckets = idx.stats_by_model().unwrap();
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].embed_model, "only-model");
+        assert_eq!(buckets[0].pdfs, 3);
+        assert_eq!(buckets[0].chunks, 6);
+    }
+
+    #[test]
+    fn stats_by_model_roundtrips_through_serde_snake_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        let buckets = idx.stats_by_model().unwrap();
+        let json = serde_json::to_string(&buckets).unwrap();
+        assert!(json.contains("\"embed_model\""));
+        let back: Vec<ModelBucket> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, buckets);
+    }
+
+    #[test]
+    fn find_stale_returns_only_missing_path_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 3, 1, "m", dir.path());
+        // Delete one of the underlying files to simulate a missing PDF.
+        let kept_listed = idx.list_indexed().unwrap();
+        let victim = kept_listed
+            .iter()
+            .find(|r| r.pdf_hash == hashes[0])
+            .unwrap()
+            .clone();
+        std::fs::remove_file(&victim.pdf_path).unwrap();
+        let stale = idx.find_stale().unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].pdf_hash, hashes[0]);
+        // The two PDFs whose files still exist are NOT in the stale list.
+        let stale_hashes: std::collections::HashSet<_> =
+            stale.iter().map(|r| r.pdf_hash.clone()).collect();
+        assert!(!stale_hashes.contains(&hashes[1]));
+        assert!(!stale_hashes.contains(&hashes[2]));
+    }
+
+    #[test]
+    fn find_stale_on_clean_index_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 2, 1, "m", dir.path());
+        let stale = idx.find_stale().unwrap();
+        assert!(stale.is_empty(), "no missing files means nothing stale");
+    }
+
+    #[test]
+    fn forget_stale_prunes_only_the_missing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let hashes = seed_pdfs(&mut idx, 3, 1, "m", dir.path());
+        // Drop two of the three on-disk files.
+        let listed = idx.list_indexed().unwrap();
+        let drop_targets: Vec<_> = listed
+            .iter()
+            .filter(|r| r.pdf_hash == hashes[0] || r.pdf_hash == hashes[1])
+            .map(|r| r.pdf_path.clone())
+            .collect();
+        for p in &drop_targets {
+            std::fs::remove_file(p).unwrap();
+        }
+        let pruned = idx.forget_stale().unwrap();
+        assert_eq!(pruned, 2);
+        let after = idx.list_indexed().unwrap();
+        assert_eq!(after.len(), 1, "the live row survives");
+        assert_eq!(after[0].pdf_hash, hashes[2]);
+    }
+
+    #[test]
+    fn forget_stale_on_clean_index_is_zero_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        seed_pdfs(&mut idx, 1, 1, "m", dir.path());
+        assert_eq!(idx.forget_stale().unwrap(), 0);
+        assert_eq!(idx.list_indexed().unwrap().len(), 1);
     }
 }

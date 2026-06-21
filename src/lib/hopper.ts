@@ -354,7 +354,32 @@ export interface BackfillReport {
   planned: PlannedAction[];
   /** Unix-seconds UTC. */
   generated_at: number;
+  /** Tally of files per matched rule, plus the synthetic
+   *  `__defaults__` (no rule, fell through to watch defaults) and
+   *  `__skip__` (plan-time skip) buckets. Rules with zero hits are
+   *  absent. Powers the panel's "Tax: 17 · Invoices: 23 · No rule:
+   *  4" pre-flight coverage strip. Optional on the wire — pre-v3.39
+   *  reports decode with this missing and the UI strip just doesn't
+   *  render. */
+  per_rule_counts?: Record<string, number>;
 }
+
+/** Bucket key in `BackfillReport.per_rule_counts` for plans that fell
+ *  through to the watch defaults (no rule matched). */
+export const BACKFILL_BUCKET_DEFAULTS = "__defaults__";
+
+/** Bucket key for plan-time skips (probe error, missing metadata). */
+export const BACKFILL_BUCKET_SKIP = "__skip__";
+
+/** Pretty-print a per_rule_counts bucket key for UI chips. The
+ *  synthetic `__defaults__` / `__skip__` keys are translated to
+ *  user-facing labels; any other key is the user-set rule name and
+ *  passes through unchanged. */
+export const backfillBucketLabel = (key: string): string => {
+  if (key === BACKFILL_BUCKET_DEFAULTS) return "No rule";
+  if (key === BACKFILL_BUCKET_SKIP) return "Skipped";
+  return key;
+};
 
 /** Per-file outcome after `executeBackfill` has run. */
 export type BackfillOutcomeStatus = "moved" | "skipped" | "failed";
@@ -377,16 +402,78 @@ export interface BackfillRun {
   per_file: BackfillOutcome[];
 }
 
+/** Per-file progress frame emitted by `slabHopperExecuteBackfillAsync`
+ *  on `hopper://backfill-progress`. The UI uses this for the live
+ *  progress bar (`processed / total`), running counts, and the
+ *  scrolling tail-of-recent-outcomes strip.
+ *
+ *  Wire contract pinned by `backfill_progress_round_trips_through_json`
+ *  in the Rust suite — changing a field name there will break this. */
+export interface BackfillProgress {
+  /** 1-indexed position of the file just finished. `processed == total`
+   *  signals the final frame; UI transitions out of "applying" here. */
+  processed: number;
+  /** Total file count from `report.planned.length` — constant per run. */
+  total: number;
+  /** Running tally — `applied + skipped + errored == processed`. */
+  applied: number;
+  skipped: number;
+  errored: number;
+  /** The outcome the loop just produced. `null` only on the empty-
+   *  report tail-end frame (so the UI gets exactly one completion
+   *  signal for an empty backfill). */
+  current: BackfillOutcome | null;
+}
+
+/** Tauri event envelope — `run_id` lets a future multi-run UI route
+ *  events to the right component instance. Today the panel gates to
+ *  one run at a time and just matches its own id. */
+export interface BackfillProgressEvent {
+  run_id: number;
+  progress: BackfillProgress;
+}
+
+/** Mint a unique run id for the streaming executor. Wall-clock ms is
+ *  fine — the only collision risk is two backfills started in the
+ *  same millisecond, which the UI already guards against. */
+export const newBackfillRunId = (): number => Date.now();
+
+/** Tunables for `slabHopperPlanBackfill`. Defaults match the v3.22
+ *  single-level scan so widening the call is fully back-compat.
+ *
+ *  - `recursive` — walk sub-folders too. Hidden directories are still
+ *    skipped (same hostility-to-Spotlight-noise rule as hidden files).
+ *  - `maxDepth` — cap on recursion depth. `null` = unbounded, `0`
+ *    matches `recursive = false` exactly. Ignored when
+ *    `recursive = false`. */
+export interface PlanOptions {
+  recursive: boolean;
+  /** Backend field is `max_depth`; we expose it as a wire-snake-case
+   *  field to match Rust serde. */
+  max_depth: number | null;
+}
+
+/** Empty/default plan options — non-recursive, no depth cap. */
+export const emptyPlanOptions = (): PlanOptions => ({
+  recursive: false,
+  max_depth: null,
+});
+
 /** Dry-run: plan the moves the current rule chain would perform on
  *  every PDF in `folder` (defaults to the watch's `source_dir`).
- *  Pure — never touches the filesystem outside `folder`. */
+ *  Pure — never touches the filesystem outside `folder`.
+ *
+ *  `opts` (v3.39 round-10) controls whether sub-folders are swept.
+ *  Omit it for legacy single-level behaviour. */
 export const slabHopperPlanBackfill = (
   watchId: number,
   folder?: string,
+  opts?: PlanOptions,
 ): Promise<BackfillReport> =>
   invoke("slab_hopper_plan_backfill", {
     watchId,
     folder: folder ?? null,
+    opts: opts ?? null,
   });
 
 /** Commit a previously-approved `BackfillReport`. Idempotent — if a
@@ -397,13 +484,85 @@ export const slabHopperExecuteBackfill = (
 ): Promise<BackfillRun> =>
   invoke("slab_hopper_execute_backfill", { report });
 
+/** Streaming variant of `slabHopperExecuteBackfill` — same return
+ *  value (the final `BackfillRun`), but the backend broadcasts a
+ *  `hopper://backfill-progress` event after every file so the UI can
+ *  render a live progress bar + scrolling outcome tail without
+ *  polling. Pair with `listenBackfillProgress()` to receive frames
+ *  and `slabHopperCancelBackfill(runId)` for the Cancel button.
+ *
+ *  `runId` must be unique per call — mint one with `newBackfillRunId()`. */
+export const slabHopperExecuteBackfillAsync = (
+  report: BackfillReport,
+  runId: number,
+): Promise<BackfillRun> =>
+  invoke("slab_hopper_execute_backfill_async", { report, runId });
+
+/** Flip the cancel token for an in-flight streaming backfill. The
+ *  worker checks the token before each file, so cancellation is
+ *  near-immediate (next file is stamped `skipped` with reason
+ *  "cancelled by user"). Returns `true` if a flag was found + flipped,
+ *  `false` if the run had already completed — both are non-error
+ *  outcomes from the user's perspective. */
+export const slabHopperCancelBackfill = (runId: number): Promise<boolean> =>
+  invoke("slab_hopper_cancel_backfill", { runId });
+
+/** Subscribe to live backfill-progress events. Returns an unlisten
+ *  function the caller stores and invokes on unmount. The handler
+ *  fires once per file processed (plus one tail-end frame for empty
+ *  reports). Filter by `e.run_id` when multiple runs are possible. */
+export const listenBackfillProgress = async (
+  handler: (e: BackfillProgressEvent) => void,
+): Promise<UnlistenFn> => {
+  return listen<BackfillProgressEvent>(
+    "hopper://backfill-progress",
+    (e) => handler(e.payload),
+  );
+};
+
 /** History tail of past backfills, newest first. Pass `folder` to
- *  filter to one watched directory. */
+ *  filter to one watched directory. `sinceUnix` (v3.39 round-10)
+ *  filters to runs that *finished* at or after the given unix-seconds
+ *  timestamp — powers the "Last 24h / Last 7d / All" history chips
+ *  by computing a JS-side cutoff and letting SQL do the row filter. */
 export const slabHopperListBackfillRuns = (
   folder?: string,
   limit?: number,
+  sinceUnix?: number,
 ): Promise<BackfillRun[]> =>
   invoke("slab_hopper_list_backfill_runs", {
     folder: folder ?? null,
+    sinceUnix: sinceUnix ?? null,
     limit: limit ?? null,
   });
+
+/** Compute the unix-seconds cutoff for a "Last N hours" chip. Pure
+ *  helper, used by HopperBackfillPanel's history filter. */
+export const backfillSinceUnix = (windowHours: number | null): number | null => {
+  if (windowHours === null || !Number.isFinite(windowHours) || windowHours <= 0) {
+    return null;
+  }
+  return Math.floor(Date.now() / 1000) - Math.floor(windowHours * 3600);
+};
+
+/** Export a `BackfillReport` to disk as RFC-4180 CSV. The frontend
+ *  gathers `path` from the @tauri-apps/plugin-dialog save-as picker;
+ *  the Rust side handles the actual write so arbitrary user-chosen
+ *  paths bypass the frontend FS scope. Returns the byte count
+ *  written, so the UI toast can say "Exported 42 rows (3.1 KB)"
+ *  without re-reading the file. */
+export const slabHopperExportBackfillCsv = (
+  report: BackfillReport,
+  path: string,
+): Promise<number> =>
+  invoke("slab_hopper_export_backfill_csv", { report, path });
+
+/** Suggest a default filename for the CSV export based on the
+ *  scanned folder + plan timestamp. Pure — keeps the panel free of
+ *  date math. Format: `backfill_<basename>_<YYYY-MM-DD>.csv`. */
+export const suggestBackfillCsvFilename = (report: BackfillReport): string => {
+  const stem = basename(report.folder).replace(/[^A-Za-z0-9_-]/g, "_") || "folder";
+  const d = new Date(report.generated_at * 1000);
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return `backfill_${stem}_${iso}.csv`;
+};
