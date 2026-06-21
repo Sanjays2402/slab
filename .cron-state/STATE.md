@@ -2,9 +2,9 @@
 
 Last updated: 2026-06-20 22:59 PT by Cake (cron) — round-13 BATCH shipped: 5 Install-Log-Export slices that turn the marketplace audit log into a deliverable artifact (paralegals can now email partners a CSV of "every plugin install/uninstall/failure in the last 90 days"). Time-window read primitive + RFC-4180 CSV serialiser + JSON envelope with schema_version/generated_at/window-bounds metadata + Tauri export commands + UI Export menu in RecentInstallsDrawer respecting the active window. Pushed + verified (local==origin ecc2261) — see TICK LOG; clippy gate wedged twice AGAIN on SlabBuild sparse image (4th tick in a row) so this batch shipped on cargo test --lib (2171 pass, +18 from round-12's 2153) + pnpm check (0 errors / 104 warnings = round-12 baseline preserved EXACTLY) strength per documented STATE.md guidance.
 
-## Active branch & version
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
-**Branch: `feature/v3.39.0-atlas-tag-suggest`** (this is THE active feature
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 branch — keep shipping onto it unless Sanjay says otherwise).
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
