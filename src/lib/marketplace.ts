@@ -275,3 +275,129 @@ export function compareSemver(a: string, b: string): number {
   if (pb.pre === null) return -1;
   return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
 }
+
+// ─── Install log read surface (v3.39 Slice 55) ──────────────────────
+
+/**
+ * One persisted row in the marketplace install-log table. Mirrors
+ * `marketplace::install_log::InstallEvent` on the Rust side.
+ *
+ * The NULL-able fields are populated only on the row kinds that need
+ * them: `bytes_written` / `files_extracted` / `source` /
+ * `replaced_existing` arrive on install/update rows; `error_msg`
+ * arrives on failed rows; `prior_version` arrives on update rows.
+ */
+export interface InstallEvent {
+  id: number;
+  plugin_id: string;
+  version: string;
+  action: "install" | "update" | "uninstall" | "failed";
+  /** Unix seconds (UTC). */
+  occurred_at: number;
+  source: string | null;
+  bytes_written: number | null;
+  files_extracted: number | null;
+  replaced_existing: boolean | null;
+  prior_version: string | null;
+  error_msg: string | null;
+}
+
+/**
+ * Per-plugin counts of each install-log action kind. Mirrors
+ * `marketplace::install_log::InstallStats`.
+ */
+export interface InstallStats {
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+}
+
+const EMPTY_INSTALL_STATS: InstallStats = {
+  installs: 0,
+  updates: 0,
+  uninstalls: 0,
+  failures: 0,
+};
+
+/**
+ * Per-plugin timeline of install/update/uninstall/failure events,
+ * newest first, capped at `limit` (default 50). Returns an empty
+ * array in browser mode and for unknown plugin ids.
+ *
+ * Used by PluginDetailDrawer's Activity section.
+ */
+export async function listInstallEvents(
+  pluginId: string,
+  limit?: number,
+): Promise<InstallEvent[]> {
+  if (!isInTauri()) return [];
+  return invoke<InstallEvent[]>("slab_marketplace_install_events", {
+    pluginId,
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Corpus-wide recent install events, newest first, capped at `limit`
+ * (default 50). Drives the PluginsPanel toolbar "Recent installs"
+ * drawer. Returns an empty array in browser mode.
+ */
+export async function listRecentInstallEvents(limit?: number): Promise<InstallEvent[]> {
+  if (!isInTauri()) return [];
+  return invoke<InstallEvent[]>("slab_marketplace_install_history_recent", {
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Per-plugin counts of each install-log action kind. Returns an
+ * all-zeroes payload in browser mode or for an unknown plugin id.
+ *
+ * Powers the slim header pill on PluginDetailDrawer's Activity
+ * section ("Installed 3 · 1 update · 0 failures") in one round-trip.
+ */
+export async function pluginInstallStats(pluginId: string): Promise<InstallStats> {
+  if (!isInTauri()) return { ...EMPTY_INSTALL_STATS };
+  return invoke<InstallStats>("slab_marketplace_plugin_install_stats", { pluginId });
+}
+
+/**
+ * Format an `InstallEvent.occurred_at` (unix seconds) as a compact
+ * human-friendly relative timestamp ("just now", "3m ago", "2h ago",
+ * "5d ago"), falling back to ISO yyyy-mm-dd for events older than 30
+ * days. UTC arithmetic so the result is timezone-stable.
+ *
+ * Used by both the Activity rows and the Recent installs drawer so
+ * they share one timestamp vocabulary.
+ */
+export function formatInstallEventTime(occurredAt: number, now?: number): string {
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = Math.max(0, nowSec - occurredAt);
+  if (delta < 60) return "just now";
+  if (delta < 60 * 60) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 60 * 60 * 24) return `${Math.floor(delta / 3600)}h ago`;
+  if (delta < 60 * 60 * 24 * 30) return `${Math.floor(delta / 86400)}d ago`;
+  // ≥30 days — fall back to ISO date (UTC) so the cell is stable
+  // across timezone changes.
+  const iso = new Date(occurredAt * 1000).toISOString();
+  return iso.slice(0, 10);
+}
+
+/**
+ * Glyph hint for an install-log action, matching Slab's monochrome
+ * chrome vocabulary (no emoji in app surfaces — but unicode glyphs
+ * like ✓ / ✕ / ↻ / ⌫ are app-chrome and are fine).
+ */
+export function installEventGlyph(action: InstallEvent["action"]): string {
+  switch (action) {
+    case "install":
+      return "✓";
+    case "update":
+      return "↻";
+    case "uninstall":
+      return "⌫";
+    case "failed":
+      return "✕";
+  }
+}

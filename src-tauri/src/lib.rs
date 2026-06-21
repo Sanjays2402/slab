@@ -5275,6 +5275,46 @@ fn record_install_failure(plugin_id: &str, version: &str, error_msg: &str) {
     }
 }
 
+// ─── Install log read surface (v3.39 Slice 55) ──────────────────────
+
+/// Per-plugin install/uninstall/failure timeline, newest first,
+/// capped at `limit`. Returns an empty Vec for unknown plugin ids.
+/// Used by PluginDetailDrawer's Activity section.
+#[tauri::command]
+fn slab_marketplace_install_events(
+    plugin_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<marketplace::InstallEvent>, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.list_events(&plugin_id, limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
+}
+
+/// Corpus-wide recent install events, newest first, capped at `limit`.
+/// Used by the PluginsPanel toolbar "Recent installs" drawer.
+#[tauri::command]
+fn slab_marketplace_install_history_recent(
+    limit: Option<i64>,
+) -> Result<Vec<marketplace::InstallEvent>, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.list_recent(limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
+}
+
+/// Per-plugin counts of each install action kind. Powers the slim
+/// header pill on PluginDetailDrawer's Activity section
+/// ("Installed 3 · 1 update · 0 failures") in one round-trip.
+#[tauri::command]
+fn slab_marketplace_plugin_install_stats(
+    plugin_id: String,
+) -> Result<marketplace::InstallStats, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.install_stats(&plugin_id).map_err(|e| e.to_string())
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Beacon Voice Mode (v1.9.0 Slice 15) — Tauri command surface.
 // ─────────────────────────────────────────────────────────────────────
@@ -6257,6 +6297,9 @@ pub fn run() {
             slab_marketplace_index,
             slab_marketplace_install,
             slab_marketplace_uninstall,
+            slab_marketplace_install_events,
+            slab_marketplace_install_history_recent,
+            slab_marketplace_plugin_install_stats,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,
