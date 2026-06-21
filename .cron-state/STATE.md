@@ -1,6 +1,307 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 11:31 PT by Cake (cron) — round-17 BATCH shipped: 5 slices closing two cohesive arcs. SmartFoldersHubPanel row-level CRUD (slice 78): personal-preset rows grow a per-row ... menu surfacing Rename / Duplicate / Delete from the slice-76 verbs, with inline rename input, six-column grid, busy-row state, Notion-style popover, and Escape-ladder (menu -> rename -> close); built-in rows stay immutable with a placeholder cell for layout alignment. Hopper rule coverage arc (slices 79-82): pure-data coverage.rs primitive computing first_match + would_match + dead_at_position per rule with O(rules*samples) two-pass scan and 15 tests pinning conservation invariants and the dead-rule diagnostic shape, slab_hopper_rule_coverage Tauri command sourcing samples from HopperLog::list_recent with 3 testable helpers (clamp_sample_limit / sample_over_read / samples_from_runs) and 13 helper tests, TS client + 4 pure helpers (fallthroughPercent / ruleMatchPercent / ruleCoverageDiagnostic / summarizeCoverage) with 17 inline-expect tests, and the demo-able coverage panel in HopperRulesEditor with two-layer per-rule bars (would-match overlay + first-match solid), diagnostic chips (Dead at position / Partly shadowed / No matches), fall-through row, sample-size number input clamped to [1, 1000], and Coverage button in the header. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 15.17s, cargo test --lib 2261 passed / 0 failed (round-16 baseline 2233 + 15 from slice 79 + 13 from slice 80 = 2261), pnpm check 0 errors / 104 warnings (round-16 baseline preserved EXACTLY). Pushed + verified (local==origin 8467fc4).
+Last updated: 2026-06-21 15:30 PT by Cake (cron) — round-18 BATCH shipped: 5 slices closing two cohesive arcs. Hopper sample drilldown arc (slices 83-86): pure-data compute_sample_drilldown(rules, samples, bucket, preview_cap) primitive returning SampleDrilldown {bucket, samples, total_in_bucket, truncated} with SampleBucket::Rule{index}|Fallthrough selector and 15 tests pinning bucket assignment + truncation + preserves-input-order + serde, slab_hopper_sample_drilldown Tauri command sharing wire semantics with rule_coverage (same candidateRules/samples/sampleLimit precedence) + new clamp_preview_cap helper with 5 tests pinning [1, 1000] bounds + default-25 + lower-than-coverage invariant, TS client with ruleBucket(i)/FALLTHROUGH_BUCKET constructors + sampleBucketEquals/describeDrilldown/describeBucket pure helpers + 19 inline-expect tests, and clickable coverage rows in HopperRulesEditor opening an in-panel drilldown popover with Notion-style toggle/chevron + bucket-specific empty-state copy + previewCap input + Escape-to-close. Install-log per-plugin histogram (slice 87): backend plugin_histogram(since, until, limit) with ONE indexed GROUP BY + in-memory sort, PluginHistogramRow with precomputed total + last_occurred_at + 13 tests pinning DESC sort + tiebreak ASC on plugin_id + window filters + conservation invariant, Tauri command with PluginHistogramResult envelope (grand_total + echoed limit_used), TS client + summarizeHistogram helper, and a "Top plugins" collapsible section in RecentInstallsDrawer between retention and events list rendering per-plugin stacked bars (installs green / updates accent / uninstalls amber / failures red) scaled relative to the most-active plugin's total with auto-refresh on window change. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 11.43s, cargo test --lib 2294 passed / 0 failed (round-17 baseline 2261 + 15 + 5 + 13 = 2294), pnpm check 0 errors / 104 warnings (round-17 baseline preserved EXACTLY). Pushed + verified (local==origin a0504dc).
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+
+**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
+src-tauri/tauri.conf.json, Cargo.lock.
+
+Latest commit: `a0504dc` — "feat(plugins): per-plugin install histogram in Recent installs drawer".
+
+### What round-18 (2026-06-21 15:30 PT) just shipped
+
+Five slices across two cohesive arcs. Before this tick the
+HopperRulesEditor coverage panel surfaced per-rule bars but had
+no way to answer the natural follow-up question "which 8 files
+fell through?" — clicking a row was a dead affordance. And the
+RecentInstallsDrawer surfaced per-event timelines but couldn't
+answer "which plugins did I install the most this month?". Tonight
+both gaps close end-to-end.
+
+Round 17's closing notes listed both items as candidates: "Hopper
+sample-set explorer (drill into 'show me the 23 fall-through files'
+from a coverage row)" and "install-log drawer's coverage-like
+aggregate ('which plugins did you install the most this month?')".
+Both lent themselves to 1-4 slice arcs that composed into a 5-slice
+batch.
+
+- Slice 83: Hopper sample drilldown primitive (7fc3463,
+  389 LOC). New pure-data compute_sample_drilldown(rules,
+  samples, bucket, preview_cap) in pdf::hopper::coverage
+  returning SampleDrilldown {bucket, samples, total_in_bucket,
+  truncated}. SampleBucket is a tag-discriminated enum:
+  Rule{index} for "samples this rule was the FIRST to match"
+  (matches RuleCoverage::first_match in count) or Fallthrough for
+  "samples no rule matched". O(rules * samples) — same shape as
+  compute_coverage; we don't reuse the coverage report because
+  winners aren't carried in its shape (only counts are), and re-
+  running the chain is cheap enough that a second pass is
+  simpler than caching a winners vec. preview_cap clamps to
+  [1, 5000] so a misuse can't copy a giant payload across IPC.
+  total_in_bucket reports the FULL match count even after the
+  cap trims samples, so the UI can render "Showing 25 of 47".
+  truncated flag (total > samples.len()) so the UI doesn't
+  compare counts itself. Out-of-range Rule{index} yields empty
+  rather than panicking — matches the analyzer's lenient
+  stance. 15 new tests pin rule bucket / fallthrough bucket /
+  shadowed-rule empty bucket / cap clamps [1, 5000] / truncated
+  flag / out-of-range / fall-through with no rules = all / fall-
+  through with Always = empty / preserves input order / full
+  sample axes (size/page/text) survive / SampleBucket serde
+  rule + fallthrough round-trips / SampleDrilldown serde shape.
+- Slice 84: sample drilldown Tauri command (80e03bc, 130
+  LOC). slab_hopper_sample_drilldown(watch_id, bucket,
+  candidate_rules?, samples?, sample_limit?, preview_cap?)
+  mirrors slab_hopper_rule_coverage on every input axis
+  (candidate_rules + samples + sample_limit) so a click on a
+  coverage row drills into the EXACT same sample set the
+  coverage report counted. Anything else would surface "27
+  fall-throughs" in the header but only show 23 in the
+  drilldown — would read as a bug. preview_cap (default 25,
+  clamped to [1, 1000]) caps the drilldown payload — heavier
+  per row than coverage (full filename + axes vs counts) so
+  its ceiling is lower (1000 vs 5000) and its default smaller
+  (25 vs 100). 5 new clamp_preview_cap helper tests pin
+  default 25 + bounds + i64 boundaries + the invariant that
+  clamp_preview_cap default < clamp_sample_limit default.
+- Slice 85: sample drilldown TS client + bucket helpers
+  (6c4fa84, 288 LOC across hopper.ts + hopper.test.ts).
+  SampleBucket discriminated union, ergonomic constructors:
+  FALLTHROUGH_BUCKET singleton (stable object, no per-call
+  allocation, identity-stable for === checks) + ruleBucket(i)
+  (throws on negative/non-integer indices — the Rust side
+  treats out-of-range as empty; negatives indicate a TS bug,
+  so fail loud client-side). slabHopperSampleDrilldown wrapper
+  with same opts shape as slabHopperRuleCoverage + previewCap.
+  Three pure helpers: sampleBucketEquals (gates "open" highlight
+  without object-identity dependency), describeDrilldown
+  ("No files" / "1 file" / "3 files" / "Showing 25 of 47" /
+  defensive "Showing 0 of 5"), describeBucket(bucket,
+  ruleNames?) (fallthrough copy / "#3 Receipts" / "Rule #N"
+  fallback for missing/empty/whitespace/out-of-range names —
+  popover never reads as "#1 " with trailing space). 19 new
+  pure-helper tests in hopper.test.ts following inline-expect
+  convention.
+- Slice 86: clickable coverage rows + drilldown popover
+  (e38a358, 421 LOC in HopperRulesEditor.svelte). The demo-
+  able payoff. Coverage rows (including fall-through) are now
+  <button>s wrapping the existing grid markup; button reset
+  keeps them reading like rows (left-align / inherit font /
+  cursor pointer). Accent-tinted .open state + focus-visible
+  ring. Chevron column (▸ → ▾) in the counts cell makes the
+  affordance obvious. Tooltip per row reads "Show the N
+  samples this rule routed" so click-purpose is clear; empty
+  rows say "no samples in this bucket; click for empty-state
+  details". Click expands an in-panel popover under the row
+  via shared {#snippet renderDrilldownBody} (one render path
+  for both rule + fall-through buckets). Popover header:
+  bucket label via describeBucket + live describeDrilldown
+  summary + 56px previewCap number input clamped [1, 1000]
+  matching the server clamp + Reload + Close. Body: monospace
+  file list (max-height 260px + overflow-y so 100s of fall-
+  throughs scroll inside the popover not the editor); per-
+  row chevron glyph; truncated footnote. Empty-state copy
+  differs per bucket — fall-through reads "every recent file
+  matched at least one rule" (informational); rule bucket
+  reads "no recent files OR an earlier rule won first — look
+  at Dead/Shadowed chips above" (actionable, points at the
+  diagnostic chips). openDrilldown toggles off if already
+  open (Notion-style). scheduleSave refreshes the open
+  drilldown alongside coverage so the bucket reshapes live on
+  every edit. Window-level Escape closes the popover. ~135
+  lines of scoped CSS following dark-glass tokens
+  (rgba(124,140,255,...) accent + monospace 11.5px file rows).
+- Slice 87: per-plugin install histogram (a0504dc, 783 LOC
+  across install_log.rs + lib.rs + marketplace.ts +
+  RecentInstallsDrawer.svelte). End-to-end backend + Tauri +
+  TS + UI as one composite slice. Backend: new
+  PluginHistogramRow {plugin_id, installs, updates,
+  uninstalls, failures, total, last_occurred_at} (total
+  precomputed so UI's bar-width and sort don't re-add four
+  columns per row). New InstallLog::plugin_histogram(since,
+  until, limit) does ONE indexed GROUP BY (plugin_id, action)
+  scan + in-memory sort by total DESC with secondary ASC on
+  plugin_id (deterministic tiebreak). 13 new tests pin sort
+  order / action buckets / last_occurred_at / window filters
+  since/until/both / empty cases / limit caps / negative
+  clamps to zero / tiebreak / conservation invariant (total ==
+  sum of buckets) / serde shape. Tauri: new
+  PluginHistogramResult envelope with rows + echoed window/
+  limit + grand_total (sum across plugins so UI renders "12
+  events across 3 plugins" without re-summing).
+  slab_marketplace_install_log_plugin_histogram registered
+  in invoke_handler. TS: PluginHistogramRow /
+  PluginHistogramResult wire types,
+  getPluginInstallHistogram wrapper with browser-mode empty
+  fallback, summarizeHistogram pure helper (singular/plural
+  correct). UI: new "Top plugins" collapsible section
+  between retention block and events list. Same toggle
+  pattern as retention (chevron + label + right-aligned
+  meta). Per-plugin row: 3-col grid (id+timestamp /
+  stacked bar / counts). Stacked bar scaled relative to
+  the most-active plugin's total (top row always = 100%);
+  four segments in canonical action order with seg-* colors
+  (install green #6dd49a / update accent #7c8cff / uninstall
+  amber #d9b04c / failed red #ff5d6c); zero-count segments
+  don't render so a zero-failure plugin doesn't get an empty
+  red sliver. Counts cell: bold total + per-action chips
+  using installEventGlyph + count, chips inherit seg-* color.
+  Auto-refreshes on window change via $effect tracking
+  windowSinceUnix. Empty + error + loading states; legend
+  footer. ~150 lines of scoped CSS matching the existing
+  retention-block vocabulary so the two sections read as
+  siblings.
+
+Gates result: cargo fmt clean (cargo fmt --all --check exit 0),
+cargo clippy --lib -- -D warnings PASSED CLEAN in 11.43s (matches
+round-17 15.17s baseline — cheap GROUP BY + pure-data drilldown
+add no new clippy surface), cargo test --lib 2294 passed / 0 failed
+(round-17 baseline 2261 + 15 from drilldown primitive + 5 from
+clamp_preview_cap + 13 from histogram = 2294), pnpm check 0 errors
+/ 104 warnings (round-17 baseline preserved EXACTLY — zero new
+warnings from the clickable rows, drilldown popover, stacked
+histogram bars, or scoped CSS).
+
+PROCESS NOTES:
+- Round-17 closing notes listed both arcs as next-tick candidates;
+  the existing primitive (compute_coverage in slice 79) gave the
+  drilldown a clean second-pass shape (winners not carried in the
+  coverage report, so a separate primitive is the right factoring
+  rather than caching). And install_log already had install_stats
+  per-plugin (single id) so generalising to all-plugins-histogram
+  was a one-method addition not a schema rework.
+- Five slices, five commits, two logical subsystems. The drilldown
+  arc (83-86) splits cleanly into pure-data primitive -> command ->
+  TS client -> UI matching the round-15 bulk-update arc (68-72)
+  and round-16 install-log-filter arc (73-77) cadence. The
+  histogram slice (87) compressed backend + commands + TS + UI
+  into one because each layer is small (~50-150 LOC) and they're
+  tightly coupled by a single new data shape (PluginHistogramRow).
+- SampleBucket's tag-discriminated enum shape ({kind, ...}) reads
+  cleanly across the Rust/TS boundary — same vocabulary as
+  RulePredicate. The TS ruleBucket(i) constructor that throws on
+  negative indices is a deliberate divergence from Rust's lenient
+  stance: client-side bugs deserve loud failures so they don't
+  silently render as empty buckets.
+- The drilldown's preview_cap (default 25) vs coverage's
+  sample_limit (default 100) divergence is intentional — see the
+  test `clamp_preview_cap_default_is_lower_than_coverage_default`
+  which pins the invariant so a future tweak that breaks the
+  ordering surfaces as a test failure rather than a silent
+  regression. Drilldown carries full filenames + axes per row;
+  coverage carries per-rule counts only.
+- The histogram's bar scaling (relative to top row's total) reads
+  more honestly than absolute scaling — at 25 plugins the top
+  may have 50 events and the bottom 1, which would render the
+  bottom as a 2% sliver under absolute scaling (visually
+  indistinguishable from zero). Relative scaling keeps every row
+  visually meaningful while preserving order.
+
+DESIGN NOTES:
+- Drilldown popover lives INSIDE the coverage panel (not as a
+  modal) because the natural mental model is "this row of bars
+  has this list of files" — keeping the file list spatially
+  attached to the bar preserves that association. A modal would
+  detach them and force the user to remember which bar they
+  clicked.
+- Bucket-specific empty-state copy was the right call vs one
+  generic "No files" string. Fall-through empty is good news
+  ("every file matched a rule") while rule-bucket empty is
+  actionable ("look at the diagnostic chips") — collapsing them
+  would hide the actionable framing.
+- Notion-style click-row-twice-to-close (no separate disclosure
+  caret) keeps the affordance count low. Chevron is a visual
+  indicator only, not a separate interactive element — clicking
+  anywhere on the row opens/closes.
+- Window-level Escape (no click-outside) matches the editor's
+  feel: clicking elsewhere on the page is typically a deliberate
+  navigation, and the explicit Close button is always visible
+  inside the popover. A click-outside listener would surprise
+  users who clicked an adjacent row to switch buckets.
+- Histogram section placement BELOW retention (not above) because
+  retention is a setting and "Top plugins" is a view — settings
+  cluster before views in the existing drawer flow. The retention-
+  block's collapsed-by-default pattern continues here for the
+  same reason: the timeline is the drawer's primary content.
+- Stacked bars (not separate four-bar grid) because the relative
+  proportions WITHIN a plugin are more important than the
+  absolute counts (the chip strip carries those). One row, one
+  bar reads as "this plugin's activity composition"; four bars
+  per plugin would compete with the cross-plugin comparison.
+- Color vocabulary mapped to the install-event glyph colors
+  already shipped in slice 77 (install ✓ green / update ↻ accent
+  / uninstall ⌫ amber / failed ✕ red) so a user who learned the
+  filter-chip colors recognises them in the histogram instantly.
+
+## Roadmap — round 18 (Hopper Sample Drilldown + Per-Plugin Histogram) — ALL DONE
+
+Round 18 batched FIVE feature slices into one cron tick. Four
+slices built the Hopper sample drilldown end-to-end (primitive ->
+command -> TS client -> clickable UI), and one composite slice
+shipped the per-plugin install histogram end-to-end (storage
+aggregate + command + TS client + Top plugins UI in one commit).
+
+83. ~~**Hopper sample drilldown primitive**~~ —
+    DONE (2026-06-21 15:30 PT, 7fc3463, single commit, 389 LOC).
+    Pure-data compute_sample_drilldown(rules, samples, bucket,
+    preview_cap) returning SampleDrilldown {bucket, samples,
+    total_in_bucket, truncated}. SampleBucket tag-discriminated
+    enum: Rule{index} | Fallthrough. preview_cap clamps [1, 5000].
+    Out-of-range Rule index yields empty rather than panicking.
+    15 new tests pin bucket assignment + truncation + preserves-
+    input-order + serde + edge cases.
+84. ~~**Hopper sample drilldown Tauri command**~~ —
+    DONE (2026-06-21 15:30 PT, 80e03bc, single commit, 130 LOC).
+    slab_hopper_sample_drilldown(watch_id, bucket, candidate_rules?,
+    samples?, sample_limit?, preview_cap?). Mirrors rule_coverage's
+    input shape so the drilldown evaluates the EXACT same chain +
+    samples the coverage counted. clamp_preview_cap default 25
+    clamped [1, 1000]; 5 new tests pin bounds + the invariant that
+    drilldown default < coverage default.
+85. ~~**sample drilldown TS client + bucket helpers**~~ —
+    DONE (2026-06-21 15:30 PT, 6c4fa84, single commit, 288 LOC).
+    SampleBucket wire type + FALLTHROUGH_BUCKET singleton +
+    ruleBucket(i) constructor (throws on negative/non-integer).
+    slabHopperSampleDrilldown wrapper. sampleBucketEquals +
+    describeDrilldown + describeBucket pure helpers. 19 new tests
+    in hopper.test.ts (inline-expect convention).
+86. ~~**clickable coverage rows + drilldown popover**~~ —
+    DONE (2026-06-21 15:30 PT, e38a358, single commit, 421 LOC).
+    The demo-able payoff. Coverage rows now <button>s with button
+    reset; .open accent tint + focus-visible ring + chevron
+    column. Shared {#snippet renderDrilldownBody} for rule +
+    fall-through. Popover with previewCap number input, Reload,
+    Close. Monospace file list (260px max-height + scroll), per-
+    row glyph, truncated footnote, bucket-specific empty-state
+    copy. Window-level Escape close. ~135 lines scoped CSS.
+87. ~~**per-plugin install histogram**~~ —
+    DONE (2026-06-21 15:30 PT, a0504dc, single commit, 783 LOC).
+    End-to-end. Backend PluginHistogramRow + plugin_histogram
+    method with indexed GROUP BY + sort + 13 tests pinning DESC
+    sort, tiebreak ASC on plugin_id, window filters, conservation
+    invariant. Tauri command with PluginHistogramResult envelope
+    (grand_total + echoed limit). TS client + summarizeHistogram
+    helper. "Top plugins" collapsible section in
+    RecentInstallsDrawer between retention and events list with
+    per-plugin stacked bars (install green / update accent /
+    uninstall amber / failed red) scaled relative to top row,
+    counts cell with chip strip, auto-refresh on window change.
+
+    With round 18 done, the Hopper rule editor closes the
+    coverage workflow loop (look at bars -> click row -> see
+    files -> tune rules with the diagnostic in hand), and the
+    Recent installs drawer gains the cross-plugin aggregate that
+    turns the timeline into a workflow surface (timeline for
+    forensics, histogram for trends). Next subsystem candidates:
+    Loom-grade tagging explorer, doc-detail metadata editor
+    read/write surface, Beacon cache inspector polish (column
+    sort by basename / model facet), Quill multi-document field-
+    detect queueing, drilldown CSV export ("save the fall-through
+    list"), Hopper rule reorder-by-drag in the coverage panel
+    (drag a dead row up to fix shadowing in one motion),
+    histogram time-bucket axis ("activity per week" alongside
+    the current per-plugin breakdown).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
