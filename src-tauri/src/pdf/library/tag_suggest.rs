@@ -323,6 +323,84 @@ pub fn accept_tag_suggestion(
     Ok(tag)
 }
 
+/// One element of a bulk-accept request: pin a single tag onto one doc.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AcceptItem {
+    pub doc_id: i64,
+    pub tag_name: String,
+}
+
+/// Outcome of a bulk-accept call. `attached` is one TagRecord per
+/// successfully attached `(doc_id, tag_name)` pair — already-present
+/// tags COUNT as attached so the caller can patch its in-memory doc
+/// rows uniformly. `failed` carries `(doc_id, tag_name, reason)` for
+/// any item the batch could not apply (e.g. empty name, unknown doc).
+///
+/// Bulk semantics are per-item, NOT all-or-nothing: a malformed name in
+/// item 12 fails item 12 alone, items 0..11 + 13..N still attach. This
+/// matches what a paralegal reviewing 50 chips actually wants — one
+/// typo doesn't undo 49 good accepts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BulkAcceptResult {
+    pub attached: Vec<(i64, TagRecord)>,
+    pub failed: Vec<(i64, String, String)>,
+}
+
+/// Apply `items` one at a time, collecting per-item outcomes. Each pair
+/// pins the named tag (creating it if missing) onto the given doc,
+/// unioned with whatever tags the doc already has. Per-item failures
+/// (empty name, unknown doc) land in the `failed` vec; the rest attach.
+///
+/// Duplicate `(doc_id, tag_name)` pairs in the input are coalesced
+/// (after normalising the tag name) so a UI that double-checks the
+/// same row by accident is not penalised.
+pub fn accept_tag_suggestions_bulk(
+    db: &mut LibraryDb,
+    items: &[AcceptItem],
+) -> Result<BulkAcceptResult, LibraryError> {
+    // 1. Pre-pass: validate names, drop empties, dedupe pairs.
+    //    Validation runs BEFORE any DB mutation so a rejected name in
+    //    item 12 doesn't leave items 0..11 attached.
+    let mut failed: Vec<(i64, String, String)> = Vec::new();
+    let mut seen: HashSet<(i64, String)> = HashSet::new();
+    let mut clean: Vec<(i64, String)> = Vec::new();
+    for it in items {
+        let normalized = it.tag_name.trim().to_lowercase();
+        if normalized.is_empty() {
+            failed.push((it.doc_id, it.tag_name.clone(), "tag name is empty".into()));
+            continue;
+        }
+        let key = (it.doc_id, normalized.clone());
+        if !seen.insert(key) {
+            // Silent dedupe — not a failure.
+            continue;
+        }
+        clean.push((it.doc_id, normalized));
+    }
+    if clean.is_empty() {
+        return Ok(BulkAcceptResult {
+            attached: Vec::new(),
+            failed,
+        });
+    }
+
+    // 2. Apply each pair through the per-doc primitive. The primitive
+    //    already handles find-or-create + union + pastel coloring, so
+    //    this loop stays slim. We don't open a manual transaction here
+    //    because set_doc_tags() opens its own txn per call — wrapping
+    //    multiple short txns in the same loop is simpler than threading
+    //    a single connection-level txn through three setter helpers,
+    //    and still rolls back the offending pair on error.
+    let mut attached: Vec<(i64, TagRecord)> = Vec::new();
+    for (doc_id, name) in &clean {
+        match accept_tag_suggestion(db, *doc_id, name) {
+            Ok(tag) => attached.push((*doc_id, tag)),
+            Err(e) => failed.push((*doc_id, name.clone(), e.to_string())),
+        }
+    }
+    Ok(BulkAcceptResult { attached, failed })
+}
+
 /// Record a dismissal so the suggestion never resurfaces for this doc.
 pub fn dismiss_tag_suggestion(
     db: &LibraryDb,
@@ -629,5 +707,146 @@ mod tests {
         let n = undismiss_all_for_doc(&d, id).unwrap();
         assert_eq!(n, 1);
         assert!(!is_tag_suggestion_dismissed(&d, id, "invoice").unwrap());
+    }
+
+    // ---- Slice 48: bulk accept ----
+
+    #[test]
+    fn bulk_accept_attaches_all_pairs() {
+        let mut d = db();
+        let a = add_doc(&mut d, "Invoice", "/tmp/a.pdf");
+        let b = add_doc(&mut d, "Receipt", "/tmp/b.pdf");
+        let items = vec![
+            AcceptItem {
+                doc_id: a,
+                tag_name: "invoice".into(),
+            },
+            AcceptItem {
+                doc_id: b,
+                tag_name: "receipt".into(),
+            },
+        ];
+        let result = accept_tag_suggestions_bulk(&mut d, &items).unwrap();
+        assert_eq!(result.attached.len(), 2);
+        assert!(result.failed.is_empty());
+        let a_tags: Vec<String> = d
+            .tags_for_document(a)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        let b_tags: Vec<String> = d
+            .tags_for_document(b)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(a_tags.contains(&"invoice".to_string()));
+        assert!(b_tags.contains(&"receipt".to_string()));
+    }
+
+    #[test]
+    fn bulk_accept_dedupes_repeated_pairs() {
+        let mut d = db();
+        let id = add_doc(&mut d, "Invoice", "/tmp/a.pdf");
+        let items = vec![
+            AcceptItem {
+                doc_id: id,
+                tag_name: "invoice".into(),
+            },
+            AcceptItem {
+                doc_id: id,
+                tag_name: "Invoice".into(), // Case dedupe after normalisation.
+            },
+            AcceptItem {
+                doc_id: id,
+                tag_name: "  invoice  ".into(), // Whitespace dedupe.
+            },
+        ];
+        let result = accept_tag_suggestions_bulk(&mut d, &items).unwrap();
+        // Three input items, one effective accept after dedupe.
+        assert_eq!(result.attached.len(), 1);
+        assert!(result.failed.is_empty());
+        assert_eq!(d.tags_for_document(id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn bulk_accept_collects_per_item_failures() {
+        let mut d = db();
+        let id = add_doc(&mut d, "Invoice", "/tmp/a.pdf");
+        let items = vec![
+            AcceptItem {
+                doc_id: id,
+                tag_name: "invoice".into(),
+            },
+            AcceptItem {
+                doc_id: id,
+                tag_name: "".into(), // Empty name -> fail.
+            },
+            AcceptItem {
+                doc_id: id,
+                tag_name: "   ".into(), // Whitespace-only -> fail.
+            },
+            AcceptItem {
+                doc_id: id,
+                tag_name: "receipt".into(),
+            },
+        ];
+        let result = accept_tag_suggestions_bulk(&mut d, &items).unwrap();
+        assert_eq!(result.attached.len(), 2);
+        assert_eq!(result.failed.len(), 2);
+        // Good items still landed even though items 1 + 2 failed.
+        let tags: Vec<String> = d
+            .tags_for_document(id)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(tags.contains(&"invoice".to_string()));
+        assert!(tags.contains(&"receipt".to_string()));
+    }
+
+    #[test]
+    fn bulk_accept_empty_input_is_noop() {
+        let mut d = db();
+        let result = accept_tag_suggestions_bulk(&mut d, &[]).unwrap();
+        assert!(result.attached.is_empty());
+        assert!(result.failed.is_empty());
+    }
+
+    #[test]
+    fn bulk_accept_only_empty_names_collects_failures_no_attach() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/x.pdf");
+        let items = vec![
+            AcceptItem {
+                doc_id: id,
+                tag_name: "".into(),
+            },
+            AcceptItem {
+                doc_id: id,
+                tag_name: "  ".into(),
+            },
+        ];
+        let result = accept_tag_suggestions_bulk(&mut d, &items).unwrap();
+        assert!(result.attached.is_empty());
+        assert_eq!(result.failed.len(), 2);
+    }
+
+    #[test]
+    fn bulk_accept_creates_missing_tags() {
+        let mut d = db();
+        let id = add_doc(&mut d, "Brand New", "/tmp/n.pdf");
+        assert!(d.find_tag_by_name("brandnew").unwrap().is_none());
+        let result = accept_tag_suggestions_bulk(
+            &mut d,
+            &[AcceptItem {
+                doc_id: id,
+                tag_name: "brandnew".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(result.attached.len(), 1);
+        assert!(d.find_tag_by_name("brandnew").unwrap().is_some());
     }
 }

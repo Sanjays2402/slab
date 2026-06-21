@@ -4085,6 +4085,27 @@ fn slab_library_tag_suggestion_undismiss_all(doc_id: i64) -> CmdResult<usize> {
     result.into()
 }
 
+/// Bulk-accept N (doc_id, tag_name) pairs in one round-trip. Per-item
+/// failure semantics — a malformed name in item 12 fails item 12 alone,
+/// the rest still attach. Emits a single `library-changed` event after
+/// the batch so the UI refreshes once instead of N times.
+#[tauri::command]
+fn slab_library_tag_suggestions_accept_bulk(
+    app: tauri::AppHandle,
+    items: Vec<pdf::library::tag_suggest::AcceptItem>,
+) -> CmdResult<pdf::library::tag_suggest::BulkAcceptResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::tag_suggest::accept_tag_suggestions_bulk(&mut db, &items)
+    })();
+    if let Ok(r) = &result {
+        if !r.attached.is_empty() {
+            emit_library_changed(&app);
+        }
+    }
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -6022,6 +6043,7 @@ pub fn run() {
             slab_library_tag_suggestion_accept,
             slab_library_tag_suggestion_dismiss,
             slab_library_tag_suggestion_undismiss_all,
+            slab_library_tag_suggestions_accept_bulk,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_tag_color,

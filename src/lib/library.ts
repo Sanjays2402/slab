@@ -1517,3 +1517,39 @@ export async function undismissAllTagSuggestions(
   );
   return unwrap(res);
 }
+
+/**
+ * One element of a bulk-accept request. Mirrors
+ * `pdf::library::tag_suggest::AcceptItem`.
+ */
+export interface TagSuggestionAcceptItem {
+  doc_id: number;
+  tag_name: string;
+}
+
+/**
+ * Outcome of a bulk-accept call. `attached` is `[doc_id, TagRecord]` per
+ * successful pair; `failed` is `[doc_id, tag_name, reason]` per failure.
+ * Per-item failure semantics — a typo in item 12 doesn't undo the 49
+ * good accepts. Mirrors `pdf::library::tag_suggest::BulkAcceptResult`.
+ */
+export interface BulkTagAcceptResult {
+  attached: Array<[number, TagRecord]>;
+  failed: Array<[number, string, string]>;
+}
+
+/**
+ * Bulk-accept N (doc_id, tag_name) pairs in one round-trip. Per-item
+ * failure semantics; the backend dedupes case- and whitespace-equivalent
+ * pairs before applying. Emits a single `library-changed` event after
+ * the batch.
+ */
+export async function acceptTagSuggestionsBulk(
+  items: TagSuggestionAcceptItem[],
+): Promise<BulkTagAcceptResult> {
+  const res = await invoke<CmdResult<BulkTagAcceptResult>>(
+    "slab_library_tag_suggestions_accept_bulk",
+    { items },
+  );
+  return unwrap(res);
+}
