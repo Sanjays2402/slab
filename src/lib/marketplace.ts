@@ -11,6 +11,7 @@
 // is in flight.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writable, get } from "svelte/store";
 import { isInTauri } from "$lib/tauri";
 
@@ -751,3 +752,192 @@ export function formatNextAutoPrune(
     ? `Next auto-prune in ${d}d ${h}h`
     : `Next auto-prune in ${d}d`;
 }
+
+// ─── Bulk update surface (v3.39 round-15 slices 68-72) ──────────────
+
+/**
+ * One planned update — installed plugin id paired with the index
+ * entry that supersedes it. Mirrors `marketplace::UpdateTarget`. The
+ * `entry` field is the full IndexEntry so the banner UI can render
+ * the new name / size / installs without a second lookup.
+ */
+export interface UpdateTarget {
+  id: string;
+  installed_version: string;
+  available_version: string;
+  size_bytes: number;
+  entry: IndexEntry;
+}
+
+/**
+ * Deterministic plan of updates to apply. Mirrors
+ * `marketplace::UpdatePlan`. Targets are sorted by id ascending so
+ * the banner UI doesn't need to sort defensively.
+ */
+export interface UpdatePlan {
+  targets: UpdateTarget[];
+  total_bytes: number;
+}
+
+/**
+ * One step of progress emitted on `marketplace://update-progress`
+ * while `slab_marketplace_update_all` is in flight. Mirrors
+ * `UpdateProgress`. The TS reducer narrows on `phase` to decide
+ * which row's state to mutate.
+ */
+export interface UpdateProgress {
+  batch_id: number;
+  /** 1-indexed position of the current target. */
+  index: number;
+  total: number;
+  plugin_id: string;
+  /** `"starting"` | `"done"` | `"error"`. */
+  phase: "starting" | "done" | "error";
+  /** Populated only on `phase === "error"`. */
+  error: string | null;
+}
+
+/**
+ * Per-target outcome from `slab_marketplace_update_all`. Discriminated
+ * union on `kind` so the reducer can narrow.
+ */
+export type UpdateOutcome =
+  | {
+      kind: "succeeded";
+      plugin_id: string;
+      prior_version: string;
+      new_version: string;
+      bytes_written: number;
+    }
+  | {
+      kind: "failed";
+      plugin_id: string;
+      prior_version: string;
+      new_version: string;
+      error: string;
+    };
+
+/**
+ * Final report from `slab_marketplace_update_all`. The `succeeded` /
+ * `failed` / `bytes_written` fields are pre-computed server-side so
+ * the toast / banner-reset logic doesn't need to fold the outcomes
+ * list itself.
+ */
+export interface BatchUpdateReport {
+  batch_id: number;
+  outcomes: UpdateOutcome[];
+  succeeded: number;
+  failed: number;
+  bytes_written: number;
+}
+
+/**
+ * List installed plugins for which the marketplace index has a
+ * strictly-newer version. Returns an empty plan (`targets.length ===
+ * 0`) when there's nothing to update; throws (Promise rejects) only
+ * if the index can't be loaded at all (no network + no cache + no
+ * embedded seed). Browser mode (non-Tauri) returns an empty plan so
+ * the banner UI naturally hides.
+ */
+export async function listUpdateTargets(): Promise<UpdatePlan> {
+  if (!isInTauri()) return { targets: [], total_bytes: 0 };
+  return await invoke<UpdatePlan>("slab_marketplace_list_update_targets");
+}
+
+/**
+ * Bulk-update one or more plugins sequentially. Pass a monotonic
+ * `batchId` (typically `Date.now()`) so the progress event stream can
+ * be correlated with the matching `slab_marketplace_update_all`
+ * call. Returns the structured per-id outcomes report on completion.
+ *
+ * Browser mode synthesises an empty all-failed report so the UI's
+ * "Update all" button gives consistent feedback in dev.
+ *
+ * Pair with `listenUpdateProgress` BEFORE awaiting this call to avoid
+ * dropping early `phase: "starting"` events.
+ */
+export async function updateAllPlugins(
+  batchId: number,
+  pluginIds: string[],
+): Promise<BatchUpdateReport> {
+  if (!isInTauri()) {
+    return {
+      batch_id: batchId,
+      outcomes: pluginIds.map((id) => ({
+        kind: "failed" as const,
+        plugin_id: id,
+        prior_version: "",
+        new_version: "",
+        error: "Marketplace bulk-update is only available in the Slab desktop app",
+      })),
+      succeeded: 0,
+      failed: pluginIds.length,
+      bytes_written: 0,
+    };
+  }
+  return await invoke<BatchUpdateReport>("slab_marketplace_update_all", {
+    batchId,
+    pluginIds,
+  });
+}
+
+/**
+ * Subscribe to per-step bulk-update progress events. Returns an
+ * unlisten function that the caller MUST invoke when the batch
+ * completes (or when the panel unmounts) to free the listener slot.
+ *
+ * The handler runs for EVERY in-flight batch on the host — filter on
+ * `payload.batch_id` if multiple are running concurrently (the UI
+ * never runs more than one at a time today, but this is the contract
+ * the listener honours).
+ */
+export async function listenUpdateProgress(
+  handler: (progress: UpdateProgress) => void,
+): Promise<UnlistenFn> {
+  if (!isInTauri()) return async () => {};
+  return await listen<UpdateProgress>(
+    "marketplace://update-progress",
+    (e) => handler(e.payload),
+  );
+}
+
+/**
+ * Pluralise a count of updates for the banner header text. The
+ * banner reads "1 update available" / "3 updates available" / "12
+ * updates available". Pure string helper — no I/O, no locale magic;
+ * the existing PluginsPanel i18n table interpolates {count} for the
+ * full Linear-grade i18n future when needed.
+ */
+export function pluralizeUpdates(n: number): string {
+  return n === 1 ? "1 update available" : `${n} updates available`;
+}
+
+/**
+ * Compact one-line summary of a batch result for the success toast.
+ * Examples:
+ *   { succeeded: 3, failed: 0 } → "Updated 3 plugins (4.2 MB)"
+ *   { succeeded: 2, failed: 1 } → "Updated 2 of 3 plugins (1.8 MB) · 1 failed"
+ *   { succeeded: 0, failed: 1 } → "Failed to update 1 plugin"
+ *   { succeeded: 1, failed: 0, bytes_written: 0 } → "Updated 1 plugin"
+ *      (no size shown when bytes_written is 0 — e.g. all-failed batches)
+ */
+export function formatUpdateSummary(report: BatchUpdateReport): string {
+  const { succeeded, failed, bytes_written } = report;
+  const total = succeeded + failed;
+  const sizePart = bytes_written > 0 ? ` (${formatBytes(bytes_written)})` : "";
+  if (succeeded === 0 && failed === 0) {
+    return "No plugins updated";
+  }
+  if (succeeded === 0) {
+    return failed === 1
+      ? "Failed to update 1 plugin"
+      : `Failed to update ${failed} plugins`;
+  }
+  if (failed === 0) {
+    const word = succeeded === 1 ? "plugin" : "plugins";
+    return `Updated ${succeeded} ${word}${sizePart}`;
+  }
+  const word = total === 1 ? "plugin" : "plugins";
+  return `Updated ${succeeded} of ${total} ${word}${sizePart} · ${failed} failed`;
+}
+
