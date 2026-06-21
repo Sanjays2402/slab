@@ -28,6 +28,9 @@
     presetApply,
     personalPresetApply,
     personalPresetsExport,
+    personalPresetRename,
+    personalPresetDuplicate,
+    personalPresetDelete,
     type SmartFolderEntry,
   } from "$lib/library";
   import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -52,6 +55,21 @@
   // Drag state
   let draggingIdx = $state<number | null>(null);
   let dragOverIdx = $state<number | null>(null);
+
+  // ── v3.40 Slice 78 — per-row ⋯ menu (personal rows only) ──────────
+  //
+  // Surfaces the personal-preset CRUD verbs shipped in slice 76
+  // (rename / duplicate / delete) directly in the Hub list, mirroring
+  // the ⋯ menu pattern from the saved-views rail in LibraryPanel. Only
+  // personal entries get the menu — built-in presets are immutable.
+  /** Compound key `${kind}:${id}` of the row whose ⋯ menu is open. */
+  let menuRowKey = $state<string | null>(null);
+  /** Personal-preset id mid-rename, or `null`. */
+  let renameId = $state<number | null>(null);
+  let renameDraft = $state("");
+  let renameError = $state<string | null>(null);
+  /** Row in flight for duplicate/delete; disables the affected row. */
+  let busyRowKey = $state<string | null>(null);
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -135,6 +153,102 @@
     }
   }
 
+  // ── v3.40 Slice 78 — personal-preset row actions ──────────────────
+
+  function rowKey(e: SmartFolderEntry): string {
+    return `${e.kind}:${e.id}`;
+  }
+
+  function toggleMenu(e: SmartFolderEntry, ev: MouseEvent) {
+    ev.stopPropagation();
+    const k = rowKey(e);
+    menuRowKey = menuRowKey === k ? null : k;
+  }
+
+  function closeMenu() {
+    menuRowKey = null;
+  }
+
+  function openRename(e: SmartFolderEntry) {
+    menuRowKey = null;
+    if (e.kind !== "personal") return;
+    renameId = Number(e.id);
+    renameDraft = e.name;
+    renameError = null;
+  }
+
+  function cancelRename() {
+    renameId = null;
+    renameDraft = "";
+    renameError = null;
+  }
+
+  async function commitRename() {
+    if (renameId === null) return;
+    const id = renameId;
+    const next = renameDraft.trim();
+    if (next.length === 0) {
+      renameError = "Name required";
+      return;
+    }
+    const src = entries.find((e) => e.kind === "personal" && Number(e.id) === id);
+    if (!src) {
+      cancelRename();
+      return;
+    }
+    if (src.name === next) {
+      cancelRename();
+      return;
+    }
+    busyRowKey = `personal:${id}`;
+    renameError = null;
+    try {
+      await personalPresetRename(id, next);
+      cancelRename();
+      await refresh();
+      showToast(`Renamed to “${next}”`);
+    } catch (err) {
+      renameError = String((err as Error).message ?? err).replace(/^Error:\s*/, "");
+    } finally {
+      busyRowKey = null;
+    }
+  }
+
+  async function duplicateRow(e: SmartFolderEntry) {
+    menuRowKey = null;
+    if (e.kind !== "personal") return;
+    const id = Number(e.id);
+    busyRowKey = `personal:${id}`;
+    try {
+      const copy = await personalPresetDuplicate(id);
+      await refresh();
+      showToast(`Duplicated as “${copy.name}”`);
+    } catch (err) {
+      error = (err as Error).message;
+    } finally {
+      busyRowKey = null;
+    }
+  }
+
+  async function deleteRow(e: SmartFolderEntry) {
+    menuRowKey = null;
+    if (e.kind !== "personal") return;
+    const id = Number(e.id);
+    if (!confirm(`Delete personal preset “${e.name}”? This cannot be undone.`)) {
+      return;
+    }
+    busyRowKey = `personal:${id}`;
+    try {
+      await personalPresetDelete(id);
+      await refresh();
+      showToast(`Deleted “${e.name}”`);
+    } catch (err) {
+      error = (err as Error).message;
+    } finally {
+      busyRowKey = null;
+    }
+  }
+
   // ----- drag handlers -----
   function onDragStart(idx: number, ev: DragEvent) {
     draggingIdx = idx;
@@ -184,17 +298,32 @@
     if (!open) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      if (menuRowKey !== null) {
+        menuRowKey = null;
+        return;
+      }
+      if (renameId !== null) {
+        cancelRename();
+        return;
+      }
       onClose();
     }
+  }
+
+  /** Close the row-popover when a click lands outside of any row. */
+  function handleBodyClick(_: MouseEvent) {
+    if (menuRowKey !== null) menuRowKey = null;
   }
 
   onMount(() => {
     refresh();
     window.addEventListener("keydown", handleKey);
+    window.addEventListener("click", handleBodyClick);
     const libHandler = () => refresh();
     window.addEventListener("library-changed", libHandler);
     return () => {
       window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("click", handleBodyClick);
       window.removeEventListener("library-changed", libHandler);
       if (toastTimer) clearTimeout(toastTimer);
     };
@@ -275,7 +404,9 @@
               class:dragging={draggingIdx === i}
               class:dragover={dragOverIdx === i && draggingIdx !== i}
               class:personal={e.kind === "personal"}
-              draggable="true"
+              class:menu-open={menuRowKey === rowKey(e)}
+              class:row-busy={busyRowKey === rowKey(e)}
+              draggable={renameId === Number(e.id) && e.kind === "personal" ? "false" : "true"}
               ondragstart={(ev) => onDragStart(i, ev)}
               ondragover={(ev) => onDragOver(i, ev)}
               ondragend={onDragEnd}
@@ -292,14 +423,56 @@
               </span>
 
               <div class="row-body">
-                <div class="row-name-line">
-                  <span class="row-name">{e.name}</span>
-                  <span class="row-kind">
-                    {e.kind === "builtin" ? "Built-in" : "Personal"}
-                  </span>
-                </div>
-                {#if e.description}
-                  <div class="row-desc">{e.description}</div>
+                {#if e.kind === "personal" && renameId === Number(e.id)}
+                  <div class="row-rename">
+                    <!-- svelte-ignore a11y_autofocus -->
+                    <input
+                      class="row-rename-input"
+                      class:invalid={renameError !== null}
+                      value={renameDraft}
+                      aria-label="Rename personal preset"
+                      autofocus
+                      oninput={(ev) => {
+                        renameDraft = ev.currentTarget.value;
+                        renameError = null;
+                      }}
+                      onkeydown={(ev) => {
+                        if (ev.key === "Enter") {
+                          ev.preventDefault();
+                          commitRename();
+                        } else if (ev.key === "Escape") {
+                          ev.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                      onblur={() => {
+                        // Only commit on blur if the draft is non-empty and
+                        // changed; otherwise just cancel so a misclick doesn't
+                        // surface a confusing error.
+                        const next = renameDraft.trim();
+                        const src = entries.find(
+                          (x) => x.kind === "personal" && Number(x.id) === renameId,
+                        );
+                        if (!next || (src && src.name === next)) cancelRename();
+                        else commitRename();
+                      }}
+                    />
+                    {#if renameError}
+                      <span class="row-rename-error" title={renameError}>
+                        {renameError}
+                      </span>
+                    {/if}
+                  </div>
+                {:else}
+                  <div class="row-name-line">
+                    <span class="row-name">{e.name}</span>
+                    <span class="row-kind">
+                      {e.kind === "builtin" ? "Built-in" : "Personal"}
+                    </span>
+                  </div>
+                  {#if e.description}
+                    <div class="row-desc">{e.description}</div>
+                  {/if}
                 {/if}
               </div>
 
@@ -313,13 +486,46 @@
                 {e.pinned ? "★" : "☆"}
               </button>
 
+              {#if e.kind === "personal"}
+                <button
+                  class="row-menu-btn"
+                  aria-label="Row actions"
+                  aria-haspopup="menu"
+                  aria-expanded={menuRowKey === rowKey(e)}
+                  title="Rename / Duplicate / Delete"
+                  disabled={busyRowKey === rowKey(e)}
+                  onclick={(ev) => toggleMenu(e, ev)}
+                >⋯</button>
+              {:else}
+                <span class="row-menu-placeholder" aria-hidden="true"></span>
+              {/if}
+
               <button
                 class="row-apply"
                 onclick={() => apply(e)}
-                disabled={applyingId === `${e.kind}:${e.id}`}
+                disabled={applyingId === `${e.kind}:${e.id}` || busyRowKey === rowKey(e)}
               >
                 {applyingId === `${e.kind}:${e.id}` ? "…" : "Apply"}
               </button>
+
+              {#if menuRowKey === rowKey(e) && e.kind === "personal"}
+                <div class="row-popover" role="menu">
+                  <button
+                    role="menuitem"
+                    onclick={() => openRename(e)}
+                  >Rename…</button>
+                  <button
+                    role="menuitem"
+                    onclick={() => duplicateRow(e)}
+                  >Duplicate</button>
+                  <hr />
+                  <button
+                    role="menuitem"
+                    class="danger"
+                    onclick={() => deleteRow(e)}
+                  >Delete preset</button>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -482,7 +688,7 @@
 
   .hub-row {
     display: grid;
-    grid-template-columns: 20px 36px 1fr auto auto;
+    grid-template-columns: 20px 36px 1fr auto auto auto;
     align-items: center;
     gap: 12px;
     padding: 10px 12px;
@@ -490,12 +696,20 @@
     transition: background 120ms, transform 80ms, border-color 120ms;
     border: 1px solid transparent;
     cursor: grab;
+    position: relative; /* anchor row-popover */
   }
   .hub-row + .hub-row {
     margin-top: 2px;
   }
   .hub-row:hover {
     background: color-mix(in srgb, white 5%, transparent);
+  }
+  .hub-row.menu-open {
+    background: color-mix(in srgb, white 6%, transparent);
+  }
+  .hub-row.row-busy {
+    opacity: 0.7;
+    cursor: progress;
   }
   .hub-row.dragging {
     opacity: 0.45;
@@ -595,6 +809,132 @@
   }
   .row-apply:active:not(:disabled) { transform: translateY(1px); }
   .row-apply:disabled { opacity: 0.55; cursor: progress; }
+
+  /* v3.40 Slice 78 — row ⋯ menu + rename inline ---------------------- */
+  .row-menu-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: color-mix(in srgb, white 40%, transparent);
+    font-size: 18px;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    cursor: pointer;
+    line-height: 1;
+    letter-spacing: -1px;
+    transition: color 120ms, background 120ms, opacity 120ms;
+    opacity: 0;
+  }
+  .hub-row.personal:hover .row-menu-btn,
+  .hub-row.menu-open .row-menu-btn,
+  .row-menu-btn:focus-visible {
+    opacity: 1;
+  }
+  .row-menu-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, white 9%, transparent);
+    color: var(--text, #e7e7f0);
+  }
+  .row-menu-btn[aria-expanded="true"] {
+    color: var(--text, #e7e7f0);
+    background: color-mix(in srgb, white 8%, transparent);
+  }
+  .row-menu-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .row-menu-placeholder {
+    width: 26px;
+    height: 26px;
+    display: inline-block;
+  }
+
+  .row-popover {
+    position: absolute;
+    top: 100%;
+    right: 56px; /* nudge so it sits over the ⋯ glyph */
+    margin-top: 4px;
+    min-width: 168px;
+    background: color-mix(in srgb, #11111c 96%, transparent);
+    border: 1px solid color-mix(in srgb, white 12%, transparent);
+    border-radius: 9px;
+    padding: 4px;
+    z-index: 20;
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.55),
+      0 0 0 1px color-mix(in srgb, white 3%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    animation: row-popover-in 110ms ease-out;
+  }
+  @keyframes row-popover-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .row-popover button {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: background 100ms, color 100ms;
+  }
+  .row-popover button:hover {
+    background: color-mix(in srgb, white 8%, transparent);
+  }
+  .row-popover button.danger {
+    color: #ff9aa3;
+  }
+  .row-popover button.danger:hover {
+    background: color-mix(in srgb, #ff5d6c 18%, transparent);
+    color: #ffd0d4;
+  }
+  .row-popover hr {
+    border: 0;
+    border-top: 1px solid color-mix(in srgb, white 8%, transparent);
+    margin: 3px 4px;
+  }
+
+  .row-rename {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .row-rename-input {
+    appearance: none;
+    background: color-mix(in srgb, white 6%, transparent);
+    border: 1px solid color-mix(in srgb, #7c8cff 60%, transparent);
+    color: inherit;
+    padding: 5px 9px;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 550;
+    flex: 1 1 auto;
+    min-width: 0;
+    outline: none;
+  }
+  .row-rename-input:focus {
+    border-color: color-mix(in srgb, #7c8cff 85%, transparent);
+    background: color-mix(in srgb, white 9%, transparent);
+  }
+  .row-rename-input.invalid {
+    border-color: color-mix(in srgb, #ff5d6c 70%, transparent);
+    background: color-mix(in srgb, #ff5d6c 10%, transparent);
+  }
+  .row-rename-error {
+    font-size: 11px;
+    color: #ffb8be;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 130px;
+  }
 
   .hub-toast {
     position: absolute;
