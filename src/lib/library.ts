@@ -1553,3 +1553,39 @@ export async function acceptTagSuggestionsBulk(
   );
   return unwrap(res);
 }
+
+/**
+ * One dismissed tag-suggestion row. `dismissed_at` is unix seconds.
+ * Mirrors `pdf::library::tag_suggest::DismissedSuggestion`.
+ */
+export interface DismissedTagSuggestion {
+  tag_name: string;
+  dismissed_at: number;
+}
+
+/** List every dismissed tag-suggestion for a doc, newest first. */
+export async function listDismissedTagSuggestions(
+  docId: number,
+): Promise<DismissedTagSuggestion[]> {
+  const res = await invoke<CmdResult<DismissedTagSuggestion[]>>(
+    "slab_library_tag_suggestions_list_dismissed",
+    { docId },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Undo ONE dismissal — the next call to `tagSuggestionsForDoc` will
+ * re-include this tag in the candidate set. Returns `true` if a row
+ * was actually deleted; `false` if no such dismissal existed.
+ */
+export async function undismissOneTagSuggestion(
+  docId: number,
+  tagName: string,
+): Promise<boolean> {
+  const res = await invoke<CmdResult<boolean>>(
+    "slab_library_tag_suggestion_undismiss_one",
+    { docId, tagName },
+  );
+  return unwrap(res);
+}

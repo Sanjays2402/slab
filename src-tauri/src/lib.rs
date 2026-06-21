@@ -4106,6 +4106,36 @@ fn slab_library_tag_suggestions_accept_bulk(
     result.into()
 }
 
+/// List every dismissed tag suggestion for a doc, newest first. Powers
+/// the inspector's "Hidden suggestions" disclosure so the user can
+/// review what they've explicitly hidden and undo a single dismissal
+/// without wiping the rest.
+#[tauri::command]
+fn slab_library_tag_suggestions_list_dismissed(
+    doc_id: i64,
+) -> CmdResult<Vec<pdf::library::tag_suggest::DismissedSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::list_dismissed_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Clear ONE dismissal for a (doc, tag) pair. Returns `true` if a row
+/// was deleted; `false` if no such dismissal existed. The next call to
+/// `suggest_tags_for_doc` will re-include that tag in the candidate set.
+#[tauri::command]
+fn slab_library_tag_suggestion_undismiss_one(
+    doc_id: i64,
+    tag_name: String,
+) -> CmdResult<bool> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::undismiss_one_for_doc(&db, doc_id, &tag_name)
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -6044,6 +6074,8 @@ pub fn run() {
             slab_library_tag_suggestion_dismiss,
             slab_library_tag_suggestion_undismiss_all,
             slab_library_tag_suggestions_accept_bulk,
+            slab_library_tag_suggestions_list_dismissed,
+            slab_library_tag_suggestion_undismiss_one,
             slab_smart_collection_update,
             slab_library_add_tag,
             slab_library_set_tag_color,

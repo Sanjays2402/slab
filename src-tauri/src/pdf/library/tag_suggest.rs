@@ -444,6 +444,56 @@ pub fn undismiss_all_for_doc(db: &LibraryDb, doc_id: i64) -> Result<usize, Libra
     Ok(n)
 }
 
+/// One dismissal row — the tag the user explicitly hid for this doc + when.
+/// `dismissed_at` is unix seconds; the frontend renders this as a relative
+/// timestamp ("2 hours ago") so users can recognise yesterday's mistakes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DismissedSuggestion {
+    pub tag_name: String,
+    pub dismissed_at: i64,
+}
+
+/// List every dismissed (doc_id, tag_name) for `doc_id`, newest first.
+/// Powers the inspector's "Hidden suggestions" disclosure so a user
+/// who dismissed `tax` by accident can undo just that one without
+/// nuking every other dismissal on the doc.
+pub fn list_dismissed_for_doc(
+    db: &LibraryDb,
+    doc_id: i64,
+) -> Result<Vec<DismissedSuggestion>, LibraryError> {
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT tag_name, dismissed_at FROM library_tag_suggestion_dismissed
+         WHERE doc_id = ?1
+         ORDER BY dismissed_at DESC, tag_name ASC",
+    )?;
+    let rows = stmt.query_map(params![doc_id], |r| {
+        Ok(DismissedSuggestion {
+            tag_name: r.get::<_, String>(0)?,
+            dismissed_at: r.get::<_, i64>(1)?,
+        })
+    })?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Clear ONE dismissal for `(doc_id, tag_name)`. Returns `true` if a row
+/// was deleted; `false` if no such dismissal existed (caller can treat
+/// this as a soft-success — there's nothing to undo). Tag name matches
+/// the same lowercased normalisation as `dismiss_tag_suggestion` so the
+/// undo path is symmetric.
+pub fn undismiss_one_for_doc(
+    db: &LibraryDb,
+    doc_id: i64,
+    tag_name: &str,
+) -> Result<bool, LibraryError> {
+    let n = db.conn().execute(
+        "DELETE FROM library_tag_suggestion_dismissed
+         WHERE doc_id = ?1 AND tag_name = ?2",
+        params![doc_id, tag_name.to_lowercase()],
+    )?;
+    Ok(n > 0)
+}
+
 /// Deterministic soft-pastel hex-ish HSL color from a tag name (FNV-1a →
 /// hue). Fixed saturation/lightness so the palette stays cohesive.
 ///
@@ -848,5 +898,100 @@ mod tests {
         .unwrap();
         assert_eq!(result.attached.len(), 1);
         assert!(d.find_tag_by_name("brandnew").unwrap().is_some());
+    }
+
+    // ---- Slice 49: granular undismiss ----
+
+    #[test]
+    fn list_dismissed_returns_empty_when_no_dismissals() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/a.pdf");
+        assert!(list_dismissed_for_doc(&d, id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_dismissed_returns_normalised_tag_names() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/a.pdf");
+        dismiss_tag_suggestion(&d, id, "Invoice").unwrap();
+        dismiss_tag_suggestion(&d, id, "TAX").unwrap();
+        let rows = list_dismissed_for_doc(&d, id).unwrap();
+        assert_eq!(rows.len(), 2);
+        let names: HashSet<String> = rows.iter().map(|r| r.tag_name.clone()).collect();
+        assert!(names.contains("invoice"));
+        assert!(names.contains("tax"));
+    }
+
+    #[test]
+    fn list_dismissed_orders_newest_first() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/a.pdf");
+        // dismiss_tag_suggestion stamps now() so we manually insert with
+        // controlled timestamps to pin the ordering.
+        d.conn()
+            .execute(
+                "INSERT INTO library_tag_suggestion_dismissed
+                 (doc_id, tag_name, dismissed_at) VALUES (?, 'older', 1000)",
+                params![id],
+            )
+            .unwrap();
+        d.conn()
+            .execute(
+                "INSERT INTO library_tag_suggestion_dismissed
+                 (doc_id, tag_name, dismissed_at) VALUES (?, 'newer', 2000)",
+                params![id],
+            )
+            .unwrap();
+        let rows = list_dismissed_for_doc(&d, id).unwrap();
+        assert_eq!(rows[0].tag_name, "newer");
+        assert_eq!(rows[1].tag_name, "older");
+        assert_eq!(rows[0].dismissed_at, 2000);
+    }
+
+    #[test]
+    fn list_dismissed_isolates_by_doc() {
+        let mut d = db();
+        let a = add_doc(&mut d, "x", "/tmp/a.pdf");
+        let b = add_doc(&mut d, "x", "/tmp/b.pdf");
+        dismiss_tag_suggestion(&d, a, "invoice").unwrap();
+        dismiss_tag_suggestion(&d, b, "receipt").unwrap();
+        let a_rows = list_dismissed_for_doc(&d, a).unwrap();
+        let b_rows = list_dismissed_for_doc(&d, b).unwrap();
+        assert_eq!(a_rows.len(), 1);
+        assert_eq!(b_rows.len(), 1);
+        assert_eq!(a_rows[0].tag_name, "invoice");
+        assert_eq!(b_rows[0].tag_name, "receipt");
+    }
+
+    #[test]
+    fn undismiss_one_clears_only_matching_row() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/a.pdf");
+        dismiss_tag_suggestion(&d, id, "invoice").unwrap();
+        dismiss_tag_suggestion(&d, id, "tax").unwrap();
+        let cleared = undismiss_one_for_doc(&d, id, "invoice").unwrap();
+        assert!(cleared);
+        assert!(!is_tag_suggestion_dismissed(&d, id, "invoice").unwrap());
+        assert!(is_tag_suggestion_dismissed(&d, id, "tax").unwrap());
+    }
+
+    #[test]
+    fn undismiss_one_returns_false_when_no_match() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/a.pdf");
+        let cleared = undismiss_one_for_doc(&d, id, "never-dismissed").unwrap();
+        assert!(!cleared);
+    }
+
+    #[test]
+    fn undismiss_one_case_insensitive_match() {
+        let mut d = db();
+        let id = add_doc(&mut d, "x", "/tmp/a.pdf");
+        dismiss_tag_suggestion(&d, id, "Invoice").unwrap();
+        // Different casing on the undismiss path still matches because
+        // both ends lowercase before comparison.
+        let cleared = undismiss_one_for_doc(&d, id, "INVOICE").unwrap();
+        assert!(cleared);
+        assert!(!is_tag_suggestion_dismissed(&d, id, "invoice").unwrap());
     }
 }
