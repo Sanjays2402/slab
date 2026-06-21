@@ -83,6 +83,8 @@
   import CollectionsSidebar from "$lib/panels/CollectionsSidebar.svelte";
   import SuggestedTagsRow from "$lib/panels/SuggestedTagsRow.svelte";
   import DocInspectorPanel from "$lib/panels/DocInspectorPanel.svelte";
+  import BulkTagSuggestionsPanel from "$lib/panels/BulkTagSuggestionsPanel.svelte";
+  import { tagSuggestionStats, type TagSuggestionStats } from "$lib/library";
 
   // ---------- Props (Cabinet v1.1.0) ----------
   //
@@ -438,6 +440,7 @@
   onMount(async () => {
     await refreshAll();
     initialized = true;
+    void refreshBulkBadge();
     window.addEventListener("click", onWindowClickForMenu);
     // Glass II Vim adapter — subscribe to the panel-targeted events.
     window.addEventListener("slab:vim-library:move", onVimLibMove as EventListener);
@@ -452,6 +455,7 @@
           // Fire-and-forget. If a refetch fails mid-flight (e.g. sqlite
           // file briefly locked) the next event will resync.
           void refreshAll();
+          void refreshBulkBadge();
         });
       } catch (e) {
         console.error("[library] failed to subscribe to library-changed:", e);
@@ -1690,6 +1694,29 @@
   // splice the freshly-mutated doc into the grid without a full
   // listDocuments round-trip.
   let inspectorDoc = $state<DocumentRecord | null>(null);
+  // v3.39.0 Atlas Tag-Suggest slice 52 — bulk review drawer + the
+  // badge stats it surfaces in the toolbar. Stats refresh on mount,
+  // after every bulk apply, and whenever the drawer closes.
+  let bulkPanelOpen = $state(false);
+  let bulkBadge = $state<TagSuggestionStats | null>(null);
+  async function refreshBulkBadge() {
+    try {
+      bulkBadge = await tagSuggestionStats(undefined);
+    } catch {
+      bulkBadge = null;
+    }
+  }
+  function openBulkPanel() {
+    bulkPanelOpen = true;
+  }
+  function closeBulkPanel() {
+    bulkPanelOpen = false;
+    void refreshBulkBadge();
+  }
+  function onBulkApplied(_attached: number) {
+    void refreshDocs();
+    void refreshBulkBadge();
+  }
   function openInspectorFor(doc: DocumentRecord) {
     menu = null;
     inspectorDoc = doc;
@@ -1903,6 +1930,16 @@
       <span class="glyph" aria-hidden="true">&#x2611;</span>
       {selecting ? "Done" : "Select"}
     </button>
+    {#if bulkBadge && bulkBadge.untagged_docs_with_suggestions > 0}
+      <button
+        class="untagged-toggle bulk-suggest-btn"
+        onclick={openBulkPanel}
+        title="Review the heuristic tag suggestions for your untagged docs"
+      >
+        <span class="glyph" aria-hidden="true">&#x2728;</span>
+        Review {bulkBadge.untagged_docs_with_suggestions >= 200 ? "200+" : bulkBadge.untagged_docs_with_suggestions}
+      </button>
+    {/if}
   </div>
 
   {#if error}
@@ -2664,6 +2701,16 @@
   onUpdate={onInspectorUpdated}
   onRemove={onInspectorRemoved}
   onClose={closeInspector}
+/>
+
+<!-- v3.39.0 Atlas Tag-Suggest slice 52 — bulk review drawer wiring
+     slices 48-51 (bulk-accept + granular undismiss + filter-aware
+     bulk + stats badge) into one demo-able surface. -->
+<BulkTagSuggestionsPanel
+  open={bulkPanelOpen}
+  filter={buildCurrentFilter()}
+  onApplied={onBulkApplied}
+  onClose={closeBulkPanel}
 />
 
 <!-- New tag modal -->

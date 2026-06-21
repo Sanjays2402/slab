@@ -4125,10 +4125,7 @@ fn slab_library_tag_suggestions_list_dismissed(
 /// was deleted; `false` if no such dismissal existed. The next call to
 /// `suggest_tags_for_doc` will re-include that tag in the candidate set.
 #[tauri::command]
-fn slab_library_tag_suggestion_undismiss_one(
-    doc_id: i64,
-    tag_name: String,
-) -> CmdResult<bool> {
+fn slab_library_tag_suggestion_undismiss_one(doc_id: i64, tag_name: String) -> CmdResult<bool> {
     let result = (|| -> Result<_, LibraryError> {
         let db = open_library_db()?;
         pdf::library::tag_suggest::undismiss_one_for_doc(&db, doc_id, &tag_name)
