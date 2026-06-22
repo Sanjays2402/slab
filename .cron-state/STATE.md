@@ -1,6 +1,356 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 21:35 PT by Cake (cron) — round-20 BATCH shipped: 5 slices closing two cohesive arcs. Drilldown JSON export arc (slices 93-96): pure-data sample_drilldown_to_json(drill, rule_names) -> DrilldownExportEnvelope mirroring the install_log_to_json envelope shape (slice 60) — schema_version=1 matching INSTALL_LOG_EXPORT_SCHEMA_VERSION + generated_at_iso (ISO-8601 UTC) + bucket (raw SampleBucket) + bucket_kind + bucket_name (precomputed via bucket_csv_labels so JSON + CSV exports agree on labels exactly) + sample_count (post-cap) + total_in_bucket (pre-cap) + truncated + samples verbatim, slab_hopper_export_drilldown_json Tauri command writing pretty-printed JSON to disk (Tauri layer owns the write because plugin-fs scope doesn't cover arbitrary user paths), slabHopperExportDrilldownJson TS wrapper with same lazy-import isInTauri pattern as the CSV wrapper + suggestDrilldownExportFilename extended with optional `ext` slot ("csv" default for backwards compat, "json" for the new export) so both wrappers share ONE suggestion path with identical filename shape apart from the suffix, and "Export JSON" button beside "Export CSV" in the drilldown popover sharing the same drilldownExporting gate + toast cell + in-state-snapshot semantics — only diffs are filename suffix, save-dialog filter, which Tauri command runs the write, and toast copy ("Exported 23 files as CSV / as JSON"). Top plugins histogram Sort by selector (slice 97): client-side sortHistogramRows(rows, key) pure helper with 5 axes (total / installs / updates / failures / recent — no uninstalls axis), DESC + plugin_id ASC tiebreak matching the server contract, returns a NEW array (Svelte $state proxies don't play well with in-place sorts), HISTOGRAM_SORT_KEYS + histogramSortLabel helpers driving a native dark-glass dropdown above the histogram list with custom chevron via linear-gradient backgrounds, bars stay ANCHORED TO TOTAL ACTIVITY when sort switches (re-anchoring would shrink/grow widths disorientingly), legend footer updated to explain the anchor invariant. All gates green: cargo fmt clean (one trivial cargo-fmt diff in cmds.rs auto-squashed into slice 94 commit via --fixup + --autosquash before push), cargo clippy --lib -D warnings PASSED CLEAN in 13.23s, cargo test --lib 2320 passed / 0 failed (round-19 baseline 2307 + 13 from drilldown JSON envelope primitive = 2320), pnpm check 0 errors / 104 warnings (round-19 baseline preserved EXACTLY). Pushed + verified (local==origin 2894329).
+Last updated: 2026-06-22 00:35 PT by Cake (cron) — round-21 BATCH shipped: 5 slices closing one cohesive arc. Top plugins histogram audit-export arc (slices 98-102): pure-data plugin_histogram_to_csv(rows, include_header) RFC-4180 serialiser with 8 columns (plugin_id, installs, updates, uninstalls, failures, total, last_occurred_at_unix, last_occurred_at_iso) matching install_log_to_csv shape with ISO column byte-for-byte (slice 98); pure-data plugin_histogram_to_json(rows, since, until, grand_total) -> PluginHistogramExportEnvelope mirroring InstallLogExportEnvelope (slice 60) and DrilldownExportEnvelope (slice 93) — schema_version=1 PARALLEL-VERSIONED with INSTALL_LOG_EXPORT_SCHEMA_VERSION (independent bumps as bodies diverge) + generated_at_iso + row_count (mirrors rows.len()) + grand_total (caller-supplied verbatim, no re-sum) + window-bounds + rows verbatim (slice 99); slab_marketplace_install_log_export_histogram_csv + _json Tauri commands writing pretty-printed JSON / RFC-4180 CSV to disk via the same plugin_histogram(since, until, limit.unwrap_or(25)) reload as the read endpoint so "what you see is what you export" default semantics (slice 100); exportInstallLogHistogramCsv/Json TS wrappers + suggestHistogramExportFilename(filter, ext, now?) helper producing marketplace-top-plugins_<window>_<YYYY-MM-DD>.<ext> with identical window shape to suggestInstallLogExportFilename so the two filenames sort side-by-side in a directory (slice 101); Export… popover beside Sort by selector inside .top-plugins-sort row sharing the .export-menu vocabulary from the footer popover, in-state-snapshot semantics (Tauri layer re-queries with same window so file content matches what's on-screen), independent histogram-export-anchor so dismissing one popover doesn't dismiss the other, toast "Exported N plugins as CSV/JSON (X.X KB)" accent-green tint matching install-event seg-install vocabulary with 0.16s fade-in keyframe (slice 102).
+
+**Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
+
+**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
+src-tauri/tauri.conf.json, Cargo.lock.
+
+Latest commit: `518f261` — "feat(plugins): Export menu for Top plugins histogram".
+
+### What round-21 (2026-06-22 00:35 PT) just shipped
+
+Five slices closing one cohesive arc. Before this tick the Top
+plugins histogram (round-18 slice 87 read + round-20 slice 97 sort)
+could be VIEWED and SORTED but couldn't be SAVED — a paralegal
+investigating "which plugins drove my install activity this month?"
+could pivot the order but couldn't export the resulting view for a
+report, an audit attachment, or a downstream pipeline. Tonight the
+histogram closes its audit-export symmetry loop with both CSV
+(spreadsheet-primary) and JSON (archive-secondary) formats sharing
+identical column semantics, identical schema_version provenance,
+identical window-shape filenames, and identical row order — the
+same canonical four-layer arc pattern as round-19 (drilldown CSV
+88-91) and round-20 (drilldown JSON 93-96) plus a UI composite.
+
+Round 20's closing notes listed "next subsystem candidates" including
+"histogram time-bucket axis" — round 21 instead closed the existing
+audit-export loop first because the existing slice-87 histogram +
+slice-97 sort cohort were the most obvious unfinished symmetry
+relative to the drilldown popover (which had CSV + JSON exports
+already).
+
+- Slice 98: histogram CSV export primitive (aee2c75, 245 LOC).
+  Pure-data plugin_histogram_to_csv(rows, include_header) -> String
+  RFC-4180 serialiser. Eight columns: plugin_id, installs, updates,
+  uninstalls, failures, total, last_occurred_at_unix,
+  last_occurred_at_iso. Both timestamp columns share one source
+  (last_occurred_at via iso8601_utc helper) so unix + ISO can never
+  drift. The total field is written verbatim (not re-summed from
+  the four bucket columns) so a future axis added to
+  PluginHistogramRow doesn't silently corrupt totals in the lag
+  window. PLUGIN_HISTOGRAM_CSV_HEADER exposed as pub const so
+  tests + future column reorders share one source of truth.
+  12 new tests pin: header opt-in invariant, header/row column
+  count parity, documented column order, ISO matches install-log
+  format byte-for-byte (downstream join compatibility), preserves
+  input order (server emits sorted DESC, UI may re-sort, exporter
+  ships verbatim), RFC-4180 escaping for comma + escaping for
+  quote, zero timestamp renders as integer 0 not empty (NOT NULL
+  contract for aggregate rows), one row per input invariant,
+  total field written verbatim (mismatch test confirms no re-sum),
+  no "None"/"null" leaks for a future Option<_> column addition.
+
+- Slice 99: histogram JSON export envelope primitive (743ec95,
+  267 LOC). Pure-data plugin_histogram_to_json(rows, since, until,
+  grand_total) -> PluginHistogramExportEnvelope mirroring the
+  InstallLogExportEnvelope (slice 60) and DrilldownExportEnvelope
+  (slice 93) shapes: schema_version=1, generated_at_iso (same
+  iso8601_utc helper so timestamps match install-log byte-for-byte),
+  row_count (mirrors rows.len() — pre-computed so consumers read
+  one int not a count), grand_total (caller-supplied verbatim —
+  the server pre-summed via PluginHistogramResult.grand_total;
+  re-summing here would let row-truncation diverge silently from
+  the actual corpus total), since_unix/since_iso/until_unix/
+  until_iso window bounds, rows Vec<PluginHistogramRow> verbatim.
+  plugin_histogram_to_json_with_now takes explicit now-seconds
+  so tests don't race the wall clock. PLUGIN_HISTOGRAM_EXPORT_
+  SCHEMA_VERSION exposed as pub const matching INSTALL_LOG_EXPORT_
+  SCHEMA_VERSION at v1 today; both are PARALLEL-versioned (a
+  future shape change in one bumps that one only). 13 new tests
+  pin: schema_version=1, row_count==rows.len() invariant,
+  grand_total carried verbatim (mismatch test confirms), generated_
+  at_iso format matches install-log envelope byte-for-byte, no
+  window bounds means no ISO sides either, both bounds round-trip
+  to ISO, only-since case has only-since ISO, preserves input row
+  order, rows are owned clones (caller-mutation isolation),
+  serde round-trip with full field-set assertion, pretty-print
+  round-trip (Tauri layer uses to_string_pretty), empty input
+  renders cleanly, parallel-versioning equality check.
+
+- Slice 100: histogram CSV+JSON Tauri commands (e624e48, 95 LOC).
+  slab_marketplace_install_log_export_histogram_csv(path, since,
+  until, limit) -> u64 + slab_marketplace_install_log_export_
+  histogram_json(path, since, until, limit) -> u64. Both reload
+  the histogram via log.plugin_histogram(since, until,
+  limit.unwrap_or(25)) — SAME default limit as the read endpoint
+  so the export ships the same 25 rows the user is looking at.
+  CSV writes with include_header=true; JSON computes grand_total
+  = rows.iter().map(.total).sum() then to_string_pretty (matches
+  the install-log JSON export's pretty-print so the file is
+  human-readable in a text editor; compactness saves bytes that
+  don't matter for a per-plugin aggregate). Tauri-layer disk I/O
+  because the frontend's plugin-fs scope doesn't cover arbitrary
+  user-chosen paths. Both create parent dirs if missing
+  (idempotent), overwrite if target exists (save dialog handles
+  overwrite confirmation upstream), return byte count actually
+  written. Both registered in invoke_handler between
+  slab_marketplace_install_log_plugin_histogram (read) and
+  slab_marketplace_install_log_retention_policy. No new lib-test
+  surface because the slice-98 + slice-99 primitives already pin
+  shape — the commands are thin disk-IO wrappers following the
+  same untested-thin-wrap pattern as the four existing CSV/JSON
+  export commands.
+
+- Slice 101: histogram export TS client + filename helper
+  (94ab3ec, 240 LOC across marketplace.ts + marketplace.test.ts).
+  HistogramExportFilter { since_unix?, until_unix?, limit? }
+  shared between the two wrappers. exportInstallLogHistogramCsv +
+  exportInstallLogHistogramJson thin invoke wrappers around the
+  slice-100 commands; both return bytes-written; browser-mode
+  returns 0 (no-op pattern matching exportInstallLogCsv).
+  suggestHistogramExportFilename(filter, ext, now?) pure helper
+  proposing marketplace-top-plugins_<window>_<YYYY-MM-DD>.<ext>.
+  Window slot reads "all" / "from-YYYYMMDD" / "to-YYYYMMDD" /
+  "YYYYMMDD-YYYYMMDD" — IDENTICAL shape to suggestInstallLog
+  ExportFilename (slice 61) so a paralegal collecting audit
+  exports sees the two filenames sort side-by-side in a directory.
+  11 new pure-helper tests in marketplace.test.ts (extends slice 97's
+  inline-expect file): no-window csv form (== "marketplace-top-
+  plugins_all_20240309.csv"), no-window json form, only-since
+  "from-" prefix, only-until "to-" prefix, both bounds
+  "YYYYMMDD-YYYYMMDD" slot, csv/json pair differs ONLY in suffix
+  (slice-prefix equality assertion pins the invariant — mirrors
+  slice-95's drilldown ext-aware test), csv ends .csv + json
+  ends .json, marketplace-top-plugins_ prefix preserved across
+  all four window-shape variants, window slot regex (no internal
+  separators), today slug uses UTC date math (deterministic NOW
+  pinning so the test stays stable across timezones).
+
+- Slice 102: Export menu for Top plugins histogram (518f261,
+  219 LOC). The demo-able payoff tying slices 98-101 together.
+  Imports exportInstallLogHistogramCsv/Json + suggestHistogram
+  ExportFilename + HistogramExportFilter alongside the existing
+  install-log export imports. New state cells beside the existing
+  histogram cells: histogramExportMenuOpen (popover open/close
+  dismissed by outside click + Escape + selection), histogram
+  Exporting (gates the button while save-dialog + Tauri write
+  are in flight — prevents double-saves), histogramExportToast +
+  histogramExportToastTimer (4s notice with a named handle so
+  back-to-back exports cleanly REPLACE rather than stack); onMount
+  cleanup adds the timer to the existing queryDebounce cleanup.
+  runHistogramExport(kind) handler mirrors runExport's shape
+  exactly: filter carries since_unix from windowSinceUnix (same
+  axis the timeline uses, "what you see is what you get") + limit
+  from histogramLimit, suggestHistogramExportFilename proposes
+  default, save dialog opened with kind-appropriate filter (CSV-
+  only or JSON-only), cancellation is a clean no-op, bytes
+  returned surfaces in toast "Exported 12 plugins as CSV/JSON
+  (1.8 KB)" — same "as <fmt>" suffix pattern as slice 96's
+  drilldown toast so a user exporting both formats back-to-back
+  can tell which one just landed. UI: Export… button sits BESIDE
+  the Sort by selector inside .top-plugins-sort row (margin-left:
+  auto pushes it to the row's right edge). Popover anchors DOWN+
+  RIGHT-aligned beneath the button (sort row is at top of body,
+  opening upward would clip the section toggle). Reuses
+  .export-menu styling from the footer popover so the two
+  surfaces feel like one verb across the drawer. The
+  histogram-export-anchor class gates the outside-click dismiss
+  SEPARATELY from the footer .export-anchor so the two popovers
+  don't dismiss each other. onKeydown's Escape chain puts
+  histogramExportMenuOpen BEFORE exportMenuOpen so an Escape with
+  both open dismisses the histogram first (more recently opened,
+  closer to user attention). Toast renders inline BELOW the sort
+  row, before the histogram list, accent-green
+  (rgb(170,230,195) matching the install-event seg-install
+  vocabulary), 0.16s fade-in keyframe — slightly different
+  placement vs the install-log toast (footer-anchored) because
+  the histogram has its own body; the toast stays attached to
+  its section. Legend footer extended: "Export… ships the current
+  window as a CSV (spreadsheet) or JSON (archive) snapshot."
+
+Gates result: cargo fmt clean (cargo fmt --all --check exit 0
+on first run — no fmt fixups needed this tick), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 14.68s (matches round-20
+13.23s baseline — pure-data CSV serialiser + JSON envelope
+serialiser + thin command wrappers + UI-only export popover add
+no new clippy surface), cargo test --lib 2345 passed / 0 failed
+(round-20 baseline 2320 + 12 from slice 98 + 13 from slice 99 =
+2345), pnpm check 0 errors / 104 warnings (round-20 baseline
+preserved EXACTLY — zero new warnings from the export wrappers,
+ext-aware suggest helper, button + popover + toast wiring,
+scoped CSS), tsx src/lib/marketplace.test.ts 54 inline expects
+pass (round-20 ~40 + 11 from slice 101 + 3 implicit on iterating
+opts = 54).
+
+PROCESS NOTES:
+- Round-20 closing notes listed "histogram time-bucket axis" as
+  a next-tick candidate; round 21 instead closed the existing
+  audit-export loop first because the histogram had a SORT axis
+  (round-20 slice 97) and READ surface (round-18 slice 87) but
+  no SAVE path — the obvious unfinished symmetry relative to the
+  drilldown popover (which had CSV+JSON since rounds 19+20).
+- Five slices, five commits, ONE logical subsystem (the histogram
+  export arc). Mirrors the four-layer cadence of round-19 (drilldown
+  CSV arc 88-91) and round-20 (drilldown JSON arc 93-96): pure-data
+  primitive (CSV) → pure-data primitive (JSON) → Tauri commands →
+  TS client + filename helper → demo-able UI. The split into
+  separate CSV-primitive + JSON-primitive slices (98 + 99) rather
+  than one combined "exporters" slice gives each format its own
+  revert point and its own focused test surface — same revertibility
+  posture as the round-19/20 drilldown arcs.
+- The PluginHistogramExportEnvelope schema_version=1 matches the
+  install-log envelope's schema_version constant by value today,
+  but they are parallel-versioned (a future shape change in the
+  histogram envelope bumps the histogram constant only, NOT the
+  install-log constant). A test pins the v1==v1 equality so a
+  careless joint bump surfaces immediately.
+- The Tauri command in slice 100 ships the limit parameter through
+  to plugin_histogram() with limit.unwrap_or(25) — same default
+  as the read endpoint so "export the same 25 you're looking at
+  right now" is the natural reading. The frontend's runHistogram
+  Export handler in slice 102 passes histogramLimit (which IS 25
+  in the current UI) so the export window matches the on-screen
+  view bit-for-bit. A future "show more" affordance in the UI that
+  bumps histogramLimit will flow through to the export without
+  any other plumbing change.
+- The toast handle pattern (histogramExportToastTimer holding the
+  named setTimeout id) matches the round-17 hopper coverage panel's
+  named-timer cleanup. Without the named handle, back-to-back
+  exports would stack timers and the 4s clear could race the
+  second export's toast.
+
+DESIGN NOTES:
+- Export… button placement BESIDE Sort by (not in the section
+  toggle, not in the footer) reads as "controls for this view live
+  with the view". The footer Export… exports the EVENT LOG; the
+  histogram Export… exports the AGGREGATE. Two distinct artefacts,
+  two distinct verbs — same look-and-feel via the shared
+  .export-menu class but separate state cells + separate anchors.
+- Popover anchors DOWN from the button instead of UP because the
+  sort row is at the top of the histogram body; opening upward
+  would clip against the section toggle. The footer popover opens
+  UP for the opposite reason — it's at the bottom of the drawer.
+  Both popovers cascade INTO the drawer body, never out of it.
+- Toast tint is accent-green (rgb(170,230,195) matching the
+  install-event seg-install vocabulary) rather than the install-
+  log's neutral .export-toast style. Two reasons: (1) the
+  histogram toast is anchored to the histogram body, not the
+  footer — a neutral tint would visually disappear against the
+  surrounding chrome; (2) green reads as "positive write outcome"
+  which matches what the toast says ("Exported N plugins…").
+- The "as CSV / as JSON" suffix in the toast copy is a tiny
+  detail but matters when a user exports both formats back-to-
+  back. The 4s toast duration is long enough that two exports
+  can overlap; the format-tag in the message disambiguates which
+  one just landed without forcing the user to remember which
+  menu item they clicked. Same reasoning as slice 96's drilldown
+  toast upgrade.
+- The marketplace-top-plugins_ filename prefix groups the
+  histogram exports with the other marketplace exports
+  (marketplace-history_*.csv from slice 61) when a paralegal
+  collects audit files in a directory. Sorting by name puts the
+  history first, then the top-plugins exports — natural reading
+  order for "the events that drove the aggregate".
+
+## Roadmap — round 21 (Top plugins histogram audit-export) — ALL DONE
+
+Round 21 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the Top plugins histogram audit-export loop
+(slices 98-102). Two pure-data primitives (CSV + JSON), one
+slice of Tauri commands (both wrappers), one slice of TS client
++ filename helper + tests, and one composite UI slice (popover +
+state + toast). Same canonical five-layer pattern as the
+drilldown CSV arc (rounds 19) and drilldown JSON arc (round 20).
+
+98. ~~**Top plugins histogram CSV export primitive**~~ —
+    DONE (2026-06-22 00:35 PT, aee2c75, single commit, 245 LOC).
+    Pure-data plugin_histogram_to_csv(rows, include_header) ->
+    String. 8 columns: plugin_id, installs, updates, uninstalls,
+    failures, total, last_occurred_at_unix, last_occurred_at_iso.
+    Shared iso8601_utc with install-log CSV so ISO column matches
+    byte-for-byte. PLUGIN_HISTOGRAM_CSV_HEADER pub const.
+    12 new tests pin header opt-in + column count parity +
+    documented order + ISO format match + preserves input order +
+    RFC-4180 escaping + zero timestamp renders integer + total
+    field written verbatim + no None/null leaks.
+99. ~~**Top plugins histogram JSON envelope primitive**~~ —
+    DONE (2026-06-22 00:35 PT, 743ec95, single commit, 267 LOC).
+    Pure-data plugin_histogram_to_json(rows, since, until,
+    grand_total) -> PluginHistogramExportEnvelope. schema_version=1
+    PARALLEL-versioned with INSTALL_LOG_EXPORT_SCHEMA_VERSION.
+    generated_at_iso + row_count + grand_total (caller verbatim)
+    + window bounds + rows verbatim. 13 new tests pin schema_v1 +
+    row_count invariant + grand_total verbatim + ISO format match
+    + window-bounds round-trip + preserves order + owned clones +
+    serde + pretty-print round-trips + empty input + parallel-
+    versioning equality.
+100. ~~**Top plugins histogram CSV+JSON Tauri commands**~~ —
+    DONE (2026-06-22 00:35 PT, e624e48, single commit, 95 LOC).
+    slab_marketplace_install_log_export_histogram_csv +
+    slab_marketplace_install_log_export_histogram_json both reload
+    via plugin_histogram(since, until, limit.unwrap_or(25)) — same
+    default as the read endpoint. CSV write with header; JSON
+    pretty-printed. Idempotent (overwrite); creates parent dirs;
+    returns bytes written. Both registered in invoke_handler.
+    No new lib tests — thin disk-IO wrappers.
+101. ~~**Top plugins histogram export TS client + filename helper**~~ —
+    DONE (2026-06-22 00:35 PT, 94ab3ec, single commit, 240 LOC).
+    HistogramExportFilter shared shape, exportInstallLogHistogram
+    Csv/Json lazy-import invoke wrappers (browser no-op),
+    suggestHistogramExportFilename(filter, ext, now?) producing
+    marketplace-top-plugins_<window>_<YYYY-MM-DD>.<ext> with
+    identical window shape to suggestInstallLogExportFilename.
+    11 new pure-helper tests in marketplace.test.ts.
+102. ~~**Export menu for Top plugins histogram**~~ —
+    DONE (2026-06-22 00:35 PT, 518f261, single commit, 219 LOC).
+    The demo-able payoff. Export… button beside Sort by selector
+    inside .top-plugins-sort row; popover anchors DOWN+RIGHT
+    beneath the button. Separate histogram-export-anchor so
+    independent dismiss from the footer .export-anchor. State
+    cells: histogramExportMenuOpen + histogramExporting +
+    histogramExportToast + histogramExportToastTimer. Handler
+    ships in-state semantics: window from windowSinceUnix, limit
+    from histogramLimit, suggestHistogramExportFilename default,
+    kind-appropriate save dialog filter. Toast "Exported N
+    plugins as CSV/JSON (X.X KB)" accent-green tint with 0.16s
+    fade-in. Legend footer extended.
+
+    With round 21 done, the Top plugins histogram closes its
+    audit-export symmetry loop (CSV for spreadsheets + JSON for
+    archives, both with identical column semantics and identical
+    schema_version provenance), matching the symmetry the
+    drilldown popover already has (rounds 19+20). Next subsystem
+    candidates: Hopper rule reorder-by-drag in the coverage
+    panel (drag a dead row up to fix shadowing in one motion),
+    histogram time-bucket axis ("activity per week" alongside the
+    current per-plugin breakdown), drilldown row →
+    cross-surface filter (clicking a fall-through filename in
+    the popover carries the search query into the document
+    inspector), Loom-grade tagging explorer, doc-detail metadata
+    editor read/write surface, Beacon cache inspector polish
+    (column sort by basename / model facet), Quill multi-document
+    field-detect queueing, install-log per-plugin retention
+    override (some plugins are audit-critical and want longer
+    retention than the global default).
+
+### What round-20 (2026-06-21 21:35 PT) just shipped
+
+Round-20 wrap-line (preserved verbatim from the prior STATE for
+continuity; full round-20 narrative follows below):
+2026-06-21 21:35 PT — drilldown JSON export arc (slices 93-96) +
+Top plugins histogram Sort by selector (slice 97), bars stay
+anchored to total activity when sort switches (re-anchoring would
+shrink/grow widths disorientingly), legend footer updated to
+explain the anchor invariant. All gates green: cargo fmt clean
+(one trivial cargo-fmt diff in cmds.rs auto-squashed into slice 94
+commit via --fixup + --autosquash before push), cargo clippy --lib
+-D warnings PASSED CLEAN in 13.23s, cargo test --lib 2320 passed /
+0 failed (round-19 baseline 2307 + 13 from drilldown JSON envelope
+primitive = 2320), pnpm check 0 errors / 104 warnings (round-19
+baseline preserved EXACTLY). Pushed + verified (local==origin
+2894329).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
