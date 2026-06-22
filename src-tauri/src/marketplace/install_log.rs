@@ -1220,11 +1220,30 @@ impl InstallLog {
 
     // ─── Auto-prune driver (Slice 64) ────────────────────────────────
 
+    /// Effective retention window in days for a single plugin id.
+    /// Composes the per-plugin override (Slice 113) with the global
+    /// `retain_days`: returns the override if one exists, otherwise
+    /// the global setting. Floor-clamped (`>= MIN_RETAIN_DAYS`) on
+    /// both sides so the resolver can't return a value that would
+    /// wipe a plugin's log even if both axes contained bad data.
+    ///
+    /// Used by the per-plugin auto-prune driver (Slice 114) and by
+    /// the wire layer when the UI needs to render "this plugin
+    /// retains for N days" beside an effective-window pill.
+    pub fn effective_retain_days(&self, plugin_id: &str) -> Result<i64, InstallLogError> {
+        match self.plugin_retention_days(plugin_id)? {
+            Some(d) => Ok(d.max(MIN_RETAIN_DAYS)),
+            None => self.retain_days(),
+        }
+    }
+
     /// Run the retention policy if the debounce window has elapsed.
     ///
     /// - If `last_auto_prune_at` is missing or older than
     ///   `now_unix - AUTO_PRUNE_INTERVAL_SECS`, prune rows older
-    ///   than `retain_days()` and stamp `last_auto_prune_at = now_unix`.
+    ///   than each plugin's effective `retain_days` (per-plugin
+    ///   overrides take precedence over the global) and stamp
+    ///   `last_auto_prune_at = now_unix`.
     /// - Otherwise, no-op (returns
     ///   [`AutoPruneOutcome::Skipped { next_due_unix }`]).
     ///
@@ -1234,6 +1253,16 @@ impl InstallLog {
     /// `now_unix` is an explicit parameter so tests can pin it
     /// deterministically; the production wrapper uses
     /// [`auto_prune_if_due_now`].
+    ///
+    /// Per-plugin overrides (Slice 113) are applied as scoped
+    /// `DELETE WHERE plugin_id = ? AND occurred_at < ?` statements
+    /// — one per override row. The global cutoff then runs as
+    /// `DELETE WHERE plugin_id NOT IN (?,...,?) AND occurred_at < ?`
+    /// so overridden plugins are skipped by the global pass. Two
+    /// equivalent invariants fall out: (1) every event surviving an
+    /// auto-prune satisfies its plugin's effective window; (2) two
+    /// consecutive `auto_prune_if_due` calls with no new events
+    /// between them remove zero rows on the second call.
     pub fn auto_prune_if_due(
         &mut self,
         now_unix: i64,
@@ -1247,12 +1276,61 @@ impl InstallLog {
         }
         let retain_days = self.retain_days()?;
         let cutoff = now_unix - retain_days * 86_400;
-        let pruned = self.prune_older_than(cutoff)?;
+        let overrides = self.plugin_retention_overrides()?;
+
+        // Per-plugin pass: one DELETE per override row, scoped to
+        // that plugin_id only. Sum the removed-row counts so the
+        // caller sees the total work done.
+        let mut overrides_rows_removed: usize = 0;
+        for ov in &overrides {
+            let plugin_cutoff = now_unix - ov.retain_days * 86_400;
+            let n = self.conn.execute(
+                "DELETE FROM install_events
+                 WHERE plugin_id = ?1 AND occurred_at < ?2",
+                params![ov.plugin_id, plugin_cutoff],
+            )?;
+            overrides_rows_removed += n;
+        }
+
+        // Global pass: everything NOT in the override set, against
+        // the global cutoff. Assembled with an IN-list of overridden
+        // plugin ids so the global pass and the per-plugin pass are
+        // disjoint (no double-counting, no plugin getting pruned
+        // against both windows).
+        let global_rows_removed: usize = if overrides.is_empty() {
+            self.conn.execute(
+                "DELETE FROM install_events WHERE occurred_at < ?1",
+                params![cutoff],
+            )?
+        } else {
+            let mut sql = String::from(
+                "DELETE FROM install_events WHERE occurred_at < ? AND plugin_id NOT IN (",
+            );
+            for (i, _) in overrides.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                sql.push('?');
+            }
+            sql.push(')');
+            let mut params_v: Vec<rusqlite::types::Value> = Vec::with_capacity(overrides.len() + 1);
+            params_v.push(rusqlite::types::Value::Integer(cutoff));
+            for ov in &overrides {
+                params_v.push(rusqlite::types::Value::Text(ov.plugin_id.clone()));
+            }
+            self.conn
+                .execute(&sql, rusqlite::params_from_iter(params_v.iter()))?
+        };
+
+        let rows_removed = overrides_rows_removed + global_rows_removed;
+        let overrides_applied = overrides.len();
         self.set_last_auto_prune_at(now_unix)?;
         Ok(AutoPruneOutcome::Pruned {
-            rows_removed: pruned,
+            rows_removed,
             retain_days,
             cutoff_unix: cutoff,
+            overrides_applied,
+            overrides_rows_removed,
         })
     }
 
@@ -1271,13 +1349,31 @@ impl InstallLog {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum AutoPruneOutcome {
-    /// The prune ran. `rows_removed` is the delete count; the other
-    /// fields describe what window was applied so the UI can show
-    /// "Auto-pruned 23 events older than 2025-06-21 (365d)".
+    /// The prune ran. `rows_removed` is the TOTAL delete count
+    /// across both the per-plugin override pass and the global pass;
+    /// the other fields describe what window was applied so the UI
+    /// can show "Auto-pruned 23 events older than 2025-06-21
+    /// (365d)" plus "(3 plugin overrides applied; 5 of 23 events
+    /// from overrides)".
+    ///
+    /// `overrides_applied` (Slice 114) is the number of per-plugin
+    /// retention overrides considered during this run (== `len()` of
+    /// `plugin_retention_overrides()` at prune time);
+    /// `overrides_rows_removed` is the subset of `rows_removed`
+    /// attributable to those per-plugin passes. Together they let
+    /// the UI surface "3 overrides cleared 5 of 23 rows" without
+    /// re-querying the log.
     Pruned {
         rows_removed: usize,
         retain_days: i64,
         cutoff_unix: i64,
+        /// Number of per-plugin retention overrides considered
+        /// during this run. Zero on a workstation with no overrides.
+        overrides_applied: usize,
+        /// Subset of `rows_removed` attributable to the per-plugin
+        /// override passes (rest are the global pass). Always
+        /// `<= rows_removed`.
+        overrides_rows_removed: usize,
     },
     /// The debounce window had not yet elapsed; no rows were
     /// touched. `next_due_unix` is when the next call will actually
@@ -3436,6 +3532,7 @@ mod tests {
                 rows_removed,
                 retain_days,
                 cutoff_unix,
+                ..
             } => {
                 assert_eq!(rows_removed, 1);
                 assert_eq!(retain_days, 30);
@@ -3503,6 +3600,8 @@ mod tests {
             rows_removed: 5,
             retain_days: 30,
             cutoff_unix: 1_700_000_000,
+            overrides_applied: 0,
+            overrides_rows_removed: 0,
         };
         let s = serde_json::to_string(&pruned).unwrap();
         assert!(s.contains("\"outcome\":\"pruned\""), "got {s}");
@@ -3516,6 +3615,287 @@ mod tests {
         assert!(s.contains("\"outcome\":\"skipped\""), "got {s}");
         let back: AutoPruneOutcome = serde_json::from_str(&s).unwrap();
         assert_eq!(back, skipped);
+    }
+
+    // ─── Slice 114: effective retention resolver + per-plugin auto-prune
+
+    #[test]
+    fn effective_retain_days_falls_back_to_global_when_unset() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_retain_days(30).unwrap();
+        // No override → global wins.
+        assert_eq!(log.effective_retain_days("com.example.x").unwrap(), 30);
+    }
+
+    #[test]
+    fn effective_retain_days_uses_override_when_set() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_retain_days(30).unwrap();
+        log.set_plugin_retention_days("com.audit", 1825).unwrap();
+        // Override wins; global stays in place for other plugins.
+        assert_eq!(log.effective_retain_days("com.audit").unwrap(), 1825);
+        assert_eq!(log.effective_retain_days("com.other").unwrap(), 30);
+    }
+
+    #[test]
+    fn effective_retain_days_floors_both_axes() {
+        // Override-side: the storage layer already clamps writes, but
+        // the resolver re-applies the floor as defence-in-depth so a
+        // future direct sqlite poke can't surface a bad value.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_retain_days(1).unwrap(); // already at floor
+        log.set_plugin_retention_days("com.x", 1).unwrap();
+        assert_eq!(log.effective_retain_days("com.x").unwrap(), MIN_RETAIN_DAYS);
+        // Global-side floor is enforced by retain_days() itself.
+        assert_eq!(
+            log.effective_retain_days("com.unset").unwrap(),
+            MIN_RETAIN_DAYS
+        );
+    }
+
+    #[test]
+    fn auto_prune_applies_per_plugin_overrides() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        // com.audit has a 1825d override; the 100d-old row stays.
+        // com.noisy has a 7d override; the 30d-old row goes.
+        // com.global has no override; uses the 365d global; 100d-old
+        // row stays, 400d-old row goes.
+        log.set_retain_days(365).unwrap();
+        log.set_plugin_retention_days("com.audit", 1825).unwrap();
+        log.set_plugin_retention_days("com.noisy", 7).unwrap();
+        insert_at(&mut log, "com.audit", "1", now - 100 * 86_400); // kept (override 1825d)
+        insert_at(&mut log, "com.noisy", "2", now - 30 * 86_400); // pruned (override 7d)
+        insert_at(&mut log, "com.noisy", "3", now - 3 * 86_400); // kept (override 7d)
+        insert_at(&mut log, "com.global", "4", now - 100 * 86_400); // kept (global 365d)
+        insert_at(&mut log, "com.global", "5", now - 400 * 86_400); // pruned (global 365d)
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_applied,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 2);
+                assert_eq!(overrides_applied, 2);
+                assert_eq!(overrides_rows_removed, 1); // only the com.noisy 30d row
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("first call must prune"),
+        }
+        assert_eq!(log.total_event_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn auto_prune_override_protects_above_global() {
+        // The override window is LONGER than the global. The audit
+        // plugin's old events must SURVIVE the global cutoff because
+        // the override's longer window protects them.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        log.set_plugin_retention_days("com.audit", 365).unwrap();
+        insert_at(&mut log, "com.audit", "1", now - 100 * 86_400); // 100d old; override 365d protects
+        insert_at(&mut log, "com.other", "2", now - 100 * 86_400); // 100d old; global 30d prunes
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 1);
+                assert_eq!(overrides_rows_removed, 0); // override pass removed nothing
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("must prune"),
+        }
+        // com.audit row survived; com.other row pruned.
+        assert_eq!(log.total_event_count().unwrap(), 1);
+        let kept = log.list_recent(10).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].plugin_id, "com.audit");
+    }
+
+    #[test]
+    fn auto_prune_override_shorter_than_global_prunes_more() {
+        // The override window is SHORTER than the global. The noisy
+        // plugin's mid-aged events must be PRUNED even though the
+        // global would have kept them.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(365).unwrap();
+        log.set_plugin_retention_days("com.noisy", 7).unwrap();
+        insert_at(&mut log, "com.noisy", "1", now - 30 * 86_400); // 30d old; override 7d prunes
+        insert_at(&mut log, "com.other", "2", now - 30 * 86_400); // 30d old; global 365d keeps
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 1);
+                assert_eq!(overrides_rows_removed, 1); // override pass removed the com.noisy row
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("must prune"),
+        }
+        assert_eq!(log.total_event_count().unwrap(), 1);
+        let kept = log.list_recent(10).unwrap();
+        assert_eq!(kept[0].plugin_id, "com.other");
+    }
+
+    #[test]
+    fn auto_prune_disjoint_passes_no_double_count() {
+        // The override pass and the global pass must be disjoint:
+        // an overridden plugin's old events go through the override
+        // pass only, never the global pass. Pin by counting that a
+        // single old event for an overridden plugin produces
+        // overrides_rows_removed=1 + rows_removed=1 (not 2).
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        log.set_plugin_retention_days("com.both", 7).unwrap();
+        insert_at(&mut log, "com.both", "1", now - 60 * 86_400); // beyond both windows
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 1);
+                assert_eq!(overrides_rows_removed, 1);
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("must prune"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_idempotent_with_overrides() {
+        // Invariant: two consecutive auto_prune_if_due calls with no
+        // new events between them remove zero rows on the second call.
+        // Same invariant the no-override path enforces — must hold
+        // with per-plugin overrides too.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        log.set_plugin_retention_days("com.audit", 1825).unwrap();
+        insert_at(&mut log, "com.audit", "1", now - 100 * 86_400);
+        insert_at(&mut log, "com.other", "2", now - 100 * 86_400);
+        let _ = log.auto_prune_if_due(now).unwrap();
+        // Second call past debounce; no new events.
+        let later = now + AUTO_PRUNE_INTERVAL_SECS;
+        let outcome = log.auto_prune_if_due(later).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned { rows_removed, .. } => assert_eq!(rows_removed, 0),
+            AutoPruneOutcome::Skipped { .. } => panic!("debounce should have elapsed"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_no_overrides_matches_legacy_behaviour() {
+        // Zero overrides → behaviour matches the round-14 single-pass
+        // version: overrides_applied=0, overrides_rows_removed=0, and
+        // rows_removed equals the count older than the global cutoff.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        insert_at(&mut log, "com.a", "1", now - 100 * 86_400);
+        insert_at(&mut log, "com.b", "2", now - 100 * 86_400);
+        insert_at(&mut log, "com.a", "3", now);
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_applied,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 2);
+                assert_eq!(overrides_applied, 0);
+                assert_eq!(overrides_rows_removed, 0);
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("must prune"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_overrides_for_unknown_plugin_no_op() {
+        // An override for a plugin that has no events in the log
+        // is fine — the per-plugin DELETE removes zero rows but the
+        // override counter still increments because the plugin had
+        // a policy considered. Conservative bookkeeping; UI surfaces
+        // "3 overrides applied" honestly even if some matched no
+        // rows.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        log.set_plugin_retention_days("com.absent", 7).unwrap();
+        insert_at(&mut log, "com.real", "1", now - 100 * 86_400);
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_applied,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 1);
+                assert_eq!(overrides_applied, 1);
+                assert_eq!(overrides_rows_removed, 0);
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("must prune"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_overrides_in_clause_handles_many_plugins() {
+        // Stress the IN-list path with many overrides — pin that
+        // sqlite handles a long IN-clause cleanly and that the
+        // disjoint invariant holds across all of them.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        for i in 0..25 {
+            let id = format!("com.override.{i}");
+            log.set_plugin_retention_days(&id, 7).unwrap();
+            insert_at(&mut log, &id, "1", now - 100 * 86_400);
+        }
+        insert_at(&mut log, "com.global", "1", now - 100 * 86_400);
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                overrides_applied,
+                overrides_rows_removed,
+                ..
+            } => {
+                assert_eq!(rows_removed, 26);
+                assert_eq!(overrides_applied, 25);
+                assert_eq!(overrides_rows_removed, 25);
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("must prune"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_outcome_serde_has_overrides_fields() {
+        // Wire compatibility: the new fields must serialise as
+        // overrides_applied + overrides_rows_removed (snake_case
+        // matching the existing fields' convention).
+        let pruned = AutoPruneOutcome::Pruned {
+            rows_removed: 5,
+            retain_days: 30,
+            cutoff_unix: 1_700_000_000,
+            overrides_applied: 2,
+            overrides_rows_removed: 3,
+        };
+        let s = serde_json::to_string(&pruned).unwrap();
+        assert!(s.contains("\"overrides_applied\":2"), "got {s}");
+        assert!(s.contains("\"overrides_rows_removed\":3"), "got {s}");
+        // Round-trip preserves the new fields.
+        let back: AutoPruneOutcome = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, pruned);
     }
 
     // ─── Per-plugin histogram aggregate (Slice 87) ────────────────────
