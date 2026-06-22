@@ -736,6 +736,56 @@ pub fn slab_hopper_export_drilldown_csv(
     Ok(bytes.len() as u64)
 }
 
+// ─── Slice 94 — drilldown JSON export command surface ────────────────
+//
+// `slab_hopper_export_drilldown_json` writes a SampleDrilldown to disk
+// as a pretty-printed JSON envelope (slice 93 shape). The frontend
+// gathers the destination from a native save-as dialog and passes the
+// absolute path here so the Tauri layer owns the disk I/O - same
+// shape as slab_hopper_export_drilldown_csv (slice 89) and
+// slab_marketplace_install_log_export_json (slice 61).
+//
+// Pretty-printed (NOT compact) for the same reason the install-log
+// JSON export is pretty-printed: a paralegal opening the file in a
+// text editor needs to be able to read it; compactness saves bytes
+// that don't matter for a per-bucket drilldown.
+//
+// Returns the byte count actually written so the toast can read
+// "Exported 23 files (2.7 KB)" without re-reading the file.
+//
+// Idempotent - overwrites if the target exists. The save dialog
+// handles overwrite confirmation, so we don't double-confirm.
+
+/// `slab_hopper_export_drilldown_json` - write a
+/// [`super::coverage::SampleDrilldown`] to disk as a pretty-printed
+/// JSON envelope (slice 93 [`super::coverage::DrilldownExportEnvelope`]
+/// shape).
+///
+/// `rule_names` is the parallel rule-name array used to resolve a
+/// rule bucket's display label - same fallback chain as the CSV
+/// export and the popover header (`Rule #N` 1-based when
+/// missing/blank/out-of-range).
+///
+/// Returns the byte count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_drilldown_json(
+    drilldown: super::coverage::SampleDrilldown,
+    rule_names: Vec<String>,
+    path: String,
+) -> CmdResult<u64> {
+    let envelope = super::coverage::sample_drilldown_to_json(&drilldown, &rule_names);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 // ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
