@@ -459,11 +459,39 @@ export async function slabHopperExportDrilldownCsv(
   });
 }
 
-/** Suggest a default filename for a drilldown CSV export. Mirrors the
+/** Write a [`SampleDrilldown`] to `path` as a pretty-printed JSON
+ *  envelope (slice-93 `DrilldownExportEnvelope` shape on the Rust
+ *  side: schema_version + generated_at_iso + bucket metadata +
+ *  samples). Same call shape as `slabHopperExportDrilldownCsv`; the
+ *  Tauri command picks the serialiser.
+ *
+ *  `ruleNames` resolves the rule bucket's display label using the
+ *  SAME fallback chain the CSV wrapper uses (`Rule #N` 1-based when
+ *  missing/blank/out-of-range) so JSON + CSV exports of the same
+ *  bucket carry identical labels.
+ *
+ *  Returns the byte count actually written. Returns 0 in browser
+ *  mode (no-op). */
+export async function slabHopperExportDrilldownJson(
+  drilldown: SampleDrilldown,
+  ruleNames: readonly string[],
+  path: string,
+): Promise<number> {
+  // Same lazy-import trick as the CSV wrapper.
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_hopper_export_drilldown_json", {
+    drilldown,
+    ruleNames: [...ruleNames],
+    path,
+  });
+}
+
+/** Suggest a default filename for a drilldown CSV/JSON export. Mirrors the
  *  marketplace install-log + hopper backfill conventions so paralegals
  *  see ONE consistent naming pattern across the audit-export surfaces.
  *
- *  Format: `hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.csv`.
+ *  Format: `hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.<ext>`.
  *
  *  - `<watch>` slot is the watch id (`watch-7`) when supplied or
  *    `watch` when the caller doesn't have one handy (the popover
@@ -475,6 +503,11 @@ export async function slabHopperExportDrilldownCsv(
  *    when it's available + non-empty. Names are slugified to
  *    `[a-z0-9-]` ASCII (lowercase + dashes for non-alphanumeric runs)
  *    so the suggested filename survives a Windows filesystem.
+ *  - `<ext>` defaults to `"csv"` (slice-90 behaviour) so existing
+ *    call sites stay green; pass `"json"` for the slice-94 envelope
+ *    export. The slot must be a real file extension (no leading
+ *    dot, lowercase) — the helper trusts the caller and doesn't
+ *    sanitise.
  *  - The trailing date uses the caller's local time (the suggestion
  *    is for a save dialog the user is about to confirm — local-time
  *    matches what their calendar says today is).
@@ -483,7 +516,7 @@ export async function slabHopperExportDrilldownCsv(
 export function suggestDrilldownExportFilename(
   bucket: SampleBucket,
   ruleNames: readonly string[] | null,
-  opts: { watchId?: number | null; now?: number } = {},
+  opts: { watchId?: number | null; now?: number; ext?: "csv" | "json" } = {},
 ): string {
   const watchSlot =
     opts.watchId != null && Number.isFinite(opts.watchId) && opts.watchId >= 0
@@ -504,7 +537,8 @@ export function suggestDrilldownExportFilename(
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  return `hopper-drilldown_${watchSlot}_${bucketSlot}_${y}-${m}-${day}.csv`;
+  const ext = opts.ext ?? "csv";
+  return `hopper-drilldown_${watchSlot}_${bucketSlot}_${y}-${m}-${day}.${ext}`;
 }
 
 /** Slugify a rule name for inclusion in a filename. Lowercase ASCII

@@ -493,3 +493,94 @@ const FIXED_NOW = new Date("2026-06-21T19:00:00Z").getTime();
     `suggestDrilldownExportFilename: ends with .csv (${name})`,
   );
 }
+
+// ── suggestDrilldownExportFilename ext slot (Slice 95) ───────────────
+
+{
+  // Default ext is "csv" — backwards compatibility with slice 90 call
+  // sites that don't pass the option.
+  const name = suggestDrilldownExportFilename(FALLTHROUGH_BUCKET, null, {
+    now: FIXED_NOW,
+  });
+  expect(
+    name.endsWith(".csv"),
+    `suggestDrilldownExportFilename: default ext stays csv (${name})`,
+  );
+}
+{
+  // Explicit ext: "csv" produces the same shape as the implicit
+  // default — round-tripping a deliberate caller.
+  const a = suggestDrilldownExportFilename(FALLTHROUGH_BUCKET, null, {
+    watchId: 7,
+    now: FIXED_NOW,
+  });
+  const b = suggestDrilldownExportFilename(FALLTHROUGH_BUCKET, null, {
+    watchId: 7,
+    now: FIXED_NOW,
+    ext: "csv",
+  });
+  expect(
+    a === b,
+    `suggestDrilldownExportFilename: explicit ext:"csv" matches default (${a} vs ${b})`,
+  );
+}
+{
+  // ext: "json" produces a .json suffix; everything else in the name
+  // stays identical to the .csv form. This is the slice-94 JSON
+  // export wrapper's primary call shape.
+  const name = suggestDrilldownExportFilename(FALLTHROUGH_BUCKET, null, {
+    watchId: 7,
+    now: FIXED_NOW,
+    ext: "json",
+  });
+  expect(
+    /^hopper-drilldown_watch-7_fallthrough_\d{4}-\d{2}-\d{2}\.json$/.test(name),
+    `suggestDrilldownExportFilename: ext json shape (${name})`,
+  );
+  expect(
+    name.endsWith(".json"),
+    `suggestDrilldownExportFilename: ext json ends in .json (${name})`,
+  );
+  expect(
+    !name.endsWith(".csv"),
+    `suggestDrilldownExportFilename: ext json doesn't end in .csv (${name})`,
+  );
+}
+{
+  // ext switch ONLY affects the suffix — bucket slot, slug, watch
+  // slot, date all stay identical between the two ext forms. Diff
+  // assertion: the names are identical apart from the .csv/.json
+  // suffix.
+  const csv = suggestDrilldownExportFilename(
+    ruleBucket(2),
+    ["Receipts Q1"],
+    { watchId: 4, now: FIXED_NOW, ext: "csv" },
+  );
+  const json = suggestDrilldownExportFilename(
+    ruleBucket(2),
+    ["Receipts Q1"],
+    { watchId: 4, now: FIXED_NOW, ext: "json" },
+  );
+  expect(
+    csv.endsWith(".csv") && json.endsWith(".json"),
+    `suggestDrilldownExportFilename: paired ext suffixes (${csv}, ${json})`,
+  );
+  expect(
+    csv.slice(0, -4) === json.slice(0, -5),
+    `suggestDrilldownExportFilename: only suffix differs between ext forms (${csv}, ${json})`,
+  );
+}
+{
+  // Rule bucket + ext:"json" still slugifies the name (same slug
+  // behaviour as ext:"csv") — the ext switch is purely cosmetic and
+  // doesn't touch any other slot.
+  const name = suggestDrilldownExportFilename(
+    ruleBucket(0),
+    ["Tax Forms 2026"],
+    { watchId: 1, now: FIXED_NOW, ext: "json" },
+  );
+  expect(
+    /^hopper-drilldown_watch-1_rule-1_tax-forms-2026_\d{4}-\d{2}-\d{2}\.json$/.test(name),
+    `suggestDrilldownExportFilename: rule slug + ext json (${name})`,
+  );
+}
