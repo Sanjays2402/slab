@@ -412,6 +412,164 @@ fn csv_escape(field: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+// ─── Slice 93 — drilldown JSON export envelope ───────────────────────
+//
+// Mirrors the install-log `InstallLogExportEnvelope` shape (slice 60)
+// so paralegals get ONE consistent audit-export idiom across surfaces:
+// a self-describing envelope with `schema_version` + `generated_at_iso`
+// + bucket metadata + the samples themselves. The CSV emitter from
+// slice 88 covers the spreadsheet path; this envelope covers the
+// "feed it to a downstream pipeline / archive it as a record" path,
+// where the consumer benefits from explicit schema versioning and a
+// generated-at stamp that doesn't need a second cover-letter document.
+//
+// Why a separate primitive vs `serde_json::to_string_pretty` over the
+// raw `SampleDrilldown`:
+//
+// 1. The envelope precomputes `bucket_kind` / `bucket_name` via the
+//    same `bucket_csv_labels` chain the CSV uses, so the JSON and CSV
+//    exports agree exactly on the bucket label. A downstream script
+//    that reads either format never has to re-derive the name.
+// 2. A bare `SampleDrilldown` JSON has no provenance — a consumer
+//    reading the file two years later can't tell when it was
+//    generated, what schema version it follows, or what bucket it
+//    was filtered to without looking at the filename.
+// 3. The schema-version field gives us a forward-compatibility hook:
+//    a future shape change (e.g. adding rule predicate JSON to the
+//    envelope) bumps the version, and v1 consumers can skip the
+//    unknown sections gracefully.
+
+/// Schema version of the drilldown JSON export envelope. Bumped on
+/// non-additive shape changes only — adding a new optional field is
+/// backward-compatible at v1. Matches the install-log export's
+/// `INSTALL_LOG_EXPORT_SCHEMA_VERSION = 1` convention so a downstream
+/// reader can recognise "Slab audit export v1" across both
+/// envelopes without checking which surface produced it.
+pub const DRILLDOWN_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Wire shape for the JSON drilldown export. Lifts the raw
+/// [`SampleDrilldown`] into a self-describing envelope so a downstream
+/// pipeline reading the file at archive-recovery time knows what
+/// schema version it's looking at, when it was generated, which
+/// bucket the export was filtered to (label + discriminator), and
+/// how many samples are in the bucket vs in this slice of it.
+///
+/// The envelope is what `slab_hopper_export_drilldown_json` (slice 94)
+/// writes to disk. It deliberately mirrors the install-log
+/// `InstallLogExportEnvelope` shape (`schema_version` +
+/// `generated_at_iso` + filter-context fields + body) so paralegals
+/// and downstream scripts see ONE consistent envelope across the two
+/// audit surfaces.
+///
+/// Bucket identity is captured TWICE:
+///
+/// - `bucket` carries the raw [`SampleBucket`] (kind-discriminated)
+///   so a script can pattern-match on `kind === "rule" | "fallthrough"`
+///   without parsing the human label.
+/// - `bucket_kind` + `bucket_name` carry the same `(kind, name)` pair
+///   the CSV emits, precomputed via the same fallback chain
+///   (`Rule #N` 1-based when names are missing/blank/out-of-range)
+///   so the JSON and CSV exports agree on labels exactly.
+///
+/// Sample count is also captured TWICE for the same reason: the
+/// `sample_count` field is the row count actually carried in
+/// `samples` (post-cap, matches `samples.len()`), and
+/// `total_in_bucket` is the FULL bucket size pre-cap (matches the
+/// underlying [`SampleDrilldown`]). A consumer can detect truncation
+/// by comparing the two, or by reading the explicit `truncated`
+/// flag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DrilldownExportEnvelope {
+    /// Schema version of the envelope itself (NOT of the hopper
+    /// run-log schema). Bumped on non-additive shape changes.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced
+    /// (`"2026-06-21T22:14:07Z"`).
+    pub generated_at_iso: String,
+    /// The raw bucket selector — `{"kind":"rule","index":1}` or
+    /// `{"kind":"fallthrough"}`. Same shape as
+    /// [`SampleBucket`]'s serde representation.
+    pub bucket: SampleBucket,
+    /// Discriminator string matching `bucket.kind` —
+    /// `"fallthrough"` or `"rule"`. Redundant with `bucket.kind` but
+    /// saves a consumer from having to descend the nested object.
+    pub bucket_kind: String,
+    /// Human label for the bucket — `"Fall-through"` for the
+    /// catch-all, the rule's display name (or `Rule #N` 1-based
+    /// fallback when missing/blank/out-of-range) for rule buckets.
+    /// Same fallback chain as `bucket_csv_labels`.
+    pub bucket_name: String,
+    /// The number of samples in `samples`. Redundant with
+    /// `samples.len()` but cheap and saves consumers a parse step.
+    pub sample_count: usize,
+    /// FULL bucket size pre-cap — matches the underlying
+    /// [`SampleDrilldown::total_in_bucket`]. Equals `sample_count`
+    /// when the export wasn't truncated.
+    pub total_in_bucket: u64,
+    /// True iff `total_in_bucket > sample_count`. Convenience flag
+    /// so the consumer doesn't have to compare the two counts itself.
+    pub truncated: bool,
+    /// The samples themselves — each row is a verbatim [`RuleSample`]
+    /// (filename + size + page count + text sample). Order matches
+    /// the input order, which is typically newest-first when the
+    /// drilldown was sourced from the run log.
+    pub samples: Vec<RuleSample>,
+}
+
+/// Build the JSON export envelope from a [`SampleDrilldown`] + the
+/// parallel rule-names array. The envelope's `generated_at_iso`
+/// stamp uses the wall clock at call time; tests pass a fixed
+/// timestamp via [`sample_drilldown_to_json_with_now`].
+pub fn sample_drilldown_to_json(
+    drill: &SampleDrilldown,
+    rule_names: &[String],
+) -> DrilldownExportEnvelope {
+    sample_drilldown_to_json_with_now(drill, rule_names, drilldown_unix_now())
+}
+
+/// Same as [`sample_drilldown_to_json`] but takes an explicit
+/// unix-seconds "now" so unit tests don't race the wall clock.
+pub fn sample_drilldown_to_json_with_now(
+    drill: &SampleDrilldown,
+    rule_names: &[String],
+    now_unix: i64,
+) -> DrilldownExportEnvelope {
+    let (kind, name) = bucket_csv_labels(drill.bucket, rule_names);
+    DrilldownExportEnvelope {
+        schema_version: DRILLDOWN_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: drilldown_iso8601_utc(now_unix),
+        bucket: drill.bucket,
+        bucket_kind: kind.to_string(),
+        bucket_name: name,
+        sample_count: drill.samples.len(),
+        total_in_bucket: drill.total_in_bucket,
+        truncated: drill.truncated,
+        samples: drill.samples.clone(),
+    }
+}
+
+/// Wall-clock unix-seconds. Duplicated from
+/// [`crate::marketplace::install_log`]'s private helper so the
+/// hopper coverage module doesn't take a cross-subsystem dep.
+fn drilldown_unix_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Render a unix-seconds value as a canonical ISO-8601 UTC string
+/// (`"2026-06-21T22:14:07Z"`). Used as the envelope's
+/// `generated_at_iso` field. Falls back to the empty string for the
+/// pathological case where the value can't be represented — keeps
+/// the field shape consistent.
+fn drilldown_iso8601_utc(unix_seconds: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(unix_seconds, 0)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1259,5 +1417,259 @@ mod tests {
         };
         let csv = sample_drilldown_to_csv(&d, &[], false);
         assert_eq!(csv.trim().lines().count(), 2);
+    }
+
+    // ── Slice 93 — sample_drilldown_to_json envelope ─────────────────
+
+    #[test]
+    fn drilldown_json_envelope_carries_schema_and_generated_timestamp() {
+        // schema_version pins the v1 contract; generated_at_iso uses
+        // the explicit-now form so tests don't race the wall clock.
+        // 1_710_000_000 is 2024-03-09T16:00:00Z.
+        let d = drill(SampleBucket::Fallthrough, vec![]);
+        let env = sample_drilldown_to_json_with_now(&d, &[], 1_710_000_000);
+        assert_eq!(env.schema_version, 1);
+        assert_eq!(env.generated_at_iso, "2024-03-09T16:00:00Z");
+    }
+
+    #[test]
+    fn drilldown_json_envelope_carries_bucket_kind_and_name_for_fallthrough() {
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "orphan.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+        assert_eq!(env.bucket_kind, "fallthrough");
+        assert_eq!(env.bucket_name, "Fall-through");
+        assert_eq!(env.bucket, SampleBucket::Fallthrough);
+    }
+
+    #[test]
+    fn drilldown_json_envelope_resolves_rule_bucket_name() {
+        let d = drill(
+            SampleBucket::Rule { index: 1 },
+            vec![RuleSample {
+                filename: "tax.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let names = vec!["Invoices".to_string(), "Tax forms".to_string()];
+        let env = sample_drilldown_to_json_with_now(&d, &names, 0);
+        assert_eq!(env.bucket_kind, "rule");
+        assert_eq!(env.bucket_name, "Tax forms");
+        assert_eq!(env.bucket, SampleBucket::Rule { index: 1 });
+    }
+
+    #[test]
+    fn drilldown_json_envelope_rule_bucket_falls_back_to_rule_n_when_name_missing() {
+        // Same describeBucket fallback chain the CSV uses (1-based).
+        let d = drill(
+            SampleBucket::Rule { index: 2 },
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        // Empty names array → "Rule #N".
+        let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+        assert_eq!(env.bucket_name, "Rule #3");
+        // Whitespace-only / blank names also fall back.
+        for name in ["", "   "] {
+            let names = vec!["".to_string(), "".to_string(), name.to_string()];
+            let env = sample_drilldown_to_json_with_now(&d, &names, 0);
+            assert_eq!(env.bucket_name, "Rule #3", "blank {:?} -> Rule #3", name);
+        }
+    }
+
+    #[test]
+    fn drilldown_json_envelope_carries_sample_count_and_total_in_bucket() {
+        // sample_count == samples.len() (post-cap); total_in_bucket
+        // is the FULL bucket size pre-cap. Truncated drilldowns
+        // surface BOTH so a consumer can detect truncation.
+        let d = SampleDrilldown {
+            bucket: SampleBucket::Fallthrough,
+            samples: vec![
+                RuleSample {
+                    filename: "a.pdf".into(),
+                    ..Default::default()
+                },
+                RuleSample {
+                    filename: "b.pdf".into(),
+                    ..Default::default()
+                },
+            ],
+            total_in_bucket: 47,
+            truncated: true,
+        };
+        let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+        assert_eq!(env.sample_count, 2);
+        assert_eq!(env.total_in_bucket, 47);
+        assert!(env.truncated);
+        assert_eq!(env.samples.len(), 2);
+    }
+
+    #[test]
+    fn drilldown_json_envelope_untruncated_when_sample_count_equals_total() {
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+        assert_eq!(env.sample_count, 1);
+        assert_eq!(env.total_in_bucket, 1);
+        assert!(!env.truncated);
+    }
+
+    #[test]
+    fn drilldown_json_envelope_empty_drilldown_still_renders() {
+        // Empty bucket exports are valid — the envelope tells the
+        // consumer the bucket was checked and contained zero samples,
+        // which is different from "nobody ran the export".
+        let d = drill(SampleBucket::Fallthrough, vec![]);
+        let env = sample_drilldown_to_json_with_now(&d, &[], 1_710_000_000);
+        assert_eq!(env.schema_version, 1);
+        assert_eq!(env.sample_count, 0);
+        assert_eq!(env.total_in_bucket, 0);
+        assert!(!env.truncated);
+        assert!(env.samples.is_empty());
+        assert_eq!(env.bucket_kind, "fallthrough");
+    }
+
+    #[test]
+    fn drilldown_json_envelope_preserves_input_sample_order() {
+        // Same ordering invariant as the CSV emitter — the envelope's
+        // `samples` array mirrors the drilldown's `samples` order
+        // verbatim so the JSON file reads in the same sequence the
+        // popover rendered.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![
+                RuleSample {
+                    filename: "c.pdf".into(),
+                    ..Default::default()
+                },
+                RuleSample {
+                    filename: "a.pdf".into(),
+                    ..Default::default()
+                },
+                RuleSample {
+                    filename: "b.pdf".into(),
+                    ..Default::default()
+                },
+            ],
+        );
+        let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+        let names: Vec<&str> = env.samples.iter().map(|s| s.filename.as_str()).collect();
+        assert_eq!(names, vec!["c.pdf", "a.pdf", "b.pdf"]);
+    }
+
+    #[test]
+    fn drilldown_json_envelope_preserves_full_sample_axes() {
+        // RuleSample has four fields; the envelope must carry every
+        // one of them so the JSON consumer never has to cross-reference
+        // a separate source for size/page/text data.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "complete.pdf".into(),
+                size_bytes: 12_345,
+                page_count: Some(7),
+                text_sample: Some("hello world".into()),
+            }],
+        );
+        let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+        let s = &env.samples[0];
+        assert_eq!(s.filename, "complete.pdf");
+        assert_eq!(s.size_bytes, 12_345);
+        assert_eq!(s.page_count, Some(7));
+        assert_eq!(s.text_sample.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn drilldown_json_envelope_serializes_full_roundtrip() {
+        // Round-trip the entire envelope so a future serde-shape
+        // change surfaces here rather than at a downstream consumer.
+        let d = drill(
+            SampleBucket::Rule { index: 0 },
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                size_bytes: 100,
+                page_count: Some(2),
+                text_sample: None,
+            }],
+        );
+        let names = vec!["Receipts".to_string()];
+        let env = sample_drilldown_to_json_with_now(&d, &names, 1_710_000_000);
+        let json = serde_json::to_string(&env).unwrap();
+        let back: DrilldownExportEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, env);
+        // Spot-check a few field names in the JSON so a careless rename
+        // breaks here.
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"generated_at_iso\":\"2024-03-09T16:00:00Z\""));
+        assert!(json.contains("\"bucket_kind\":\"rule\""));
+        assert!(json.contains("\"bucket_name\":\"Receipts\""));
+        assert!(json.contains("\"sample_count\":1"));
+    }
+
+    #[test]
+    fn drilldown_json_envelope_pretty_print_is_valid_json() {
+        // The Tauri command writes pretty-printed JSON to disk for
+        // human readability; this pins that the serialiser doesn't
+        // emit anything that breaks JSON.parse on the consumer side.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                // A filename with a quote tests escaping survives the
+                // pretty-printer too.
+                filename: "weird \"name\".pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let env = sample_drilldown_to_json_with_now(&d, &[], 1_710_000_000);
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        let back: DrilldownExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+        // Pretty form should contain at least one newline.
+        assert!(pretty.contains('\n'));
+    }
+
+    #[test]
+    fn drilldown_json_envelope_iso_helper_handles_bad_timestamp() {
+        // The wall-clock helper falls back to 0 on a SystemTime
+        // failure; the ISO helper should render a representable
+        // timestamp for 0 and an empty string for an out-of-range
+        // i64. Tests pin both branches so a future change to the
+        // chrono call surfaces.
+        let ok = drilldown_iso8601_utc(0);
+        assert_eq!(ok, "1970-01-01T00:00:00Z");
+        let bad = drilldown_iso8601_utc(i64::MAX);
+        assert_eq!(bad, "");
+    }
+
+    #[test]
+    fn drilldown_json_envelope_kind_string_matches_bucket_serde_tag() {
+        // The bucket_kind field MUST match what serde emits for the
+        // bucket's tag — otherwise a consumer reading bucket_kind and
+        // a consumer reading bucket.kind get different answers.
+        let cases = [
+            (SampleBucket::Fallthrough, "fallthrough"),
+            (SampleBucket::Rule { index: 0 }, "rule"),
+        ];
+        for (bucket, expected_kind) in cases {
+            let d = drill(bucket, vec![]);
+            let env = sample_drilldown_to_json_with_now(&d, &[], 0);
+            assert_eq!(env.bucket_kind, expected_kind);
+            // Round-trip through serde and verify bucket.kind matches.
+            let json = serde_json::to_value(env.bucket).unwrap();
+            let kind_from_serde = json.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            assert_eq!(kind_from_serde, expected_kind);
+        }
     }
 }
