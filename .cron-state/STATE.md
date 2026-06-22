@@ -1,13 +1,472 @@
 # Slab Cron State
 
-Last updated: 2026-06-22 00:35 PT by Cake (cron) — round-21 BATCH shipped: 5 slices closing one cohesive arc. Top plugins histogram audit-export arc (slices 98-102): pure-data plugin_histogram_to_csv(rows, include_header) RFC-4180 serialiser with 8 columns (plugin_id, installs, updates, uninstalls, failures, total, last_occurred_at_unix, last_occurred_at_iso) matching install_log_to_csv shape with ISO column byte-for-byte (slice 98); pure-data plugin_histogram_to_json(rows, since, until, grand_total) -> PluginHistogramExportEnvelope mirroring InstallLogExportEnvelope (slice 60) and DrilldownExportEnvelope (slice 93) — schema_version=1 PARALLEL-VERSIONED with INSTALL_LOG_EXPORT_SCHEMA_VERSION (independent bumps as bodies diverge) + generated_at_iso + row_count (mirrors rows.len()) + grand_total (caller-supplied verbatim, no re-sum) + window-bounds + rows verbatim (slice 99); slab_marketplace_install_log_export_histogram_csv + _json Tauri commands writing pretty-printed JSON / RFC-4180 CSV to disk via the same plugin_histogram(since, until, limit.unwrap_or(25)) reload as the read endpoint so "what you see is what you export" default semantics (slice 100); exportInstallLogHistogramCsv/Json TS wrappers + suggestHistogramExportFilename(filter, ext, now?) helper producing marketplace-top-plugins_<window>_<YYYY-MM-DD>.<ext> with identical window shape to suggestInstallLogExportFilename so the two filenames sort side-by-side in a directory (slice 101); Export… popover beside Sort by selector inside .top-plugins-sort row sharing the .export-menu vocabulary from the footer popover, in-state-snapshot semantics (Tauri layer re-queries with same window so file content matches what's on-screen), independent histogram-export-anchor so dismissing one popover doesn't dismiss the other, toast "Exported N plugins as CSV/JSON (X.X KB)" accent-green tint matching install-event seg-install vocabulary with 0.16s fade-in keyframe (slice 102).
+Last updated: 2026-06-22 04:14 PT by Cake (cron) — round-22 BATCH shipped: 5 slices closing one cohesive arc. Activity-over-time aggregate (slices 103-107): backend primitive activity_timeline(since, until, granularity) -> Vec<ActivityBucket> with TimeBucketGranularity{Day, Week, Month} enum + UTC-calendar floor helper bucket_floor_unix (chrono-backed, ISO-8601 weeks, sparse output) (slice 103); pure-data activity_timeline_to_csv(buckets, granularity, include_header) RFC-4180 serialiser with 8 columns leading with granularity tag for concat-friendly downstream pipelines (slice 104); pure-data activity_timeline_to_json(buckets, granularity, since, until, grand_total) -> ActivityTimelineExportEnvelope mirroring InstallLogExportEnvelope + PluginHistogramExportEnvelope + DrilldownExportEnvelope shape — schema_version=1 PARALLEL-VERSIONED with the three sibling envelopes + generated_at_iso + granularity discriminator + bucket_count + grand_total (caller-supplied verbatim, no re-sum) + window-bounds + buckets verbatim (slice 105); slab_marketplace_install_log_activity_timeline (read) + _export_activity_timeline_csv + _export_activity_timeline_json Tauri commands + TS getActivityTimeline/exportInstallLog ActivityTimelineCsv/Json + densifyActivityTimeline pure helper (zero-fill gap buckets day/week/month with calendar-aware month advance) + advanceBucketStart helper + suggestActivityTimelineExportFilename producing marketplace-activity-{day|week|month}_<window>_<YYYY-MM-DD>.<ext> with granularity-in-prefix + identical window-shape to suggestHistogramExportFilename (slice 106); Activity-over-time collapsible section in Recent installs drawer with bucket-width selector (Per day/week/month) + Export… popover + 96px vertical-bar chart (sparse-server / dense-UI via densifyActivityTimeline) + segmented stacks (install green / update accent / uninstall amber / failed red, bottom-up via column-reverse) + 1px hairline for empty buckets + date axis labels + legend footer (slice 107).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `518f261` — "feat(plugins): Export menu for Top plugins histogram".
+Latest commit: `9c0b0b6` — "feat(plugins): Activity over time section with bar chart".
+
+### What round-22 (2026-06-22 04:14 PT) just shipped
+
+Five slices closing one cohesive arc. Before this tick the
+Recent installs drawer had two existing aggregates over the
+install log — the per-event timeline (round 16-17 filter + sort
+work) answering "what happened" and the Top plugins histogram
+(round 18 + 20-21 sort + export work) answering "WHICH plugins
+were active". The third natural axis — "WHEN was activity
+happening" / the temporal cadence of installs — had no surface.
+Tonight that axis closes end-to-end with a backend aggregate
+primitive, two pure-data exporters (CSV + JSON envelope),
+Tauri command wiring, a TS client + filename helper + densifier
+pure helper, and the demo-able vertical-bar chart UI.
+
+Round 21's closing notes listed "histogram time-bucket axis
+('activity per week' alongside the current per-plugin
+breakdown)" as the lead next-subsystem candidate — round 22
+ships it as a SIBLING aggregate (not a histogram axis) because
+the per-bucket data is keyed by bucket_start_unix rather than
+plugin_id, making it a complementary axis rather than a sort
+pivot. The cohort closes the trio (per-event timeline + per-
+plugin histogram + per-bucket activity timeline) for the install
+log's read-side surfaces, all sharing the same window axis +
+the same export-arc cadence + the same dark-glass design
+language.
+
+- Slice 103: activity timeline aggregate primitive (bf12da4,
+  586 LOC). Pure-data InstallLog::activity_timeline(since,
+  until, granularity) -> Vec<ActivityBucket> aggregating the
+  install log by calendar bucket. New TimeBucketGranularity
+  enum {Day, Week, Month} (serde rename_all="lowercase" so the
+  wire form matches what the TS client sends) with parse()
+  fallback to Day for unknown strings (conservative, matches
+  InstallAction::parse). New ActivityBucket struct carrying
+  bucket_start_unix + installs/updates/uninstalls/failures/
+  total counts (matching PluginHistogramRow's per-action shape
+  minus plugin_id). New bucket_floor_unix(unix_seconds,
+  granularity) helper using chrono for UTC-calendar flooring
+  (Day = floor to UTC midnight, Week = floor to UTC Monday via
+  weekday().num_days_from_monday(), Month = floor to UTC first-
+  of-month via with_day(1)). All UTC (not local) so two
+  machines in different timezones emit identical buckets — the
+  UI can render labels in local time but the boundaries don't
+  drift. Same WHERE-assembly pattern as plugin_histogram so the
+  sqlite planner reuses the occurred_at index for the time-
+  window seek. Bucketing in code (not SQL strftime) because the
+  week/month flooring is calendar-aware and chrono handles ISO
+  weeks where sqlite's strftime '%V' has sharp edge cases.
+  SPARSE output — only buckets with at least one event are
+  emitted (UI densifies for rendering, keeps the primitive cheap
+  on idle corpora). ASCENDING by bucket_start_unix so the UI
+  renders the timeline left-to-right. 22 new tests pin:
+  granularity round-trip via string, parse-unknown-is-Day, serde
+  lowercase tag, bucket_floor day midnight + idempotent, week
+  Tuesday -> Monday + Sunday -> previous Monday (ISO weeks put
+  Sunday at END of week not start) + Monday idempotent, month
+  first-of-month + idempotent, epoch zero edge case (Day=0,
+  Week=-259200 for Thursday 1970-01-01, Month=0), empty log
+  returns empty, day/week/month bucketing each verified against
+  a hand-built 3-day-spanning-2-month fixture (day-grain=3,
+  week-grain=2 collapsing day 1+2 into 4-event week, month-
+  grain=2 collapsing into 4-event November + 1-event December),
+  window filters since/until/empty-window, conservation
+  invariant (bucket total == sum of buckets across all three
+  granularities), sparse output (no zero-fill for gap days), ASC
+  ordering invariant (out-of-insertion-order events still emit
+  ASC), serde round-trip.
+
+- Slice 104: activity timeline CSV export primitive (58d4a71,
+  316 LOC). Pure-data activity_timeline_to_csv(buckets,
+  granularity, include_header) -> String RFC-4180 serialiser.
+  Eight columns: granularity, bucket_start_unix, bucket_start_
+  iso, installs, updates, uninstalls, failures, total.
+  granularity is the FIRST column (not a comment header, not
+  trailing) so a downstream pipeline concatenating day.csv +
+  week.csv + month.csv reads the first cell to dispatch — same
+  reasoning as the bucket_kind position in the slice-88
+  drilldown CSV. bucket_start_unix + bucket_start_iso are both
+  fed by the SAME iso8601_utc helper (cannot drift). bucket_
+  start_iso matches the install-log + histogram CSVs' ISO
+  format byte-for-byte (test pins this for cross-export join
+  compatibility). total written verbatim (NOT re-summed from
+  the four bucket columns) so a future axis addition to
+  ActivityBucket can't silently corrupt totals in the lag
+  window. ACTIVITY_TIMELINE_CSV_HEADER exposed as pub const
+  so tests + future column reorders share one source of truth.
+  12 new tests pin: header opt-in invariant + with-header has
+  2 lines bare 1, empty with header is header-only, header/row
+  column count parity (8 cols both sides), documented column
+  order, granularity tag on EVERY row (concatenation safety),
+  granularity tag distinguishes export pairs (day/week/month
+  differ only in column 0), ISO matches install-log byte-for-
+  byte, preserves input order (caller may pre-densify; exporter
+  ships verbatim), zero timestamp renders 0 not empty (NOT NULL
+  contract), total field verbatim (mismatch test confirms no
+  re-sum), no "None"/"null" leaks (catches future Option
+  addition), one row per input invariant (n=0,1,5,30 for
+  stable toast count without re-reading file).
+
+- Slice 105: activity timeline JSON envelope primitive (19b2254,
+  382 LOC). Pure-data activity_timeline_to_json(buckets,
+  granularity, since, until, grand_total) ->
+  ActivityTimelineExportEnvelope. Same envelope shape as
+  InstallLogExportEnvelope + PluginHistogramExportEnvelope +
+  DrilldownExportEnvelope: schema_version + generated_at_iso +
+  window + body. ADDS one extra discriminator field —
+  granularity — because the timeline body carries per-bucket
+  counts whose meaning depends on the bucket width. Without
+  the discriminator a downstream consumer would have to infer
+  the granularity from bucket gaps which is fragile when the
+  timeline is sparse (the primitive is sparse by slice-103
+  contract). With it, the envelope is self-describing: a JSONL
+  pipeline can dispatch on schema_version + granularity.
+  generated_at_iso uses the same iso8601_utc helper as install-
+  log + histogram + drilldown envelopes so two exports produced
+  at the same moment carry byte-for-byte identical timestamp
+  strings. grand_total ships caller-supplied verbatim (NOT re-
+  summed) — defence-in-depth matching the histogram envelope.
+  ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION=1 pub const PARALLEL-
+  VERSIONED with INSTALL_LOG_EXPORT_SCHEMA_VERSION +
+  PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION (independent bumps as
+  bodies diverge). 14 new tests pin: schema_v1 + equality to
+  the const, granularity field for all three values, bucket_
+  count == buckets.len() invariant, grand_total verbatim from
+  caller (mismatch confirms), generated_at_iso matches install-
+  log byte-for-byte, window-bounds round-trip to ISO (both
+  bounds + neither), only-since case has only-since ISO,
+  preserves input bucket order (out-of-order ships verbatim),
+  buckets are owned clones (caller mutation isolation), serde
+  round-trip with full field-set assertion, pretty-print round-
+  trip (Tauri layer uses to_string_pretty), empty input renders
+  cleanly, parallel-versioning equality vs install-log +
+  histogram, granularity serde round-trips for all three
+  lowercase tags.
+
+- Slice 106: activity timeline Tauri commands + TS client
+  (0424f22, 766 LOC). Three new Tauri commands: slab_market
+  place_install_log_activity_timeline (read) +
+  _export_activity_timeline_csv + _export_activity_timeline_
+  json (write). Granularity defaults to Day when omitted across
+  all three (matches the typical UI default + the most common
+  short-window pivot). All three reload via activity_timeline()
+  with the same default so "export the timeline I'm looking at"
+  is the natural reading. All three registered in invoke_handler
+  between the histogram exports and the retention policy
+  commands. TS surface: TimeBucketGranularity = "day" | "week"
+  | "month" matching the Rust serde tag exactly. TIME_BUCKET_
+  GRANULARITIES array + timeBucketLabel helper drive any UI
+  selector. ActivityBucket + ActivityTimelineResult interfaces
+  mirror the wire shapes. getActivityTimeline async wrapper
+  (browser-mode returns empty result). The non-trivial pure
+  helper: densifyActivityTimeline(buckets, granularity) zero-
+  fills the gap days/weeks/months between the first and last
+  bucket the server returned — the server's primitive is
+  sparse, the UI rendering a bar chart needs dense form so gap
+  days show as visible zero-bars rather than collapsing the
+  time axis. Returns NEW array (same posture as
+  sortHistogramRows). advanceBucketStart helper the densifier
+  builds on: day = +86_400, week = +7 * 86_400, month = UTC-
+  calendar +1 month via Date.UTC (handles 28/29/30/31 +
+  year-overflow). exportInstallLogActivityTimelineCsv +
+  exportInstallLogActivityTimelineJson lazy-import invoke
+  wrappers (browser no-op). suggestActivityTimelineExport
+  Filename(filter, ext, now?) producing marketplace-activity-
+  {day|week|month}_<window>_<YYYY-MM-DD>.<ext>. Granularity in
+  the PREFIX (not the window slot) reads as a noun phrase
+  ("the daily activity export"); window slot matches
+  suggestHistogramExportFilename byte-for-byte (slice 101) so
+  the two exports for the same window sort side-by-side in a
+  directory. 23 new inline-expect tests in marketplace.test.ts:
+  TIME_BUCKET_GRANULARITIES length + order, timeBucketLabel
+  per value, advanceBucketStart day=+86400 + week=+7d + month
+  Nov->Dec + Dec->Jan year overflow + Feb 2024 leap-year
+  +29d, densify empty/single/3-sparse-over-5-day, densify
+  returns NEW array, densify week 2-sparse-2-weeks-apart -> 3
+  dense with middle zero-bucket, densify month Nov+Jan -> 3
+  dense with Dec zero-month inserted, suggestActivityTimeline
+  ExportFilename default granularity is day, granularity-in-
+  prefix for all three, csv/json pair differs ONLY in suffix
+  (slice-prefix equality), window slot all/from-/to-/X-Y
+  mirrors histogram, prefix preserved across every window-
+  shape variant, today slug UTC date math (deterministic NOW
+  pinning).
+
+- Slice 107: Activity over time section with bar chart
+  (9c0b0b6, 541 LOC). The demo-able payoff tying slices 103-
+  106 together. New collapsible "Activity over time" section
+  in RecentInstallsDrawer, sibling to the Top plugins block,
+  answering "WHEN was install activity happening?" with a
+  vertical-bar chart. State cells alongside the histogram
+  cells: timelineOpen (defaults closed; per-event timeline
+  stays primary content), timeline + timelineLoading +
+  timelineError, timelineGranularity (defaults "day"
+  matching the read endpoint), timelineExportMenuOpen +
+  timelineExporting + timelineExportToast + timelineExport
+  ToastTimer (named handle so back-to-back exports REPLACE
+  rather than stack); onMount cleanup adds the timer to the
+  existing queryDebounce + histogramExportToastTimer clears.
+  refreshTimeline() re-fetches via getActivityTimeline with
+  sinceUnix from windowSinceUnix + the section's granularity.
+  $effect on keyed (open|window|granularity) — refetches on
+  any change while open. runTimelineExport(kind) handler
+  mirrors runHistogramExport's shape exactly: filter carries
+  in-state since_unix + granularity, suggestActivityTimeline
+  ExportFilename proposes default, save dialog opened with
+  kind-appropriate filter, cancellation is a clean no-op,
+  toast "Exported N buckets as CSV/JSON (X.X KB)" accent-
+  green tint with 0.16s fade-in keyframe (shared with
+  histogram toast). UI: Bucket width selector + Export…
+  button beside it inside .timeline-controls row; popover
+  anchors DOWN+RIGHT-aligned beneath the button. Independent
+  .timeline-export-anchor so dismiss is separate from the
+  histogram + footer anchors. onKeydown's Escape chain puts
+  timelineExportMenuOpen FIRST (most recently opened, closer
+  to user attention). The chart: flex row of vertical bars,
+  96px height, padding keeps bars anchored above the date
+  axis below. densifyActivityTimeline zero-fills the gap
+  days/weeks/months between first + last bucket so the time
+  axis stays honest. Each bar renders the per-action stack
+  (install -> update -> uninstall -> failed, bottom-up via
+  column-reverse). Empty buckets render as a 1px hairline +
+  .empty-bar opacity 0.6 — "nothing happened these days"
+  reads at a glance without collapsing the time axis. Date
+  axis labels below the chart (first bucket on the left,
+  last on the right, tabular-nums). Legend footer explains
+  bucket-width pivot + segment colour vocabulary + export
+  verbs. Section toggle row mirrors the Top plugins block
+  exactly (chevron + label + meta reading "N events across X
+  days · 30d" / "Click to expand").
+
+Gates result: cargo fmt clean (cargo fmt --all --check exit 0
+after a small clippy doc-overindented-list-items fix folded
+into slice 103 via --fixup + --autosquash), cargo clippy --lib
+-- -D warnings PASSED CLEAN in 7.38s (one clippy doc-list
+indent warning fixed in slice 103; pure-data CSV serialiser +
+JSON envelope serialiser + thin command wrappers + UI section
+add no new clippy surface), cargo test --lib 2393 passed / 0
+failed (round-21 baseline 2345 + 22 from slice 103 + 12 from
+slice 104 + 14 from slice 105 = 2393), pnpm check 0 errors /
+104 warnings (round-21 baseline preserved EXACTLY — zero new
+warnings from the timeline TS surface, helpers, section
+markup, scoped CSS), tsx src/lib/marketplace.test.ts 102
+inline expects pass (round-21 ~54 + 49 from slice 106 inline
+sub-expects = 102 — the 23 logical tests fan out into 49
+individual inline `ok:` lines).
+
+PROCESS NOTES:
+- Round-21 closing notes listed "histogram time-bucket axis
+  ('activity per week' alongside the current per-plugin
+  breakdown)" as the lead candidate; round 22 shipped it as a
+  SIBLING AGGREGATE (not a histogram axis) because the per-
+  bucket data is keyed by bucket_start_unix rather than
+  plugin_id, making it a complementary axis rather than a
+  pivot. The cohort closes the trio of install-log read-side
+  aggregates (per-event timeline + per-plugin histogram +
+  per-bucket activity timeline) all sharing the same window
+  axis + the same export-arc cadence.
+- Five slices, five commits, ONE logical subsystem (the
+  activity-over-time aggregate). Mirrors the canonical five-
+  layer cadence of round-19 (drilldown CSV arc 88-91 + one
+  composite slice 92) and round-20 (drilldown JSON arc 93-96
+  + histogram sort 97) and round-21 (histogram audit-export
+  arc 98-102): backend primitive -> CSV primitive -> JSON
+  primitive -> commands+client (composite) -> demo-able UI.
+  The split into separate CSV-primitive + JSON-primitive
+  slices (104 + 105) rather than one combined "exporters"
+  slice gives each format its own revert point and focused
+  test surface.
+- The ActivityTimelineExportEnvelope schema_version=1
+  matches the install-log + histogram envelopes' constants
+  by value today but they are PARALLEL-versioned (a future
+  shape change in one bumps that one only). A test pins the
+  v1==v1 equality so a careless joint bump surfaces.
+- The TimeBucketGranularity enum adds a fourth audit-export
+  discriminator field shape — the first three envelopes
+  (install-log + histogram + drilldown) don't need one
+  because their body shape is self-describing. The
+  granularity discriminator lifts the envelope into the
+  "self-describing aggregate" category and makes a JSONL
+  pipeline that processes mixed-granularity exports cheap.
+- The densifyActivityTimeline pure helper on the TS side
+  rather than the Rust side is deliberate: keep the
+  primitive sparse (cheap on idle corpora) and densify
+  client-side where the row count is bounded by what fits
+  in the chart anyway. A future densify-server-side helper
+  would only matter if a chart-less consumer needed dense
+  output — not a real use case today.
+- The Tauri command in slice 106 ships granularity through
+  to activity_timeline() with .unwrap_or(Day) — same default
+  as the read endpoint so "export what you're looking at" is
+  the natural reading. The frontend's runTimelineExport
+  handler in slice 107 passes timelineGranularity (which IS
+  the rendered chart's granularity) so the export window
+  matches the on-screen view bit-for-bit.
+- The chart uses flex-direction: column-reverse on each bar
+  so the bottom-anchored stack reads install (green base) ->
+  update -> uninstall -> failed (top). This matches the
+  histogram's left-to-right action order in horizontal bars
+  — same vocabulary, rotated 90° for the vertical surface.
+
+DESIGN NOTES:
+- "Activity over time" rather than "Activity timeline" or
+  "Activity histogram" because the section name reads as a
+  human question ("when did activity happen") rather than a
+  data-type ("a time-series of activity"). Same voice
+  posture as "Top plugins" (user question, not data
+  classification).
+- Sibling section under Top plugins (not a separate panel,
+  not a tab) so the drawer's vertical layout reads as a
+  progressive disclosure: per-event timeline (default) ->
+  Top plugins (which plugins) -> Activity over time (when).
+  Both aggregates collapse by default so the per-event view
+  stays primary; users who want pivot views expand them.
+- Bucket width selector uses a NATIVE <select> for the
+  same reasons as the histogram sort selector: native a11y
+  for free (arrow keys + Esc-cancel), small stable option
+  count (3), no rich content (just labels).
+- Granularity options "Per day / Per week / Per month"
+  rather than "Daily / Weekly / Monthly" because "Per X"
+  reads as a cadence ("show me activity Per day") whereas
+  "Daily" reads as a recurrence ("the daily activity") —
+  the cadence framing matches the selector's role of
+  picking a bucket width.
+- Chart height 96px is deliberate — tall enough that a
+  3-stack segment reads clearly, short enough that the
+  full chart + axis + legend fits in the drawer body
+  without scroll. Wider buckets (week / month) get
+  proportionally wider bars via flex: 1 1 0 + min-width:
+  6px so a long day timeline scrolls horizontally rather
+  than squishing bars below readability.
+- Empty buckets render as a 1px baseline hairline rather
+  than blank space because blank space would visually
+  collapse the time axis — a week-long quiet stretch
+  reads as "did nothing happen, or did the chart skip
+  these days?". The hairline + .empty-bar opacity 0.6
+  resolves the ambiguity at a glance.
+- Date axis labels show just the bookend dates (first +
+  last bucket start) rather than per-bar labels because
+  per-bar labels would be unreadable at 6px-min-width.
+  The legend explains the granularity so the user knows
+  what each bar represents; the bookends anchor the time
+  range. A future hover-tooltip on each bar can carry the
+  per-bucket date if needed.
+- The bar chart visualisation choice (vertical bars) vs
+  the histogram's horizontal bars is the right call
+  because the per-bucket data IS a time series — vertical
+  bars on a horizontal time axis is the standard reading
+  for "X over time". The horizontal bars in the histogram
+  encode magnitude across an unordered categorical axis
+  (plugin id); vertical bars in the timeline encode
+  magnitude across an ordered temporal axis.
+
+## Roadmap — round 22 (Activity over time aggregate) — ALL DONE
+
+Round 22 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the install-log "Activity over time" aggregate
+(slices 103-107). One backend primitive, one CSV primitive, one
+JSON envelope primitive, one slice of Tauri commands + TS
+client + filename helper + densifier, and one demo-able UI
+section with vertical-bar chart. Same canonical five-layer
+pattern as round 19 (drilldown CSV arc) + round 20 (drilldown
+JSON + histogram sort) + round 21 (histogram export arc).
+
+103. ~~**activity timeline aggregate primitive**~~ —
+     DONE (2026-06-22 04:14 PT, bf12da4, single commit + tiny
+     fixup, 586 LOC). InstallLog::activity_timeline(since,
+     until, granularity) -> Vec<ActivityBucket>. New
+     TimeBucketGranularity{Day,Week,Month} (serde lowercase) +
+     ActivityBucket {bucket_start_unix, installs, updates,
+     uninstalls, failures, total}. bucket_floor_unix helper
+     using chrono for UTC-calendar flooring (Day midnight,
+     Week ISO-Monday, Month first-of-month). Sparse output
+     (only non-empty buckets), ASC by bucket_start_unix.
+     22 new tests pin granularity round-trip + parse-unknown-
+     is-Day + serde lowercase + bucket_floor day/week/month
+     (8 cases including 1970 epoch edge) + activity_timeline
+     empty/day/week/month bucketing + window filters since/
+     until/empty + conservation invariant + sparse output +
+     ASC ordering + serde.
+104. ~~**activity timeline CSV export primitive**~~ —
+     DONE (2026-06-22 04:14 PT, 58d4a71, single commit, 316
+     LOC). Pure-data activity_timeline_to_csv(buckets,
+     granularity, include_header) -> String. 8 columns leading
+     with granularity tag for concat-friendly downstream
+     pipelines. ACTIVITY_TIMELINE_CSV_HEADER pub const.
+     12 new tests pin header opt-in + column count parity +
+     documented order + granularity-on-every-row + ISO matches
+     install-log byte-for-byte + preserves input order + zero
+     timestamp renders 0 + total verbatim + no None/null leaks
+     + one row per input + granularity distinguishes export
+     pairs.
+105. ~~**activity timeline JSON envelope primitive**~~ —
+     DONE (2026-06-22 04:14 PT, 19b2254, single commit, 382
+     LOC). Pure-data activity_timeline_to_json(buckets,
+     granularity, since, until, grand_total) ->
+     ActivityTimelineExportEnvelope. schema_version=1
+     PARALLEL-versioned with INSTALL_LOG_EXPORT_SCHEMA_VERSION
+     + PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION. Adds
+     granularity discriminator (self-describing for JSONL
+     pipelines that mix granularities). 14 new tests pin
+     schema_v1 + granularity + bucket_count invariant +
+     grand_total verbatim + ISO matches install-log + window
+     round-trip + only-since + preserves order + owned clones
+     + serde + pretty-print + empty input + parallel-
+     versioning + granularity serde round-trip.
+106. ~~**activity timeline Tauri commands + TS client**~~ —
+     DONE (2026-06-22 04:14 PT, 0424f22, single commit, 766
+     LOC). 3 Tauri commands (read + CSV-export + JSON-export)
+     defaulting to Day. TS TimeBucketGranularity type +
+     TIME_BUCKET_GRANULARITIES + timeBucketLabel + ActivityBucket +
+     ActivityTimelineResult interfaces. getActivityTimeline
+     async wrapper. densifyActivityTimeline pure helper zero-
+     filling gap buckets via advanceBucketStart (day = +86400,
+     week = +7d, month = UTC calendar +1 via Date.UTC).
+     exportInstallLogActivityTimeline Csv/Json lazy-import
+     invoke wrappers. suggestActivityTimelineExportFilename
+     producing marketplace-activity-{granularity}_<window>_
+     <YYYY-MM-DD>.<ext> with granularity-in-prefix +
+     identical window-shape to histogram filename helper.
+     23 new pure-helper tests in marketplace.test.ts.
+107. ~~**Activity over time section with bar chart**~~ —
+     DONE (2026-06-22 04:14 PT, 9c0b0b6, single commit, 541
+     LOC). The demo-able payoff. Collapsible section under
+     Top plugins, sibling layout pattern. State cells:
+     timelineOpen + timeline + timelineLoading + timeline
+     Error + timelineGranularity + timelineExport
+     MenuOpen + timelineExporting + timelineExportToast +
+     timelineExportToastTimer. Handler ships in-state
+     semantics; toast "Exported N buckets as CSV/JSON (X.X
+     KB)" accent-green tint. UI: Bucket width selector +
+     Export… popover beside it inside .timeline-controls,
+     popover anchors DOWN+RIGHT, independent .timeline-
+     export-anchor for dismiss isolation. 96px vertical-bar
+     chart with densifyActivityTimeline (zero-fill gaps for
+     honest time axis) + per-action stacked segments (install
+     green / update accent / uninstall amber / failed red) +
+     1px hairline for empty buckets + date axis labels +
+     legend footer. Section toggle row mirrors Top plugins
+     pattern exactly.
+
+     With round 22 done, the install log's read-side closes
+     its third aggregate axis (per-event timeline + per-plugin
+     histogram + per-bucket activity timeline), all sharing
+     the same window axis + the same export-arc cadence + the
+     same dark-glass design language. Next subsystem
+     candidates: Hopper rule reorder-by-drag in the coverage
+     panel (drag a dead row up to fix shadowing in one
+     motion), drilldown row → cross-surface filter (clicking
+     a fall-through filename in the popover carries the
+     search query into the document inspector), Loom-grade
+     tagging explorer, doc-detail metadata editor read/write
+     surface, Beacon cache inspector polish (column sort by
+     basename / model facet), Quill multi-document field-
+     detect queueing, install-log per-plugin retention
+     override (some plugins are audit-critical and want
+     longer retention than the global default), histogram
+     hover-tooltip on bar segments showing per-action
+     breakdown without forcing the user to read the legend.
 
 ### What round-21 (2026-06-22 00:35 PT) just shipped
 
