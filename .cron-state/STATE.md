@@ -1,13 +1,322 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 18:35 PT by Cake (cron) — round-19 BATCH shipped: 5 slices closing two cohesive arcs. Drilldown CSV export arc (slices 88-91): pure-data sample_drilldown_to_csv(drill, rule_names, include_header) RFC-4180 serialiser with bucket_kind/bucket_name columns mirroring describeBucket fallback chain (Rule #N 1-based) and 13 tests pinning header opt-in + escaping (commas/quotes/newlines) + empty optional columns + preserves input order + row count matches samples-not-total invariant, slab_hopper_export_drilldown_csv Tauri command sharing the disk-IO shape with slab_hopper_export_backfill_csv + slab_marketplace_install_log_export_csv (the Tauri layer owns the write because plugin-fs scope doesn't cover arbitrary user paths), slabHopperExportDrilldownCsv TS wrapper with lazy isInTauri import (browser-mode no-op) + suggestDrilldownExportFilename helper proposing hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.csv with NFD-aware slugifier (café→cafe) + 11 new tests, and Export CSV button in the round-18 drilldown popover between Reload and Close opening the native save dialog and surfacing a 4s green "Exported N files (X.X KB)" toast with disabled states for in-flight/loading/null/empty-bucket. Top plugins click-to-filter (slice 92): histogram rows now <button>s with onHistogramRowClick toggle semantics (click row → apply as plugin filter; click again → clear) populating the same plugin_id_substr axis the search input + chip strip + export filenames feed so there's ONE filter narrow that carries consistently, accent-tinted .active state + focus-visible ring + aria-pressed reflecting state, legend footer extended explaining the click affordance. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 10.91s, cargo test --lib 2307 passed / 0 failed (round-18 baseline 2294 + 13 from drilldown CSV primitive = 2307), pnpm check 0 errors / 104 warnings (round-18 baseline preserved EXACTLY). Pushed + verified (local==origin 49511df).
+Last updated: 2026-06-21 21:35 PT by Cake (cron) — round-20 BATCH shipped: 5 slices closing two cohesive arcs. Drilldown JSON export arc (slices 93-96): pure-data sample_drilldown_to_json(drill, rule_names) -> DrilldownExportEnvelope mirroring the install_log_to_json envelope shape (slice 60) — schema_version=1 matching INSTALL_LOG_EXPORT_SCHEMA_VERSION + generated_at_iso (ISO-8601 UTC) + bucket (raw SampleBucket) + bucket_kind + bucket_name (precomputed via bucket_csv_labels so JSON + CSV exports agree on labels exactly) + sample_count (post-cap) + total_in_bucket (pre-cap) + truncated + samples verbatim, slab_hopper_export_drilldown_json Tauri command writing pretty-printed JSON to disk (Tauri layer owns the write because plugin-fs scope doesn't cover arbitrary user paths), slabHopperExportDrilldownJson TS wrapper with same lazy-import isInTauri pattern as the CSV wrapper + suggestDrilldownExportFilename extended with optional `ext` slot ("csv" default for backwards compat, "json" for the new export) so both wrappers share ONE suggestion path with identical filename shape apart from the suffix, and "Export JSON" button beside "Export CSV" in the drilldown popover sharing the same drilldownExporting gate + toast cell + in-state-snapshot semantics — only diffs are filename suffix, save-dialog filter, which Tauri command runs the write, and toast copy ("Exported 23 files as CSV / as JSON"). Top plugins histogram Sort by selector (slice 97): client-side sortHistogramRows(rows, key) pure helper with 5 axes (total / installs / updates / failures / recent — no uninstalls axis), DESC + plugin_id ASC tiebreak matching the server contract, returns a NEW array (Svelte $state proxies don't play well with in-place sorts), HISTOGRAM_SORT_KEYS + histogramSortLabel helpers driving a native dark-glass dropdown above the histogram list with custom chevron via linear-gradient backgrounds, bars stay ANCHORED TO TOTAL ACTIVITY when sort switches (re-anchoring would shrink/grow widths disorientingly), legend footer updated to explain the anchor invariant. All gates green: cargo fmt clean (one trivial cargo-fmt diff in cmds.rs auto-squashed into slice 94 commit via --fixup + --autosquash before push), cargo clippy --lib -D warnings PASSED CLEAN in 13.23s, cargo test --lib 2320 passed / 0 failed (round-19 baseline 2307 + 13 from drilldown JSON envelope primitive = 2320), pnpm check 0 errors / 104 warnings (round-19 baseline preserved EXACTLY). Pushed + verified (local==origin 2894329).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `49511df` — "feat(plugins): click Top plugins row to filter timeline by plugin".
+Latest commit: `2894329` — "feat(plugins): Sort by selector for Top plugins histogram".
+
+### What round-20 (2026-06-21 21:35 PT) just shipped
+
+Five slices across two cohesive arcs. Before this tick the
+drilldown popover could save its bucket as RFC-4180 CSV (round-19
+work) but had no JSON envelope export — a paralegal feeding a
+downstream pipeline or archive workflow had to manually wrap the
+CSV in JSON or invent provenance metadata. And the round-18 "Top
+plugins" histogram emitted rows DESC by total activity only — a
+user investigating "which plugin's been breaking my installs the
+most this month?" had to scan failure chips on every row visually
+instead of pivoting the sort axis. Tonight both gaps close
+end-to-end.
+
+Round 19's closing notes listed both items as candidates:
+"drilldown JSON export envelope (mirror the install-log JSON
+envelope so the CSV + JSON pair stays symmetric across audit
+surfaces)" and the histogram could naturally extend with a
+"time-bucket axis" / sort-axis pivot. Both lent themselves to
+clean composition with round-18 + round-19 shipped surfaces.
+
+- Slice 93: drilldown JSON export envelope primitive (7182624,
+  412 LOC). Pure-data sample_drilldown_to_json(drill, rule_names)
+  -> DrilldownExportEnvelope mirroring the install_log_to_json
+  envelope shape (slice 60). schema_version=1 matching
+  INSTALL_LOG_EXPORT_SCHEMA_VERSION so a downstream reader can
+  recognise "Slab audit export v1" across both envelopes without
+  checking the source surface. generated_at_iso (ISO-8601 UTC)
+  via a private chrono helper duplicated from install_log so the
+  hopper coverage module doesn't take a cross-subsystem dep.
+  bucket field carries the raw SampleBucket discriminator for
+  pattern-matching; bucket_kind + bucket_name pre-compute the
+  same (kind, name) pair the CSV emits via bucket_csv_labels so
+  JSON + CSV exports of the same bucket carry IDENTICAL labels
+  exactly. sample_count (post-cap matching samples.len()) +
+  total_in_bucket (pre-cap matching SampleDrilldown) +
+  truncated flag captured separately so a consumer can detect
+  truncation from either source. samples verbatim preserves
+  input order. sample_drilldown_to_json_with_now takes an
+  explicit unix-seconds now so tests don't race the wall clock
+  (same pattern as install_log_to_json_with_now). 13 new tests
+  pin schema + ISO format + bucket_kind+name for fallthrough +
+  rule + rule-name-resolution + fallback to "Rule #N" 1-based for
+  missing/blank/out-of-range names + sample_count+total invariant
+  + untruncated case + empty drilldown renders cleanly + preserves
+  input order + preserves full sample axes + serde full roundtrip
+  + pretty-print is valid JSON + iso_helper handles 0/i64::MAX +
+  bucket_kind matches serde tag (consumer reading bucket_kind vs
+  bucket.kind gets same answer).
+- Slice 94: drilldown JSON export Tauri command (c5f199c,
+  53 LOC + fmt fixup squashed via --autosquash). 
+  slab_hopper_export_drilldown_json(drilldown, rule_names, path)
+  -> u64 writes the slice-93 envelope to disk as
+  pretty-printed JSON. Same command shape as
+  slab_hopper_export_drilldown_csv (slice 89) and
+  slab_marketplace_install_log_export_json (slice 61) — Tauri
+  layer owns disk I/O because the frontend's plugin-fs scope
+  doesn't cover arbitrary user-chosen paths. Pretty-printed
+  (NOT compact) so a paralegal opening the file in a text editor
+  can read it; compactness saves bytes that don't matter for a
+  per-bucket drilldown. Idempotent (overwrites if target exists),
+  returns byte count actually written, creates parent dirs if
+  missing. Registered in invoke_handler alongside the CSV export.
+  No new lib-test surface because the primitive in slice 93
+  already pins the envelope shape — the command is a thin
+  disk-IO wrapper following the same untested-thin-wrap pattern.
+- Slice 95: drilldown JSON export TS client + ext-aware filename
+  helper (df61510, 129 LOC across hopper.ts + hopper.test.ts).
+  slabHopperExportDrilldownJson(drilldown, ruleNames, path) ->
+  Promise<number> wraps invoke; same lazy-import isInTauri pattern
+  as slabHopperExportDrilldownCsv (hopper.test.ts runs under tsx
+  without the Tauri plugin chain). Browser-mode returns 0 (no-op).
+  suggestDrilldownExportFilename extended with optional ext slot
+  ("csv" | "json", default "csv" for backwards compat with slice
+  90 callers — pure additive change). Both export wrappers now
+  share ONE suggestion path with IDENTICAL filename shape apart
+  from the suffix. 5 new pure-helper tests in hopper.test.ts:
+  default ext stays "csv" (backwards-compat), explicit ext:"csv"
+  matches implicit default exactly, ext:"json" produces expected
+  shape + suffix, paired csv/json forms differ ONLY in the suffix
+  (slice-prefix equality assertion pins the invariant), rule
+  bucket with slug + ext:"json" still slugifies correctly.
+- Slice 96: Export JSON button + toast in drilldown popover
+  (d608b70, 84 LOC in HopperRulesEditor.svelte). The demo-able
+  payoff tying slices 93-95 together. Imports
+  slabHopperExportDrilldownJson alongside the existing CSV
+  wrapper; no new state cells. The slice-91 exportDrilldownCsv
+  handler refactored into single exportDrilldown(format)
+  dispatch + thin exportDrilldownCsv/exportDrilldownJson
+  wrappers. Both formats share drilldownExporting gate (user
+  can't open save dialog twice), drilldownExportToast cell (one
+  toast at a time across both formats), in-state-snapshot
+  semantics (background rule edit can't sneak in a different
+  bucket between "click Export" and "click Save"). Per-format
+  diffs: filename suffix (.csv vs .json), save-dialog filter
+  (CSV vs JSON), which Tauri command runs, toast copy
+  ("Exported 23 files as CSV/JSON"). Export JSON button placed
+  AFTER Export CSV (not before) so verb order reads Reload →
+  Export CSV → Export JSON → Close; CSV-first because the
+  spreadsheet path is the primary audit workflow, JSON-second
+  because the envelope is the secondary archive/pipeline path.
+  Same disabled states as the CSV button. Toast copy upgraded
+  from "Exported N files (X.X KB)" to "Exported N files as
+  CSV/JSON (X.X KB)" so a user who exported both formats
+  back-to-back can tell from the toast which one just landed.
+- Slice 97: Sort by selector for Top plugins histogram
+  (2894329, 447 LOC across marketplace.ts + marketplace.test.ts
+  + RecentInstallsDrawer.svelte). Pure-data sortHistogramRows(
+  rows, key) -> PluginHistogramRow[] in marketplace.ts with 5
+  axes (total / installs / updates / failures / recent — no
+  uninstalls axis because uninstall-heavy plugins are an
+  antipattern users spot via bar segments not sort defaults).
+  DESC primary + plugin_id ASC tiebreak matches server contract
+  exactly so refresh doesn't reshuffle ties. Returns NEW array
+  (Svelte $state proxies don't play well with in-place sorts +
+  server payload should stay untouched so a later sort-switch
+  sees original rows). HISTOGRAM_SORT_KEYS array +
+  histogramSortLabel helper drive the dropdown so adding a sixth
+  axis is a one-line edit across all four surfaces (type +
+  array + label + UI). 19 new tests in src/lib/marketplace.test
+  .ts (new file, follows fuzzy.test.ts inline-expect convention):
+  axis count + order (total first, recent last, no uninstalls),
+  label per key + spot-checks for renames, non-mutating contract
+  (input array unchanged + returns new array), per-axis sort
+  order (total/installs/updates/failures/recent each reorder
+  expected sequence), ASC plugin_id tiebreak, empty input ->
+  empty output, single row passes through every axis, every axis
+  preserves array length (sort is permutation never filter) +
+  every input plugin_id appears in output, bogus key doesn't
+  throw at runtime. UI: native <select> dropdown above the
+  histogram list (label "Sort by" + 5 options) with custom
+  dark-glass styling (appearance: none + 1px border + hover/
+  focus-visible accent + custom chevron via two linear-gradient
+  backgrounds — no extra SVG asset). Bars stay anchored to
+  TOTAL ACTIVITY (most-active plugin = 100% wide) when sort
+  switches — re-anchoring to the sort axis would shrink/grow
+  widths disorientingly. Legend footer updated to explain the
+  anchor invariant ("bars stay anchored to total activity").
+
+Gates result: cargo fmt clean (cargo fmt --all --check exit 0
+after one trivial cmds.rs reformatting auto-squashed into slice
+94 via --fixup + --autosquash before push), cargo clippy --lib
+-- -D warnings PASSED CLEAN in 13.23s (matches round-19 10.91s
+baseline — pure-data JSON envelope serialiser + thin command
+wrapper + UI-only sort dropdown add no new clippy surface),
+cargo test --lib 2320 passed / 0 failed (round-19 baseline 2307
++ 13 from slice 93 JSON envelope = 2320), pnpm check 0 errors /
+104 warnings (round-19 baseline preserved EXACTLY — zero new
+warnings from the JSON export wrapper, ext-aware suggest helper,
+button + toast wiring, sort helper, dropdown, scoped CSS).
+
+PROCESS NOTES:
+- Round-19 closing notes listed "drilldown JSON export envelope
+  (mirror the install-log JSON envelope so the CSV + JSON pair
+  stays symmetric across audit surfaces)" as the lead candidate;
+  slices 93-96 close that arc end-to-end with the same four-layer
+  cadence as the round-15 bulk-update arc (68-72), round-16
+  install-log filter arc (73-77), round-17 hopper coverage arc
+  (79-82), round-18 hopper drilldown arc (83-86), round-19
+  drilldown CSV arc (88-91): pure-data primitive → Tauri command
+  → TS client → demo-able UI. Slice 97 compressed histogram
+  sort-axis into one composite slice because the data path
+  already existed (PluginHistogramRow from slice 87) and the
+  whole sort axis is pure UI wiring around an already-tested
+  data shape.
+- Five slices, five commits, two logical subsystems. Drilldown
+  JSON arc (93-96) follows the canonical four-layer pattern;
+  histogram sort-axis (97) is a single composite commit because
+  the backend axis already existed (plugin_histogram from slice
+  87) — the slice is pure UI wiring + a pure-helper add around
+  an already-tested data shape.
+- The DrilldownExportEnvelope schema_version=1 matches the
+  install-log envelope's schema_version constant so a downstream
+  consumer reading either Slab audit-export JSON file recognises
+  the v1 contract by name. A future shape change (e.g. adding
+  rule predicate JSON to the drilldown envelope) bumps the
+  drilldown's version independently — the two envelopes are
+  parallel-versioned, not joint-versioned, because their bodies
+  are unrelated.
+- The bucket_csv_labels helper from slice 88 was the seam that
+  let slice 93 reuse the CSV's exact bucket-name fallback chain
+  in the JSON envelope. Both formats now agree byte-for-byte on
+  the bucket label, which means a paralegal who exported a bucket
+  as CSV and another paralegal who exported the same bucket as
+  JSON can compare labels and trust they're identical.
+- The ext slot on suggestDrilldownExportFilename was the smallest
+  possible surface-area extension — adding a 4th key to the opts
+  bag rather than a parallel suggestDrilldownJsonExportFilename
+  helper. The default "csv" preserves every existing call site
+  verbatim, and the JSON wrapper just passes ext:"json". A future
+  3rd format (e.g. JSONL for streaming) is a one-line type
+  widening + a one-arm dispatch in exportDrilldown.
+- The sortHistogramRows helper returns a NEW array
+  deliberately — in-place sort on a Svelte 5 $state proxy
+  surfaces reactivity bugs in the proxy machinery, and the server
+  payload should stay untouched so a later sort-axis switch sees
+  the original rows. Same pattern as the round-15 bulkUpdate
+  primitive which never mutated its inputs.
+
+DESIGN NOTES:
+- Export JSON button AFTER Export CSV (not before) reads as
+  "primary audit path → secondary archive path". A paralegal
+  emailing the bucket to a partner reaches for CSV first
+  (spreadsheet); a developer feeding the bucket to a downstream
+  pipeline reaches for JSON. The verb order Reload → Export CSV
+  → Export JSON → Close keeps the most-common verbs leftmost.
+- Toast copy upgrade ("as CSV / as JSON" suffix) is a tiny detail
+  but matters when a user exports both formats back-to-back. The
+  4s toast duration is long enough that two exports can overlap;
+  the format-tag in the message disambiguates which one just
+  landed without forcing the user to remember which button they
+  clicked.
+- Sort by selector uses a NATIVE <select> (not a custom popover)
+  for two reasons: (1) native selects carry keyboard a11y for
+  free (arrow keys + typeahead + Esc-cancel), and a custom
+  popover would have to reimplement them; (2) the option count
+  is small (5) and stable — a custom popover is the right call
+  when the option list is dynamic or the options have rich
+  content (icons, sublabels), neither of which applies here.
+- Bars stay anchored to total activity when sort switches
+  (re-anchoring to the sort axis would shrink/grow widths
+  disorientingly). The sort axis affects ORDER, not SCALE — a
+  plugin's bar width represents its share of cross-plugin
+  activity, which is independent of which axis the user is
+  currently asking about.
+- No uninstalls sort axis because uninstall-heavy plugins are
+  almost always an antipattern the user catches via the bar's
+  amber segment (visible at a glance). Adding it would clutter
+  the menu with a rarely-useful pivot. The four count axes that
+  ARE included (total / installs / updates / failures) each
+  answer a real workflow question:
+    - total: "what's most active overall" (the default)
+    - installs: "what am I adopting most" (cohort tracking)
+    - updates: "what's churning most" (release-velocity check)
+    - failures: "what's breaking most" (the bug hunt)
+- Sort selector placement: above the histogram list, BELOW the
+  section toggle. Above the list because the selector affects
+  the list's order — controls go above their targets. Below the
+  section toggle because the selector is a sub-control of the
+  Top plugins section, not a sibling.
+
+## Roadmap — round 20 (Drilldown JSON Export + Histogram Sort Axis) — ALL DONE
+
+Round 20 batched FIVE feature slices into one cron tick. Four
+slices built the drilldown JSON export end-to-end (envelope
+primitive → Tauri command → TS client + ext-aware suggest helper
+→ demo-able UI), and one composite slice shipped the Top plugins
+histogram sort axis end-to-end (pure-data sort helper + UI
+dropdown + comprehensive tests in a new marketplace.test.ts).
+
+93. ~~**drilldown JSON export envelope primitive**~~ —
+    DONE (2026-06-21 21:35 PT, 7182624, single commit, 412 LOC).
+    Pure-data sample_drilldown_to_json(drill, rule_names) ->
+    DrilldownExportEnvelope mirroring the install_log_to_json
+    envelope shape (schema_version=1 matching
+    INSTALL_LOG_EXPORT_SCHEMA_VERSION + generated_at_iso +
+    bucket + bucket_kind + bucket_name + sample_count +
+    total_in_bucket + truncated + samples). 13 new tests pin
+    schema + ISO format + bucket labels + truncation invariant
+    + serde roundtrip + edge cases.
+94. ~~**drilldown JSON export Tauri command**~~ —
+    DONE (2026-06-21 21:35 PT, c5f199c, single commit, 53 LOC +
+    fmt fixup squashed via --autosquash). slab_hopper_export_
+    drilldown_json(drilldown, rule_names, path) -> u64.
+    Pretty-printed JSON write to disk. Tauri-layer disk I/O
+    matching the existing CSV/JSON export commands.
+    Registered in invoke_handler.
+95. ~~**drilldown JSON export TS client + ext-aware filename helper**~~ —
+    DONE (2026-06-21 21:35 PT, df61510, single commit, 129 LOC).
+    slabHopperExportDrilldownJson lazy-import wrapper (browser
+    no-op). suggestDrilldownExportFilename extended with
+    optional ext ("csv" default for backwards compat, "json"
+    for new export). 5 new pure-helper tests in hopper.test.ts.
+96. ~~**Export JSON button + toast in drilldown popover**~~ —
+    DONE (2026-06-21 21:35 PT, d608b70, single commit, 84 LOC).
+    The demo-able payoff. Button after Export CSV (verb order:
+    Reload → Export CSV → Export JSON → Close). Shared
+    drilldownExporting gate + toast cell + in-state-snapshot
+    semantics. Per-format diffs: suggested filename suffix,
+    save-dialog filter, which Tauri command, toast copy
+    ("Exported N files as CSV/JSON").
+97. ~~**Sort by selector for Top plugins histogram**~~ —
+    DONE (2026-06-21 21:35 PT, 2894329, single commit, 447 LOC).
+    Pure-data sortHistogramRows(rows, key) with 5 axes (total /
+    installs / updates / failures / recent — no uninstalls).
+    Returns NEW array (non-mutating). HISTOGRAM_SORT_KEYS +
+    histogramSortLabel helpers. Native <select> dropdown above
+    the histogram list with custom dark-glass styling. Bars
+    stay anchored to total activity when sort switches. 19 new
+    tests in new src/lib/marketplace.test.ts file (follows
+    fuzzy.test.ts inline-expect convention).
+
+    With round 20 done, the Hopper drilldown popover closes the
+    audit-export symmetry loop (CSV for partners + JSON for
+    archives, both with identical bucket labels), and the
+    Recent installs drawer's Top plugins section gains pivot-
+    sorting (no refetch, cheap pure-data resort). Next subsystem
+    candidates: Hopper rule reorder-by-drag in the coverage
+    panel (drag a dead row up to fix shadowing in one motion),
+    histogram time-bucket axis ("activity per week" alongside
+    the current per-plugin breakdown), drilldown row →
+    cross-surface filter (clicking a fall-through filename in
+    the popover carries the search query into the document
+    inspector), Loom-grade tagging explorer, doc-detail metadata
+    editor read/write surface, Beacon cache inspector polish
+    (column sort by basename / model facet), Quill multi-document
+    field-detect queueing, install-log per-plugin retention
+    override (some plugins are audit-critical and want longer
+    retention than the global default).
 
 ### What round-19 (2026-06-21 18:35 PT) just shipped
 
