@@ -35,6 +35,8 @@
     exportInstallLogHistogramCsv,
     exportInstallLogHistogramJson,
     exportInstallLogJson,
+    exportInstallLogActivityTimelineCsv,
+    exportInstallLogActivityTimelineJson,
     formatBytes,
     formatInstallEventTime,
     formatLastAutoPrune,
@@ -42,6 +44,8 @@
     formatNextAutoPrune,
     getInstallLogRetentionPolicy,
     getPluginInstallHistogram,
+    getActivityTimeline,
+    densifyActivityTimeline,
     installEventGlyph,
     installLogSummary,
     listInstallEventsFiltered,
@@ -52,9 +56,15 @@
     runInstallLogAutoPrune,
     setInstallLogRetentionDays,
     suggestHistogramExportFilename,
+    suggestActivityTimelineExportFilename,
     suggestInstallLogExportFilename,
     summarizeHistogram,
     type HistogramExportFilter,
+    type ActivityTimelineExportFilter,
+    type ActivityTimelineResult,
+    type TimeBucketGranularity,
+    TIME_BUCKET_GRANULARITIES,
+    timeBucketLabel,
     type InstallEvent,
     type InstallEventQuery,
     type InstallLogExportFilter,
@@ -196,6 +206,41 @@
   /** Names timeout handle so back-to-back exports don't pile up. */
   let histogramExportToastTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ─── Activity over time section (Slice 107 — round 22) ────────────
+  //
+  // Collapsible "Activity over time" section under the Top plugins
+  // block showing per-bucket vertical bars within the currently-
+  // selected window. Complementary axis to the Top plugins histogram
+  // — that surface answers "WHICH plugins were active", this one
+  // answers "WHEN was activity happening". Same window axis as the
+  // timeline above; auto-refreshes when window or bucket-width
+  // granularity changes. Defaults closed so the per-event timeline
+  // stays the primary content; cheap fetch (one indexed scan + a
+  // calendar floor pass) so the open/close is snappy.
+
+  /** Section expand/collapse. Defaults closed. */
+  let timelineOpen = $state(false);
+  /** Loaded timeline result. Null until the first fetch resolves. */
+  let timeline = $state<ActivityTimelineResult | null>(null);
+  /** True while a timeline fetch is in flight. */
+  let timelineLoading = $state(false);
+  /** Last error from the timeline loader, surfaced inline. */
+  let timelineError = $state<string | null>(null);
+  /** Bucket width — day (default, matches the read endpoint), week,
+   *  or month. Persisted across open/close for the drawer lifetime. */
+  let timelineGranularity = $state<TimeBucketGranularity>("day");
+
+  /** Open state for the timeline Export… popover (mirror of the
+   *  histogram popover; lives in its own anchor so dismiss is
+   *  independent). */
+  let timelineExportMenuOpen = $state(false);
+  /** True while a save-as dialog or backend write is in flight. */
+  let timelineExporting = $state(false);
+  /** Slim 4-second toast for timeline export success. */
+  let timelineExportToast = $state<string | null>(null);
+  /** Named timeout handle so back-to-back exports replace cleanly. */
+  let timelineExportToastTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Dirty when the draft diverges from the persisted policy. */
   let retentionDirty = $derived.by<boolean>(() => {
     if (!policy) return false;
@@ -306,6 +351,7 @@
     return () => {
       if (queryDebounce) clearTimeout(queryDebounce);
       if (histogramExportToastTimer) clearTimeout(histogramExportToastTimer);
+      if (timelineExportToastTimer) clearTimeout(timelineExportToastTimer);
     };
   });
 
@@ -348,6 +394,46 @@
     if (key === lastHistogramKey) return;
     lastHistogramKey = key;
     if (topPluginsOpen) void refreshHistogram();
+  });
+
+  // ─── Slice 107: activity timeline loader ─────────────────────────
+  //
+  // Fetched on demand when the user expands the section; refreshed
+  // automatically when the window choice OR granularity changes.
+  // Changes while the section is closed don't trigger a fetch — the
+  // next open will use the current window + granularity.
+
+  async function refreshTimeline(): Promise<void> {
+    if (!timelineOpen) return;
+    timelineLoading = true;
+    timelineError = null;
+    try {
+      timeline = await getActivityTimeline({
+        sinceUnix: windowSinceUnix,
+        granularity: timelineGranularity,
+      });
+    } catch (e) {
+      timelineError = e instanceof Error ? e.message : String(e);
+      timeline = null;
+    } finally {
+      timelineLoading = false;
+    }
+  }
+
+  function toggleTimeline() {
+    timelineOpen = !timelineOpen;
+    if (timelineOpen && timeline === null) {
+      void refreshTimeline();
+    }
+  }
+
+  // Refresh when window or granularity changes (if open).
+  let lastTimelineKey = $state<string>("");
+  $effect(() => {
+    const key = `${timelineOpen ? 1 : 0}|${windowSinceUnix ?? "all"}|${timelineGranularity}`;
+    if (key === lastTimelineKey) return;
+    lastTimelineKey = key;
+    if (timelineOpen) void refreshTimeline();
   });
 
   // ─── Slice 77: filter-driven reload ──────────────────────────────
@@ -465,6 +551,8 @@
       e.preventDefault();
       if (suggestOpen) {
         suggestOpen = false;
+      } else if (timelineExportMenuOpen) {
+        timelineExportMenuOpen = false;
       } else if (histogramExportMenuOpen) {
         histogramExportMenuOpen = false;
       } else if (exportMenuOpen) {
@@ -660,6 +748,63 @@
     }
   }
 
+  /** Flash a 4s toast scoped to the Activity over time section. Uses
+   *  its own timer handle so back-to-back exports replace cleanly. */
+  function flashTimelineToast(msg: string): void {
+    timelineExportToast = msg;
+    if (timelineExportToastTimer) {
+      clearTimeout(timelineExportToastTimer);
+    }
+    timelineExportToastTimer = setTimeout(() => {
+      timelineExportToast = null;
+      timelineExportToastTimer = null;
+    }, 4000);
+  }
+
+  /**
+   * Export the current activity timeline as CSV or JSON. Mirrors
+   * runHistogramExport (above) but scoped to the timeline view:
+   * window comes from the same windowSinceUnix axis, granularity
+   * from the section's selector, so what the user sees is what they
+   * get. Same in-state-snapshot semantics — the Tauri command
+   * re-queries with the same params so file content matches the
+   * on-screen view even if a background install lands between
+   * click-Export and click-Save.
+   */
+  async function runTimelineExport(kind: "csv" | "json"): Promise<void> {
+    timelineExportMenuOpen = false;
+    timelineExporting = true;
+    try {
+      const filter: ActivityTimelineExportFilter = {
+        since_unix: windowSinceUnix,
+        granularity: timelineGranularity,
+      };
+      const defaultPath = suggestActivityTimelineExportFilename(filter, kind);
+      const target = await saveDialog({
+        defaultPath,
+        filters: [
+          kind === "csv"
+            ? { name: "CSV", extensions: ["csv"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        kind === "csv"
+          ? await exportInstallLogActivityTimelineCsv(target, filter)
+          : await exportInstallLogActivityTimelineJson(target, filter);
+      const count = timeline?.buckets.length ?? 0;
+      const label = kind === "csv" ? "CSV" : "JSON";
+      flashTimelineToast(
+        `Exported ${count} bucket${count === 1 ? "" : "s"} as ${label} (${formatBytes(bytes)})`,
+      );
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    } finally {
+      timelineExporting = false;
+    }
+  }
+
   /**
    * Dismiss the export popover on outside click — matches the
    * Notion / Linear convention. The check uses .closest() on the
@@ -681,6 +826,11 @@
     if (histogramExportMenuOpen) {
       if (!target?.closest(".histogram-export-anchor")) {
         histogramExportMenuOpen = false;
+      }
+    }
+    if (timelineExportMenuOpen) {
+      if (!target?.closest(".timeline-export-anchor")) {
+        timelineExportMenuOpen = false;
       }
     }
   }
@@ -1073,6 +1223,154 @@
                 below to that plugin; click again to clear. Use the Sort by selector to
                 pivot the order (the bars stay anchored to total activity). Export… ships
                 the current window as a CSV (spreadsheet) or JSON (archive) snapshot.
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/if}
+    </section>
+
+    <section class="timeline-block" aria-labelledby="timeline-heading">
+      <button
+        type="button"
+        class="timeline-toggle"
+        aria-expanded={timelineOpen}
+        aria-controls="timeline-body"
+        onclick={toggleTimeline}
+      >
+        <span class="timeline-chevron" aria-hidden="true">
+          {timelineOpen ? "▾" : "▸"}
+        </span>
+        <span class="timeline-label" id="timeline-heading">Activity over time</span>
+        <span class="timeline-meta">
+          {#if timeline}
+            {timeline.grand_total} event{timeline.grand_total === 1 ? "" : "s"} across {timeline.buckets.length} {timelineGranularity}{timeline.buckets.length === 1 ? "" : "s"} · {windowChoice}
+          {:else if timelineLoading}
+            Loading…
+          {:else}
+            Click to expand
+          {/if}
+        </span>
+      </button>
+      {#if timelineOpen}
+        <div class="timeline-body" id="timeline-body">
+          {#if timelineError}
+            <p class="timeline-error" role="alert">
+              Could not load timeline: {timelineError}
+            </p>
+          {:else if timelineLoading && !timeline}
+            <p class="timeline-loading">Bucketing activity…</p>
+          {:else if timeline}
+            <div class="timeline-controls">
+              <label class="timeline-control-label" for="timeline-granularity-select">
+                Bucket width
+              </label>
+              <select
+                id="timeline-granularity-select"
+                class="timeline-granularity-select"
+                bind:value={timelineGranularity}
+              >
+                {#each TIME_BUCKET_GRANULARITIES as g}
+                  <option value={g}>{timeBucketLabel(g)}</option>
+                {/each}
+              </select>
+              <div class="timeline-export-anchor">
+                <button
+                  type="button"
+                  class="timeline-export-btn"
+                  onclick={() => (timelineExportMenuOpen = !timelineExportMenuOpen)}
+                  disabled={timelineExporting || timelineLoading || timeline.buckets.length === 0}
+                  aria-haspopup="menu"
+                  aria-expanded={timelineExportMenuOpen}
+                  title={timeline.buckets.length === 0
+                    ? "No activity buckets to export"
+                    : "Export the activity timeline for the current window"}
+                >
+                  {timelineExporting ? "Exporting…" : "Export…"}
+                </button>
+                {#if timelineExportMenuOpen}
+                  <div class="export-menu timeline-export-menu" role="menu" aria-label="Export activity timeline">
+                    <button type="button" role="menuitem" onclick={() => void runTimelineExport("csv")}>
+                      <span class="menu-glyph" aria-hidden="true">⤓</span>
+                      <span class="menu-body">
+                        <span class="menu-title">Export as CSV…</span>
+                        <span class="menu-sub">
+                          {timeBucketLabel(timelineGranularity)} · spreadsheet-friendly
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" role="menuitem" onclick={() => void runTimelineExport("json")}>
+                      <span class="menu-glyph" aria-hidden="true">⤓</span>
+                      <span class="menu-body">
+                        <span class="menu-title">Export as JSON…</span>
+                        <span class="menu-sub">
+                          {timeBucketLabel(timelineGranularity)} · with envelope metadata
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            </div>
+            {#if timelineExportToast}
+              <p class="timeline-export-toast" role="status">{timelineExportToast}</p>
+            {/if}
+            {#if timeline.buckets.length === 0}
+              <p class="timeline-empty">
+                No activity in the last {windowChoice}. Try widening the window
+                or installing a plugin from the Marketplace tab.
+              </p>
+            {:else}
+              {@const denseBuckets = densifyActivityTimeline(timeline.buckets, timelineGranularity)}
+              {@const maxBucketTotal = denseBuckets.reduce(
+                (acc: number, b: { total: number }) => (b.total > acc ? b.total : acc),
+                0,
+              )}
+              {@const firstStart = denseBuckets[0].bucket_start_unix}
+              {@const lastStart = denseBuckets[denseBuckets.length - 1].bucket_start_unix}
+              <div class="timeline-chart" role="img" aria-label="Activity timeline bar chart">
+                {#each denseBuckets as b (b.bucket_start_unix)}
+                  {@const heightPct = maxBucketTotal > 0 ? (b.total / maxBucketTotal) * 100 : 0}
+                  {@const installPct = b.total > 0 ? (b.installs / b.total) * heightPct : 0}
+                  {@const updatePct = b.total > 0 ? (b.updates / b.total) * heightPct : 0}
+                  {@const uninstallPct = b.total > 0 ? (b.uninstalls / b.total) * heightPct : 0}
+                  {@const failedPct = b.total > 0 ? (b.failures / b.total) * heightPct : 0}
+                  <div
+                    class="timeline-bar"
+                    class:empty-bar={b.total === 0}
+                    title="{new Date(b.bucket_start_unix * 1000).toISOString().slice(0, 10)} — {b.total} event{b.total === 1 ? '' : 's'}: {b.installs}i {b.updates}u {b.uninstalls}x {b.failures}f"
+                  >
+                    {#if b.failures > 0}
+                      <div class="bar-seg seg-failed" style="height: {failedPct}%"></div>
+                    {/if}
+                    {#if b.uninstalls > 0}
+                      <div class="bar-seg seg-uninstall" style="height: {uninstallPct}%"></div>
+                    {/if}
+                    {#if b.updates > 0}
+                      <div class="bar-seg seg-update" style="height: {updatePct}%"></div>
+                    {/if}
+                    {#if b.installs > 0}
+                      <div class="bar-seg seg-install" style="height: {installPct}%"></div>
+                    {/if}
+                    {#if b.total === 0}
+                      <div class="bar-zero" aria-hidden="true"></div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+              {@const firstStartLabel = new Date(firstStart * 1000).toISOString().slice(0, 10)}
+              {@const lastStartLabel = new Date(lastStart * 1000).toISOString().slice(0, 10)}
+              <div class="timeline-axis" aria-hidden="true">
+                <span class="axis-label">{firstStartLabel}</span>
+                <span class="axis-label axis-right">{lastStartLabel}</span>
+              </div>
+              <p class="timeline-legend">
+                Each bar is one {timelineGranularity} from {firstStartLabel} to {lastStartLabel}, scaled to the busiest bucket.
+                Stacked segments break down by action — installs (green), updates (accent),
+                uninstalls (amber), failures (red). Empty buckets render as
+                hairlines to keep the time axis honest. Change Bucket width to
+                pivot day/week/month; Export… ships the current window as a
+                CSV (spreadsheet) or JSON (archive) snapshot.
               </p>
             {/if}
           {/if}
@@ -2128,5 +2426,248 @@
       opacity: 1;
       transform: translateY(0);
     }
+  }
+
+  /* ─── Slice 107 — Activity over time (round 22) ───────────────── */
+  /* Mirrors the Top plugins block (Slice 87) on every shape except
+     the chart itself — sibling .timeline-block under .top-plugins-
+     block, same collapsible toggle, same body padding, same toast
+     vocabulary. The chart inside the body is the only visually
+     novel element: a row of vertical bars rendering the per-bucket
+     activity stack, instead of the histogram's row of horizontal
+     bars. */
+  .timeline-block {
+    margin-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 8px;
+  }
+  .timeline-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    padding: 6px 4px;
+    font: inherit;
+    font-size: 12.5px;
+    line-height: 1.4;
+    text-align: left;
+    border-radius: 5px;
+  }
+  .timeline-toggle:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .timeline-chevron {
+    color: var(--text-2);
+    width: 12px;
+  }
+  .timeline-label {
+    font-weight: 500;
+  }
+  .timeline-meta {
+    color: var(--text-2);
+    font-size: 11.5px;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+  .timeline-body {
+    padding: 6px 4px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .timeline-loading,
+  .timeline-empty {
+    color: var(--text-2);
+    font-size: 12px;
+    margin: 2px 4px;
+    line-height: 1.4;
+  }
+  .timeline-error {
+    color: rgb(255, 160, 160);
+    font-size: 12px;
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 110, 110, 0.32);
+    background: rgba(255, 110, 110, 0.06);
+    border-radius: 6px;
+    margin: 4px 4px;
+  }
+  /* Controls row — bucket-width selector on the left, Export… on the
+     right (margin-left: auto). Same layout pattern as the histogram's
+     sort row so the two sections feel like siblings. */
+  .timeline-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px;
+  }
+  .timeline-control-label {
+    color: var(--text-2);
+    font-size: 11.5px;
+    line-height: 1;
+  }
+  /* Same custom dark-glass styling as the histogram sort-select for
+     visual consistency. Custom chevron via two linear-gradient
+     backgrounds so we don't ship an extra SVG asset. */
+  .timeline-granularity-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    padding: 3px 22px 3px 8px;
+    font: inherit;
+    font-size: 11.5px;
+    line-height: 1.4;
+    cursor: pointer;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-2) 50%),
+      linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
+    background-position:
+      calc(100% - 12px) 50%,
+      calc(100% - 8px) 50%;
+    background-size:
+      4px 4px,
+      4px 4px;
+    background-repeat: no-repeat;
+  }
+  .timeline-granularity-select:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+  .timeline-granularity-select:focus-visible {
+    outline: 2px solid rgba(124, 140, 255, 0.55);
+    outline-offset: 1px;
+    border-color: rgba(124, 140, 255, 0.55);
+  }
+  .timeline-export-anchor {
+    position: relative;
+    margin-left: auto;
+  }
+  .timeline-export-btn {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 11.5px;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+  .timeline-export-btn:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.16);
+    color: var(--text);
+  }
+  .timeline-export-btn:focus-visible {
+    outline: 2px solid rgba(124, 140, 255, 0.55);
+    outline-offset: 1px;
+    border-color: rgba(124, 140, 255, 0.55);
+  }
+  .timeline-export-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .timeline-export-menu {
+    bottom: auto;
+    top: calc(100% + 6px);
+    left: auto;
+    right: 0;
+    min-width: 240px;
+  }
+  .timeline-export-toast {
+    margin: 4px 0 2px;
+    color: rgb(170, 230, 195);
+    font-size: 11.5px;
+    line-height: 1.3;
+    padding: 4px 10px;
+    border: 1px solid rgba(110, 220, 154, 0.36);
+    border-radius: 6px;
+    background: rgba(110, 220, 154, 0.06);
+    animation: histogram-toast-in 0.16s ease-out;
+  }
+  /* The chart proper: a flex row of fixed-min-width vertical bars.
+     min-width-bar lets a long timeline scroll horizontally rather
+     than squish the bars below readability; padding keeps the bars
+     visually anchored above the date axis below. */
+  .timeline-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 96px;
+    padding: 6px 4px 4px;
+    overflow-x: auto;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.015);
+  }
+  .timeline-bar {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 6px;
+    height: 100%;
+    display: flex;
+    flex-direction: column-reverse;
+    justify-content: flex-start;
+    align-items: stretch;
+    border-radius: 2px 2px 0 0;
+    overflow: hidden;
+    transition: background-color 0.12s ease;
+  }
+  .timeline-bar:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .timeline-bar .bar-seg {
+    width: 100%;
+    flex: none;
+  }
+  .timeline-bar .bar-seg.seg-install {
+    background: rgb(110, 220, 154);
+  }
+  .timeline-bar .bar-seg.seg-update {
+    background: rgb(124, 140, 255);
+  }
+  .timeline-bar .bar-seg.seg-uninstall {
+    background: rgb(240, 178, 100);
+  }
+  .timeline-bar .bar-seg.seg-failed {
+    background: rgb(240, 130, 130);
+  }
+  /* Empty buckets get a hairline at the baseline so the time axis
+     reads honestly — a gap of empty bars conveys "nothing happened
+     these days" rather than collapsing the axis. */
+  .timeline-bar .bar-zero {
+    width: 100%;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .timeline-bar.empty-bar {
+    opacity: 0.6;
+  }
+  /* Date axis labels — first bucket date on the left, last on the
+     right. Light-on-dark, monospace for column alignment if a future
+     export label widens to include time. */
+  .timeline-axis {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-2);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    padding: 0 4px;
+  }
+  .timeline-axis .axis-label {
+    line-height: 1.2;
+  }
+  .timeline-axis .axis-right {
+    text-align: right;
+  }
+  .timeline-legend {
+    margin: 4px 4px 0;
+    color: var(--text-2);
+    font-size: 11px;
+    line-height: 1.4;
   }
 </style>
