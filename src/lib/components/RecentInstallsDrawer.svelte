@@ -393,6 +393,42 @@
     }
   }
 
+  // ─── Slice 92 — histogram row click-to-filter ────────────────────────
+  //
+  // Click a "Top plugins" row to pivot the timeline below from
+  // "everything in window" to "just this plugin's events" in one
+  // click. Reuses the same plugin_id_substr filter axis the search
+  // input feeds, so the timeline + the filter chip strip + the
+  // export filenames all carry the narrow consistently — there's
+  // ONE filter axis, the histogram row just populates it.
+  //
+  // Click semantics:
+  //  - Row whose plugin_id != current filter → apply as filter.
+  //  - Row whose plugin_id == current filter → CLEAR (Notion-style
+  //    toggle, matches the slice 86 coverage-row open/close pattern).
+  //
+  // This makes the histogram bidirectional: it's both a view AND a
+  // navigation surface. Without the toggle-off, the only way to
+  // clear after a row click would be the search input — but the
+  // user just clicked a bar, not the search input, so the natural
+  // "undo" is to click the same bar again.
+
+  function onHistogramRowClick(pluginId: string): void {
+    if (pluginQueryActive === pluginId) {
+      // Toggle off — clear the plugin axis. We don't also clear the
+      // action axis: those are independent narrows, and clearing
+      // both would feel surprising (the user only clicked one).
+      pluginQueryDraft = "";
+      pluginQueryActive = "";
+      if (queryDebounce) {
+        clearTimeout(queryDebounce);
+        queryDebounce = null;
+      }
+      return;
+    }
+    applySuggestion(pluginId);
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -823,43 +859,56 @@
                   {@const updatePct = row.total > 0 ? (row.updates / row.total) * widthPct : 0}
                   {@const uninstallPct = row.total > 0 ? (row.uninstalls / row.total) * widthPct : 0}
                   {@const failedPct = row.total > 0 ? (row.failures / row.total) * widthPct : 0}
-                  <li class="top-plugin-row">
-                    <div class="tp-name" title={row.plugin_id}>
-                      <span class="tp-id">{row.plugin_id}</span>
-                      <span class="tp-time">
-                        {formatInstallEventTime(row.last_occurred_at)}
-                      </span>
-                    </div>
-                    <div class="tp-bar" title="{row.total} events: {row.installs}i {row.updates}u {row.uninstalls}x {row.failures}f">
-                      {#if row.installs > 0}
-                        <div class="tp-seg seg-install" style="width: {installPct}%"></div>
-                      {/if}
-                      {#if row.updates > 0}
-                        <div class="tp-seg seg-update" style="width: {updatePct}%"></div>
-                      {/if}
-                      {#if row.uninstalls > 0}
-                        <div class="tp-seg seg-uninstall" style="width: {uninstallPct}%"></div>
-                      {/if}
-                      {#if row.failures > 0}
-                        <div class="tp-seg seg-failed" style="width: {failedPct}%"></div>
-                      {/if}
-                    </div>
-                    <div class="tp-counts">
-                      <span class="tp-total">{row.total}</span>
-                      <span class="tp-breakdown">
-                        {#if row.installs > 0}<span class="tp-glyph seg-install" title="{row.installs} install{row.installs === 1 ? '' : 's'}">{installEventGlyph("install")}{row.installs}</span>{/if}
-                        {#if row.updates > 0}<span class="tp-glyph seg-update" title="{row.updates} update{row.updates === 1 ? '' : 's'}">{installEventGlyph("update")}{row.updates}</span>{/if}
-                        {#if row.uninstalls > 0}<span class="tp-glyph seg-uninstall" title="{row.uninstalls} uninstall{row.uninstalls === 1 ? '' : 's'}">{installEventGlyph("uninstall")}{row.uninstalls}</span>{/if}
-                        {#if row.failures > 0}<span class="tp-glyph seg-failed" title="{row.failures} failure{row.failures === 1 ? '' : 's'}">{installEventGlyph("failed")}{row.failures}</span>{/if}
-                      </span>
-                    </div>
+                  {@const isActiveFilter = pluginQueryActive === row.plugin_id}
+                  <li>
+                    <button
+                      type="button"
+                      class="top-plugin-row"
+                      class:active={isActiveFilter}
+                      onclick={() => onHistogramRowClick(row.plugin_id)}
+                      aria-pressed={isActiveFilter}
+                      title={isActiveFilter
+                        ? `Clear filter on ${row.plugin_id}`
+                        : `Filter timeline below to ${row.plugin_id}`}
+                    >
+                      <div class="tp-name" title={row.plugin_id}>
+                        <span class="tp-id">{row.plugin_id}</span>
+                        <span class="tp-time">
+                          {formatInstallEventTime(row.last_occurred_at)}
+                        </span>
+                      </div>
+                      <div class="tp-bar" title="{row.total} events: {row.installs}i {row.updates}u {row.uninstalls}x {row.failures}f">
+                        {#if row.installs > 0}
+                          <div class="tp-seg seg-install" style="width: {installPct}%"></div>
+                        {/if}
+                        {#if row.updates > 0}
+                          <div class="tp-seg seg-update" style="width: {updatePct}%"></div>
+                        {/if}
+                        {#if row.uninstalls > 0}
+                          <div class="tp-seg seg-uninstall" style="width: {uninstallPct}%"></div>
+                        {/if}
+                        {#if row.failures > 0}
+                          <div class="tp-seg seg-failed" style="width: {failedPct}%"></div>
+                        {/if}
+                      </div>
+                      <div class="tp-counts">
+                        <span class="tp-total">{row.total}</span>
+                        <span class="tp-breakdown">
+                          {#if row.installs > 0}<span class="tp-glyph seg-install" title="{row.installs} install{row.installs === 1 ? '' : 's'}">{installEventGlyph("install")}{row.installs}</span>{/if}
+                          {#if row.updates > 0}<span class="tp-glyph seg-update" title="{row.updates} update{row.updates === 1 ? '' : 's'}">{installEventGlyph("update")}{row.updates}</span>{/if}
+                          {#if row.uninstalls > 0}<span class="tp-glyph seg-uninstall" title="{row.uninstalls} uninstall{row.uninstalls === 1 ? '' : 's'}">{installEventGlyph("uninstall")}{row.uninstalls}</span>{/if}
+                          {#if row.failures > 0}<span class="tp-glyph seg-failed" title="{row.failures} failure{row.failures === 1 ? '' : 's'}">{installEventGlyph("failed")}{row.failures}</span>{/if}
+                        </span>
+                      </div>
+                    </button>
                   </li>
                 {/each}
               </ul>
               <p class="top-plugins-legend">
                 Each row's bar is scaled relative to the most-active plugin. Stacked
                 segments break down by action — installs (green), updates (accent),
-                uninstalls (amber), failures (red).
+                uninstalls (amber), failures (red). Click a row to filter the timeline
+                below to that plugin; click again to clear.
               </p>
             {/if}
           {/if}
@@ -1695,12 +1744,38 @@
     max-height: 360px;
     overflow-y: auto;
   }
+  .top-plugins-list > li { margin: 0; padding: 0; }
   .top-plugin-row {
     display: grid;
     grid-template-columns: minmax(150px, 30%) 1fr auto;
     gap: 10px;
     align-items: center;
-    padding: 4px 0;
+    padding: 4px 8px;
+    width: 100%;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: inherit;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .top-plugin-row:hover {
+    background: rgba(255, 255, 255, 0.025);
+    border-color: rgba(255, 255, 255, 0.06);
+  }
+  .top-plugin-row:focus-visible {
+    outline: none;
+    border-color: rgba(124, 140, 255, 0.42);
+    background: rgba(124, 140, 255, 0.06);
+  }
+  .top-plugin-row.active {
+    background: rgba(124, 140, 255, 0.1);
+    border-color: rgba(124, 140, 255, 0.34);
+  }
+  .top-plugin-row.active:hover {
+    background: rgba(124, 140, 255, 0.14);
   }
   .tp-name {
     display: flex;
