@@ -1092,6 +1092,74 @@ fn iso8601_utc(unix_seconds: i64) -> String {
         .unwrap_or_default()
 }
 
+// ─── Top plugins histogram CSV export (Slice 98) ─────────────────────
+
+/// Header row for the per-plugin histogram CSV export. Kept as a
+/// module constant so tests + future column reorders share one
+/// source of truth — same convention as [`INSTALL_LOG_CSV_HEADER`]
+/// and `SAMPLE_DRILLDOWN_CSV_HEADER` over in the hopper module.
+///
+/// Eight columns matching the [`PluginHistogramRow`] shape plus a
+/// precomputed `last_occurred_at_iso` companion for human review:
+///
+/// ```text
+/// plugin_id,installs,updates,uninstalls,failures,total,last_occurred_at_unix,last_occurred_at_iso
+/// ```
+pub const PLUGIN_HISTOGRAM_CSV_HEADER: &str =
+    "plugin_id,installs,updates,uninstalls,failures,total,last_occurred_at_unix,last_occurred_at_iso";
+
+/// Render a slice of [`PluginHistogramRow`] as RFC-4180 CSV. Columns
+/// match what the Recent installs drawer's "Top plugins" section
+/// shows, plus the canonical machine-friendly columns an auditor or
+/// downstream script needs:
+///
+/// `plugin_id, installs, updates, uninstalls, failures, total,
+///  last_occurred_at_unix, last_occurred_at_iso`
+///
+/// Two timestamp columns — the raw unix-seconds value (machine-friendly
+/// for joining with other audit logs) and the ISO-8601 UTC string
+/// (human-friendly for direct review in a spreadsheet). Both come
+/// from the same `last_occurred_at` field so they can't drift.
+///
+/// `last_occurred_at_unix` renders as `0` (not empty) when the row
+/// happens to carry a zero timestamp — matches the integer-column
+/// contract of the upstream sqlite schema (the column is `NOT NULL`
+/// for histogram rows since they're aggregates, not raw events).
+/// The ISO column degrades to empty when the unix value can't be
+/// represented, same as the install-log CSV's ISO column.
+///
+/// Escaping policy (RFC 4180 §2): same as [`install_log_to_csv`] —
+/// fields containing `,`, `"`, `\r`, `\n` are wrapped in `"`,
+/// embedded `"` is doubled. The plugin_id is the only string column
+/// that can contain those characters in practice (reverse-DNS ids
+/// occasionally carry hyphens but never the four trip characters);
+/// the escaping shields against a future relaxation of the id format.
+///
+/// Pure function — never touches the filesystem. The Tauri command
+/// layer (Slice 100) owns disk I/O.
+pub fn plugin_histogram_to_csv(rows: &[PluginHistogramRow], include_header: bool) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(PLUGIN_HISTOGRAM_CSV_HEADER);
+        out.push('\n');
+    }
+    for r in rows {
+        let row = [
+            csv_escape(&r.plugin_id),
+            r.installs.to_string(),
+            r.updates.to_string(),
+            r.uninstalls.to_string(),
+            r.failures.to_string(),
+            r.total.to_string(),
+            r.last_occurred_at.to_string(),
+            csv_escape(&iso8601_utc(r.last_occurred_at)),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
 // ─── JSON export envelope (Slice 60) ─────────────────────────────────
 
 /// Wire shape for the JSON install-log export. Lifts the raw
@@ -2577,5 +2645,182 @@ mod tests {
         assert!(json.contains("\"last_occurred_at\":1700000000"));
         let back: PluginHistogramRow = serde_json::from_str(&json).unwrap();
         assert_eq!(back, row);
+    }
+
+    // ─── Slice 98: histogram CSV export ──────────────────────────────
+
+    fn hist_row(
+        plugin_id: &str,
+        installs: i64,
+        updates: i64,
+        uninstalls: i64,
+        failures: i64,
+        last_occurred_at: i64,
+    ) -> PluginHistogramRow {
+        PluginHistogramRow {
+            plugin_id: plugin_id.into(),
+            installs,
+            updates,
+            uninstalls,
+            failures,
+            total: installs + updates + uninstalls + failures,
+            last_occurred_at,
+        }
+    }
+
+    #[test]
+    fn histogram_csv_header_inclusion_is_caller_controlled() {
+        let rows = vec![hist_row("com.x", 1, 0, 0, 0, 1_700_000_000)];
+        let with_header = plugin_histogram_to_csv(&rows, true);
+        assert!(with_header.starts_with(PLUGIN_HISTOGRAM_CSV_HEADER));
+        let lines: Vec<_> = with_header.lines().collect();
+        assert_eq!(lines.len(), 2, "header + one data row");
+        let bare = plugin_histogram_to_csv(&rows, false);
+        assert!(!bare.starts_with("plugin_id,"));
+        assert_eq!(bare.lines().count(), 1);
+    }
+
+    #[test]
+    fn histogram_csv_empty_with_header_is_header_only() {
+        let csv = plugin_histogram_to_csv(&[], true);
+        assert_eq!(csv, format!("{}\n", PLUGIN_HISTOGRAM_CSV_HEADER));
+        let bare = plugin_histogram_to_csv(&[], false);
+        assert!(bare.is_empty());
+    }
+
+    #[test]
+    fn histogram_csv_header_column_count_matches_row() {
+        // Defensive: header and every row carry the same number of
+        // comma-separated fields. Protects future column additions
+        // from drifting one side without the other.
+        let rows = vec![hist_row("com.x", 1, 2, 3, 4, 1_700_000_000)];
+        let csv = plugin_histogram_to_csv(&rows, true);
+        let lines: Vec<_> = csv.lines().collect();
+        let header_cols = lines[0].split(',').count();
+        let row_cols = lines[1].split(',').count();
+        assert_eq!(
+            header_cols, row_cols,
+            "header has {header_cols} cols, row has {row_cols}"
+        );
+        assert_eq!(header_cols, 8, "expected 8 columns");
+    }
+
+    #[test]
+    fn histogram_csv_columns_in_documented_order() {
+        // Pin the column order so a refactor that reorders the
+        // header constant has to update this test in lockstep with
+        // the doc comment.
+        let row = hist_row("com.acme.ocr", 3, 1, 0, 2, 1_700_000_000);
+        let csv = plugin_histogram_to_csv(&[row], false);
+        // Single row → single line. The eight cells are:
+        //   plugin_id, installs, updates, uninstalls, failures, total,
+        //   last_occurred_at_unix, last_occurred_at_iso
+        let line = csv.lines().next().unwrap();
+        let cells: Vec<&str> = line.split(',').collect();
+        assert_eq!(cells[0], "com.acme.ocr");
+        assert_eq!(cells[1], "3");
+        assert_eq!(cells[2], "1");
+        assert_eq!(cells[3], "0");
+        assert_eq!(cells[4], "2");
+        assert_eq!(cells[5], "6");
+        assert_eq!(cells[6], "1700000000");
+        // ISO column is the canonical UTC stamp.
+        assert_eq!(cells[7], "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn histogram_csv_iso_column_matches_install_log_format() {
+        // Both CSV exports must agree on the same ISO format so a
+        // paralegal joining the two on timestamp gets identical
+        // strings, not nearly-identical ones.
+        let row = hist_row("com.x", 1, 0, 0, 0, 1_700_000_000);
+        let csv = plugin_histogram_to_csv(&[row], false);
+        // The ISO substring matches the install-log shape exactly.
+        assert!(csv.contains("2023-11-14T22:13:20Z"));
+    }
+
+    #[test]
+    fn histogram_csv_preserves_input_order() {
+        // The CSV does NOT re-sort; the caller's row order is the
+        // emitted order. The server emits sorted-by-total-DESC; the
+        // UI may have re-sorted client-side via sortHistogramRows.
+        // Either way, the exporter ships exactly what it gets.
+        let rows = vec![
+            hist_row("zzz", 10, 0, 0, 0, 100),
+            hist_row("aaa", 5, 0, 0, 0, 200),
+            hist_row("mmm", 1, 0, 0, 0, 300),
+        ];
+        let csv = plugin_histogram_to_csv(&rows, false);
+        let ids: Vec<&str> = csv.lines().map(|l| l.split(',').next().unwrap()).collect();
+        assert_eq!(ids, vec!["zzz", "aaa", "mmm"]);
+    }
+
+    #[test]
+    fn histogram_csv_escapes_plugin_id_with_comma() {
+        // Reverse-DNS ids don't carry commas today, but the column
+        // is a free-form string at the schema level; escape defensively.
+        let row = hist_row("com.acme,inc", 1, 0, 0, 0, 1_700_000_000);
+        let csv = plugin_histogram_to_csv(&[row], false);
+        assert!(csv.contains("\"com.acme,inc\""));
+    }
+
+    #[test]
+    fn histogram_csv_escapes_plugin_id_with_quotes() {
+        // Embedded quotes are doubled per RFC 4180.
+        let row = hist_row("com.x\"quoted\"", 1, 0, 0, 0, 1_700_000_000);
+        let csv = plugin_histogram_to_csv(&[row], false);
+        assert!(csv.contains("\"com.x\"\"quoted\"\"\""));
+    }
+
+    #[test]
+    fn histogram_csv_zero_timestamp_renders_zero_not_empty() {
+        // Numeric column carries the integer 0, not an empty cell.
+        // Distinguishes "real zero timestamp" from "missing data" —
+        // matches the schema's NOT NULL contract for aggregate rows.
+        let row = hist_row("com.x", 1, 0, 0, 0, 0);
+        let csv = plugin_histogram_to_csv(&[row], false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[6], "0", "unix column is integer 0 not empty");
+        // ISO of 0 == 1970-01-01T00:00:00Z (epoch start, valid).
+        assert_eq!(cells[7], "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn histogram_csv_emits_one_row_per_input() {
+        // The CSV is a 1:1 emit; row count out matches row count in.
+        // Mirrors the drilldown CSV's row-count invariant (slice 88).
+        let rows: Vec<PluginHistogramRow> = (0..7)
+            .map(|i| hist_row(&format!("com.p{i}"), 1, 0, 0, 0, 1_700_000_000))
+            .collect();
+        let csv = plugin_histogram_to_csv(&rows, false);
+        assert_eq!(csv.lines().count(), 7);
+    }
+
+    #[test]
+    fn histogram_csv_total_field_renders_separately_not_recomputed() {
+        // The serialiser writes the row's `total` field verbatim
+        // rather than re-summing the four bucket columns. Important:
+        // a future axis (e.g. "skipped") gets added to PluginHistogramRow
+        // BEFORE the CSV serialiser learns about it — the verbatim
+        // write means the totals stay correct in the lag window.
+        let mut row = hist_row("com.x", 1, 1, 1, 1, 1_700_000_000);
+        // Deliberately mismatch the total field to verify the writer
+        // doesn't re-derive it from the buckets.
+        row.total = 99;
+        let csv = plugin_histogram_to_csv(&[row], false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[5], "99");
+    }
+
+    #[test]
+    fn histogram_csv_no_none_or_null_strings_anywhere() {
+        // Defensive: no "None" / "null" tokens leak from any column.
+        // The histogram row has no Option<_> columns so this is a
+        // contract check (catches a future Option addition that
+        // forgets to escape).
+        let rows = vec![hist_row("com.x", 0, 0, 0, 0, 0)];
+        let csv = plugin_histogram_to_csv(&rows, true);
+        assert!(!csv.contains("None"));
+        assert!(!csv.to_lowercase().contains("null"));
     }
 }
