@@ -195,6 +195,88 @@ pub struct PluginHistogramRow {
     pub last_occurred_at: i64,
 }
 
+/// Granularity of the install-log activity timeline aggregate (Slice
+/// 103). The three calendar buckets the UI offers — daily for
+/// short-window drilldowns ("show me the last 14 days"), weekly for
+/// medium windows ("the last 3 months"), and monthly for long
+/// windows ("the year in review").
+///
+/// Bucket boundaries are computed in UTC:
+///   - `Day`   → floor to the UTC midnight that the timestamp lives in
+///   - `Week`  → floor to the UTC Monday (ISO-8601 week start) the
+///     timestamp lives in
+///   - `Month` → floor to the UTC first-of-month the timestamp lives in
+///
+/// UTC (not local) so the same audit query produces the same buckets
+/// regardless of which machine ran it — a paralegal cross-referencing
+/// timelines from two laptops in different timezones gets the same
+/// answer either way. The UI is free to *render* the bucket labels in
+/// local time; the boundaries themselves stay deterministic.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum TimeBucketGranularity {
+    /// One bucket per UTC calendar day (86 400 seconds wide).
+    Day,
+    /// One bucket per ISO-8601 week, anchored at UTC Monday 00:00:00.
+    Week,
+    /// One bucket per UTC calendar month (variable width: 28-31 days).
+    Month,
+}
+
+impl TimeBucketGranularity {
+    /// Lowercase tag matching the serde representation. Used by the
+    /// CSV exporter so a downstream reader can re-derive the bucket
+    /// granularity without consulting the export filename.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
+
+    /// Inverse of [`as_str`]. Unknown strings fall back to
+    /// [`TimeBucketGranularity::Day`] so a future schema addition
+    /// reads as the smallest bucket rather than panicking — matches
+    /// the conservative posture of [`InstallAction::parse`].
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "week" => Self::Week,
+            "month" => Self::Month,
+            _ => Self::Day,
+        }
+    }
+}
+
+/// One bucket in the install-log activity timeline aggregate (Slice
+/// 103). Carries the same four per-action counts as
+/// [`PluginHistogramRow`] plus a `total` for sort / bar scaling, but
+/// is keyed by `bucket_start_unix` (the UTC-floored start of the
+/// bucket window) instead of `plugin_id` — answers "WHEN was install
+/// activity happening?" rather than "WHICH plugins were active?".
+///
+/// Bucket emit order is ASCENDING by `bucket_start_unix` so the UI
+/// can render the timeline left-to-right (oldest → newest, the
+/// natural reading direction). Sparse: only buckets with at least one
+/// event are emitted. Densifying the timeline with zero-event buckets
+/// for the missing days/weeks/months is the UI's job (so the
+/// primitive stays cheap when a corpus is enormous but mostly idle).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityBucket {
+    /// UTC-floored start of the bucket window (unix seconds). For
+    /// `Day` it's UTC midnight; for `Week` it's the UTC Monday
+    /// 00:00:00; for `Month` it's the UTC first-of-month 00:00:00.
+    pub bucket_start_unix: i64,
+    pub installs: i64,
+    pub updates: i64,
+    pub uninstalls: i64,
+    pub failures: i64,
+    /// Sum of installs + updates + uninstalls + failures within the
+    /// bucket. Precomputed so the UI's bar-height computation doesn't
+    /// have to re-add four columns per bucket.
+    pub total: i64,
+}
+
 #[derive(Debug, Error)]
 pub enum InstallLogError {
     #[error("sqlite: {0}")]
@@ -812,6 +894,97 @@ impl InstallLog {
         Ok(out)
     }
 
+    // ─── Activity timeline aggregate (Slice 103) ─────────────────────
+
+    /// Aggregate install-log activity grouped by calendar bucket
+    /// within an optional time window. Returns one [`ActivityBucket`]
+    /// per non-empty bucket, ordered ASCENDING by `bucket_start_unix`
+    /// so the UI can render the timeline left-to-right (oldest →
+    /// newest, the natural reading direction).
+    ///
+    /// Answers "WHEN was install activity happening?" — complementary
+    /// to [`plugin_histogram`] which answers "WHICH plugins were
+    /// active?". The two aggregates are independent axes over the
+    /// same event log.
+    ///
+    /// `since_unix` / `until_unix` are inclusive boundaries (same
+    /// shape as [`list_events_between`]); pass `None` for either to
+    /// disable that side of the window.
+    ///
+    /// `granularity` controls the bucket width — see
+    /// [`TimeBucketGranularity`] for the calendar floor semantics.
+    /// All boundaries are UTC so the same query on two different
+    /// machines emits the same buckets.
+    ///
+    /// SPARSE OUTPUT: only buckets with at least one event are
+    /// emitted. The UI densifies the timeline (inserts zero-event
+    /// buckets for the missing days/weeks/months) so the primitive
+    /// stays cheap when a corpus is enormous but mostly idle.
+    pub fn activity_timeline(
+        &self,
+        since_unix: Option<i64>,
+        until_unix: Option<i64>,
+        granularity: TimeBucketGranularity,
+    ) -> Result<Vec<ActivityBucket>, InstallLogError> {
+        // Same WHERE-assembly pattern as plugin_histogram — the
+        // sqlite planner can reuse the occurred_at index for the
+        // time-window seek.
+        let mut sql = String::from("SELECT action, occurred_at FROM install_events");
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        let mut clauses: Vec<&'static str> = Vec::new();
+        if let Some(since) = since_unix {
+            clauses.push("occurred_at >= ?");
+            params.push(rusqlite::types::Value::Integer(since));
+        }
+        if let Some(until) = until_unix {
+            clauses.push("occurred_at <= ?");
+            params.push(rusqlite::types::Value::Integer(until));
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+
+        // Walk the raw (action, occurred_at) grid and reduce into
+        // per-bucket counts. We bucket in code (not SQL) because the
+        // week/month flooring is calendar-aware — sqlite's strftime
+        // could do it but the rounding edge cases for ISO weeks vs
+        // %V-week-of-year are sharp enough that pushing the logic to
+        // chrono is the safer call.
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+
+        let mut acc: std::collections::HashMap<i64, ActivityBucket> =
+            std::collections::HashMap::new();
+        for r in rows {
+            let (action_str, at) = r?;
+            let bucket_start = bucket_floor_unix(at, granularity);
+            let bucket = acc.entry(bucket_start).or_insert_with(|| ActivityBucket {
+                bucket_start_unix: bucket_start,
+                installs: 0,
+                updates: 0,
+                uninstalls: 0,
+                failures: 0,
+                total: 0,
+            });
+            match InstallAction::parse(&action_str) {
+                InstallAction::Install => bucket.installs += 1,
+                InstallAction::Update => bucket.updates += 1,
+                InstallAction::Uninstall => bucket.uninstalls += 1,
+                InstallAction::Failed => bucket.failures += 1,
+            }
+            bucket.total += 1;
+        }
+
+        // Sort ASC by bucket_start_unix so the timeline reads
+        // left-to-right (oldest → newest).
+        let mut out: Vec<ActivityBucket> = acc.into_values().collect();
+        out.sort_by_key(|b| b.bucket_start_unix);
+        Ok(out)
+    }
+
     // ─── Retention policy storage (Slice 63) ─────────────────────────
     //
     // Key/value rows in `install_log_settings` back the retention
@@ -1090,6 +1263,52 @@ fn iso8601_utc(unix_seconds: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp(unix_seconds, 0)
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .unwrap_or_default()
+}
+
+/// Floor a unix-seconds timestamp to the start of the calendar bucket
+/// it lives in, per the requested [`TimeBucketGranularity`]. All
+/// arithmetic is UTC so the result is deterministic across machines /
+/// timezones — the UI is free to render bucket labels in local time,
+/// but the boundaries themselves don't drift.
+///
+/// Bucket semantics:
+///   - `Day`   → floor to UTC midnight (`00:00:00`)
+///   - `Week`  → floor to UTC Monday `00:00:00` (ISO-8601 week start)
+///   - `Month` → floor to the UTC first-of-month `00:00:00`
+///
+/// Falls back to the input value when the timestamp can't be
+/// represented as a UTC datetime (extreme i64 bounds) — keeps the
+/// bucket-key contract intact at the type boundary even when the
+/// underlying calendar math would overflow. The pathological input
+/// would already be unreachable for a realistic install-log row.
+pub(crate) fn bucket_floor_unix(unix_seconds: i64, granularity: TimeBucketGranularity) -> i64 {
+    use chrono::{Datelike, TimeZone, Utc};
+    let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(unix_seconds, 0) else {
+        return unix_seconds;
+    };
+    let date = dt.date_naive();
+    let floored = match granularity {
+        TimeBucketGranularity::Day => date,
+        TimeBucketGranularity::Week => {
+            // ISO-8601 week starts on Monday. weekday().num_days_from_monday()
+            // returns 0 for Monday … 6 for Sunday — exactly the number of
+            // days we need to subtract to reach Monday.
+            let from_monday = date.weekday().num_days_from_monday() as i64;
+            date - chrono::Duration::days(from_monday)
+        }
+        TimeBucketGranularity::Month => {
+            // First of the month. Year + month are always valid for a
+            // valid input date; with_day(1) cannot fail for any real
+            // calendar date.
+            date.with_day(1).unwrap_or(date)
+        }
+    };
+    Utc.from_utc_datetime(
+        &floored
+            .and_hms_opt(0, 0, 0)
+            .unwrap_or_else(|| floored.and_hms_opt(0, 0, 0).unwrap()),
+    )
+    .timestamp()
 }
 
 // ─── Top plugins histogram CSV export (Slice 98) ─────────────────────
@@ -2738,6 +2957,370 @@ mod tests {
         assert!(json.contains("\"last_occurred_at\":1700000000"));
         let back: PluginHistogramRow = serde_json::from_str(&json).unwrap();
         assert_eq!(back, row);
+    }
+
+    // ─── Activity timeline aggregate (Slice 103) ─────────────────────
+
+    /// Pick a known unix-seconds value to seed the timeline tests
+    /// against. 1_700_000_000 = 2023-11-14T22:13:20Z (a Tuesday).
+    /// Building all the test fixtures relative to this constant
+    /// keeps the expected bucket-start values readable.
+    const TEST_NOW_UNIX: i64 = 1_700_000_000;
+
+    /// Compose a small activity-timeline fixture. Events spread
+    /// across three calendar days (and two calendar months) so a
+    /// Day/Week/Month bucketing pass produces three distinct,
+    /// hand-checkable shapes.
+    fn seed_timeline_log() -> InstallLog {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // 2023-11-14T22:13:20Z (Tuesday) — installs on day 1
+        insert_at_action(&mut log, "p.a", "1", InstallAction::Install, TEST_NOW_UNIX);
+        insert_at_action(
+            &mut log,
+            "p.b",
+            "1",
+            InstallAction::Install,
+            TEST_NOW_UNIX + 30,
+        );
+        // 2023-11-15T10:00:00Z (Wednesday, same week) — update +
+        // failure on day 2
+        insert_at_action(&mut log, "p.a", "2", InstallAction::Update, 1_700_042_400);
+        insert_at_action(&mut log, "p.c", "1", InstallAction::Failed, 1_700_042_500);
+        // 2023-12-04T08:00:00Z (Monday, next month, next ISO-week)
+        // — single uninstall
+        insert_at_action(
+            &mut log,
+            "p.b",
+            "1",
+            InstallAction::Uninstall,
+            1_701_676_800,
+        );
+        log
+    }
+
+    #[test]
+    fn time_bucket_granularity_round_trips_via_string() {
+        for g in [
+            TimeBucketGranularity::Day,
+            TimeBucketGranularity::Week,
+            TimeBucketGranularity::Month,
+        ] {
+            assert_eq!(TimeBucketGranularity::parse(g.as_str()), g);
+        }
+    }
+
+    #[test]
+    fn time_bucket_granularity_parse_unknown_is_day() {
+        // Conservative fallback: unknown string reads as the smallest
+        // bucket (Day) rather than panicking.
+        assert_eq!(
+            TimeBucketGranularity::parse("gibberish"),
+            TimeBucketGranularity::Day
+        );
+        assert_eq!(TimeBucketGranularity::parse(""), TimeBucketGranularity::Day);
+        assert_eq!(
+            TimeBucketGranularity::parse("DAY"),
+            TimeBucketGranularity::Day
+        );
+    }
+
+    #[test]
+    fn time_bucket_granularity_serde_is_lowercase_tag() {
+        // Serde rename_all = "lowercase" — the wire form is "day"/
+        // "week"/"month", matching as_str(). This invariant lets a
+        // TS client send the string form directly to the Tauri layer.
+        let json = serde_json::to_string(&TimeBucketGranularity::Week).unwrap();
+        assert_eq!(json, "\"week\"");
+        let back: TimeBucketGranularity = serde_json::from_str("\"month\"").unwrap();
+        assert_eq!(back, TimeBucketGranularity::Month);
+    }
+
+    #[test]
+    fn bucket_floor_day_floors_to_utc_midnight() {
+        // 2023-11-14T22:13:20Z floors to 2023-11-14T00:00:00Z =
+        // 1_699_920_000. The 22:13:20 inside the day should be
+        // erased.
+        assert_eq!(
+            bucket_floor_unix(TEST_NOW_UNIX, TimeBucketGranularity::Day),
+            1_699_920_000
+        );
+    }
+
+    #[test]
+    fn bucket_floor_day_is_idempotent_at_midnight() {
+        // A timestamp already on a UTC midnight floors to itself.
+        let midnight = 1_699_920_000; // 2023-11-14T00:00:00Z
+        assert_eq!(
+            bucket_floor_unix(midnight, TimeBucketGranularity::Day),
+            midnight
+        );
+    }
+
+    #[test]
+    fn bucket_floor_week_floors_to_iso_monday() {
+        // 2023-11-14T22:13:20Z is a Tuesday — flooring to ISO-week
+        // start (Monday) yields 2023-11-13T00:00:00Z = 1_699_833_600.
+        assert_eq!(
+            bucket_floor_unix(TEST_NOW_UNIX, TimeBucketGranularity::Week),
+            1_699_833_600
+        );
+    }
+
+    #[test]
+    fn bucket_floor_week_for_sunday_floors_to_previous_monday() {
+        // 2023-11-19T15:00:00Z is a Sunday — flooring to the
+        // PREVIOUS Monday yields 2023-11-13T00:00:00Z = 1_699_833_600.
+        // The ISO-8601 week convention puts Sunday at the END of the
+        // week (not the start) — a common point of confusion with
+        // US-week conventions.
+        let sunday = 1_700_406_000;
+        assert_eq!(
+            bucket_floor_unix(sunday, TimeBucketGranularity::Week),
+            1_699_833_600
+        );
+    }
+
+    #[test]
+    fn bucket_floor_week_monday_floors_to_itself() {
+        // 2023-11-13T00:00:00Z is exactly the start of the ISO
+        // week — flooring is idempotent.
+        let monday = 1_699_833_600;
+        assert_eq!(
+            bucket_floor_unix(monday, TimeBucketGranularity::Week),
+            monday
+        );
+    }
+
+    #[test]
+    fn bucket_floor_month_floors_to_first_of_month() {
+        // 2023-11-14T22:13:20Z floors to 2023-11-01T00:00:00Z =
+        // 1_698_796_800.
+        assert_eq!(
+            bucket_floor_unix(TEST_NOW_UNIX, TimeBucketGranularity::Month),
+            1_698_796_800
+        );
+    }
+
+    #[test]
+    fn bucket_floor_month_first_of_month_floors_to_itself() {
+        let first = 1_698_796_800; // 2023-11-01T00:00:00Z
+        assert_eq!(
+            bucket_floor_unix(first, TimeBucketGranularity::Month),
+            first
+        );
+    }
+
+    #[test]
+    fn bucket_floor_handles_unix_epoch() {
+        // Edge case: epoch zero. 1970-01-01 was a Thursday in UTC.
+        // - Day:   already UTC midnight → 0
+        // - Week:  floors to the prior Monday (1969-12-29) = -259_200
+        //          (Thursday is 3 days into the ISO week, so 3 * 86_400)
+        // - Month: 1970-01-01 is already first-of-month → 0
+        assert_eq!(bucket_floor_unix(0, TimeBucketGranularity::Day), 0);
+        assert_eq!(bucket_floor_unix(0, TimeBucketGranularity::Week), -259_200);
+        assert_eq!(bucket_floor_unix(0, TimeBucketGranularity::Month), 0);
+    }
+
+    #[test]
+    fn activity_timeline_empty_log_returns_empty() {
+        let log = InstallLog::open_in_memory().unwrap();
+        let rows = log
+            .activity_timeline(None, None, TimeBucketGranularity::Day)
+            .unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn activity_timeline_day_buckets_per_calendar_day() {
+        let log = seed_timeline_log();
+        let buckets = log
+            .activity_timeline(None, None, TimeBucketGranularity::Day)
+            .unwrap();
+        // Three distinct UTC days: 2023-11-14, 2023-11-15, 2023-12-04.
+        assert_eq!(buckets.len(), 3);
+        // ASC order — oldest first.
+        assert!(buckets[0].bucket_start_unix < buckets[1].bucket_start_unix);
+        assert!(buckets[1].bucket_start_unix < buckets[2].bucket_start_unix);
+        // First bucket: two installs on 2023-11-14.
+        assert_eq!(buckets[0].bucket_start_unix, 1_699_920_000);
+        assert_eq!(buckets[0].installs, 2);
+        assert_eq!(buckets[0].total, 2);
+        // Second bucket: one update + one failure on 2023-11-15.
+        assert_eq!(buckets[1].bucket_start_unix, 1_700_006_400);
+        assert_eq!(buckets[1].updates, 1);
+        assert_eq!(buckets[1].failures, 1);
+        assert_eq!(buckets[1].total, 2);
+        // Third bucket: one uninstall on 2023-12-04.
+        assert_eq!(buckets[2].bucket_start_unix, 1_701_648_000);
+        assert_eq!(buckets[2].uninstalls, 1);
+        assert_eq!(buckets[2].total, 1);
+    }
+
+    #[test]
+    fn activity_timeline_week_buckets_collapse_same_week() {
+        let log = seed_timeline_log();
+        let buckets = log
+            .activity_timeline(None, None, TimeBucketGranularity::Week)
+            .unwrap();
+        // 2023-11-14 and 2023-11-15 are both in the same ISO-week
+        // (week starting Mon 2023-11-13). 2023-12-04 is in the
+        // week starting Mon 2023-12-04. So two buckets.
+        assert_eq!(buckets.len(), 2);
+        // First bucket: week of 2023-11-13 — collapses day 1 + day 2
+        // events. 2 installs + 1 update + 1 failure = 4.
+        assert_eq!(buckets[0].bucket_start_unix, 1_699_833_600);
+        assert_eq!(buckets[0].installs, 2);
+        assert_eq!(buckets[0].updates, 1);
+        assert_eq!(buckets[0].failures, 1);
+        assert_eq!(buckets[0].total, 4);
+        // Second bucket: week of 2023-12-04 — single uninstall.
+        assert_eq!(buckets[1].bucket_start_unix, 1_701_648_000);
+        assert_eq!(buckets[1].uninstalls, 1);
+        assert_eq!(buckets[1].total, 1);
+    }
+
+    #[test]
+    fn activity_timeline_month_buckets_collapse_same_month() {
+        let log = seed_timeline_log();
+        let buckets = log
+            .activity_timeline(None, None, TimeBucketGranularity::Month)
+            .unwrap();
+        // 2023-11 collapses days 1+2; 2023-12 has the uninstall.
+        // Two buckets.
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(buckets[0].bucket_start_unix, 1_698_796_800); // 2023-11-01
+        assert_eq!(buckets[0].installs, 2);
+        assert_eq!(buckets[0].updates, 1);
+        assert_eq!(buckets[0].failures, 1);
+        assert_eq!(buckets[0].total, 4);
+        assert_eq!(buckets[1].bucket_start_unix, 1_701_388_800); // 2023-12-01
+        assert_eq!(buckets[1].uninstalls, 1);
+        assert_eq!(buckets[1].total, 1);
+    }
+
+    #[test]
+    fn activity_timeline_window_filters_since() {
+        let log = seed_timeline_log();
+        // since = 2023-11-15T00:00:00Z = 1_700_006_400 — drops the
+        // day-1 installs, keeps the day-2 events + the December
+        // uninstall.
+        let buckets = log
+            .activity_timeline(Some(1_700_006_400), None, TimeBucketGranularity::Day)
+            .unwrap();
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(buckets[0].installs, 0);
+        assert_eq!(buckets[0].updates, 1);
+        assert_eq!(buckets[0].failures, 1);
+        assert_eq!(buckets[1].uninstalls, 1);
+    }
+
+    #[test]
+    fn activity_timeline_window_filters_until() {
+        let log = seed_timeline_log();
+        // until = 2023-11-30T23:59:59Z = 1_701_388_799 — keeps
+        // November, drops December's uninstall.
+        let buckets = log
+            .activity_timeline(None, Some(1_701_388_799), TimeBucketGranularity::Day)
+            .unwrap();
+        assert_eq!(buckets.len(), 2);
+        assert!(buckets.iter().all(|b| b.uninstalls == 0));
+    }
+
+    #[test]
+    fn activity_timeline_window_empty_returns_empty() {
+        let log = seed_timeline_log();
+        let buckets = log
+            .activity_timeline(Some(1_800_000_000), None, TimeBucketGranularity::Day)
+            .unwrap();
+        assert!(buckets.is_empty());
+    }
+
+    #[test]
+    fn activity_timeline_bucket_total_equals_sum_of_buckets_invariant() {
+        // Conservation invariant: each bucket's `total` equals
+        // installs + updates + uninstalls + failures.
+        let log = seed_timeline_log();
+        for g in [
+            TimeBucketGranularity::Day,
+            TimeBucketGranularity::Week,
+            TimeBucketGranularity::Month,
+        ] {
+            let buckets = log.activity_timeline(None, None, g).unwrap();
+            for b in &buckets {
+                assert_eq!(
+                    b.total,
+                    b.installs + b.updates + b.uninstalls + b.failures,
+                    "{:?} bucket at {} total mismatch",
+                    g,
+                    b.bucket_start_unix
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn activity_timeline_sparse_only_non_empty_buckets() {
+        // Two events months apart — the gap months/weeks/days between
+        // them are NOT in the output. The UI densifies; the
+        // primitive stays sparse.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        insert_at_action(&mut log, "p", "1", InstallAction::Install, 1_700_000_000);
+        insert_at_action(&mut log, "p", "1", InstallAction::Update, 1_710_000_000);
+        let buckets = log
+            .activity_timeline(None, None, TimeBucketGranularity::Day)
+            .unwrap();
+        // Exactly two buckets — no zero-filled gap.
+        assert_eq!(buckets.len(), 2);
+        assert!(buckets.iter().all(|b| b.total > 0));
+    }
+
+    #[test]
+    fn activity_timeline_ascending_order_invariant() {
+        // Ten events on five distinct days in random insertion
+        // order — output must still be ASC by bucket_start_unix.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // Five day-floors spaced one day apart starting 2024-01-01:
+        // 2024-01-05 first, then 03, 01, 04, 02 — out of order.
+        let day = 86_400;
+        let base = 1_704_067_200; // 2024-01-01T00:00:00Z
+        for offset in [4, 2, 0, 3, 1] {
+            insert_at_action(
+                &mut log,
+                "p",
+                "1",
+                InstallAction::Install,
+                base + offset * day + 3_600, // mid-day
+            );
+        }
+        let buckets = log
+            .activity_timeline(None, None, TimeBucketGranularity::Day)
+            .unwrap();
+        assert_eq!(buckets.len(), 5);
+        for i in 1..buckets.len() {
+            assert!(
+                buckets[i].bucket_start_unix > buckets[i - 1].bucket_start_unix,
+                "buckets out of order at index {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn activity_bucket_serde_round_trip() {
+        let bucket = ActivityBucket {
+            bucket_start_unix: 1_700_000_000,
+            installs: 3,
+            updates: 2,
+            uninstalls: 1,
+            failures: 4,
+            total: 10,
+        };
+        let json = serde_json::to_string(&bucket).unwrap();
+        assert!(json.contains("\"bucket_start_unix\":1700000000"));
+        assert!(json.contains("\"installs\":3"));
+        assert!(json.contains("\"total\":10"));
+        let back: ActivityBucket = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, bucket);
     }
 
     // ─── Slice 98: histogram CSV export ──────────────────────────────
