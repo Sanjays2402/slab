@@ -5614,6 +5614,99 @@ fn slab_marketplace_install_log_plugin_histogram(
     })
 }
 
+// ─── Top plugins histogram export (v3.40 round-21 Slice 100) ─────────
+
+/// Write the top-plugins histogram to disk as RFC-4180 CSV, filtered
+/// by an optional `[since_unix, until_unix]` window. Mirrors
+/// [`slab_marketplace_install_log_export_csv`] but emits the
+/// per-plugin aggregate shape (one row per distinct plugin) rather
+/// than the raw event log.
+///
+/// `path` is an absolute filesystem path the frontend obtains from
+/// `@tauri-apps/plugin-dialog` save() so the write bypasses the
+/// default plugin-fs scope (which doesn't cover arbitrary
+/// user-chosen paths). Same approach as
+/// `slab_marketplace_install_log_export_csv`.
+///
+/// `limit` caps the number of rows written (default = server's
+/// histogram default of 25). The histogram itself is small in
+/// practice (a typical paralegal install footprint fits well under
+/// 100 plugins), but the cap also clamps the aggregate query at
+/// the storage boundary so a runaway log doesn't drag a giant grid
+/// through IPC just to be filtered down at write time.
+///
+/// Returns the byte count actually written so the UI toast can say
+/// "Exported 12 plugins (1.8 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+fn slab_marketplace_install_log_export_histogram_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_histogram(since_unix, until_unix, limit.unwrap_or(25))
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::plugin_histogram_to_csv(&rows, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the top-plugins histogram to disk as a pretty-printed JSON
+/// envelope, filtered by an optional `[since_unix, until_unix]`
+/// window. Mirrors [`slab_marketplace_install_log_export_histogram_csv`]
+/// but emits the [`marketplace::install_log::PluginHistogramExportEnvelope`]
+/// shape (schema_version + generated_at_iso + window-bounds +
+/// row_count + grand_total + rows array).
+///
+/// `limit` caps the number of rows written (same default as the
+/// CSV command — 25, matching the server's histogram default).
+/// Returns the byte count actually written.
+///
+/// Idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_histogram_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_histogram(since_unix, until_unix, limit.unwrap_or(25))
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = rows.iter().map(|r| r.total).sum();
+    let envelope = marketplace::install_log::plugin_histogram_to_json(
+        &rows,
+        since_unix,
+        until_unix,
+        grand_total,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 // ─── Install log retention policy surface (v3.40 Slice 64) ──────────
 
 /// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
@@ -7235,6 +7328,8 @@ pub fn run() {
             slab_marketplace_install_log_list_filtered,
             slab_marketplace_install_log_recent_plugin_ids,
             slab_marketplace_install_log_plugin_histogram,
+            slab_marketplace_install_log_export_histogram_csv,
+            slab_marketplace_install_log_export_histogram_json,
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,
