@@ -1311,6 +1311,67 @@ pub(crate) fn bucket_floor_unix(unix_seconds: i64, granularity: TimeBucketGranul
     .timestamp()
 }
 
+// ─── Bucket window helper (Slice 108) ────────────────────────────────
+
+/// Given a bucket start (already calendar-floored to UTC midnight for
+/// Day, ISO-Monday for Week, first-of-month for Month) and the
+/// granularity that produced it, return the half-open
+/// `[since_unix, until_unix]` window covering exactly that bucket.
+///
+/// The returned `until_unix` is **inclusive on the last second of the
+/// bucket** (i.e. one second before the next bucket starts) so the
+/// caller can pass it straight to [`InstallLog::list_events_between`]
+/// / [`InstallLog::plugin_histogram`] whose boundaries are both
+/// inclusive. This keeps the bucket-drilldown surface fully aligned
+/// with the activity-timeline aggregate that produced the bucket —
+/// the union of every bucket's drilldown is bit-for-bit the full
+/// activity-timeline window, with no events double-counted at a
+/// boundary.
+///
+/// Bucket lengths:
+///   - `Day`   → +86_400 s   (24h, exact in UTC because the bucket
+///                            floor is UTC midnight; DST is a local-
+///                            time concern that doesn't touch UTC
+///                            arithmetic).
+///   - `Week`  → +7 × 86_400 (7 UTC days, exact).
+///   - `Month` → calendar-aware via chrono. We compute the start of
+///               the NEXT month (year/month + 1, with December
+///               rolling into January of year+1) and subtract one
+///               second — so February drills as 28 / 29 days,
+///               November as 30, January as 31. The `with_year` /
+///               `with_month` plumbing handles year overflow.
+///
+/// Falls back to the input `bucket_start` for both bounds when the
+/// timestamp can't be represented as a UTC datetime — same defensive
+/// posture as [`bucket_floor_unix`]. The pathological input would
+/// already be unreachable for a realistic activity-timeline row.
+pub(crate) fn bucket_window_unix(
+    bucket_start: i64,
+    granularity: TimeBucketGranularity,
+) -> (i64, i64) {
+    use chrono::{Datelike, TimeZone, Utc};
+    match granularity {
+        TimeBucketGranularity::Day => (bucket_start, bucket_start + 86_400 - 1),
+        TimeBucketGranularity::Week => (bucket_start, bucket_start + 7 * 86_400 - 1),
+        TimeBucketGranularity::Month => {
+            let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(bucket_start, 0) else {
+                return (bucket_start, bucket_start);
+            };
+            // Start of the NEXT month. December → January of year+1.
+            let (next_year, next_month) = if dt.month() == 12 {
+                (dt.year() + 1, 1u32)
+            } else {
+                (dt.year(), dt.month() + 1)
+            };
+            let next_start = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+                .map(|ndt| Utc.from_utc_datetime(&ndt).timestamp())
+                .unwrap_or(bucket_start);
+            (bucket_start, next_start - 1)
+        }
+    }
+}
+
 // ─── Top plugins histogram CSV export (Slice 98) ─────────────────────
 
 /// Header row for the per-plugin histogram CSV export. Kept as a
@@ -3318,6 +3379,114 @@ mod tests {
         assert_eq!(bucket_floor_unix(0, TimeBucketGranularity::Day), 0);
         assert_eq!(bucket_floor_unix(0, TimeBucketGranularity::Week), -259_200);
         assert_eq!(bucket_floor_unix(0, TimeBucketGranularity::Month), 0);
+    }
+
+    // ── Slice 108 — bucket_window_unix ───────────────────────────────
+
+    #[test]
+    fn bucket_window_day_spans_exactly_86_399_seconds() {
+        // A daily bucket runs from its UTC midnight start to one
+        // second before the next UTC midnight (so back-to-back buckets
+        // never overlap and the union covers every second of the
+        // calendar day).
+        let start = 1_699_920_000; // 2023-11-14T00:00:00Z
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Day);
+        assert_eq!(since, start);
+        assert_eq!(until, start + 86_399);
+        assert_eq!(until - since, 86_399);
+    }
+
+    #[test]
+    fn bucket_window_week_spans_exactly_seven_days_minus_one_second() {
+        let start = 1_699_833_600; // 2023-11-13T00:00:00Z Monday
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Week);
+        assert_eq!(since, start);
+        assert_eq!(until, start + 7 * 86_400 - 1);
+    }
+
+    #[test]
+    fn bucket_window_month_january_has_31_days() {
+        // 2024-01 is a 31-day month → window = 31 * 86_400 - 1.
+        let start = 1_704_067_200; // 2024-01-01T00:00:00Z
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Month);
+        assert_eq!(since, start);
+        assert_eq!(until, start + 31 * 86_400 - 1);
+    }
+
+    #[test]
+    fn bucket_window_month_february_2024_is_leap_year_29_days() {
+        // 2024 is a leap year — February runs 29 days.
+        let start = 1_706_745_600; // 2024-02-01T00:00:00Z
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Month);
+        assert_eq!(since, start);
+        assert_eq!(until, start + 29 * 86_400 - 1);
+    }
+
+    #[test]
+    fn bucket_window_month_february_2023_is_28_days() {
+        // 2023 is NOT a leap year — February runs 28 days. Pins the
+        // calendar-aware month length against a hand-built 28-day
+        // baseline so a future drift in chrono's leap-year math
+        // surfaces here rather than in a stale assertion.
+        let start = 1_675_209_600; // 2023-02-01T00:00:00Z
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Month);
+        assert_eq!(since, start);
+        assert_eq!(until, start + 28 * 86_400 - 1);
+    }
+
+    #[test]
+    fn bucket_window_month_november_has_30_days() {
+        // 2023-11 is a 30-day month.
+        let start = 1_698_796_800; // 2023-11-01T00:00:00Z
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Month);
+        assert_eq!(since, start);
+        assert_eq!(until, start + 30 * 86_400 - 1);
+    }
+
+    #[test]
+    fn bucket_window_month_december_rolls_into_january_next_year() {
+        // December → next month is January of year+1. Without the
+        // year-overflow plumbing in bucket_window_unix this would
+        // produce month=13 which chrono rejects and the helper
+        // would fall back to (start, start).
+        let start = 1_701_388_800; // 2023-12-01T00:00:00Z
+        let (since, until) = bucket_window_unix(start, TimeBucketGranularity::Month);
+        assert_eq!(since, start);
+        // Dec 2023 has 31 days.
+        assert_eq!(until, start + 31 * 86_400 - 1);
+    }
+
+    #[test]
+    fn bucket_window_back_to_back_buckets_never_overlap() {
+        // Two consecutive daily buckets: the end of bucket N must be
+        // exactly one second before the start of bucket N+1, so no
+        // event with a unix-second timestamp can be counted twice and
+        // no event can fall in a gap.
+        let start_a = 1_699_920_000; // 2023-11-14T00:00:00Z
+        let start_b = 1_700_006_400; // 2023-11-15T00:00:00Z
+        let (_, until_a) = bucket_window_unix(start_a, TimeBucketGranularity::Day);
+        let (since_b, _) = bucket_window_unix(start_b, TimeBucketGranularity::Day);
+        assert_eq!(since_b, until_a + 1);
+    }
+
+    #[test]
+    fn bucket_window_compose_with_bucket_floor_round_trip() {
+        // For any timestamp ts in (bucket_window of floor(ts)) is an
+        // invariant: floor(ts) ≤ ts ≤ floor(ts) + bucket_length - 1.
+        // Pin this for one timestamp per granularity so a future
+        // change in either helper (floor or window) that breaks the
+        // composition surfaces.
+        for g in [
+            TimeBucketGranularity::Day,
+            TimeBucketGranularity::Week,
+            TimeBucketGranularity::Month,
+        ] {
+            let ts = 1_700_059_200; // 2023-11-15T12:00:00Z (mid-day)
+            let start = bucket_floor_unix(ts, g);
+            let (since, until) = bucket_window_unix(start, g);
+            assert!(since <= ts, "since {since} > ts {ts} for {g:?}");
+            assert!(ts <= until, "ts {ts} > until {until} for {g:?}");
+        }
     }
 
     #[test]
