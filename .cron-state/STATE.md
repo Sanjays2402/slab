@@ -1,13 +1,301 @@
 # Slab Cron State
 
-Last updated: 2026-06-22 07:51 PT by Cake (cron) — round-23 BATCH shipped: 5 slices closing one cohesive arc. Activity bucket drilldown (slices 108-112): backend bucket_window_unix(bucket_start, granularity) -> (since, until) calendar-aware (Day=86_400, Week=7d, Month=chrono year-overflow) inclusive-second-adjacent helper (slice 108); InstallLog::bucket_drilldown(bucket_start, granularity, limit) -> Vec<PluginHistogramRow> reader composing bucket_window_unix + plugin_histogram (slice 109); pure-data bucket_drilldown_to_csv(rows, bucket_start, granularity, include_header) 11-column RFC-4180 serialiser with bucket coords leading + 8-col histogram body (slice 110); pure-data bucket_drilldown_to_json(rows, bucket_start, granularity, grand_total) -> BucketDrilldownExportEnvelope schema_version=1 PARALLEL-versioned with the three sibling envelopes (slice 111); slab_marketplace_install_log_bucket_drilldown + _export_bucket_drilldown_csv + _export_bucket_drilldown_json Tauri commands + TS getBucketDrilldown + exportInstallLogBucketDrilldown Csv/Json + suggestBucketDrilldownExportFilename producing marketplace-bucket-drilldown-{day|week|month}_<bucketISO>_<YYYY-MM-DD>.<ext> + click-bar-to-drill UI with anchored popover + Export… menu + close (✕) + per-plugin inline list + active-bar accent ring + ESC-chain integration (slice 112).
+Last updated: 2026-06-22 14:57 PT by Cake (cron) — round-24 BATCH shipped: 5 slices closing one cohesive arc. Per-plugin retention overrides (slices 113-117): schema v2->v3 install_log_plugin_retention(plugin_id PRIMARY KEY, retain_days) + four storage primitives plugin_retention_days / set_plugin_retention_days(UPSERT, clamp >= MIN_RETAIN_DAYS) / clear_plugin_retention / plugin_retention_overrides (slice 113); effective_retain_days(plugin_id) resolver + auto-prune driver rewrite to two disjoint passes (per-plugin DELETEs for every override row, then global DELETE with plugin_id NOT IN clause so overridden plugins skip the global cutoff) + AutoPruneOutcome::Pruned gains overrides_applied + overrides_rows_removed for UI attribution (slice 114); pure-data plugin_retention_overrides_to_csv(rows, default_retain_days, include_header) -> String 3-column RFC-4180 with denormalised default-on-every-row + PLUGIN_RETENTION_CSV_HEADER pub const (slice 115); pure-data plugin_retention_overrides_to_json(rows, default_retain_days, min_retain_days) -> PluginRetentionExportEnvelope 6-field envelope schema_version=1 PARALLEL-versioned with all four sibling envelopes (slice 116); 5 Tauri commands (slab_marketplace_install_log_plugin_retention_overrides + _set_plugin_retention + _clear_plugin_retention + _export_plugin_retention_csv + _export_plugin_retention_json) + TS surface (getPluginRetentionOverrides + setPluginRetentionDays + clearPluginRetention + exportPluginRetentionOverrides Csv/Json + suggestPluginRetentionExportFilename) + nested overrides sub-block inside Retention section with composer + per-row Edit/Clear + longer/shorter badge + Export… popover (slice 117).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `2d8a29f` — "feat(plugins): bucket drilldown popover with export menu".
+Latest commit: `d024824` — "feat(plugins): per-plugin retention overrides UI with export menu".
+
+### What round-24 (2026-06-22 14:57 PT) just shipped
+
+Five slices closing one cohesive arc. Before this tick the install log
+had a SINGLE global retention window (round 14 + 16 surfaces). Two
+recurring production pains had no escape valve: (1) audit-critical
+plugins (compliance, redaction, billing) need LONGER retention than the
+corpus default so a quarterly audit still resolves; (2) noisy
+diagnostic plugins want SHORTER retention so the install log doesn't
+drown in events the user doesn't care about. Moving the global hurts
+the OTHER endpoint every time. Tonight that two-sided pain closes
+end-to-end: per-plugin overrides storage + an effective-retention
+resolver that the auto-prune driver respects in two disjoint passes +
+CSV + JSON exports of the overrides list + a nested overrides
+sub-block inside the Retention section with composer, per-row edit/
+clear, longer/shorter visual treatment, and export popover.
+
+Round 23's closing notes listed "install-log per-plugin retention
+override (some plugins are audit-critical and want longer retention
+than the global default)" as a candidate; round 24 shipped it as a
+full storage + resolver + auto-prune + export + UI arc rather than the
+minimum viable storage-only slice. The auto-prune rewrite to two
+disjoint passes is the structurally important piece — without it an
+override row would set the policy but the global pass would still
+delete the plugin's events under the global cutoff, defeating the
+override.
+
+- Slice 113: per-plugin retention overrides storage (9de6338).
+  Schema bump v2 -> v3 (pure additive — every v2 row stays valid).
+  install_log_plugin_retention(plugin_id PRIMARY KEY, retain_days
+  INTEGER NOT NULL). Four primitives: plugin_retention_days(id) ->
+  Option<i64> single-id lookup with read-side clamp >= MIN_RETAIN_DAYS;
+  set_plugin_retention_days(id, days) -> i64 UPSERT with storage-
+  boundary clamp returning the value actually stored so wire layer
+  can surface corrections; clear_plugin_retention(id) -> bool DELETE
+  returning whether a row was removed; plugin_retention_overrides()
+  -> Vec<PluginRetentionOverride> full-list read with deterministic
+  ORDER BY plugin_id ASC.
+
+- Slice 114: effective retention resolver + per-plugin auto-prune
+  (77784b7). effective_retain_days(plugin_id) -> i64 composes per-
+  plugin override with global, floor-clamped on both sides as
+  defence-in-depth. Auto-prune driver rewritten to two disjoint
+  passes: per-plugin DELETEs for every override row (using each
+  plugin's effective window) followed by one global DELETE with
+  plugin_id NOT IN (?,...,?) so overridden plugins are SKIPPED by
+  the global cutoff. AutoPruneOutcome::Pruned gains overrides_
+  applied + overrides_rows_removed fields so the UI can surface
+  per-plugin policy work versus corpus-wide policy work without
+  re-querying. Disjoint contract pins two invariants: every event
+  surviving an auto-prune satisfies its plugin's effective window;
+  two consecutive auto_prune_if_due calls with no new events
+  between them remove zero rows on the second call.
+
+- Slice 115: plugin retention overrides CSV export primitive
+  (64d532b). Pure-data plugin_retention_overrides_to_csv(rows,
+  default_retain_days, include_header) -> String RFC-4180
+  serialiser. Three columns: plugin_id (the override key),
+  retain_days (override value, guaranteed >= MIN_RETAIN_DAYS),
+  default_retain_days (denormalised onto every row — same context-
+  on-every-row pattern as the activity-timeline + bucket-drilldown
+  CSVs' granularity column). A consumer reading one row in
+  isolation sees both the override and the global window in force
+  when the export was produced — no implicit "the default was
+  365". PLUGIN_RETENTION_CSV_HEADER pub const for test + future
+  reorder safety. Same include_header opt-in API as the four
+  sibling exporters.
+
+- Slice 116: plugin retention overrides JSON envelope primitive
+  (0b4545f). Pure-data plugin_retention_overrides_to_json(rows,
+  default_retain_days, min_retain_days) ->
+  PluginRetentionExportEnvelope. Six fields: schema_version +
+  generated_at_iso + default_retain_days + min_retain_days +
+  row_count + rows. Two envelope-level numeric fields are export-
+  scoped invariants (one per export) NOT per-override properties —
+  same shape philosophy as the bucket-drilldown envelope's bucket
+  coords. min_retain_days included so a consumer auditing the file
+  can verify per-row retain_days all sit above the floor without
+  hard-coding it. PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION = 1, pub
+  const PARALLEL-versioned with all four sibling envelopes
+  (install-log + histogram + activity-timeline + bucket-drilldown).
+
+- Slice 117: per-plugin retention overrides UI with export menu
+  (d024824). The demo-able payoff. 5 Tauri commands wired into
+  invoke handler (read + set + clear + CSV export + JSON export).
+  PluginRetentionOverridesResult wire payload denormalises
+  default_retain_days + min_retain_days onto the read so UI
+  doesn't have to pair with retention-policy read for every
+  render. TS surface: PluginRetentionOverride +
+  PluginRetentionOverridesResult interfaces. getPluginRetention
+  Overrides + setPluginRetentionDays + clearPluginRetention async
+  wrappers (browser-mode safe fallbacks). exportPluginRetention
+  Overrides Csv/Json lazy-import invoke wrappers (browser no-op).
+  suggestPluginRetentionExportFilename producing marketplace-
+  plugin-retention-overrides_<YYYYMMDD>.<ext> with UTC date slug.
+
+  UI: nested overrides sub-block inside the Retention section
+  (NOT a sibling section — per-plugin overrides are a
+  SPECIALISATION of the global window, not an independent policy).
+  Eight new state cells (overrides, overridesBusy, addOverride
+  Open, addOverrideIdDraft, addOverrideDaysDraft, editingOverrides,
+  overridesExportMenuOpen, overridesExporting). load()'s
+  Promise.all extended with the overrides read so the section
+  paints with the initial drawer open (no flash-of-empty).
+
+  Overrides head: label + count meta ("All plugins use the
+  default" / "N plugin(s) override the default") + "+ Add"
+  composer trigger + "Export…" popover (hidden when no rows —
+  nothing to export). Composer: inline dashed-border block with
+  plugin_id text input + days number input (min=min_retain_days,
+  max=3650) + Cancel/Save. Override row: monospace truncated
+  plugin_id + retain_days badge with longer/shorter visual
+  treatment (accent tint when longer than default, warn tint when
+  shorter, neutral when equal — the visual difference makes
+  policy drift instantly legible) + Edit/Clear. Edit mode swaps
+  the badge for an inline number input with Cancel/Save. Clear
+  is idempotent — calling on a non-existent row no-ops with no
+  toast.
+
+  Empty state: "No per-plugin overrides yet. Add one to keep an
+  audit-critical plugin's events longer than the default, or a
+  noisy plugin's events shorter." — the two production
+  motivations spelled out so the empty UI explains its own
+  value.
+
+  runOverridesExport(kind) mirrors runTimelineExport /
+  runDrilldownExport shape exactly: opens save dialog with kind-
+  appropriate filter + default filename from helper, cancellation
+  is clean no-op, on success flashes standard retention toast
+  "Exported N overrides as CSV/JSON (X.X KB)" via shared
+  flashRetentionToast helper (reuses retention-toast vocabulary
+  instead of growing a third toast surface).
+
+  9 inline test assertions in marketplace.test.ts (7 scenarios):
+  default csv/json form for known timestamp, csv vs json differ
+  ONLY in suffix, same-epoch reproducibility (UTC contract),
+  epoch slug, date-slug shared across export helpers (cross-
+  validates retention vs activity-timeline slug format), future-
+  date helper honours the `now` arg.
+
+Gates result: cargo fmt clean (one fmt-touch on
+install_log.rs reflowing two doc comments folded into the slice 116
+state — no functional change), cargo clippy --lib -- -D warnings
+PASSED CLEAN in 11.31s, cargo test --lib 2486 passed / 0 failed
+(round-23 baseline 2437 + slices 113-117 = 2486), pnpm check 0
+errors / 104 warnings (round-23 baseline preserved EXACTLY — zero
+new warnings from the overrides TS surface, helpers, popover
+markup, scoped CSS, composer + row layout), tsx
+src/lib/marketplace.test.ts 124 inline expects pass (round-23
+baseline 115 + 9 from slice 117 = 124).
+
+PROCESS NOTES:
+- This tick recovered an in-flight batch — a previous cron tick
+  had committed slices 113-116 but crashed mid-slice-117 (Tauri
+  commands + TS + UI all in working tree, no commit, no push, lock
+  not released). This tick verified slice 117 was complete in the
+  working tree, ran the full gate, committed slice 117, pushed
+  the full round-24 batch, then updated STATE.md + wrote the
+  session note. The recovery path stayed inside the canonical
+  flow — no improvisation needed because the previous tick had
+  written full slice 117 source before crashing.
+- Round-23 closing notes listed "install-log per-plugin
+  retention override" as a next-subsystem candidate; round 24
+  shipped it as a full 5-layer arc rather than a minimum-viable
+  storage-only slice. The auto-prune rewrite (slice 114) is the
+  load-bearing piece — without it an override row would set the
+  policy but the global pass would still delete the plugin's
+  events under the global cutoff, defeating the override.
+- Five slices, five commits, ONE logical subsystem (the per-
+  plugin retention override). Mirrors the canonical five-layer
+  cadence of round-19 (drilldown CSV arc 88-91 + composite 92),
+  round-20 (drilldown JSON arc 93-96 + histogram sort 97),
+  round-21 (histogram audit-export arc 98-102), round-22
+  (activity timeline arc 103-107), and round-23 (bucket
+  drilldown arc 108-112): backend storage -> backend resolver ->
+  CSV primitive -> JSON primitive -> Tauri commands + TS client
+  + filename helper + demo-able UI.
+- The PluginRetentionExportEnvelope schema_version=1 matches the
+  install-log + histogram + activity-timeline + bucket-drilldown
+  envelopes' constants by value today but they are PARALLEL-
+  versioned (a future shape change in one bumps that one only).
+
+DESIGN NOTES:
+- The overrides surface is a NESTED sub-block inside the
+  Retention section (NOT a sibling section). Per-plugin overrides
+  are a SPECIALISATION of the global retention window, not an
+  independent policy — putting them adjacent visually mirrors
+  that semantic.
+- The retain_days badge uses longer/shorter visual treatment
+  (accent tint when longer than default, warn tint when shorter)
+  so policy drift is instantly legible at a glance. A user
+  scanning the list can spot the audit-critical plugins (accent)
+  vs the noisy diagnostic plugins (warn) without reading the
+  numbers.
+- The Pruned outcome's overrides_applied + overrides_rows_removed
+  fields (slice 114) carry per-plugin policy attribution
+  separately from the global pass — a future "Run now" toast can
+  say "Pruned 14 events: 9 from 2 per-plugin policies + 5 from
+  the global window" instead of one undifferentiated number.
+  Not surfaced in the toast yet — slice 117 keeps the toast
+  unchanged to avoid scope creep, the fields ride along for a
+  follow-up tick.
+- The denormalised default_retain_days column on the CSV (slice
+  115) + envelope (slice 116) is the deliberate context-on-every-
+  row pattern — same shape philosophy as the activity-timeline +
+  bucket-drilldown CSVs' granularity column. A consumer reading
+  one row in isolation sees both the override and the global
+  window in force when the export was produced.
+- The runOverridesExport handler reuses flashRetentionToast (the
+  shared retention-section toast helper) instead of growing a
+  third toast surface alongside the drawer toast + the
+  histogram/timeline/drilldown export toasts. The overrides
+  surface lives INSIDE the retention section, so its feedback
+  rides on the retention section's toast vocabulary.
+
+## Roadmap — round 24 (Per-plugin retention overrides) — ALL DONE
+
+Round 24 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the per-plugin retention overrides (slices
+113-117). One backend storage slice, one backend resolver + auto-
+prune rewrite, one CSV primitive, one JSON envelope primitive, and
+one composite UI slice (Tauri commands + TS client + filename
+helper + demo-able overrides sub-block). Same canonical five-layer
+pattern as round 19 (drilldown CSV arc) + round 20 (drilldown JSON
++ histogram sort) + round 21 (histogram export arc) + round 22
+(activity timeline arc) + round 23 (bucket drilldown arc).
+
+113. ~~**per-plugin retention overrides storage**~~ —
+     DONE (2026-06-22 11:33 PT, 9de6338). Schema v2->v3 with
+     install_log_plugin_retention(plugin_id PRIMARY KEY,
+     retain_days). Four primitives: plugin_retention_days(id) /
+     set_plugin_retention_days(id, days) UPSERT-clamp /
+     clear_plugin_retention(id) -> bool / plugin_retention_
+     overrides() -> Vec<PluginRetentionOverride>. Storage-
+     boundary clamp >= MIN_RETAIN_DAYS so a stored bad value
+     never wipes a plugin's log.
+114. ~~**effective retention resolver + per-plugin auto-prune**~~ —
+     DONE (2026-06-22 11:36 PT, 77784b7). effective_retain_days
+     (plugin_id) composes override with global, floor-clamped on
+     both sides. Auto-prune driver rewritten to two disjoint
+     passes (per-plugin DELETEs then global DELETE with
+     NOT IN). AutoPruneOutcome::Pruned gains overrides_applied +
+     overrides_rows_removed for UI attribution. Disjoint
+     invariant: every surviving event satisfies its plugin's
+     effective window.
+115. ~~**plugin retention overrides CSV export primitive**~~ —
+     DONE (2026-06-22 11:38 PT, 64d532b). Pure-data plugin_
+     retention_overrides_to_csv(rows, default_retain_days,
+     include_header) -> String. 3 columns: plugin_id + retain_
+     days + default_retain_days (denormalised). PLUGIN_RETENTION_
+     CSV_HEADER pub const.
+116. ~~**plugin retention overrides JSON envelope primitive**~~ —
+     DONE (2026-06-22 11:40 PT, 0b4545f). Pure-data plugin_
+     retention_overrides_to_json(rows, default_retain_days,
+     min_retain_days) -> PluginRetentionExportEnvelope. 6 fields:
+     schema_version + generated_at_iso + default_retain_days +
+     min_retain_days + row_count + rows. schema_version=1
+     PARALLEL-versioned with all four sibling envelopes.
+117. ~~**per-plugin retention overrides UI with export menu**~~ —
+     DONE (2026-06-22 14:57 PT, d024824). 5 Tauri commands
+     wired into invoke handler (read + set + clear + CSV export
+     + JSON export). PluginRetentionOverridesResult wire payload
+     denormalises default_retain_days + min_retain_days. TS
+     surface with 5 async wrappers + suggestPluginRetention
+     ExportFilename helper. UI: nested overrides sub-block
+     inside Retention section with count meta + "+ Add"
+     composer + per-row Edit/Clear + longer/shorter badge
+     treatment + Export… popover. load()'s Promise.all extended
+     with overrides read so section paints on initial drawer
+     open. 9 inline test assertions for the filename helper.
+
+     With round 24 done, the install log's read-side + policy-
+     side both close: the read-side closes its 2x2 aggregate
+     matrix (round 23) and the policy-side closes the per-plugin
+     override loop. Next subsystem candidates: Hopper rule
+     reorder-by-drag in the coverage panel (drag a dead row up
+     to fix shadowing in one motion), drilldown row -> cross-
+     surface filter (clicking a fall-through filename in the
+     popover carries the search query into the document
+     inspector), Loom-grade tagging explorer, doc-detail
+     metadata editor read/write surface, Beacon cache inspector
+     polish (column sort by basename / model facet), Quill
+     multi-document field-detect queueing, install-log
+     auto-prune toast that breaks out the per-plugin vs global
+     attribution from AutoPruneOutcome::Pruned (slice 114
+     already plumbs the fields, the UI just doesn't render the
+     split yet — short follow-up), histogram hover-tooltip on
+     bar segments (could still ship as a smaller arc).
 
 ### What round-23 (2026-06-22 07:51 PT) just shipped
 
