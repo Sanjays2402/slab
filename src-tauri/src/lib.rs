@@ -6057,6 +6057,149 @@ fn slab_marketplace_install_log_auto_prune(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Per-plugin retention overrides surface (v3.39 round-24 — slice 117).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Wire payload returned by
+/// [`slab_marketplace_install_log_plugin_retention_overrides`].
+/// Carries every persisted override row plus the global window in
+/// force plus the floor constant so the UI can render "Override 7d
+/// (default 365d, min 1d)" without round-tripping for the constants.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginRetentionOverridesResult {
+    pub rows: Vec<marketplace::PluginRetentionOverride>,
+    /// Global window in force at read time — same value
+    /// [`slab_marketplace_install_log_retention_policy`] returns;
+    /// duplicated here so the Retention section UI doesn't have to
+    /// pair the two reads.
+    pub default_retain_days: i64,
+    /// Floor constant — same value as
+    /// [`marketplace::MIN_RETAIN_DAYS`]; the UI uses it to render
+    /// the input field's `min` attribute.
+    pub min_retain_days: i64,
+}
+
+/// Read every persisted per-plugin retention override. Cheap O(N)
+/// on the overrides table; in practice N is small (a handful of
+/// audit-critical or diagnostic plugins per workstation). The UI's
+/// Retention section calls this on mount + after every write.
+#[tauri::command]
+fn slab_marketplace_install_log_plugin_retention_overrides(
+) -> Result<PluginRetentionOverridesResult, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_retention_overrides()
+        .map_err(|e| e.to_string())?;
+    let default_retain_days = log.retain_days().map_err(|e| e.to_string())?;
+    Ok(PluginRetentionOverridesResult {
+        rows,
+        default_retain_days,
+        min_retain_days: marketplace::MIN_RETAIN_DAYS,
+    })
+}
+
+/// Persist a per-plugin retention override. Returns the value
+/// actually stored after the storage layer's
+/// [`marketplace::MIN_RETAIN_DAYS`] clamp so the UI can surface the
+/// corrected value if the user typed something the floor rejects
+/// (e.g. 0 → clamps to 1). Validates `plugin_id` is non-empty
+/// before touching the log — defensive bookkeeping on the wire
+/// boundary.
+///
+/// Does NOT immediately run a prune — that's a separate user
+/// action via [`slab_marketplace_install_log_auto_prune`]. Splitting
+/// the two responsibilities keeps "change the policy" reversible
+/// without altering the log.
+#[tauri::command]
+fn slab_marketplace_install_log_set_plugin_retention(
+    plugin_id: String,
+    days: i64,
+) -> Result<i64, String> {
+    if plugin_id.trim().is_empty() {
+        return Err("plugin_id must not be empty".into());
+    }
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.set_plugin_retention_days(plugin_id.trim(), days)
+        .map_err(|e| e.to_string())
+}
+
+/// Clear a per-plugin retention override. Returns `true` if a row
+/// was actually removed, `false` if no override existed (idempotent).
+/// The plugin falls back to the global window on its next
+/// auto-prune evaluation.
+#[tauri::command]
+fn slab_marketplace_install_log_clear_plugin_retention(plugin_id: String) -> Result<bool, String> {
+    if plugin_id.trim().is_empty() {
+        return Err("plugin_id must not be empty".into());
+    }
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.clear_plugin_retention(plugin_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+/// Write the per-plugin retention overrides list to disk as RFC-4180
+/// CSV. Mirrors the four sibling export commands (install-log,
+/// histogram, activity-timeline, bucket-drilldown). Returns the byte
+/// count actually written; idempotent — overwrites if the target file
+/// exists; creates parent dirs if missing.
+#[tauri::command]
+fn slab_marketplace_install_log_export_plugin_retention_csv(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_retention_overrides()
+        .map_err(|e| e.to_string())?;
+    let default_retain_days = log.retain_days().map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::plugin_retention_overrides_to_csv(
+        &rows,
+        default_retain_days,
+        true,
+    );
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the per-plugin retention overrides list to disk as a
+/// pretty-printed JSON envelope. Ships the
+/// [`marketplace::install_log::PluginRetentionExportEnvelope`] shape
+/// (schema_version + generated_at_iso + default_retain_days +
+/// min_retain_days + row_count + rows). Returns the byte count
+/// actually written; idempotent.
+#[tauri::command]
+fn slab_marketplace_install_log_export_plugin_retention_json(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_retention_overrides()
+        .map_err(|e| e.to_string())?;
+    let default_retain_days = log.retain_days().map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::plugin_retention_overrides_to_json(
+        &rows,
+        default_retain_days,
+        marketplace::MIN_RETAIN_DAYS,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Bulk updates (v3.39 round-15 — slices 69-70).
 // ─────────────────────────────────────────────────────────────────────
 
@@ -7609,6 +7752,11 @@ pub fn run() {
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,
+            slab_marketplace_install_log_plugin_retention_overrides,
+            slab_marketplace_install_log_set_plugin_retention,
+            slab_marketplace_install_log_clear_plugin_retention,
+            slab_marketplace_install_log_export_plugin_retention_csv,
+            slab_marketplace_install_log_export_plugin_retention_json,
             slab_marketplace_list_update_targets,
             slab_marketplace_update_all,
             slab_beacon_voice_capabilities,

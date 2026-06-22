@@ -22,6 +22,8 @@ import {
   // Slice 112 — bucket drilldown TS surface
   suggestBucketDrilldownExportFilename,
   type BucketDrilldownExportFilter,
+  // Slice 117 — per-plugin retention overrides TS surface
+  suggestPluginRetentionExportFilename,
 } from "./marketplace";
 
 function expect(cond: boolean, label: string): void {
@@ -859,3 +861,97 @@ function actBucket(
     `limit irrelevant to filename (no=${noLimit} with=${withLimit})`,
   );
 }
+
+// ─── Slice 117 — per-plugin retention overrides filename helper ───
+
+{
+  // Default csv form for the per-plugin overrides export. Same
+  // YYYYMMDD UTC slug as the four sibling export-filename helpers
+  // so a paralegal collecting marketplace audit exports gets a
+  // sortable directory naturally.
+  const name = suggestPluginRetentionExportFilename("csv", NOW);
+  expect(
+    name === "marketplace-plugin-retention-overrides_20240309.csv",
+    `default csv form (${name})`,
+  );
+}
+
+{
+  // Default json form — same prefix + slug, json extension.
+  const name = suggestPluginRetentionExportFilename("json", NOW);
+  expect(
+    name === "marketplace-plugin-retention-overrides_20240309.json",
+    `default json form (${name})`,
+  );
+}
+
+{
+  // csv vs json differ ONLY in the file extension — the prefix +
+  // date slug are byte-equal. Pin so a future change that adds a
+  // per-kind subdirectory or different date format on one branch
+  // surfaces here.
+  const csv = suggestPluginRetentionExportFilename("csv", NOW);
+  const json = suggestPluginRetentionExportFilename("json", NOW);
+  const csvHead = csv.slice(0, -4);
+  const jsonHead = json.slice(0, -5);
+  expect(csvHead === jsonHead, `csv/json prefix equal (csv=${csv} json=${json})`);
+  expect(csv.endsWith(".csv"), `csv ext (${csv})`);
+  expect(json.endsWith(".json"), `json ext (${json})`);
+}
+
+{
+  // UTC date slug — same wall clock seconds across timezones must
+  // produce the same filename. Pin by passing two equivalent epoch
+  // values that would render differently in local time but identical
+  // in UTC.
+  const a = suggestPluginRetentionExportFilename("csv", 1_710_000_000_000);
+  const b = suggestPluginRetentionExportFilename("csv", 1_710_000_000_000);
+  expect(a === b, `same epoch -> same filename (a=${a} b=${b})`);
+}
+
+{
+  // Epoch timestamp edge case: now = 0 -> 1970-01-01 slug. Pins the
+  // helper's behaviour at the lower bound so a corrupted-state
+  // caller stays predictable.
+  const name = suggestPluginRetentionExportFilename("csv", 0);
+  expect(
+    name === "marketplace-plugin-retention-overrides_19700101.csv",
+    `epoch slug (${name})`,
+  );
+}
+
+{
+  // The sibling filename helpers all share the same date-slug format.
+  // Pin that the per-plugin retention export's slug byte-equals the
+  // activity-timeline export's today-slug for the same `now` — a
+  // future drift between the slug formats surfaces here.
+  const retention = suggestPluginRetentionExportFilename("csv", NOW);
+  const timeline = suggestActivityTimelineExportFilename(
+    { granularity: "day" },
+    "csv",
+    NOW,
+  );
+  // Both slugs end with _<YYYYMMDD>.<ext>. Extract the slug.
+  const retMatch = retention.match(/_(\d{8})\.[a-z]+$/);
+  const tlMatch = timeline.match(/_(\d{8})\.[a-z]+$/);
+  expect(
+    retMatch !== null && tlMatch !== null && retMatch[1] === tlMatch[1],
+    `date slug shared across export helpers (retention=${retention} timeline=${timeline})`,
+  );
+}
+
+{
+  // Future-date helper invocation. The slug should reflect the
+  // requested date — proves the helper is honest about the `now`
+  // arg vs falling back to Date.now() under the hood.
+  // 2026-06-22T00:00:00Z = Date.UTC(2026,5,22) = 1_782_086_400_000 ms.
+  const name = suggestPluginRetentionExportFilename(
+    "json",
+    Date.UTC(2026, 5, 22),
+  );
+  expect(
+    name === "marketplace-plugin-retention-overrides_20260622.json",
+    `future-date helper invocation (${name})`,
+  );
+}
+

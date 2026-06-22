@@ -2346,9 +2346,8 @@ pub fn bucket_drilldown_to_json_with_now(
 ///
 /// Body shape:
 ///
-///   `schema_version` + `generated_at_iso` + `default_retain_days`
-///   + `min_retain_days` + `row_count` + `rows`
-///   (Vec<PluginRetentionOverride>)
+/// `schema_version` + `generated_at_iso` + `default_retain_days` +
+/// `min_retain_days` + `row_count` + `rows` (Vec<PluginRetentionOverride>)
 ///
 /// `default_retain_days` is the global retention window in force at
 /// export time — same value the CSV exporter denormalises onto every
@@ -2373,11 +2372,10 @@ pub struct PluginRetentionExportEnvelope {
     /// Global retention window in force at export time — same value
     /// the CSV exporter denormalises onto every row.
     pub default_retain_days: i64,
-    /// Floor constant. Each `rows[i].retain_days` is guaranteed
-    /// `>= min_retain_days` because the storage layer clamps writes
-    /// + the readers re-clamp on read. Included on the envelope so
-    /// a consumer can pin the invariant without hard-coding the
-    /// floor.
+    /// Floor constant. Each `rows[i].retain_days` is guaranteed `>=
+    /// min_retain_days` because the storage layer clamps writes and
+    /// the readers re-clamp on read. Included on the envelope so a
+    /// consumer can pin the invariant without hard-coding the floor.
     pub min_retain_days: i64,
     /// Number of rows in `rows`. Redundant with `rows.len()` but
     /// cheap and saves consumers a parse step.
@@ -2396,10 +2394,10 @@ pub struct PluginRetentionExportEnvelope {
 /// timeline + bucket-drilldown envelopes (slices 99 + 105 + 111).
 pub const PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION: u32 = 1;
 
-/// Build the envelope from a slice of overrides + the global default
-/// + the floor constant. The envelope's `generated_at_iso` stamp
-/// uses the wall clock at call time; tests pass a fixed timestamp
-/// via [`plugin_retention_overrides_to_json_with_now`].
+/// Build the envelope from a slice of overrides plus the global
+/// default plus the floor constant. The envelope's `generated_at_iso`
+/// stamp uses the wall clock at call time; tests pass a fixed
+/// timestamp via [`plugin_retention_overrides_to_json_with_now`].
 pub fn plugin_retention_overrides_to_json(
     rows: &[PluginRetentionOverride],
     default_retain_days: i64,

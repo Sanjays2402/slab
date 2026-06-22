@@ -33,8 +33,8 @@ pub use install::{
 };
 pub use install_log::{
     default_log_path, ActivityBucket, AutoPruneOutcome, InstallAction, InstallEvent, InstallLog,
-    InstallLogError, InstallStats, PluginHistogramRow, TimeBucketGranularity,
-    AUTO_PRUNE_INTERVAL_SECS, DEFAULT_RETAIN_DAYS, MIN_RETAIN_DAYS,
+    InstallLogError, InstallStats, PluginHistogramRow, PluginRetentionOverride,
+    TimeBucketGranularity, AUTO_PRUNE_INTERVAL_SECS, DEFAULT_RETAIN_DAYS, MIN_RETAIN_DAYS,
 };
 pub use update_plan::{plan_updates, InstalledPlugin, UpdatePlan, UpdateTarget};
 pub use verify::{

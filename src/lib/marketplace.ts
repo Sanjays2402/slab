@@ -1616,6 +1616,149 @@ export async function runInstallLogAutoPrune(
   );
 }
 
+// ─── Per-plugin retention overrides (Slice 117) ─────────────────────
+
+/**
+ * One persisted per-plugin retention override. Mirrors the Rust
+ * `PluginRetentionOverride` struct (Slice 113). `retain_days` is
+ * guaranteed `>= min_retain_days` because the storage layer clamps
+ * writes and the readers re-clamp on read.
+ */
+export interface PluginRetentionOverride {
+  plugin_id: string;
+  retain_days: number;
+}
+
+/**
+ * Wire payload returned by `getPluginRetentionOverrides`. Carries
+ * every override row plus the global window in force and the floor
+ * constant so the UI can render override badges and validate input
+ * without a second round-trip.
+ */
+export interface PluginRetentionOverridesResult {
+  rows: PluginRetentionOverride[];
+  default_retain_days: number;
+  min_retain_days: number;
+}
+
+const BROWSER_FALLBACK_OVERRIDES: PluginRetentionOverridesResult = {
+  rows: [],
+  default_retain_days: 365,
+  min_retain_days: 1,
+};
+
+/**
+ * Read every persisted per-plugin retention override. Cheap O(N) on
+ * the overrides table; in practice N is small (a handful of audit-
+ * critical or diagnostic plugins per workstation). Called on Retention
+ * section mount + after every write so the list stays current.
+ *
+ * Browser mode returns an empty overrides list with the fallback
+ * default + min so the UI renders consistently in dev / preview
+ * builds.
+ */
+export async function getPluginRetentionOverrides(): Promise<PluginRetentionOverridesResult> {
+  if (!isInTauri()) return { ...BROWSER_FALLBACK_OVERRIDES, rows: [] };
+  return invoke<PluginRetentionOverridesResult>(
+    "slab_marketplace_install_log_plugin_retention_overrides",
+  );
+}
+
+/**
+ * Persist a per-plugin retention override. Returns the value actually
+ * stored after the backend's `MIN_RETAIN_DAYS` clamp — when the user
+ * types 0 the backend stores 1 and we surface 1 here, so the input
+ * field can correct itself inline without an extra round-trip.
+ *
+ * Does NOT immediately run a prune — changing the policy and applying
+ * it are independent so the user can edit + cancel without altering
+ * the log. The next `runInstallLogAutoPrune` call will honour the
+ * new override.
+ *
+ * In browser mode returns the requested value clamped at `>= 1` so
+ * the UI's optimistic update reads consistently.
+ */
+export async function setPluginRetentionDays(
+  pluginId: string,
+  days: number,
+): Promise<number> {
+  if (!isInTauri()) return Math.max(1, Math.trunc(days));
+  return invoke<number>(
+    "slab_marketplace_install_log_set_plugin_retention",
+    { pluginId, days },
+  );
+}
+
+/**
+ * Clear a per-plugin retention override. Returns `true` if a row was
+ * removed, `false` if no override existed (idempotent — calling twice
+ * is a no-op on the second call). The plugin falls back to the global
+ * window on its next auto-prune evaluation.
+ *
+ * In browser mode returns `false` (no real backend to mutate).
+ */
+export async function clearPluginRetention(
+  pluginId: string,
+): Promise<boolean> {
+  if (!isInTauri()) return false;
+  return invoke<boolean>(
+    "slab_marketplace_install_log_clear_plugin_retention",
+    { pluginId },
+  );
+}
+
+/**
+ * Suggest a filename for the per-plugin retention overrides export.
+ * Produces `marketplace-plugin-retention-overrides_<YYYYMMDD>.<ext>`
+ * matching the four sibling export-filename helpers' shape. UTC date
+ * slug so the same export from two machines in different timezones
+ * carries the same name.
+ *
+ * Pure helper — no I/O, no Tauri. Accepts an injectable `now` for
+ * deterministic unit tests.
+ */
+export function suggestPluginRetentionExportFilename(
+  kind: "csv" | "json",
+  now?: number,
+): string {
+  const d = new Date(now ?? Date.now());
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `marketplace-plugin-retention-overrides_${y}${m}${day}.${kind}`;
+}
+
+/**
+ * Write the per-plugin retention overrides list to disk as RFC-4180
+ * CSV. Returns the byte count written. In browser mode no-ops and
+ * returns 0 — the file picker is desktop-only.
+ */
+export async function exportPluginRetentionOverridesCsv(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_plugin_retention_csv",
+    { path },
+  );
+}
+
+/**
+ * Write the per-plugin retention overrides list to disk as a pretty-
+ * printed JSON envelope (schema_version + generated_at_iso +
+ * default_retain_days + min_retain_days + row_count + rows). Returns
+ * the byte count written. In browser mode no-ops and returns 0.
+ */
+export async function exportPluginRetentionOverridesJson(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_plugin_retention_json",
+    { path },
+  );
+}
+
 /**
  * Human-friendly subtitle for the Retention section. Renders one of:
  *

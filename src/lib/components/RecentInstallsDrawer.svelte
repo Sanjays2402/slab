@@ -39,6 +39,8 @@
     exportInstallLogActivityTimelineJson,
     exportInstallLogBucketDrilldownCsv,
     exportInstallLogBucketDrilldownJson,
+    exportPluginRetentionOverridesCsv,
+    exportPluginRetentionOverridesJson,
     formatBytes,
     formatInstallEventTime,
     formatLastAutoPrune,
@@ -48,6 +50,9 @@
     getPluginInstallHistogram,
     getActivityTimeline,
     getBucketDrilldown,
+    getPluginRetentionOverrides,
+    setPluginRetentionDays,
+    clearPluginRetention,
     densifyActivityTimeline,
     installEventGlyph,
     installLogSummary,
@@ -62,6 +67,7 @@
     suggestActivityTimelineExportFilename,
     suggestBucketDrilldownExportFilename,
     suggestInstallLogExportFilename,
+    suggestPluginRetentionExportFilename,
     summarizeHistogram,
     type HistogramExportFilter,
     type ActivityTimelineExportFilter,
@@ -81,6 +87,8 @@
     HISTOGRAM_SORT_KEYS,
     sortHistogramRows,
     histogramSortLabel,
+    type PluginRetentionOverridesResult,
+    type PluginRetentionOverride,
   } from "$lib/marketplace";
 
   type Props = {
@@ -169,6 +177,34 @@
   let retentionBusy = $state(false);
   /** Slim auto-clear toast for retention-section feedback. */
   let retentionToast = $state<string | null>(null);
+
+  // ─── Per-plugin retention overrides (Slice 117) ────────────────────
+  //
+  // Nested list inside the Retention section. Audit-critical plugins
+  // want LONGER retention than the corpus default; noisy diagnostic
+  // plugins want SHORTER. Each row is an editable per-plugin override
+  // with a clear affordance to fall back to the global window.
+
+  /** Loaded overrides. Null until the first fetch resolves. */
+  let overrides = $state<PluginRetentionOverridesResult | null>(null);
+  /** True while a getPluginRetentionOverrides / set / clear call is in flight. */
+  let overridesBusy = $state(false);
+  /** Open state of the "Add override" composer inline at the top of the list. */
+  let addOverrideOpen = $state(false);
+  /** Composer plugin_id draft. */
+  let addOverrideIdDraft = $state<string>("");
+  /** Composer retain_days draft. */
+  let addOverrideDaysDraft = $state<number>(365);
+  /**
+   * Per-row inline edit draft keyed by plugin_id. A row is in edit
+   * mode iff this map has an entry; clicking "Edit" populates +
+   * clicking "Save" / "Cancel" clears.
+   */
+  let editingOverrides = $state<Record<string, number>>({});
+  /** Open state for the per-plugin retention export popover. */
+  let overridesExportMenuOpen = $state(false);
+  /** True while a save-as dialog or backend write is in flight. */
+  let overridesExporting = $state(false);
 
   // ─── Top plugins histogram (Slice 87) ─────────────────────────────
   //
@@ -364,7 +400,7 @@
           actionFilter.size > 0 ? [...actionFilter] : null,
         plugin_id_substr: pluginQueryActive || null,
       };
-      const [eventsResp, sm, pol, ids] = await Promise.all([
+      const [eventsResp, sm, pol, ids, ovr] = await Promise.all([
         useFiltered
           ? listInstallEventsFiltered(filterQuery).then((r) => r.events)
           : listRecentInstallEvents(100),
@@ -375,12 +411,14 @@
         pluginSuggestions.length === 0
           ? recentInstallPluginIds(25)
           : Promise.resolve(pluginSuggestions),
+        getPluginRetentionOverrides(),
       ]);
       events = eventsResp;
       summary = sm;
       policy = pol;
       retainDaysDraft = pol.retain_days;
       pluginSuggestions = ids;
+      overrides = ovr;
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
     } finally {
@@ -700,6 +738,142 @@
       err = e instanceof Error ? e.message : String(e);
     } finally {
       retentionBusy = false;
+    }
+  }
+
+  // ─── Per-plugin retention overrides (Slice 117) ────────────────────
+
+  /** Reload just the overrides row — cheap after a single mutation,
+   *  avoids the full drawer refresh that load() would trigger. */
+  async function refreshOverrides(): Promise<void> {
+    overrides = await getPluginRetentionOverrides();
+  }
+
+  function openAddOverride(): void {
+    addOverrideOpen = true;
+    addOverrideIdDraft = "";
+    addOverrideDaysDraft = overrides?.default_retain_days ?? 365;
+  }
+
+  function cancelAddOverride(): void {
+    addOverrideOpen = false;
+    addOverrideIdDraft = "";
+  }
+
+  async function commitAddOverride(): Promise<void> {
+    const id = addOverrideIdDraft.trim();
+    if (!id) {
+      flashRetentionToast("Plugin id is required.");
+      return;
+    }
+    const days = Math.max(
+      overrides?.min_retain_days ?? 1,
+      Math.trunc(addOverrideDaysDraft),
+    );
+    overridesBusy = true;
+    try {
+      const stored = await setPluginRetentionDays(id, days);
+      await refreshOverrides();
+      addOverrideOpen = false;
+      addOverrideIdDraft = "";
+      const dayWord = stored === 1 ? "day" : "days";
+      flashRetentionToast(
+        `Override saved: ${id} keeps events ${stored} ${dayWord}.`,
+      );
+    } catch (e) {
+      flashRetentionToast(
+        `Could not save override: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      overridesBusy = false;
+    }
+  }
+
+  function startEditOverride(row: PluginRetentionOverride): void {
+    editingOverrides = { ...editingOverrides, [row.plugin_id]: row.retain_days };
+  }
+
+  function cancelEditOverride(pluginId: string): void {
+    const next = { ...editingOverrides };
+    delete next[pluginId];
+    editingOverrides = next;
+  }
+
+  async function commitEditOverride(pluginId: string): Promise<void> {
+    const draft = editingOverrides[pluginId];
+    if (draft === undefined) return;
+    const days = Math.max(
+      overrides?.min_retain_days ?? 1,
+      Math.trunc(draft),
+    );
+    overridesBusy = true;
+    try {
+      const stored = await setPluginRetentionDays(pluginId, days);
+      await refreshOverrides();
+      cancelEditOverride(pluginId);
+      const dayWord = stored === 1 ? "day" : "days";
+      flashRetentionToast(
+        `Override updated: ${pluginId} keeps events ${stored} ${dayWord}.`,
+      );
+    } catch (e) {
+      flashRetentionToast(
+        `Could not update override: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      overridesBusy = false;
+    }
+  }
+
+  async function clearOverride(pluginId: string): Promise<void> {
+    overridesBusy = true;
+    try {
+      const removed = await clearPluginRetention(pluginId);
+      if (removed) {
+        await refreshOverrides();
+        cancelEditOverride(pluginId);
+        flashRetentionToast(
+          `Override cleared: ${pluginId} now uses the default window.`,
+        );
+      }
+    } catch (e) {
+      flashRetentionToast(
+        `Could not clear override: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      overridesBusy = false;
+    }
+  }
+
+  async function runOverridesExport(kind: "csv" | "json"): Promise<void> {
+    overridesExportMenuOpen = false;
+    overridesExporting = true;
+    try {
+      const defaultPath = suggestPluginRetentionExportFilename(kind);
+      const target = await saveDialog({
+        defaultPath,
+        filters: [
+          kind === "csv"
+            ? { name: "CSV", extensions: ["csv"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        kind === "csv"
+          ? await exportPluginRetentionOverridesCsv(target)
+          : await exportPluginRetentionOverridesJson(target);
+      const count = overrides?.rows.length ?? 0;
+      const word = count === 1 ? "override" : "overrides";
+      const kindLabel = kind === "csv" ? "CSV" : "JSON";
+      flashRetentionToast(
+        `Exported ${count} ${word} as ${kindLabel} (${formatBytes(bytes)})`,
+      );
+    } catch (e) {
+      flashRetentionToast(
+        `Could not export overrides: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      overridesExporting = false;
     }
   }
 
@@ -1214,6 +1388,204 @@
                 {retentionBusy ? "Working…" : "Run now"}
               </button>
             </div>
+
+            <!-- Per-plugin overrides sub-block (Slice 117) -->
+            {#if overrides}
+              <div class="overrides-block">
+                <div class="overrides-head">
+                  <span class="overrides-label">Per-plugin overrides</span>
+                  <span class="overrides-meta">
+                    {#if overrides.rows.length === 0}
+                      All plugins use the default
+                    {:else if overrides.rows.length === 1}
+                      1 plugin overrides the default
+                    {:else}
+                      {overrides.rows.length} plugins override the default
+                    {/if}
+                  </span>
+                  <div class="overrides-actions">
+                    {#if !addOverrideOpen}
+                      <button
+                        type="button"
+                        class="ghost mini"
+                        onclick={openAddOverride}
+                        disabled={overridesBusy}
+                      >
+                        + Add
+                      </button>
+                    {/if}
+                    {#if overrides.rows.length > 0}
+                      <div class="overrides-export-wrap">
+                        <button
+                          type="button"
+                          class="ghost mini"
+                          onclick={() =>
+                            (overridesExportMenuOpen = !overridesExportMenuOpen)}
+                          disabled={overridesBusy || overridesExporting}
+                          aria-expanded={overridesExportMenuOpen}
+                          aria-haspopup="menu"
+                        >
+                          {overridesExporting ? "Exporting…" : "Export…"}
+                        </button>
+                        {#if overridesExportMenuOpen}
+                          <div class="overrides-export-menu" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onclick={() => void runOverridesExport("csv")}
+                              disabled={overridesExporting}
+                            >
+                              CSV
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onclick={() => void runOverridesExport("json")}
+                              disabled={overridesExporting}
+                            >
+                              JSON envelope
+                            </button>
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+
+                {#if addOverrideOpen}
+                  <div class="overrides-composer">
+                    <label class="overrides-composer-field">
+                      <span class="field-label">Plugin id</span>
+                      <input
+                        type="text"
+                        placeholder="com.example.audit"
+                        bind:value={addOverrideIdDraft}
+                        disabled={overridesBusy}
+                        aria-label="Plugin id"
+                      />
+                    </label>
+                    <label class="overrides-composer-field overrides-composer-days">
+                      <span class="field-label">Keep</span>
+                      <span class="field-input">
+                        <input
+                          type="number"
+                          min={overrides.min_retain_days}
+                          max="3650"
+                          step="1"
+                          bind:value={addOverrideDaysDraft}
+                          disabled={overridesBusy}
+                          aria-label="Override retention days"
+                        />
+                        <span class="field-unit">days</span>
+                      </span>
+                    </label>
+                    <div class="overrides-composer-actions">
+                      <button
+                        type="button"
+                        class="ghost mini"
+                        onclick={cancelAddOverride}
+                        disabled={overridesBusy}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        class="primary mini"
+                        onclick={() => void commitAddOverride()}
+                        disabled={overridesBusy || !addOverrideIdDraft.trim()}
+                      >
+                        {overridesBusy ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+
+                {#if overrides.rows.length === 0 && !addOverrideOpen}
+                  <p class="overrides-empty">
+                    No per-plugin overrides yet. Add one to keep an
+                    audit-critical plugin's events longer than the
+                    default, or a noisy plugin's events shorter.
+                  </p>
+                {:else if overrides.rows.length > 0}
+                  <ul class="overrides-list" role="list">
+                    {#each overrides.rows as row (row.plugin_id)}
+                      {@const editing = editingOverrides[row.plugin_id]}
+                      {@const isLonger =
+                        row.retain_days > overrides.default_retain_days}
+                      {@const isShorter =
+                        row.retain_days < overrides.default_retain_days}
+                      <li class="overrides-row">
+                        <span class="overrides-row-id" title={row.plugin_id}>
+                          {row.plugin_id}
+                        </span>
+                        {#if editing !== undefined}
+                          <span class="field-input overrides-row-edit">
+                            <input
+                              type="number"
+                              min={overrides.min_retain_days}
+                              max="3650"
+                              step="1"
+                              bind:value={editingOverrides[row.plugin_id]}
+                              disabled={overridesBusy}
+                              aria-label="Override retention days"
+                            />
+                            <span class="field-unit">days</span>
+                          </span>
+                          <button
+                            type="button"
+                            class="ghost mini"
+                            onclick={() => cancelEditOverride(row.plugin_id)}
+                            disabled={overridesBusy}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            class="primary mini"
+                            onclick={() =>
+                              void commitEditOverride(row.plugin_id)}
+                            disabled={overridesBusy}
+                          >
+                            {overridesBusy ? "Saving…" : "Save"}
+                          </button>
+                        {:else}
+                          <span
+                            class="overrides-row-badge"
+                            class:longer={isLonger}
+                            class:shorter={isShorter}
+                            title={isLonger
+                              ? `Longer than default (${overrides.default_retain_days}d)`
+                              : isShorter
+                                ? `Shorter than default (${overrides.default_retain_days}d)`
+                                : "Same as default"}
+                          >
+                            {row.retain_days}d
+                          </span>
+                          <button
+                            type="button"
+                            class="ghost mini"
+                            onclick={() => startEditOverride(row)}
+                            disabled={overridesBusy}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            class="ghost mini"
+                            onclick={() => void clearOverride(row.plugin_id)}
+                            disabled={overridesBusy}
+                            title="Remove this override — the plugin falls back to the default window."
+                          >
+                            Clear
+                          </button>
+                        {/if}
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+
             {#if retentionToast}
               <p class="retention-toast" role="status">{retentionToast}</p>
             {/if}
@@ -2442,6 +2814,158 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     background: var(--bg-2);
+  }
+
+  /* ─── Per-plugin retention overrides (Slice 117) ─────────────── */
+  .overrides-block {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .overrides-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .overrides-label {
+    font-size: 11.5px;
+    color: var(--text-1);
+    font-weight: 500;
+  }
+  .overrides-meta {
+    flex: 1;
+    color: var(--text-3);
+    font-size: 11px;
+  }
+  .overrides-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .overrides-export-wrap {
+    position: relative;
+  }
+  .overrides-export-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 5;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    min-width: 130px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  }
+  .overrides-export-menu button {
+    background: transparent;
+    border: 0;
+    color: var(--text-1);
+    font-size: 12px;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .overrides-export-menu button:hover {
+    background: var(--bg-2);
+  }
+  .overrides-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px dashed var(--border);
+    border-radius: 5px;
+    background: var(--bg-1);
+  }
+  .overrides-composer-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+  }
+  .overrides-composer-field input[type="text"] {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    color: var(--text-1);
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .overrides-composer-days {
+    flex: 0 0 110px;
+  }
+  .overrides-composer-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .overrides-empty {
+    margin: 0;
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.5;
+    padding: 6px 4px;
+  }
+  .overrides-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .overrides-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-1);
+  }
+  .overrides-row-id {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11.5px;
+    color: var(--text-1);
+  }
+  .overrides-row-badge {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg-2);
+    color: var(--text-2);
+    border: 1px solid var(--border);
+  }
+  .overrides-row-badge.longer {
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-2) 86%);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 32%, var(--border) 68%);
+  }
+  .overrides-row-badge.shorter {
+    background: color-mix(in srgb, var(--warn, #d99) 14%, var(--bg-2) 86%);
+    color: var(--warn, #d99);
+    border-color: color-mix(in srgb, var(--warn, #d99) 32%, var(--border) 68%);
+  }
+  .overrides-row-edit {
+    flex: 0 0 110px;
   }
 
   /* ─── Top plugins histogram (Slice 87) ────────────────────────── */
