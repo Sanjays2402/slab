@@ -985,6 +985,42 @@ impl InstallLog {
         Ok(out)
     }
 
+    // ─── Activity bucket drilldown (Slice 109) ───────────────────────
+
+    /// Per-plugin breakdown of activity inside a single activity-
+    /// timeline bucket. Composes [`bucket_window_unix`] with
+    /// [`Self::plugin_histogram`] so the UI can answer the natural
+    /// follow-up to the Activity-over-time chart — "OK, but WHICH
+    /// plugins drove that one spike?" — with one round-trip and no
+    /// duplicated bucketing math.
+    ///
+    /// `bucket_start_unix` must be a calendar-floored boundary that
+    /// matches `granularity` (i.e. came from
+    /// [`Self::activity_timeline`]'s output). Callers that pass a
+    /// non-floored timestamp will get a window centred on whatever
+    /// bucket the wider helper would assign to it, which is well-
+    /// defined but probably not what they meant — the wire-layer
+    /// command floors via `bucket_floor_unix` defensively.
+    ///
+    /// `limit` clamps the number of returned plugins; negative
+    /// clamps to zero. The UI default is 25 — same as
+    /// `plugin_histogram` so the drilldown reads as "the same
+    /// per-plugin lens, narrowed to one bucket".
+    ///
+    /// Cheap: one indexed scan over the bucket's events, the same
+    /// GROUP BY plugin_id, action reduction `plugin_histogram` does,
+    /// then the same DESC-by-total sort with plugin_id ASC tie-break
+    /// for deterministic order across calls.
+    pub fn bucket_drilldown(
+        &self,
+        bucket_start_unix: i64,
+        granularity: TimeBucketGranularity,
+        limit: i64,
+    ) -> Result<Vec<PluginHistogramRow>, InstallLogError> {
+        let (since, until) = bucket_window_unix(bucket_start_unix, granularity);
+        self.plugin_histogram(Some(since), Some(until), limit)
+    }
+
     // ─── Retention policy storage (Slice 63) ─────────────────────────
     //
     // Key/value rows in `install_log_settings` back the retention
@@ -3670,6 +3706,174 @@ mod tests {
                 "buckets out of order at index {i}"
             );
         }
+    }
+
+    // ── Slice 109 — bucket_drilldown ─────────────────────────────────
+
+    #[test]
+    fn bucket_drilldown_returns_only_plugins_active_in_bucket() {
+        // seed_timeline_log puts 2 installs on 2023-11-14 (p.a + p.b),
+        // 1 update + 1 failure on 2023-11-15 (p.a + p.c), and 1
+        // uninstall on 2023-12-04 (p.b). Drilling into the 11-14
+        // daily bucket should surface ONLY p.a and p.b.
+        let log = seed_timeline_log();
+        let bucket_start = 1_699_920_000; // 2023-11-14T00:00:00Z
+        let rows = log
+            .bucket_drilldown(bucket_start, TimeBucketGranularity::Day, 25)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<&str> = rows.iter().map(|r| r.plugin_id.as_str()).collect();
+        assert!(ids.contains(&"p.a"));
+        assert!(ids.contains(&"p.b"));
+        assert!(!ids.contains(&"p.c"), "p.c shouldn't drill into day 1");
+    }
+
+    #[test]
+    fn bucket_drilldown_day_grain_excludes_next_day_events() {
+        // The day-2 update (2023-11-15) must not bleed into the day-1
+        // bucket — pins the bucket_window inclusive-second boundary.
+        let log = seed_timeline_log();
+        let bucket_start = 1_699_920_000; // 2023-11-14T00:00:00Z
+        let rows = log
+            .bucket_drilldown(bucket_start, TimeBucketGranularity::Day, 25)
+            .unwrap();
+        // p.a has 1 install on day 1; the update on day 2 is excluded.
+        let pa = rows.iter().find(|r| r.plugin_id == "p.a").unwrap();
+        assert_eq!(pa.installs, 1);
+        assert_eq!(pa.updates, 0);
+        assert_eq!(pa.total, 1);
+    }
+
+    #[test]
+    fn bucket_drilldown_week_grain_collapses_both_days() {
+        // The 2023-11-13 week bucket holds day 1 + day 2 events:
+        // p.a 1 install + 1 update, p.b 1 install, p.c 1 failure.
+        let log = seed_timeline_log();
+        let week_start = 1_699_833_600; // 2023-11-13T00:00:00Z Monday
+        let rows = log
+            .bucket_drilldown(week_start, TimeBucketGranularity::Week, 25)
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        let pa = rows.iter().find(|r| r.plugin_id == "p.a").unwrap();
+        assert_eq!(pa.installs, 1);
+        assert_eq!(pa.updates, 1);
+        assert_eq!(pa.total, 2);
+        // The December uninstall (p.b) is in a later week, NOT here.
+        let pb = rows.iter().find(|r| r.plugin_id == "p.b").unwrap();
+        assert_eq!(pb.installs, 1);
+        assert_eq!(pb.uninstalls, 0);
+        let pc = rows.iter().find(|r| r.plugin_id == "p.c").unwrap();
+        assert_eq!(pc.failures, 1);
+        assert_eq!(pc.total, 1);
+    }
+
+    #[test]
+    fn bucket_drilldown_month_grain_separates_november_december() {
+        let log = seed_timeline_log();
+        // 2023-11 bucket: everything except the December uninstall.
+        let nov_rows = log
+            .bucket_drilldown(1_698_796_800, TimeBucketGranularity::Month, 25)
+            .unwrap();
+        assert_eq!(nov_rows.len(), 3);
+        let pb = nov_rows.iter().find(|r| r.plugin_id == "p.b").unwrap();
+        assert_eq!(pb.uninstalls, 0, "Dec uninstall mustn't bleed into Nov");
+        // 2023-12 bucket: just the uninstall.
+        let dec_rows = log
+            .bucket_drilldown(1_701_388_800, TimeBucketGranularity::Month, 25)
+            .unwrap();
+        assert_eq!(dec_rows.len(), 1);
+        assert_eq!(dec_rows[0].plugin_id, "p.b");
+        assert_eq!(dec_rows[0].uninstalls, 1);
+    }
+
+    #[test]
+    fn bucket_drilldown_total_matches_activity_timeline_bucket_total() {
+        // CONSERVATION INVARIANT: for every bucket the
+        // activity-timeline aggregate emits, summing the per-plugin
+        // totals from bucket_drilldown for the same bucket reproduces
+        // bucket.total — the two surfaces are independent
+        // aggregations of the same underlying events and they
+        // CAN'T diverge.
+        let log = seed_timeline_log();
+        for g in [
+            TimeBucketGranularity::Day,
+            TimeBucketGranularity::Week,
+            TimeBucketGranularity::Month,
+        ] {
+            let buckets = log.activity_timeline(None, None, g).unwrap();
+            for b in &buckets {
+                let rows = log.bucket_drilldown(b.bucket_start_unix, g, 1000).unwrap();
+                let sum: i64 = rows.iter().map(|r| r.total).sum();
+                assert_eq!(
+                    sum, b.total,
+                    "bucket {:?} grain {:?}: drilldown sum {} != bucket total {}",
+                    b.bucket_start_unix, g, sum, b.total
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bucket_drilldown_orders_desc_by_total_with_id_tiebreak() {
+        // Pin the same sort contract plugin_histogram observes:
+        // primary DESC by total, secondary ASC by plugin_id. Build a
+        // bucket where two plugins tie at total=2 to exercise the
+        // tie-break.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // 2023-11-14T00:00:00Z — base of the day-1 bucket.
+        let base = 1_699_920_000;
+        // Plugin a — 2 installs
+        insert_at_action(&mut log, "p.a", "1", InstallAction::Install, base + 100);
+        insert_at_action(&mut log, "p.a", "1", InstallAction::Install, base + 200);
+        // Plugin b — 2 installs (ties with a; b > a so a comes first)
+        insert_at_action(&mut log, "p.b", "1", InstallAction::Install, base + 300);
+        insert_at_action(&mut log, "p.b", "1", InstallAction::Install, base + 400);
+        // Plugin c — 3 installs (highest, ranks first)
+        for _ in 0..3 {
+            insert_at_action(&mut log, "p.c", "1", InstallAction::Install, base + 500);
+        }
+        let rows = log
+            .bucket_drilldown(base, TimeBucketGranularity::Day, 25)
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].plugin_id, "p.c"); // highest total
+        assert_eq!(rows[1].plugin_id, "p.a"); // ties at 2, a < b
+        assert_eq!(rows[2].plugin_id, "p.b");
+    }
+
+    #[test]
+    fn bucket_drilldown_empty_bucket_returns_empty() {
+        let log = seed_timeline_log();
+        // 2023-12-25 — a day with no events in the seed fixture.
+        let rows = log
+            .bucket_drilldown(1_703_462_400, TimeBucketGranularity::Day, 25)
+            .unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn bucket_drilldown_limit_caps_results() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // 2023-11-14T00:00:00Z — day-1 base.
+        let base = 1_699_920_000;
+        // 7 distinct plugins with one install each, all on day 1.
+        for i in 0..7 {
+            let id = format!("p.{i:02}");
+            insert_at_action(&mut log, &id, "1", InstallAction::Install, base + i * 100);
+        }
+        let rows = log
+            .bucket_drilldown(base, TimeBucketGranularity::Day, 3)
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn bucket_drilldown_negative_limit_clamps_to_zero() {
+        let log = seed_timeline_log();
+        let rows = log
+            .bucket_drilldown(1_699_920_000, TimeBucketGranularity::Day, -5)
+            .unwrap();
+        assert!(rows.is_empty());
     }
 
     #[test]
