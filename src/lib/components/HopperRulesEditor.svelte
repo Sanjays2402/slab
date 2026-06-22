@@ -20,6 +20,7 @@
   // `src-tauri/src/pdf/hopper/rules.rs` and `cmds.rs` for the backend.
 
   import { onMount } from "svelte";
+  import { save as saveDialog } from "@tauri-apps/plugin-dialog";
   import {
     slabHopperGetRules,
     slabHopperSetRules,
@@ -27,6 +28,8 @@
     slabHopperListRuns,
     slabHopperRuleCoverage,
     slabHopperSampleDrilldown,
+    slabHopperExportDrilldownCsv,
+    suggestDrilldownExportFilename,
     fallthroughPercent,
     ruleMatchPercent,
     ruleCoverageDiagnostic,
@@ -122,6 +125,15 @@
   let drilldownLoading = $state(false);
   let drilldownError = $state<string | null>(null);
   let drilldownPreviewCap = $state<number>(25);
+
+  /** v3.40 Slice 91 — drilldown CSV export state.
+   *  `drilldownExporting` gates the Export button while the save
+   *  dialog + write is in flight; `drilldownExportToast` carries
+   *  the 4s success notice ("Exported 23 files (1.4 KB)") so the
+   *  paralegal knows the file landed without staring at the disk. */
+  let drilldownExporting = $state(false);
+  let drilldownExportToast = $state<string | null>(null);
+  let drilldownExportToastTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** v3.22.0 Hopper Loop — when true, the BackfillPanel overlay is
    *  mounted. Driven by the "Test on this folder" button below and by
@@ -305,6 +317,68 @@
     if (clamped === drilldownPreviewCap) return;
     drilldownPreviewCap = clamped;
     if (openBucket !== null) refreshDrilldown();
+  }
+
+  // ─── Slice 91 — drilldown CSV export handler ────────────────────────
+  //
+  // Wires the popover's "Export CSV" button. Resolves the suggested
+  // filename via the slice-90 helper, opens the native save-as dialog,
+  // ships the in-state drilldown + the current rule-name array to the
+  // slice-89 command, then shows a 4s success toast. Cancellation
+  // (user dismisses the dialog) is a clean no-op — the toast doesn't
+  // fire and `drilldownExporting` resets in the finally.
+  //
+  // We pass the LOADED drilldown verbatim (not re-fetched) so the CSV
+  // matches exactly what the popover is currently rendering — a
+  // background rule edit can't sneak in a different bucket between
+  // "click Export" and "click Save".
+
+  async function exportDrilldownCsv() {
+    if (drilldown === null || openBucket === null) return;
+    if (drilldownExporting) return;
+    drilldownExporting = true;
+    drilldownExportToast = null;
+    try {
+      const ruleNames = rules.map((r) => r.name);
+      const defaultPath = suggestDrilldownExportFilename(openBucket, ruleNames, {
+        watchId,
+      });
+      const target = await saveDialog({
+        defaultPath,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+        title: "Export drilldown as CSV",
+      });
+      if (!target) return; // user cancelled
+      const bytes = await slabHopperExportDrilldownCsv(
+        drilldown,
+        ruleNames,
+        target,
+      );
+      const fileCount = drilldown.samples.length;
+      drilldownExportToast =
+        `Exported ${fileCount} ${fileCount === 1 ? "file" : "files"}` +
+        ` (${formatBytes(bytes)})`;
+      if (drilldownExportToastTimer) clearTimeout(drilldownExportToastTimer);
+      drilldownExportToastTimer = setTimeout(() => {
+        drilldownExportToast = null;
+      }, 4000);
+    } catch (e) {
+      drilldownError = `Export failed: ${String(e)}`;
+    } finally {
+      drilldownExporting = false;
+    }
+  }
+
+  /** Local KB/MB formatter for the export toast. Mirrors
+   *  RecentInstallsDrawer's formatBytes shape (1 decimal place,
+   *  K/M/G suffixes). Kept local because the hopper.ts formatBytes
+   *  is for predicate display ("size > 1 MB") and uses a slightly
+   *  different signature. */
+  function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   }
 
   /** Window-level Escape closes the drilldown popover. We don't
@@ -876,12 +950,27 @@
       <button
         type="button"
         class="ghost mini"
+        onclick={() => void exportDrilldownCsv()}
+        disabled={drilldownExporting
+          || drilldownLoading
+          || drilldown === null
+          || drilldown.samples.length === 0}
+        title={drilldown && drilldown.samples.length > 0
+          ? `Save ${drilldown.samples.length} ${drilldown.samples.length === 1 ? "file" : "files"} as CSV`
+          : "No files in this bucket to export"}
+      >{drilldownExporting ? "Exporting…" : "Export CSV"}</button>
+      <button
+        type="button"
+        class="ghost mini"
         onclick={closeDrilldown}
         title="Close drilldown (Esc)"
         aria-label="Close drilldown"
       >Close</button>
     </div>
   </header>
+  {#if drilldownExportToast}
+    <p class="drill-export-toast" role="status">{drilldownExportToast}</p>
+  {/if}
   {#if drilldownError}
     <p class="drill-error" role="alert">{drilldownError}</p>
   {:else if drilldownLoading && !drilldown}
@@ -1649,6 +1738,21 @@
     color: rgb(255, 180, 180);
     background: rgba(240, 80, 80, 0.1);
     border-radius: 4px;
+  }
+  .drill-export-toast {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: rgb(170, 230, 195);
+    background: rgba(110, 220, 154, 0.1);
+    border: 1px solid rgba(110, 220, 154, 0.22);
+    border-radius: 4px;
+    font-variant-numeric: tabular-nums;
+    animation: drill-toast-fade-in 0.16s ease-out;
+  }
+  @keyframes drill-toast-fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: translateY(0); }
   }
   .drill-loading,
   .drill-empty {
