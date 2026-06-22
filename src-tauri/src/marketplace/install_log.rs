@@ -1262,6 +1262,99 @@ pub fn install_log_to_json_with_now(
     }
 }
 
+// ─── Top plugins histogram JSON export envelope (Slice 99) ───────────
+
+/// Wire shape for the JSON top-plugins histogram export. Lifts the
+/// raw [`PluginHistogramRow`] entries into an envelope so a downstream
+/// consumer can see at a glance which schema it's reading, the
+/// effective window the export covers, when it was produced, and the
+/// pre-summed corpus total — without re-summing client-side or
+/// guessing at provenance.
+///
+/// The envelope is what `slab_marketplace_install_log_export_histogram_json`
+/// (Slice 100) writes to disk. Same envelope pattern as
+/// [`InstallLogExportEnvelope`] (schema_version + generated_at_iso +
+/// window + body) so a downstream script reading either v1 Slab
+/// audit-export JSON file recognises the family by name.
+///
+/// `row_count` mirrors `rows.len()` and `grand_total` mirrors the
+/// server's `PluginHistogramResult.grand_total` — both redundant
+/// with the body but cheap to pre-compute and save a consumer a
+/// parse step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PluginHistogramExportEnvelope {
+    /// Schema version of the envelope (NOT of the histogram aggregate
+    /// itself). Bumped on a non-additive shape change.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced.
+    pub generated_at_iso: String,
+    /// Number of rows in `rows`. Redundant with `rows.len()` but
+    /// cheap and saves consumers a parse step.
+    pub row_count: usize,
+    /// Sum of every row's `total`. The corpus-wide event count within
+    /// the window across the returned plugins. Pre-summed so a
+    /// downstream pipeline (Splunk, Excel) can read one number instead
+    /// of iterating the rows.
+    pub grand_total: i64,
+    /// Window the export was filtered by, mirroring the
+    /// `plugin_histogram` boundaries. `null` on either side means
+    /// "no bound" — i.e. the export covers everything before (or
+    /// after) the other boundary.
+    pub since_unix: Option<i64>,
+    pub since_iso: Option<String>,
+    pub until_unix: Option<i64>,
+    pub until_iso: Option<String>,
+    /// The histogram rows themselves. Order is the caller's order
+    /// verbatim — the server emits sorted-by-total-DESC + plugin_id
+    /// ASC tiebreak; the UI may have re-sorted client-side via
+    /// `sortHistogramRows`. Either way, the envelope ships exactly
+    /// what it gets.
+    pub rows: Vec<PluginHistogramRow>,
+}
+
+/// Schema version of the JSON histogram export envelope. Starts at
+/// v1; bumped independently of [`INSTALL_LOG_EXPORT_SCHEMA_VERSION`]
+/// because the two envelopes' bodies are unrelated (a future shape
+/// change in one shouldn't drag the other forward). Same parallel-
+/// versioning reasoning as the drilldown envelope (slice 93).
+pub const PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Build the envelope from a slice of histogram rows + the same
+/// window boundaries that produced them + the corpus-wide
+/// `grand_total` the server pre-computed. The envelope's
+/// `generated_at_iso` stamp uses the wall clock at call time; tests
+/// pass a fixed timestamp via [`plugin_histogram_to_json_with_now`].
+pub fn plugin_histogram_to_json(
+    rows: &[PluginHistogramRow],
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    grand_total: i64,
+) -> PluginHistogramExportEnvelope {
+    plugin_histogram_to_json_with_now(rows, since_unix, until_unix, grand_total, unix_now())
+}
+
+/// Same as [`plugin_histogram_to_json`] but takes an explicit
+/// unix-seconds "now" so unit tests don't race the wall clock.
+pub fn plugin_histogram_to_json_with_now(
+    rows: &[PluginHistogramRow],
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    grand_total: i64,
+    now_unix: i64,
+) -> PluginHistogramExportEnvelope {
+    PluginHistogramExportEnvelope {
+        schema_version: PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: iso8601_utc(now_unix),
+        row_count: rows.len(),
+        grand_total,
+        since_unix,
+        since_iso: since_unix.map(iso8601_utc),
+        until_unix,
+        until_iso: until_unix.map(iso8601_utc),
+        rows: rows.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2822,5 +2915,179 @@ mod tests {
         let csv = plugin_histogram_to_csv(&rows, true);
         assert!(!csv.contains("None"));
         assert!(!csv.to_lowercase().contains("null"));
+    }
+
+    // ─── Slice 99: histogram JSON envelope ───────────────────────────
+
+    #[test]
+    fn histogram_json_envelope_carries_schema_v1() {
+        let rows = vec![hist_row("com.x", 1, 0, 0, 0, 1_700_000_000)];
+        let env = plugin_histogram_to_json_with_now(&rows, None, None, 1, 1_710_000_000);
+        assert_eq!(env.schema_version, PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.schema_version, 1);
+    }
+
+    #[test]
+    fn histogram_json_envelope_records_row_count_matching_rows_len() {
+        let rows: Vec<PluginHistogramRow> = (0..4)
+            .map(|i| hist_row(&format!("com.p{i}"), 1, 0, 0, 0, 1_700_000_000))
+            .collect();
+        let env = plugin_histogram_to_json_with_now(&rows, None, None, 4, 1_710_000_000);
+        assert_eq!(env.row_count, 4);
+        assert_eq!(env.row_count, env.rows.len());
+        let empty = plugin_histogram_to_json_with_now(&[], None, None, 0, 1_710_000_000);
+        assert_eq!(empty.row_count, 0);
+        assert_eq!(empty.rows.len(), 0);
+    }
+
+    #[test]
+    fn histogram_json_envelope_carries_grand_total_from_caller() {
+        // The envelope ships the caller-supplied grand_total verbatim
+        // rather than re-summing (the server already pre-summed; a
+        // re-sum here would let row-truncation differ silently from
+        // the actual corpus total).
+        let rows = vec![
+            hist_row("com.a", 3, 0, 0, 0, 1_700_000_000),
+            hist_row("com.b", 5, 0, 0, 0, 1_700_000_000),
+        ];
+        // Deliberately mismatch grand_total vs the sum of rows.total
+        // to verify the envelope ships the caller's value verbatim.
+        let env = plugin_histogram_to_json_with_now(&rows, None, None, 999, 1_710_000_000);
+        assert_eq!(env.grand_total, 999);
+    }
+
+    #[test]
+    fn histogram_json_envelope_generated_at_iso_format() {
+        let env = plugin_histogram_to_json_with_now(&[], None, None, 0, 1_710_000_000);
+        // Same ISO format as install-log envelope so a downstream
+        // tool reading either file sees identical timestamp shape.
+        assert_eq!(env.generated_at_iso, "2024-03-09T16:00:00Z");
+    }
+
+    #[test]
+    fn histogram_json_envelope_no_window_bounds_means_no_iso_either() {
+        let env = plugin_histogram_to_json_with_now(&[], None, None, 0, 1_710_000_000);
+        assert!(env.since_unix.is_none());
+        assert!(env.since_iso.is_none());
+        assert!(env.until_unix.is_none());
+        assert!(env.until_iso.is_none());
+    }
+
+    #[test]
+    fn histogram_json_envelope_window_bounds_round_trip_to_iso() {
+        let env = plugin_histogram_to_json_with_now(
+            &[],
+            Some(1_700_000_000),
+            Some(1_710_000_000),
+            0,
+            1_710_000_000,
+        );
+        assert_eq!(env.since_unix, Some(1_700_000_000));
+        assert_eq!(env.since_iso.as_deref(), Some("2023-11-14T22:13:20Z"));
+        assert_eq!(env.until_unix, Some(1_710_000_000));
+        assert_eq!(env.until_iso.as_deref(), Some("2024-03-09T16:00:00Z"));
+    }
+
+    #[test]
+    fn histogram_json_envelope_only_since_bound_other_none() {
+        let env =
+            plugin_histogram_to_json_with_now(&[], Some(1_700_000_000), None, 0, 1_710_000_000);
+        assert_eq!(env.since_unix, Some(1_700_000_000));
+        assert!(env.since_iso.is_some());
+        assert!(env.until_unix.is_none());
+        assert!(env.until_iso.is_none());
+    }
+
+    #[test]
+    fn histogram_json_envelope_preserves_input_row_order() {
+        // The envelope ships the caller's order verbatim — the server
+        // emits sorted-by-total-DESC, the UI may re-sort by another
+        // axis, the exporter doesn't re-sort either way.
+        let rows = vec![
+            hist_row("zzz", 10, 0, 0, 0, 100),
+            hist_row("aaa", 5, 0, 0, 0, 200),
+            hist_row("mmm", 1, 0, 0, 0, 300),
+        ];
+        let env = plugin_histogram_to_json_with_now(&rows, None, None, 16, 1_710_000_000);
+        let ids: Vec<&str> = env.rows.iter().map(|r| r.plugin_id.as_str()).collect();
+        assert_eq!(ids, vec!["zzz", "aaa", "mmm"]);
+    }
+
+    #[test]
+    fn histogram_json_envelope_rows_are_clones_not_references() {
+        // The envelope owns its row data (Vec<PluginHistogramRow>).
+        // Validates the to_vec() in the builder by mutating the caller's
+        // slice after envelope construction — the envelope shouldn't
+        // observe the mutation.
+        let mut rows = vec![hist_row("com.x", 1, 0, 0, 0, 1_700_000_000)];
+        let env = plugin_histogram_to_json_with_now(&rows, None, None, 1, 1_710_000_000);
+        rows[0].plugin_id = "mutated".into();
+        assert_eq!(env.rows[0].plugin_id, "com.x");
+    }
+
+    #[test]
+    fn histogram_json_envelope_serde_round_trip() {
+        // serde stability — the envelope serialises and deserialises
+        // to the same value, with the same field set we documented.
+        let rows = vec![
+            hist_row("com.acme.ocr", 3, 1, 0, 2, 1_700_000_000),
+            hist_row("org.studio.batch", 5, 0, 1, 0, 1_700_086_400),
+        ];
+        let env =
+            plugin_histogram_to_json_with_now(&rows, Some(1_700_000_000), None, 12, 1_710_000_000);
+        let s = serde_json::to_string(&env).unwrap();
+        // All required fields present.
+        assert!(s.contains("\"schema_version\":1"));
+        assert!(s.contains("\"row_count\":2"));
+        assert!(s.contains("\"grand_total\":12"));
+        assert!(s.contains("\"generated_at_iso\":\"2024-03-09T16:00:00Z\""));
+        assert!(s.contains("\"since_unix\":1700000000"));
+        assert!(s.contains("\"since_iso\":\"2023-11-14T22:13:20Z\""));
+        assert!(s.contains("\"until_unix\":null"));
+        assert!(s.contains("\"until_iso\":null"));
+        // Roundtrip back.
+        let back: PluginHistogramExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn histogram_json_envelope_pretty_print_is_valid_json() {
+        // The Tauri command writes serde_json::to_string_pretty —
+        // confirm the envelope serialises cleanly in that form too
+        // (catches any non-serialisable field added in the future).
+        let rows = vec![hist_row("com.x", 1, 0, 0, 0, 1_700_000_000)];
+        let env = plugin_histogram_to_json_with_now(&rows, None, None, 1, 1_710_000_000);
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        // Pretty form contains newlines + indentation.
+        assert!(pretty.contains('\n'));
+        // Round-trip from pretty form.
+        let back: PluginHistogramExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn histogram_json_envelope_empty_input_renders_cleanly() {
+        // Zero rows, no window. The envelope still has all its fields;
+        // a downstream consumer can recognise "Slab audit export" by
+        // schema_version even when there's nothing to read.
+        let env = plugin_histogram_to_json_with_now(&[], None, None, 0, 1_710_000_000);
+        assert_eq!(env.schema_version, PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.row_count, 0);
+        assert_eq!(env.grand_total, 0);
+        assert!(env.rows.is_empty());
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(s.contains("\"rows\":[]"));
+    }
+
+    #[test]
+    fn histogram_json_envelope_parallel_versioned_with_install_log() {
+        // Both start at v1; their values are equal today. The two
+        // envelopes are parallel-versioned (independent bumps as their
+        // bodies diverge), so this equality is "true today" not "true
+        // forever" — bumping one must NOT silently bump the other.
+        assert_eq!(
+            PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION, INSTALL_LOG_EXPORT_SCHEMA_VERSION,
+            "both start at v1 — bump independently when shapes diverge",
+        );
     }
 }
