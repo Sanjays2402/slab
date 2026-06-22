@@ -1662,6 +1662,116 @@ pub fn plugin_histogram_to_json_with_now(
     }
 }
 
+// ─── Activity timeline JSON envelope (Slice 105) ─────────────────────
+
+/// Wire shape for the JSON activity-timeline export. Lifts the raw
+/// [`ActivityBucket`] rows into an envelope so a downstream consumer
+/// can see at a glance what schema it's reading, what granularity the
+/// buckets carry, how big the export is, and when it was produced —
+/// without re-counting the array or guessing at fields.
+///
+/// Same envelope shape as [`InstallLogExportEnvelope`] (slice 60) +
+/// [`PluginHistogramExportEnvelope`] (slice 99) +
+/// `DrilldownExportEnvelope` (slice 93): `schema_version` +
+/// `generated_at_iso` + window + body. Adds one extra discriminator
+/// field — `granularity` — because the timeline body carries
+/// per-bucket counts whose meaning depends on the bucket width.
+///
+/// `bucket_count` mirrors `buckets.len()` and `grand_total` mirrors
+/// the sum of every bucket's `total` (caller-supplied verbatim, NOT
+/// re-summed here — same defence-in-depth as the histogram envelope's
+/// `grand_total`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityTimelineExportEnvelope {
+    /// Schema version of the envelope (NOT of the activity-timeline
+    /// aggregate itself). Bumped on a non-additive shape change.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced.
+    pub generated_at_iso: String,
+    /// Bucket width — `"day"` / `"week"` / `"month"`. Carries the
+    /// semantics needed to interpret each bucket's
+    /// `bucket_start_unix` as the START of a day / week / month
+    /// window. Without this discriminator a downstream consumer
+    /// would have to infer the granularity from the bucket gaps —
+    /// fragile when the timeline is sparse.
+    pub granularity: TimeBucketGranularity,
+    /// Number of buckets in `buckets`. Redundant with
+    /// `buckets.len()` but cheap and saves consumers a parse step.
+    pub bucket_count: usize,
+    /// Sum of every bucket's `total`. The corpus-wide event count
+    /// within the window across the returned buckets. Caller-
+    /// supplied verbatim (NOT re-summed here) so a future change
+    /// to ActivityBucket.total semantics doesn't silently diverge.
+    pub grand_total: i64,
+    /// Window the export was filtered by, mirroring the
+    /// `activity_timeline` boundaries. `null` on either side means
+    /// "no bound" — same shape as the other v1 audit-export
+    /// envelopes.
+    pub since_unix: Option<i64>,
+    pub since_iso: Option<String>,
+    pub until_unix: Option<i64>,
+    pub until_iso: Option<String>,
+    /// The buckets themselves. Order is the caller's order
+    /// verbatim — the server emits ASC by `bucket_start_unix`; the
+    /// UI may have densified (zero-fill gap buckets) before export.
+    /// Either way, the envelope ships exactly what it gets.
+    pub buckets: Vec<ActivityBucket>,
+}
+
+/// Schema version of the JSON activity-timeline export envelope.
+/// Starts at v1; bumped independently of the other audit-export
+/// envelope constants because their bodies are unrelated (a future
+/// shape change here shouldn't drag the install-log / histogram /
+/// drilldown envelopes forward). Same parallel-versioning reasoning
+/// as the histogram envelope (slice 99).
+pub const ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Build the envelope from a slice of activity buckets + the
+/// granularity + window boundaries that produced them + the corpus-
+/// wide `grand_total`. The envelope's `generated_at_iso` stamp uses
+/// the wall clock at call time; tests pass a fixed timestamp via
+/// [`activity_timeline_to_json_with_now`].
+pub fn activity_timeline_to_json(
+    buckets: &[ActivityBucket],
+    granularity: TimeBucketGranularity,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    grand_total: i64,
+) -> ActivityTimelineExportEnvelope {
+    activity_timeline_to_json_with_now(
+        buckets,
+        granularity,
+        since_unix,
+        until_unix,
+        grand_total,
+        unix_now(),
+    )
+}
+
+/// Same as [`activity_timeline_to_json`] but takes an explicit
+/// unix-seconds "now" so unit tests don't race the wall clock.
+pub fn activity_timeline_to_json_with_now(
+    buckets: &[ActivityBucket],
+    granularity: TimeBucketGranularity,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    grand_total: i64,
+    now_unix: i64,
+) -> ActivityTimelineExportEnvelope {
+    ActivityTimelineExportEnvelope {
+        schema_version: ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: iso8601_utc(now_unix),
+        granularity,
+        bucket_count: buckets.len(),
+        grand_total,
+        since_unix,
+        since_iso: since_unix.map(iso8601_utc),
+        until_unix,
+        until_iso: until_unix.map(iso8601_utc),
+        buckets: buckets.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3988,5 +4098,277 @@ mod tests {
             PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION, INSTALL_LOG_EXPORT_SCHEMA_VERSION,
             "both start at v1 — bump independently when shapes diverge",
         );
+    }
+
+    // ─── Slice 105: activity timeline JSON envelope ──────────────────
+
+    #[test]
+    fn activity_timeline_json_envelope_carries_schema_v1() {
+        let buckets = vec![act_bucket(1_700_000_000, 1, 0, 0, 0)];
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Day,
+            None,
+            None,
+            1,
+            1_710_000_000,
+        );
+        assert_eq!(env.schema_version, ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.schema_version, 1);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_records_granularity() {
+        // The granularity field discriminates the bucket-width
+        // semantics — a downstream consumer can read it without
+        // inferring from bucket gaps. Test all three values
+        // round-trip exactly.
+        for g in [
+            TimeBucketGranularity::Day,
+            TimeBucketGranularity::Week,
+            TimeBucketGranularity::Month,
+        ] {
+            let env = activity_timeline_to_json_with_now(&[], g, None, None, 0, 1_710_000_000);
+            assert_eq!(env.granularity, g);
+        }
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_bucket_count_mirrors_buckets_len() {
+        let buckets: Vec<ActivityBucket> = (0..4)
+            .map(|i| act_bucket(1_700_000_000 + i * 86_400, 1, 0, 0, 0))
+            .collect();
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Day,
+            None,
+            None,
+            4,
+            1_710_000_000,
+        );
+        assert_eq!(env.bucket_count, 4);
+        assert_eq!(env.bucket_count, env.buckets.len());
+        let empty =
+            activity_timeline_to_json_with_now(&[], TimeBucketGranularity::Day, None, None, 0, 0);
+        assert_eq!(empty.bucket_count, 0);
+        assert_eq!(empty.buckets.len(), 0);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_grand_total_verbatim_from_caller() {
+        // grand_total ships from the caller VERBATIM (not re-summed
+        // here) — matches the histogram envelope's defensive posture.
+        // A caller-supplied mismatched value surfaces in the export
+        // rather than being silently corrected.
+        let buckets = vec![
+            act_bucket(1_700_000_000, 3, 0, 0, 0),
+            act_bucket(1_700_086_400, 5, 0, 0, 0),
+        ];
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Day,
+            None,
+            None,
+            999, // deliberate mismatch
+            1_710_000_000,
+        );
+        assert_eq!(env.grand_total, 999);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_generated_at_iso_format_matches_install_log() {
+        // Downstream join: the ISO format byte-for-byte matches the
+        // install-log envelope's generated_at_iso so two exports
+        // produced at the same moment carry identical strings.
+        let now = 1_710_000_000;
+        let timeline_env =
+            activity_timeline_to_json_with_now(&[], TimeBucketGranularity::Day, None, None, 0, now);
+        let install_env = install_log_to_json_with_now(&[], None, None, now);
+        assert_eq!(timeline_env.generated_at_iso, install_env.generated_at_iso);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_window_bounds_round_trip_to_iso() {
+        // Both window bounds populated → both iso sides populated;
+        // both unset → both iso sides null.
+        let env = activity_timeline_to_json_with_now(
+            &[],
+            TimeBucketGranularity::Day,
+            Some(1_700_000_000),
+            Some(1_710_000_000),
+            0,
+            1_710_000_000,
+        );
+        assert_eq!(env.since_iso.as_deref(), Some("2023-11-14T22:13:20Z"));
+        assert_eq!(env.until_iso.as_deref(), Some("2024-03-09T16:00:00Z"));
+        let no_window =
+            activity_timeline_to_json_with_now(&[], TimeBucketGranularity::Day, None, None, 0, 0);
+        assert!(no_window.since_iso.is_none());
+        assert!(no_window.until_iso.is_none());
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_only_since_has_only_since_iso() {
+        let env = activity_timeline_to_json_with_now(
+            &[],
+            TimeBucketGranularity::Day,
+            Some(1_700_000_000),
+            None,
+            0,
+            1_710_000_000,
+        );
+        assert!(env.since_iso.is_some());
+        assert!(env.until_iso.is_none());
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_preserves_input_bucket_order() {
+        // The envelope ships the caller's bucket order verbatim. The
+        // server emits ASC by bucket_start_unix; the UI may densify
+        // (zero-fill gap buckets) before export. Either way the
+        // envelope ships exactly what it gets.
+        let buckets = vec![
+            act_bucket(1_700_172_800, 0, 0, 0, 1),
+            act_bucket(1_700_000_000, 1, 0, 0, 0),
+            act_bucket(1_700_086_400, 0, 1, 0, 0),
+        ];
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Day,
+            None,
+            None,
+            2,
+            1_710_000_000,
+        );
+        let starts: Vec<i64> = env.buckets.iter().map(|b| b.bucket_start_unix).collect();
+        // Out-of-order input ships out-of-order — caller's
+        // responsibility to sort before export if order matters.
+        assert_eq!(starts, vec![1_700_172_800, 1_700_000_000, 1_700_086_400]);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_buckets_are_clones_not_references() {
+        // The envelope owns its bucket data (Vec<ActivityBucket>).
+        // Validates the to_vec() in the builder by mutating the
+        // caller's slice after construction.
+        let mut buckets = vec![act_bucket(1_700_000_000, 1, 0, 0, 0)];
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Day,
+            None,
+            None,
+            1,
+            1_710_000_000,
+        );
+        buckets[0].installs = 999;
+        assert_eq!(env.buckets[0].installs, 1);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_serde_round_trip() {
+        // serde stability — the envelope serialises and deserialises
+        // to the same value with the same field set we documented.
+        let buckets = vec![
+            act_bucket(1_700_000_000, 3, 1, 0, 2),
+            act_bucket(1_700_086_400, 5, 0, 1, 0),
+        ];
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Week,
+            Some(1_700_000_000),
+            None,
+            12,
+            1_710_000_000,
+        );
+        let s = serde_json::to_string(&env).unwrap();
+        // All required fields present.
+        assert!(s.contains("\"schema_version\":1"));
+        assert!(s.contains("\"granularity\":\"week\""));
+        assert!(s.contains("\"bucket_count\":2"));
+        assert!(s.contains("\"grand_total\":12"));
+        assert!(s.contains("\"generated_at_iso\":\"2024-03-09T16:00:00Z\""));
+        assert!(s.contains("\"since_unix\":1700000000"));
+        assert!(s.contains("\"since_iso\":\"2023-11-14T22:13:20Z\""));
+        assert!(s.contains("\"until_unix\":null"));
+        assert!(s.contains("\"until_iso\":null"));
+        // Roundtrip back.
+        let back: ActivityTimelineExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_pretty_print_is_valid_json() {
+        // The Tauri command writes serde_json::to_string_pretty —
+        // confirm the envelope serialises cleanly in that form too.
+        let buckets = vec![act_bucket(1_700_000_000, 1, 0, 0, 0)];
+        let env = activity_timeline_to_json_with_now(
+            &buckets,
+            TimeBucketGranularity::Day,
+            None,
+            None,
+            1,
+            1_710_000_000,
+        );
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        assert!(pretty.contains('\n'));
+        let back: ActivityTimelineExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_empty_input_renders_cleanly() {
+        // Zero buckets, no window — the envelope still has all its
+        // fields. A downstream consumer can recognise "Slab audit
+        // export" by schema_version + granularity even with nothing
+        // to read.
+        let env = activity_timeline_to_json_with_now(
+            &[],
+            TimeBucketGranularity::Month,
+            None,
+            None,
+            0,
+            1_710_000_000,
+        );
+        assert_eq!(env.schema_version, ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.granularity, TimeBucketGranularity::Month);
+        assert_eq!(env.bucket_count, 0);
+        assert_eq!(env.grand_total, 0);
+        assert!(env.buckets.is_empty());
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(s.contains("\"buckets\":[]"));
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_parallel_versioned_with_other_envelopes() {
+        // All four start at v1 today. The envelopes are parallel-
+        // versioned (independent bumps as their bodies diverge), so
+        // these equalities are "true today" not "true forever" —
+        // bumping any one must NOT silently bump the others.
+        assert_eq!(
+            ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION, INSTALL_LOG_EXPORT_SCHEMA_VERSION,
+            "timeline + install-log: bump independently when shapes diverge",
+        );
+        assert_eq!(
+            ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION, PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION,
+            "timeline + histogram: bump independently when shapes diverge",
+        );
+    }
+
+    #[test]
+    fn activity_timeline_json_envelope_granularity_round_trips_serde() {
+        // The granularity field uses the same serde rename_all =
+        // "lowercase" — confirm it survives a roundtrip in all three
+        // values without manual remapping.
+        for (g, tag) in [
+            (TimeBucketGranularity::Day, "day"),
+            (TimeBucketGranularity::Week, "week"),
+            (TimeBucketGranularity::Month, "month"),
+        ] {
+            let env = activity_timeline_to_json_with_now(&[], g, None, None, 0, 0);
+            let s = serde_json::to_string(&env).unwrap();
+            assert!(s.contains(&format!("\"granularity\":\"{tag}\"")));
+            let back: ActivityTimelineExportEnvelope = serde_json::from_str(&s).unwrap();
+            assert_eq!(back.granularity, g);
+        }
     }
 }
