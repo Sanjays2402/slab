@@ -1564,6 +1564,95 @@ pub fn activity_timeline_to_csv(
     out
 }
 
+// ─── Bucket drilldown CSV export (Slice 110) ─────────────────────────
+
+/// Header row for the activity-bucket drilldown CSV export. Kept as
+/// a module constant so tests + future column reorders share one
+/// source of truth — same convention as [`PLUGIN_HISTOGRAM_CSV_HEADER`]
+/// + [`ACTIVITY_TIMELINE_CSV_HEADER`].
+///
+/// Eleven columns matching the [`PluginHistogramRow`] body plus
+/// THREE bucket-coordinate columns (`granularity`, `bucket_start_unix`,
+/// `bucket_start_iso`) leading the row so a downstream pipeline
+/// concatenating drilldown exports across multiple buckets can
+/// dispatch on the first three cells without parsing the filename:
+///
+/// ```text
+/// granularity,bucket_start_unix,bucket_start_iso,plugin_id,installs,updates,uninstalls,failures,total,last_occurred_at_unix,last_occurred_at_iso
+/// ```
+///
+/// The 11-column shape extends the 8-column histogram CSV with the
+/// three bucket-coordinate columns at the front. A consumer that
+/// only knows about histogram CSVs can still read the per-plugin
+/// columns by skipping the first three — same "extends, doesn't
+/// replace" composition the round-19 drilldown CSV uses relative to
+/// the install-log CSV.
+pub const BUCKET_DRILLDOWN_CSV_HEADER: &str =
+    "granularity,bucket_start_unix,bucket_start_iso,plugin_id,installs,updates,uninstalls,failures,total,last_occurred_at_unix,last_occurred_at_iso";
+
+/// Render a slice of [`PluginHistogramRow`] rows scoped to a single
+/// activity-timeline bucket as RFC-4180 CSV. Columns match what the
+/// "Activity over time → bucket drilldown" surface shows, plus the
+/// canonical machine-friendly columns an auditor or downstream script
+/// needs:
+///
+/// `granularity, bucket_start_unix, bucket_start_iso, plugin_id,
+///  installs, updates, uninstalls, failures, total,
+///  last_occurred_at_unix, last_occurred_at_iso`
+///
+/// The first three columns identify the bucket the rows belong to.
+/// Both timestamp columns (`bucket_start_iso` + `last_occurred_at_iso`)
+/// are fed by the SAME [`iso8601_utc`] helper as the install-log /
+/// histogram / activity-timeline CSVs so an ISO column in any of the
+/// four exports matches byte-for-byte — keeps cross-export joining
+/// reliable for a paralegal pivoting between surfaces.
+///
+/// `total` is written verbatim (NOT re-summed from the four bucket
+/// columns) so a future axis added to `PluginHistogramRow` (e.g. a
+/// future `rolled_back` event kind) doesn't silently corrupt totals
+/// in the lag window — same defence-in-depth as the histogram /
+/// activity-timeline CSV serialisers.
+///
+/// Escaping policy (RFC 4180 §2): same as [`install_log_to_csv`]. In
+/// practice only the plugin_id column ever needs escaping; the
+/// integer + ISO columns + the fixed granularity tag never carry
+/// the four trip characters.
+///
+/// Pure function — never touches the filesystem. The Tauri command
+/// layer (Slice 112) owns disk I/O.
+pub fn bucket_drilldown_to_csv(
+    rows: &[PluginHistogramRow],
+    bucket_start_unix: i64,
+    granularity: TimeBucketGranularity,
+    include_header: bool,
+) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(BUCKET_DRILLDOWN_CSV_HEADER);
+        out.push('\n');
+    }
+    let gran_str = granularity.as_str();
+    let bucket_iso = iso8601_utc(bucket_start_unix);
+    for r in rows {
+        let row = [
+            gran_str.to_string(),
+            bucket_start_unix.to_string(),
+            csv_escape(&bucket_iso),
+            csv_escape(&r.plugin_id),
+            r.installs.to_string(),
+            r.updates.to_string(),
+            r.uninstalls.to_string(),
+            r.failures.to_string(),
+            r.total.to_string(),
+            r.last_occurred_at.to_string(),
+            csv_escape(&iso8601_utc(r.last_occurred_at)),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
 // ─── JSON export envelope (Slice 60) ─────────────────────────────────
 
 /// Wire shape for the JSON install-log export. Lifts the raw
@@ -4297,6 +4386,231 @@ mod tests {
             let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, false);
             assert_eq!(csv.lines().count(), n as usize, "n={n}");
         }
+    }
+
+    // ─── Slice 110: bucket drilldown CSV export ──────────────────────
+
+    #[test]
+    fn bucket_drilldown_csv_header_inclusion_is_caller_controlled() {
+        let rows = vec![hist_row("com.x", 1, 0, 0, 0, 1_700_000_000)];
+        let with_header =
+            bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, true);
+        assert!(with_header.starts_with(BUCKET_DRILLDOWN_CSV_HEADER));
+        let lines: Vec<_> = with_header.lines().collect();
+        assert_eq!(lines.len(), 2, "header + one data row");
+        let bare = bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, false);
+        assert!(!bare.starts_with("granularity,"));
+        assert_eq!(bare.lines().count(), 1);
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_empty_with_header_is_header_only() {
+        let csv = bucket_drilldown_to_csv(&[], 1_700_000_000, TimeBucketGranularity::Day, true);
+        assert_eq!(csv, format!("{}\n", BUCKET_DRILLDOWN_CSV_HEADER));
+        let bare = bucket_drilldown_to_csv(&[], 1_700_000_000, TimeBucketGranularity::Day, false);
+        assert_eq!(bare, "");
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_header_column_count_matches_row() {
+        // The header column count must match the data-row column count
+        // exactly — any future column addition that lands on one but
+        // not the other corrupts every downstream parser.
+        let header_cols = BUCKET_DRILLDOWN_CSV_HEADER.split(',').count();
+        assert_eq!(header_cols, 11);
+        let rows = vec![hist_row("com.x", 1, 2, 3, 4, 1_700_000_000)];
+        let csv = bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, false);
+        let first = csv.lines().next().unwrap();
+        assert_eq!(first.split(',').count(), header_cols);
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_columns_in_documented_order() {
+        // Pin the column order so a future column shuffle that breaks
+        // downstream parsers surfaces here. Bucket coords first, then
+        // plugin_id, then per-action counts, then total, then last_at
+        // (unix + ISO).
+        let row = hist_row("com.acme.ocr", 3, 1, 0, 2, 1_700_000_000);
+        let csv = bucket_drilldown_to_csv(&[row], 1_700_086_400, TimeBucketGranularity::Day, false);
+        let line = csv.lines().next().unwrap();
+        let cells: Vec<&str> = line.split(',').collect();
+        assert_eq!(cells[0], "day"); // granularity
+        assert_eq!(cells[1], "1700086400"); // bucket_start_unix
+        assert_eq!(cells[2], "2023-11-15T22:13:20Z"); // bucket_start_iso
+        assert_eq!(cells[3], "com.acme.ocr"); // plugin_id
+        assert_eq!(cells[4], "3"); // installs
+        assert_eq!(cells[5], "1"); // updates
+        assert_eq!(cells[6], "0"); // uninstalls
+        assert_eq!(cells[7], "2"); // failures
+        assert_eq!(cells[8], "6"); // total
+        assert_eq!(cells[9], "1700000000"); // last_occurred_at_unix
+        assert_eq!(cells[10], "2023-11-14T22:13:20Z"); // last_occurred_at_iso
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_granularity_tag_on_every_row() {
+        // Each row carries the same granularity tag — even if the
+        // export is concatenated downstream with another export, the
+        // discriminator stays on every line.
+        let rows = vec![
+            hist_row("p.a", 1, 0, 0, 0, 1_700_000_000),
+            hist_row("p.b", 0, 1, 0, 0, 1_700_001_000),
+            hist_row("p.c", 0, 0, 1, 0, 1_700_002_000),
+        ];
+        let csv = bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Week, false);
+        for line in csv.lines() {
+            let first = line.split(',').next().unwrap();
+            assert_eq!(first, "week", "granularity tag missing on row: {line}");
+        }
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_iso_matches_install_log_format_byte_for_byte() {
+        // The bucket_start_iso column MUST share the exact ISO format
+        // of the install-log + histogram + activity-timeline CSVs so
+        // an auditor joining the four exports keys on identical
+        // strings without timezone-format normalisation.
+        let ts = 1_700_086_400;
+        // Install-log CSV's ISO column for the same timestamp:
+        let event = InstallEvent {
+            id: 1,
+            plugin_id: "p".into(),
+            version: "1".into(),
+            action: InstallAction::Install,
+            occurred_at: ts,
+            source: Some("m".into()),
+            bytes_written: Some(0),
+            files_extracted: Some(0),
+            replaced_existing: Some(false),
+            prior_version: None,
+            error_msg: None,
+        };
+        let log_csv = install_log_to_csv(&[event], false);
+        let log_iso = log_csv.lines().next().unwrap().split(',').nth(5).unwrap();
+        // Bucket drilldown CSV's bucket_start_iso (column 2) for the
+        // same timestamp:
+        let row = hist_row("p", 1, 0, 0, 0, ts);
+        let bd_csv = bucket_drilldown_to_csv(&[row], ts, TimeBucketGranularity::Day, false);
+        let bd_iso = bd_csv.lines().next().unwrap().split(',').nth(2).unwrap();
+        assert_eq!(
+            bd_iso, log_iso,
+            "bucket_start_iso must match install-log ISO"
+        );
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_preserves_input_order() {
+        // The exporter ships rows verbatim — the bucket_drilldown
+        // reader handles sort, the exporter mustn't second-guess it.
+        let rows = vec![
+            hist_row("p.z", 5, 0, 0, 0, 1_700_000_000),
+            hist_row("p.a", 1, 0, 0, 0, 1_700_000_000),
+            hist_row("p.m", 3, 0, 0, 0, 1_700_000_000),
+        ];
+        let csv = bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, false);
+        let ids: Vec<&str> = csv.lines().map(|l| l.split(',').nth(3).unwrap()).collect();
+        assert_eq!(ids, vec!["p.z", "p.a", "p.m"]);
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_zero_timestamp_renders_zero_not_empty() {
+        // A bucket pinned at unix=0 renders "0" not empty — same
+        // NOT-NULL contract as the histogram CSV's last_occurred_at_unix.
+        let row = hist_row("p", 1, 0, 0, 0, 0);
+        let csv = bucket_drilldown_to_csv(&[row], 0, TimeBucketGranularity::Day, false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[1], "0"); // bucket_start_unix
+        assert_eq!(cells[9], "0"); // last_occurred_at_unix
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_total_field_written_verbatim() {
+        // Defence-in-depth: total is the caller's value, NOT a re-sum
+        // of installs/updates/uninstalls/failures. A test row with a
+        // deliberately-wrong total catches a future regression where
+        // the serialiser silently recomputes (which would mask a
+        // PluginHistogramRow axis addition bug).
+        let row = PluginHistogramRow {
+            plugin_id: "p".into(),
+            installs: 1,
+            updates: 2,
+            uninstalls: 3,
+            failures: 4,
+            total: 99, // deliberately wrong; 1+2+3+4=10
+            last_occurred_at: 1_700_000_000,
+        };
+        let csv = bucket_drilldown_to_csv(&[row], 1_700_000_000, TimeBucketGranularity::Day, false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[8], "99");
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_no_none_or_null_strings_anywhere() {
+        // Catches a future Option<_> addition to PluginHistogramRow
+        // that slips through as the literal "None" or "null" string.
+        let rows = vec![hist_row("p", 1, 0, 0, 0, 1_700_000_000)];
+        let csv = bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, false);
+        assert!(!csv.contains("None"));
+        assert!(!csv.contains("null"));
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_one_row_per_input_invariant() {
+        // The exporter ships exactly one CSV data row per input row
+        // — no truncation, no compression. Pins the same stable-count
+        // invariant the histogram + activity-timeline CSVs hold.
+        for n in [0i64, 1, 5, 30] {
+            let rows: Vec<PluginHistogramRow> = (0..n)
+                .map(|i| hist_row(&format!("p.{i:02}"), 1, 0, 0, 0, 1_700_000_000))
+                .collect();
+            let csv =
+                bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, false);
+            assert_eq!(csv.lines().count(), n as usize, "n={n}");
+        }
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_granularity_tag_distinguishes_export_pairs() {
+        // Two drilldown exports for the SAME bucket-start but different
+        // granularities must differ ONLY in the granularity column —
+        // a downstream pipeline can join the two by stripping column
+        // 0 + comparing the rest. (In practice the rows would differ
+        // because a week bucket covers more events than a day, but
+        // the structural invariant holds on identical input.)
+        let rows = vec![hist_row("p", 1, 0, 0, 0, 1_700_000_000)];
+        let day = bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Day, false);
+        let week =
+            bucket_drilldown_to_csv(&rows, 1_700_000_000, TimeBucketGranularity::Week, false);
+        let day_rest: String = day
+            .lines()
+            .next()
+            .unwrap()
+            .split_once(',')
+            .unwrap()
+            .1
+            .into();
+        let week_rest: String = week
+            .lines()
+            .next()
+            .unwrap()
+            .split_once(',')
+            .unwrap()
+            .1
+            .into();
+        assert_eq!(day_rest, week_rest, "non-granularity columns must match");
+        assert!(day.starts_with("day,"));
+        assert!(week.starts_with("week,"));
+    }
+
+    #[test]
+    fn bucket_drilldown_csv_escapes_plugin_id_with_comma() {
+        // The plugin_id is the only column that can plausibly contain
+        // an RFC-4180 trip character. Pin the escape behaviour so a
+        // future relaxation of the reverse-DNS id format doesn't
+        // silently corrupt downstream parsers.
+        let row = hist_row("weird,id", 1, 0, 0, 0, 1_700_000_000);
+        let csv = bucket_drilldown_to_csv(&[row], 1_700_000_000, TimeBucketGranularity::Day, false);
+        assert!(csv.contains("\"weird,id\""));
     }
 
     // ─── Slice 99: histogram JSON envelope ───────────────────────────
