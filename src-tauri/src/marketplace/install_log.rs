@@ -62,7 +62,15 @@ use thiserror::Error;
 ///   (retain_days + last_auto_prune_at). Pure additive — every v1 row
 ///   stays valid; the new table starts empty and the policy reader
 ///   falls back to [`DEFAULT_RETAIN_DAYS`] when unset.
-const SCHEMA_VERSION: u32 = 2;
+/// - v3: `install_log_plugin_retention(plugin_id PRIMARY KEY,
+///   retain_days INTEGER NOT NULL)` per-plugin retention overrides.
+///   Audit-critical plugins (compliance reports, redaction tooling)
+///   want longer retention than the global default; noisy diagnostic
+///   plugins want shorter. Pure additive: every v2 row stays valid;
+///   the new table starts empty and the effective-retention resolver
+///   falls back to the global `retain_days` when an id has no
+///   override row.
+const SCHEMA_VERSION: u32 = 3;
 
 /// Default retention window when the user has never explicitly set
 /// one. 365 days picked to match the round-12 design note: long
@@ -193,6 +201,21 @@ pub struct PluginHistogramRow {
     /// the queried window. The UI renders this as a relative "Xd
     /// ago" chip beside the bar.
     pub last_occurred_at: i64,
+}
+
+/// One persisted per-plugin retention override (Slice 113). Mirrors a
+/// single row of `install_log_plugin_retention` after the storage
+/// floor has been applied. `retain_days` is guaranteed `>=
+/// MIN_RETAIN_DAYS` (clamped on read so a stored bad value never
+/// surfaces to the auto-prune driver).
+///
+/// Serde-friendly so the wire layer (Slice 117) ships it straight to
+/// the Retention section UI; PartialEq so tests pin equality on the
+/// override list across writes/reads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginRetentionOverride {
+    pub plugin_id: String,
+    pub retain_days: i64,
 }
 
 /// Granularity of the install-log activity timeline aggregate (Slice
@@ -350,6 +373,10 @@ impl InstallLog {
             CREATE TABLE IF NOT EXISTS install_log_settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS install_log_plugin_retention (
+                plugin_id   TEXT PRIMARY KEY,
+                retain_days INTEGER NOT NULL
             );
             "#,
         )?;
@@ -1091,6 +1118,104 @@ impl InstallLog {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    // ─── Per-plugin retention overrides (Slice 113) ──────────────────
+    //
+    // The global `retain_days` setting is one window for every plugin
+    // in the install log. That's wrong for two recurring cases on a
+    // production workstation:
+    //
+    //   1. Audit-critical plugins (compliance reports, redaction
+    //      tooling, billing automations) want LONGER retention than
+    //      the global default so a quarterly audit can still resolve
+    //      the install/update trail.
+    //   2. Noisy diagnostic plugins (telemetry collectors, profilers,
+    //      preview-build sideloads) want SHORTER retention so the
+    //      install log doesn't drown in events the user doesn't
+    //      care about retaining.
+    //
+    // The override table is a thin key/value: one row per plugin id
+    // that has a non-default window. Absence means "use the global
+    // `retain_days`". The auto-prune driver (Slice 114) composes the
+    // overrides with the global into per-plugin cutoffs.
+
+    /// Read a single plugin's retention override, or `None` if no
+    /// override row exists for that id. A value below
+    /// [`MIN_RETAIN_DAYS`] clamps up on read so a stored bad value
+    /// (legacy migration, future bug) never wipes the entire log for
+    /// that plugin.
+    pub fn plugin_retention_days(&self, plugin_id: &str) -> Result<Option<i64>, InstallLogError> {
+        let v: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT retain_days FROM install_log_plugin_retention WHERE plugin_id = ?1",
+                params![plugin_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.map(|d| d.max(MIN_RETAIN_DAYS)))
+    }
+
+    /// Persist a per-plugin retention override. Clamps `days` to
+    /// [`MIN_RETAIN_DAYS`] at the storage boundary (commands also
+    /// clamp; double-defence is cheap). Returns the value actually
+    /// stored after clamping so the caller can surface the corrected
+    /// value in the UI without re-reading.
+    pub fn set_plugin_retention_days(
+        &mut self,
+        plugin_id: &str,
+        days: i64,
+    ) -> Result<i64, InstallLogError> {
+        let clamped = days.max(MIN_RETAIN_DAYS);
+        self.conn.execute(
+            "INSERT INTO install_log_plugin_retention (plugin_id, retain_days)
+             VALUES (?1, ?2)
+             ON CONFLICT(plugin_id) DO UPDATE SET retain_days = excluded.retain_days",
+            params![plugin_id, clamped],
+        )?;
+        Ok(clamped)
+    }
+
+    /// Remove a plugin's retention override. The plugin falls back to
+    /// the global `retain_days` on its next auto-prune evaluation.
+    /// Returns `true` if a row was actually removed, `false` if no
+    /// override existed (idempotent — calling twice is a no-op on
+    /// the second call).
+    pub fn clear_plugin_retention(&mut self, plugin_id: &str) -> Result<bool, InstallLogError> {
+        let n = self.conn.execute(
+            "DELETE FROM install_log_plugin_retention WHERE plugin_id = ?1",
+            params![plugin_id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// List every persisted per-plugin retention override. ORDER:
+    /// DESC by `retain_days` (longest retention first), ASC by
+    /// `plugin_id` for tie-break — same deterministic ordering as
+    /// `plugin_histogram` so the UI's "Overrides" list reads top-to-
+    /// bottom as "longest retention wins". Cheap O(N) on the
+    /// overrides table; in practice N is small (a handful of
+    /// audit-critical or diagnostic plugins per workstation).
+    pub fn plugin_retention_overrides(
+        &self,
+    ) -> Result<Vec<PluginRetentionOverride>, InstallLogError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT plugin_id, retain_days
+             FROM install_log_plugin_retention
+             ORDER BY retain_days DESC, plugin_id ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(PluginRetentionOverride {
+                plugin_id: r.get(0)?,
+                retain_days: r.get::<_, i64>(1)?.max(MIN_RETAIN_DAYS),
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 
     // ─── Auto-prune driver (Slice 64) ────────────────────────────────
@@ -2066,9 +2191,11 @@ mod tests {
     fn schema_pragma_pinned() {
         let log = InstallLog::open_in_memory().unwrap();
         assert_eq!(log.schema_version().unwrap(), SCHEMA_VERSION);
-        // v2: install_log_settings table added (round-14 retention
-        // policy storage). Bump in lockstep with init_schema arms.
-        assert_eq!(SCHEMA_VERSION, 2);
+        // v3: install_log_plugin_retention table added (Slice 113
+        // per-plugin retention overrides). Pure additive — every v2
+        // row stays valid; the new table starts empty. Bump in
+        // lockstep with init_schema arms.
+        assert_eq!(SCHEMA_VERSION, 3);
     }
 
     #[test]
@@ -3117,6 +3244,174 @@ mod tests {
         let mut log = InstallLog::open_in_memory().unwrap();
         log.write_setting("retain_days", "not_a_number").unwrap();
         // retain_days() reads raw via read_setting_i64; malformed → None → default.
+        assert_eq!(log.retain_days().unwrap(), DEFAULT_RETAIN_DAYS);
+    }
+
+    // ─── Slice 113: per-plugin retention overrides ───────────────────
+
+    #[test]
+    fn plugin_retention_days_unset_returns_none() {
+        let log = InstallLog::open_in_memory().unwrap();
+        // No override row exists; the reader returns None so the
+        // effective-retention resolver (Slice 114) falls back to the
+        // global retain_days.
+        assert_eq!(log.plugin_retention_days("com.example.x").unwrap(), None);
+    }
+
+    #[test]
+    fn set_plugin_retention_days_round_trips() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let stored = log
+            .set_plugin_retention_days("com.example.audit", 1825)
+            .unwrap();
+        assert_eq!(stored, 1825);
+        assert_eq!(
+            log.plugin_retention_days("com.example.audit").unwrap(),
+            Some(1825)
+        );
+        // Per-plugin override does NOT affect the global setting.
+        assert_eq!(log.retain_days().unwrap(), DEFAULT_RETAIN_DAYS);
+    }
+
+    #[test]
+    fn set_plugin_retention_days_clamps_below_floor() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let stored_zero = log.set_plugin_retention_days("com.x", 0).unwrap();
+        assert_eq!(stored_zero, MIN_RETAIN_DAYS);
+        let stored_neg = log.set_plugin_retention_days("com.y", -5).unwrap();
+        assert_eq!(stored_neg, MIN_RETAIN_DAYS);
+        // Stored value must also read back clamped (no auto-prune
+        // surprise where a plugin gets wiped because a stored value
+        // slipped past the floor).
+        assert_eq!(
+            log.plugin_retention_days("com.x").unwrap(),
+            Some(MIN_RETAIN_DAYS)
+        );
+    }
+
+    #[test]
+    fn set_plugin_retention_days_upserts_in_place() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_plugin_retention_days("com.example.x", 30).unwrap();
+        log.set_plugin_retention_days("com.example.x", 180).unwrap();
+        // ON CONFLICT replaces the value in place — not a second row.
+        assert_eq!(
+            log.plugin_retention_days("com.example.x").unwrap(),
+            Some(180)
+        );
+        let all = log.plugin_retention_overrides().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].retain_days, 180);
+    }
+
+    #[test]
+    fn clear_plugin_retention_returns_removed_flag() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // Removing a non-existent override is a no-op; returns false.
+        assert!(!log.clear_plugin_retention("com.nope").unwrap());
+        log.set_plugin_retention_days("com.example.x", 30).unwrap();
+        // First removal returns true.
+        assert!(log.clear_plugin_retention("com.example.x").unwrap());
+        // Second removal returns false (idempotent).
+        assert!(!log.clear_plugin_retention("com.example.x").unwrap());
+        assert_eq!(log.plugin_retention_days("com.example.x").unwrap(), None);
+    }
+
+    #[test]
+    fn plugin_retention_overrides_empty_when_unset() {
+        let log = InstallLog::open_in_memory().unwrap();
+        assert!(log.plugin_retention_overrides().unwrap().is_empty());
+    }
+
+    #[test]
+    fn plugin_retention_overrides_orders_desc_then_id_asc() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // Insert intentionally out-of-order so the ORDER BY clause
+        // (not the insertion order) is what's pinned.
+        log.set_plugin_retention_days("com.b.audit", 30).unwrap();
+        log.set_plugin_retention_days("com.a.diag", 1825).unwrap();
+        log.set_plugin_retention_days("com.a.audit", 30).unwrap();
+        log.set_plugin_retention_days("com.c.tail", 365).unwrap();
+        let rows = log.plugin_retention_overrides().unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.plugin_id.as_str()).collect();
+        // 1825 (com.a.diag), 365 (com.c.tail), then both 30s ordered
+        // by plugin_id ASC tie-break (com.a.audit before com.b.audit).
+        assert_eq!(
+            ids,
+            vec!["com.a.diag", "com.c.tail", "com.a.audit", "com.b.audit"]
+        );
+    }
+
+    #[test]
+    fn plugin_retention_overrides_reads_clamp_below_floor() {
+        // A stored value below the floor (theoretical legacy /
+        // downgrade) reads back clamped, so the overrides list never
+        // surfaces a value that would wipe a plugin's log.
+        let log = InstallLog::open_in_memory().unwrap();
+        log.conn
+            .execute(
+                "INSERT INTO install_log_plugin_retention (plugin_id, retain_days)
+                 VALUES ('com.legacy.x', 0)",
+                [],
+            )
+            .unwrap();
+        let rows = log.plugin_retention_overrides().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].retain_days, MIN_RETAIN_DAYS);
+        // Same defence on the single-plugin reader.
+        assert_eq!(
+            log.plugin_retention_days("com.legacy.x").unwrap(),
+            Some(MIN_RETAIN_DAYS)
+        );
+    }
+
+    #[test]
+    fn plugin_retention_overrides_independent_per_id() {
+        // Setting one plugin's override does not affect any other
+        // plugin's lookup. Catches accidental "global state via
+        // settings key" regression where a future refactor folds the
+        // table into install_log_settings.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_plugin_retention_days("com.audit.long", 1825)
+            .unwrap();
+        log.set_plugin_retention_days("com.diag.short", 7).unwrap();
+        assert_eq!(
+            log.plugin_retention_days("com.audit.long").unwrap(),
+            Some(1825)
+        );
+        assert_eq!(
+            log.plugin_retention_days("com.diag.short").unwrap(),
+            Some(7)
+        );
+        assert_eq!(log.plugin_retention_days("com.other").unwrap(), None);
+    }
+
+    #[test]
+    fn plugin_retention_overrides_struct_serde_round_trip() {
+        // PluginRetentionOverride is exposed on the wire (Slice 117);
+        // pin the field names + serde shape so a refactor that
+        // renames the fields will break the test, not silently break
+        // the JS bridge.
+        let row = PluginRetentionOverride {
+            plugin_id: "com.example.x".into(),
+            retain_days: 365,
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("\"plugin_id\":\"com.example.x\""));
+        assert!(json.contains("\"retain_days\":365"));
+        let back: PluginRetentionOverride = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, row);
+    }
+
+    #[test]
+    fn plugin_retention_table_present_at_schema_v3() {
+        // Existence check via a write+read round-trip — the v3
+        // migration arm is the only path that gets us here without a
+        // sqlite "no such table" error.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_plugin_retention_days("com.probe", 42).unwrap();
+        // And the table is independent of install_log_settings —
+        // writing here doesn't pollute the global retain_days key.
         assert_eq!(log.retain_days().unwrap(), DEFAULT_RETAIN_DAYS);
     }
 
