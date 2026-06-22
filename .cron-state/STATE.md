@@ -1,13 +1,285 @@
 # Slab Cron State
 
-Last updated: 2026-06-21 15:30 PT by Cake (cron) — round-18 BATCH shipped: 5 slices closing two cohesive arcs. Hopper sample drilldown arc (slices 83-86): pure-data compute_sample_drilldown(rules, samples, bucket, preview_cap) primitive returning SampleDrilldown {bucket, samples, total_in_bucket, truncated} with SampleBucket::Rule{index}|Fallthrough selector and 15 tests pinning bucket assignment + truncation + preserves-input-order + serde, slab_hopper_sample_drilldown Tauri command sharing wire semantics with rule_coverage (same candidateRules/samples/sampleLimit precedence) + new clamp_preview_cap helper with 5 tests pinning [1, 1000] bounds + default-25 + lower-than-coverage invariant, TS client with ruleBucket(i)/FALLTHROUGH_BUCKET constructors + sampleBucketEquals/describeDrilldown/describeBucket pure helpers + 19 inline-expect tests, and clickable coverage rows in HopperRulesEditor opening an in-panel drilldown popover with Notion-style toggle/chevron + bucket-specific empty-state copy + previewCap input + Escape-to-close. Install-log per-plugin histogram (slice 87): backend plugin_histogram(since, until, limit) with ONE indexed GROUP BY + in-memory sort, PluginHistogramRow with precomputed total + last_occurred_at + 13 tests pinning DESC sort + tiebreak ASC on plugin_id + window filters + conservation invariant, Tauri command with PluginHistogramResult envelope (grand_total + echoed limit_used), TS client + summarizeHistogram helper, and a "Top plugins" collapsible section in RecentInstallsDrawer between retention and events list rendering per-plugin stacked bars (installs green / updates accent / uninstalls amber / failures red) scaled relative to the most-active plugin's total with auto-refresh on window change. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 11.43s, cargo test --lib 2294 passed / 0 failed (round-17 baseline 2261 + 15 + 5 + 13 = 2294), pnpm check 0 errors / 104 warnings (round-17 baseline preserved EXACTLY). Pushed + verified (local==origin a0504dc).
+Last updated: 2026-06-21 18:35 PT by Cake (cron) — round-19 BATCH shipped: 5 slices closing two cohesive arcs. Drilldown CSV export arc (slices 88-91): pure-data sample_drilldown_to_csv(drill, rule_names, include_header) RFC-4180 serialiser with bucket_kind/bucket_name columns mirroring describeBucket fallback chain (Rule #N 1-based) and 13 tests pinning header opt-in + escaping (commas/quotes/newlines) + empty optional columns + preserves input order + row count matches samples-not-total invariant, slab_hopper_export_drilldown_csv Tauri command sharing the disk-IO shape with slab_hopper_export_backfill_csv + slab_marketplace_install_log_export_csv (the Tauri layer owns the write because plugin-fs scope doesn't cover arbitrary user paths), slabHopperExportDrilldownCsv TS wrapper with lazy isInTauri import (browser-mode no-op) + suggestDrilldownExportFilename helper proposing hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.csv with NFD-aware slugifier (café→cafe) + 11 new tests, and Export CSV button in the round-18 drilldown popover between Reload and Close opening the native save dialog and surfacing a 4s green "Exported N files (X.X KB)" toast with disabled states for in-flight/loading/null/empty-bucket. Top plugins click-to-filter (slice 92): histogram rows now <button>s with onHistogramRowClick toggle semantics (click row → apply as plugin filter; click again → clear) populating the same plugin_id_substr axis the search input + chip strip + export filenames feed so there's ONE filter narrow that carries consistently, accent-tinted .active state + focus-visible ring + aria-pressed reflecting state, legend footer extended explaining the click affordance. All gates green: cargo fmt clean, cargo clippy --lib -D warnings PASSED CLEAN in 10.91s, cargo test --lib 2307 passed / 0 failed (round-18 baseline 2294 + 13 from drilldown CSV primitive = 2307), pnpm check 0 errors / 104 warnings (round-18 baseline preserved EXACTLY). Pushed + verified (local==origin 49511df).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `a0504dc` — "feat(plugins): per-plugin install histogram in Recent installs drawer".
+Latest commit: `49511df` — "feat(plugins): click Top plugins row to filter timeline by plugin".
+
+### What round-19 (2026-06-21 18:35 PT) just shipped
+
+Five slices across two cohesive arcs. Before this tick the
+round-18 drilldown popover could show the 23 fall-through files for
+a coverage bucket but had no way to save that list — paralegals
+would have to copy filenames by hand to email them to a partner.
+And the round-18 "Top plugins" histogram rows were passive: you
+could see "com.acme.ocr-pro: 23 events" but the only way to
+actually filter the timeline to those 23 was to type the plugin id
+into the search field yourself. Tonight both gaps close end-to-end.
+
+Round 18's closing notes listed both items as candidates: "drilldown
+CSV export ('save the fall-through list')" and the histogram could
+naturally extend by becoming clickable to drive the existing filter
+axis. Both lent themselves to clean composition with round-18's
+shipped surfaces.
+
+- Slice 88: drilldown CSV export primitive (0c04f6b,
+  354 LOC). Pure-data sample_drilldown_to_csv(drill, rule_names,
+  include_header) -> String. RFC-4180 with six columns:
+  filename, size_bytes, page_count, text_sample, bucket_kind,
+  bucket_name. bucket_kind is the SampleBucket serde tag
+  ("fallthrough" / "rule") so a downstream consumer can re-derive
+  the bucket without guessing. bucket_name uses the
+  describeBucket fallback chain verbatim: trimmed rule_names[i]
+  when present + non-empty, else "Rule #N" (1-based). Header
+  opt-in (mirror backfill_report_to_csv signature) so an
+  append-to-audit workflow can suppress it. RFC-4180 escaping
+  duplicated (not re-exported) from backfill so the two emitters
+  stay independent. RuleSample now derives Default (additive —
+  every field already had serde default attrs) so tests can spread
+  RuleSample { filename, ..Default::default() } without listing
+  zero fields. 13 new tests pin header behaviour + bare-empty
+  shape + fallthrough label + rule-bucket name resolution +
+  empty/blank/out-of-range name fallback to "Rule #N" + comma +
+  quote + newline escaping + None columns emit empty cells +
+  preserves input order + non-ASCII filenames pass through unquoted
+  when safe + row count == drill.samples.len() (NOT total_in_bucket
+  — truncation footnote belongs on UI, not in CSV).
+- Slice 89: drilldown CSV export Tauri command (e7d916e,
+  53 LOC). slab_hopper_export_drilldown_csv(drilldown,
+  rule_names, path) -> u64 writes the CSV to an absolute path the
+  frontend obtained from @tauri-apps/plugin-dialog save(). Same
+  command shape as slab_hopper_export_backfill_csv +
+  slab_marketplace_install_log_export_csv — the Tauri layer owns
+  disk I/O because the frontend's plugin-fs scope doesn't cover
+  arbitrary user-chosen paths. Idempotent (overwrites if target
+  exists — save dialog handles overwrite confirmation upstream),
+  returns byte count actually written so the toast can show
+  "Exported 23 files (1.4 KB)" without re-reading the file.
+  Creates parent dirs if missing. Registered in invoke_handler
+  alongside slab_hopper_export_backfill_csv. No new lib-test
+  surface because the primitive in slice 88 already pins the CSV
+  shape — the command is a thin disk-IO wrapper following the
+  same untested-thin-wrap pattern as the two existing CSV exports.
+- Slice 90: drilldown CSV export TS client + filename helper
+  (3d48a57, 237 LOC across hopper.ts + hopper.test.ts).
+  slabHopperExportDrilldownCsv(drilldown, ruleNames, path) ->
+  Promise<number> wraps the invoke; lazy-imports $lib/tauri so the
+  hopper.test.ts file (which runs under tsx without the Tauri
+  runtime) can pull the helpers without dragging the plugin chain
+  into a node import. Browser-mode returns 0 (no-op) — same pattern
+  as exportInstallLogCsv. suggestDrilldownExportFilename(bucket,
+  ruleNames, opts) pure helper proposing
+  hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.csv. watch slot
+  reads "watch-N" or bare "watch" when unset/negative; bucket slot
+  reads "fallthrough" for the catch-all, "rule-N" (1-based) +
+  optional "_<slug>" for rule buckets. Slugifier NFD-strips
+  diacritics (café → cafe), collapses non-[a-z0-9] runs to single
+  dashes, trims leading/trailing dashes; falls back to bare rule-N
+  when nothing survives. Date uses LOCAL time. 11 new pure-helper
+  tests in hopper.test.ts (inline-expect convention): fallthrough
+  no-watch + watchId=7 shapes, rule no-names = "rule-N", rule
+  with name slug, messy chars collapse, NFD diacritics, all-
+  punctuation falls back to bare rule-N, whitespace-only name,
+  negative watch id falls back, rule index 9 reads as rule-10
+  (off-by-one invariant), always ends in .csv.
+- Slice 91: Export CSV button + toast in drilldown popover
+  (7a358c8, 104 LOC in HopperRulesEditor.svelte). The demo-able
+  payoff tying slices 88-90 together. Imports
+  slabHopperExportDrilldownCsv + suggestDrilldownExportFilename +
+  saveDialog from @tauri-apps/plugin-dialog (same dependency
+  RecentInstallsDrawer's export uses). New state cells:
+  drilldownExporting (gates the button while save dialog + write
+  in flight) and drilldownExportToast (4s success notice) with a
+  named setTimeout handle so back-to-back exports don't pile up
+  toasts. exportDrilldownCsv() resolves the suggested filename,
+  opens the native save dialog (CSV filter + meaningful title),
+  ships the in-state drilldown VERBATIM (not re-fetched, so a
+  background rule edit can't sneak in a different bucket between
+  click-Export and click-Save) + the current ruleNames array to
+  the slice-89 command, surfaces a 4s "Exported 23 files (1.4
+  KB)" toast. Cancellation is a clean no-op. Local formatBytes
+  helper (kept separate from hopper.ts's predicate formatter —
+  different signature, different context). Button between Reload
+  and Close in the popover header with disabled states for
+  in-flight/loading/null/empty-bucket and defensive-tooltip pattern
+  matching the slice 91 install-log export. Success toast renders
+  inline BELOW the popover header (NOT a floating banner) so it
+  stays attached to the popover; green vocabulary
+  (rgb(170,230,195) / rgba(110,220,154,...)) matching the
+  install-event seg-install color; 0.16s fade-in keyframe.
+- Slice 92: click Top plugins row to filter timeline by plugin
+  (49511df, 107+ / 32- LOC in RecentInstallsDrawer.svelte). Each
+  histogram row is now a <button> (Notion-style row interaction
+  matching slice 86 coverage-row click pattern). One click pivots
+  the timeline from "everything in window" to "just this plugin's
+  events" via the existing plugin_id_substr filter axis — the
+  SAME axis the search input + slice 77 chip strip + export
+  filenames all feed, so there's ONE narrow carrying consistently
+  across every dependent surface. Click semantics: row != current
+  filter → apply; row == current filter → clear (toggle-off — the
+  natural undo for "I clicked a bar" is "I click the same bar
+  again"). Visual states: hover-tinted background +
+  faint border on hover; .active state for currently-filtered row
+  uses accent-tinted background + border
+  (rgba(124,140,255,.1)/.34) so the row reading "this is what I'm
+  looking at right now" is unmistakable; focus-visible accent ring.
+  a11y: aria-pressed reflects the toggle state, title attr reads
+  "Filter timeline below to <id>" / "Clear filter on <id>" per
+  state. Legend footer extended explaining the click affordance.
+
+Gates result: cargo fmt clean (cargo fmt --all --check exit 0),
+cargo clippy --lib -- -D warnings PASSED CLEAN in 10.91s (matches
+round-18 11.43s baseline — pure-data CSV serialiser + thin
+command wrapper add no new clippy surface), cargo test --lib 2307
+passed / 0 failed (round-18 baseline 2294 + 13 from slice 88 =
+2307), pnpm check 0 errors / 104 warnings (round-18 baseline
+preserved EXACTLY — zero new warnings from the export wrapper,
+suggestFilename helper, button + toast wiring, histogram row
+refactor, scoped CSS).
+
+PROCESS NOTES:
+- Round-18 closing notes listed "drilldown CSV export ('save the
+  fall-through list')" as a next-tick candidate; slices 88-91
+  close that arc end-to-end with the same four-layer cadence as
+  the round-15 bulk-update arc (68-72), round-16 install-log
+  filter arc (73-77), round-17 hopper coverage arc (79-82), and
+  round-18 hopper drilldown arc (83-86): pure-data primitive →
+  Tauri command → TS client → demo-able UI. Slice 92 compressed
+  histogram click-to-filter into one composite slice because the
+  backend axis already existed (plugin_id_substr filter from
+  slice 73) — the slice is pure UI wiring around an already-tested
+  filter primitive.
+- Five slices, five commits, two logical subsystems. Drilldown
+  CSV arc (88-91) follows the canonical four-layer pattern;
+  histogram click-to-filter (92) is single UI-only commit because
+  the data path was complete.
+- The RuleSample Default derive in slice 88 is a tiny additive
+  affordance the test code needed to spread { filename,
+  ..Default::default() } without listing every zero field. Every
+  field already had a serde default attribute so the runtime
+  semantics don't change — Default produces exactly what the
+  Deserialize default path produces. Cheap, useful for tests, no
+  observable behaviour change for callers.
+- The Tauri command in slice 89 ships ruleNames as a Vec<String>
+  parameter rather than reading from the watch registry server-
+  side because the popover's bucket_name should match what the
+  user SAW on screen — even if they have unsaved name edits in
+  the editor. A server-side registry lookup would silently use
+  the persisted names instead. Same reasoning as why slice 84's
+  drilldown command accepts caller-supplied candidate_rules.
+- The slugifier in slice 90 deliberately doesn't transliterate
+  non-ASCII letters (café → caf would lose info silently). It
+  NFD-strips diacritics (café → cafe) which is the standard
+  ASCII-fold pattern, and falls back to bare "rule-N" when nothing
+  survives the slug. Filenames stay portable across Windows
+  without being misleading about what the rule was named.
+- The exportDrilldownCsv handler ships the in-state drilldown
+  verbatim rather than re-fetching. Re-fetching would race the
+  600ms scheduleSave that ripples into a drilldown refresh — a
+  background rule edit could sneak in a different bucket between
+  "click Export" and "click Save" in the dialog. Shipping the
+  snapshot means the CSV matches exactly what the popover
+  currently renders. Same in-state-snapshot reasoning as the
+  RecentInstallsDrawer export flow.
+
+DESIGN NOTES:
+- Export button BETWEEN Reload and Close (not after Close, not
+  before Reload) so the verb order reads "refresh this view → save
+  this view → done". Reload-then-Export-then-Close is the natural
+  workflow: "let me re-pull the latest bucket, then save it, then
+  close the popover".
+- Disabled-when-empty (drilldown.samples.length === 0) is the right
+  call because empty buckets shouldn't offer an export — the CSV
+  would just be the header row, which reads like "the export
+  failed silently". The defensive tooltip ("No files in this
+  bucket to export") explains the disabled state on hover.
+- The 4s toast duration matches the install-log export toast
+  (slice 62) and the slice 91 install-log retention toast — one
+  duration across audit-export toasts so paralegals don't have
+  to recalibrate per surface.
+- Histogram row .active visual is accent-tinted (not check-marked,
+  not chip-suffixed) because the bar IS the row and the bar's
+  width already conveys magnitude — adding a check mark would
+  fight the bar visually. Accent-tint + border lifts the row's
+  z-priority without obscuring the data.
+- Click-row-twice-to-clear matches the slice 86 popover toggle
+  pattern, which itself was chosen for the same reason: the
+  user's last action on the same surface should reverse itself.
+  Forcing them to scroll up to the search field and click an X
+  to clear would break the spatial mental model.
+- Histogram click clears ONLY the plugin axis (not the action
+  axis). The action chips are independent narrows; clearing them
+  too would feel like an undo'd batch operation. The user only
+  clicked ONE control; only that control's effect reverses.
+
+## Roadmap — round 19 (Drilldown CSV Export + Histogram Click-to-Filter) — ALL DONE
+
+Round 19 batched FIVE feature slices into one cron tick. Four
+slices built the drilldown CSV export end-to-end (primitive →
+command → TS client + suggest helper → demo-able UI), and one
+composite slice wired the round-18 histogram rows into the
+existing plugin filter axis.
+
+88. ~~**drilldown CSV export primitive**~~ —
+    DONE (2026-06-21 18:35 PT, 0c04f6b, single commit, 354 LOC).
+    Pure-data sample_drilldown_to_csv(drill, rule_names,
+    include_header) RFC-4180 serialiser. bucket_kind matches the
+    SampleBucket serde tag; bucket_name uses describeBucket
+    fallback chain (Rule #N 1-based). RuleSample now derives
+    Default (additive — every field already had serde default
+    attrs). 13 new tests pin header + escaping + None columns +
+    preserves order + row count == samples.len() invariant.
+89. ~~**drilldown CSV export Tauri command**~~ —
+    DONE (2026-06-21 18:35 PT, e7d916e, single commit, 53 LOC).
+    slab_hopper_export_drilldown_csv(drilldown, rule_names, path)
+    -> u64. Tauri-layer disk I/O matching the existing two CSV
+    export commands. Idempotent, returns byte count, creates
+    parent dirs. Registered in invoke_handler.
+90. ~~**drilldown CSV export TS client + filename helper**~~ —
+    DONE (2026-06-21 18:35 PT, 3d48a57, single commit, 237 LOC).
+    slabHopperExportDrilldownCsv lazy-import wrapper (browser
+    no-op). suggestDrilldownExportFilename helper proposing
+    hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.csv with
+    NFD-aware slugifier + 1-based bucket index. 11 new pure-
+    helper tests in hopper.test.ts.
+91. ~~**Export CSV button + toast in drilldown popover**~~ —
+    DONE (2026-06-21 18:35 PT, 7a358c8, single commit, 104 LOC).
+    The demo-able payoff. Button between Reload and Close;
+    disabled states for in-flight/loading/null/empty-bucket; 4s
+    green success toast inline below header; native save dialog
+    with CSV filter; ships in-state drilldown verbatim so
+    background rule edits can't race the export.
+92. ~~**click Top plugins row to filter timeline by plugin**~~ —
+    DONE (2026-06-21 18:35 PT, 49511df, single commit, 107+/32- LOC).
+    Histogram rows now <button>s with onHistogramRowClick toggle
+    semantics (click → apply plugin filter; click again → clear).
+    Reuses existing plugin_id_substr axis — ONE filter narrow
+    carries consistently across timeline + chip strip + export
+    filenames. .active accent-tint + focus-visible ring +
+    aria-pressed; legend footer extended explaining click affordance.
+
+    With round 19 done, the Hopper drilldown workflow closes the
+    audit-export loop (click a coverage row → see the files →
+    save them as CSV for the partner), and the Recent installs
+    drawer's Top plugins section becomes bidirectional (view AND
+    navigation surface — click a bar to see that plugin's
+    timeline). Next subsystem candidates: drilldown JSON export
+    envelope (mirror the install-log JSON envelope so the CSV +
+    JSON pair stays symmetric across audit surfaces), Hopper
+    rule reorder-by-drag in the coverage panel (drag a dead row
+    up to fix shadowing in one motion), histogram time-bucket
+    axis ("activity per week" alongside the current per-plugin
+    breakdown), Loom-grade tagging explorer, doc-detail metadata
+    editor read/write surface, Beacon cache inspector polish
+    (column sort by basename / model facet), Quill multi-document
+    field-detect queueing, drilldown row → toast a "filter
+    timeline" cross-surface (clicking a fall-through filename in
+    the popover could carry the search query into the document
+    inspector).
 
 ### What round-18 (2026-06-21 15:30 PT) just shipped
 
