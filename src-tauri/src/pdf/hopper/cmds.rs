@@ -684,6 +684,58 @@ pub fn slab_hopper_export_backfill_csv(
     Ok(bytes.len() as u64)
 }
 
+// ─── Slice 89 — drilldown CSV export command surface ─────────────────
+//
+// `slab_hopper_export_drilldown_csv` writes a SampleDrilldown to disk
+// as RFC-4180 CSV. The frontend gathers the destination from a
+// native save-as dialog and passes the absolute path here so the
+// Tauri layer owns the disk I/O - same shape as
+// slab_hopper_export_backfill_csv and slab_marketplace_install_log_
+// export_csv. Returns the byte count actually written so the toast
+// can read "Exported 23 files (1.4 KB)" without re-reading the file.
+//
+// Idempotent - overwrites if the target exists. The save dialog
+// handles overwrite confirmation, so we don't double-confirm.
+//
+// Why a separate command vs serialising the drilldown client-side
+// and shipping it to a generic `write_text_file`:
+//
+//   1. The frontend's @tauri-apps/plugin-fs scope doesn't cover
+//      arbitrary user-chosen paths; the Tauri layer has to own the
+//      write. Same constraint that drove the existing two CSV
+//      export commands.
+//   2. Keeping the CSV rendering in Rust means a future shape
+//      change to RuleSample (e.g. adding a parent_dir column) is a
+//      one-line edit to sample_drilldown_to_csv that automatically
+//      cascades to the export - the frontend doesn't have to remember
+//      to update a parallel TS serialiser.
+
+/// `slab_hopper_export_drilldown_csv` - write a
+/// [`super::coverage::SampleDrilldown`] to disk as RFC-4180 CSV.
+///
+/// `rule_names` is the parallel rule-name array used to resolve a
+/// rule bucket's display label. Empty / missing / out-of-range
+/// names fall back to `"Rule #N"` (1-based) - mirrors the popover
+/// header convention.
+///
+/// Returns the byte count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_drilldown_csv(
+    drilldown: super::coverage::SampleDrilldown,
+    rule_names: Vec<String>,
+    path: String,
+) -> CmdResult<u64> {
+    let csv = super::coverage::sample_drilldown_to_csv(&drilldown, &rule_names, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 // ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------

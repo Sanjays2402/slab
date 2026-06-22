@@ -7279,6 +7279,7 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_cancel_backfill,
             crate::pdf::hopper::cmds::slab_hopper_list_backfill_runs,
             crate::pdf::hopper::cmds::slab_hopper_export_backfill_csv,
+            crate::pdf::hopper::cmds::slab_hopper_export_drilldown_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");
