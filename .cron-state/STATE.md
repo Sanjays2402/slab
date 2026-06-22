@@ -1,13 +1,406 @@
 # Slab Cron State
 
-Last updated: 2026-06-22 04:14 PT by Cake (cron) — round-22 BATCH shipped: 5 slices closing one cohesive arc. Activity-over-time aggregate (slices 103-107): backend primitive activity_timeline(since, until, granularity) -> Vec<ActivityBucket> with TimeBucketGranularity{Day, Week, Month} enum + UTC-calendar floor helper bucket_floor_unix (chrono-backed, ISO-8601 weeks, sparse output) (slice 103); pure-data activity_timeline_to_csv(buckets, granularity, include_header) RFC-4180 serialiser with 8 columns leading with granularity tag for concat-friendly downstream pipelines (slice 104); pure-data activity_timeline_to_json(buckets, granularity, since, until, grand_total) -> ActivityTimelineExportEnvelope mirroring InstallLogExportEnvelope + PluginHistogramExportEnvelope + DrilldownExportEnvelope shape — schema_version=1 PARALLEL-VERSIONED with the three sibling envelopes + generated_at_iso + granularity discriminator + bucket_count + grand_total (caller-supplied verbatim, no re-sum) + window-bounds + buckets verbatim (slice 105); slab_marketplace_install_log_activity_timeline (read) + _export_activity_timeline_csv + _export_activity_timeline_json Tauri commands + TS getActivityTimeline/exportInstallLog ActivityTimelineCsv/Json + densifyActivityTimeline pure helper (zero-fill gap buckets day/week/month with calendar-aware month advance) + advanceBucketStart helper + suggestActivityTimelineExportFilename producing marketplace-activity-{day|week|month}_<window>_<YYYY-MM-DD>.<ext> with granularity-in-prefix + identical window-shape to suggestHistogramExportFilename (slice 106); Activity-over-time collapsible section in Recent installs drawer with bucket-width selector (Per day/week/month) + Export… popover + 96px vertical-bar chart (sparse-server / dense-UI via densifyActivityTimeline) + segmented stacks (install green / update accent / uninstall amber / failed red, bottom-up via column-reverse) + 1px hairline for empty buckets + date axis labels + legend footer (slice 107).
+Last updated: 2026-06-22 07:51 PT by Cake (cron) — round-23 BATCH shipped: 5 slices closing one cohesive arc. Activity bucket drilldown (slices 108-112): backend bucket_window_unix(bucket_start, granularity) -> (since, until) calendar-aware (Day=86_400, Week=7d, Month=chrono year-overflow) inclusive-second-adjacent helper (slice 108); InstallLog::bucket_drilldown(bucket_start, granularity, limit) -> Vec<PluginHistogramRow> reader composing bucket_window_unix + plugin_histogram (slice 109); pure-data bucket_drilldown_to_csv(rows, bucket_start, granularity, include_header) 11-column RFC-4180 serialiser with bucket coords leading + 8-col histogram body (slice 110); pure-data bucket_drilldown_to_json(rows, bucket_start, granularity, grand_total) -> BucketDrilldownExportEnvelope schema_version=1 PARALLEL-versioned with the three sibling envelopes (slice 111); slab_marketplace_install_log_bucket_drilldown + _export_bucket_drilldown_csv + _export_bucket_drilldown_json Tauri commands + TS getBucketDrilldown + exportInstallLogBucketDrilldown Csv/Json + suggestBucketDrilldownExportFilename producing marketplace-bucket-drilldown-{day|week|month}_<bucketISO>_<YYYY-MM-DD>.<ext> + click-bar-to-drill UI with anchored popover + Export… menu + close (✕) + per-plugin inline list + active-bar accent ring + ESC-chain integration (slice 112).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `9c0b0b6` — "feat(plugins): Activity over time section with bar chart".
+Latest commit: `2d8a29f` — "feat(plugins): bucket drilldown popover with export menu".
+
+### What round-23 (2026-06-22 07:51 PT) just shipped
+
+Five slices closing one cohesive arc. Before this tick the
+Activity over time chart (round 22) could be VIEWED and EXPORTED
+but the bars were inert — clicking one did nothing. A user staring
+at a spike on 2023-11-14 had to manually pivot to the Top plugins
+section, narrow the window to that single day, then read off the
+plugin breakdown. Tonight that "OK, but WHICH plugins drove THAT
+bar?" follow-up closes in one click — click the bar, popover anchors
+below the chart, shows the per-plugin breakdown for exactly that
+bucket, with CSV + JSON export for the breakdown.
+
+Round 22's closing notes listed "histogram hover-tooltip on bar
+segments showing per-action breakdown without forcing the user to
+read the legend" as a candidate; round 23 ships a STRONGER form of
+that idea — instead of a hover tooltip on the per-plugin histogram,
+the activity-over-time CHART (slice 107) gets a click-to-drill
+popover that resolves the natural "drill into this bucket"
+question with a full per-plugin grid. The two surfaces are
+complementary: the histogram answers "WHICH plugins overall",
+this drilldown answers "WHICH plugins in this specific bucket".
+
+- Slice 108: bucket window helper (c7e22d8, 169 LOC).
+  Pure helper `bucket_window_unix(bucket_start, granularity) ->
+  (since, until)` composes `bucket_floor_unix` (round 22 slice 103)
+  with a calendar-aware "advance one bucket" walk to produce the
+  inclusive [since_unix, until_unix] window for a single
+  activity-timeline bucket. Returns `until = next_bucket_start -
+  1` so the output drops straight into the inclusive
+  `list_events_between` / `plugin_histogram` boundary contract —
+  back-to-back buckets are exactly second-adjacent (no overlap, no
+  gap), so the union of every bucket's window is bit-for-bit the
+  activity-timeline window. Bucket lengths: Day = 86_400s, Week =
+  7d, Month = calendar-aware via chrono with December → January
+  year+1 rollover. Defensive fallback to (start, start) when the
+  timestamp can't be represented as a UTC datetime — matches
+  bucket_floor_unix. 9 tests pin day = 86_399s, week = 7d - 1s,
+  January = 31d, February 2024 = 29d (leap), February 2023 = 28d,
+  November = 30d, December rolls into January year+1 (catches the
+  year-overflow plumbing — without it next_month=13 would have
+  chrono reject and the helper would fall back to (start, start)),
+  back-to-back daily buckets are second-adjacent, compose-with-
+  floor invariant (floor(ts) <= ts <= bucket_window(floor(ts)).end).
+
+- Slice 109: activity bucket drilldown reader (7a25878, 204 LOC).
+  `InstallLog::bucket_drilldown(bucket_start_unix, granularity,
+  limit) -> Vec<PluginHistogramRow>` — thin composition: bucket_
+  window_unix produces the inclusive window, plugin_histogram
+  aggregates by plugin_id within that window. Same sort contract
+  (DESC by total, ASC by plugin_id tie-break) so two calls return
+  the same order. limit clamps to zero on negative. The drilldown
+  surface is the THIRD aggregate on top of the install log —
+  sibling to activity_timeline (when?) and plugin_histogram
+  (which plugins overall?). Drilldown asks the cross-product:
+  "which plugins, narrowed to this one bucket?". 9 tests pin only
+  plugins active in the bucket appear, day-grain excludes next-day
+  events (boundary pin for bucket_window), week-grain collapses
+  both days within the same ISO week, month-grain separates Nov vs
+  Dec correctly, CONSERVATION INVARIANT (summing drilldown totals
+  across every bucket reproduces activity_timeline's bucket totals
+  across all three granularities — the two surfaces are
+  independent aggregations of the same underlying events and they
+  CAN'T diverge), DESC-by-total with plugin_id ASC tie-break,
+  empty bucket returns empty, limit caps results to top-N,
+  negative limit clamps to zero.
+
+- Slice 110: bucket drilldown CSV export primitive (9c8782a, 314
+  LOC). Pure-data `bucket_drilldown_to_csv(rows, bucket_start_unix,
+  granularity, include_header) -> String` RFC-4180 serialiser.
+  Eleven columns: granularity, bucket_start_unix, bucket_start_iso,
+  plugin_id, installs, updates, uninstalls, failures, total,
+  last_occurred_at_unix, last_occurred_at_iso. The first three
+  identify the bucket the rows belong to; the remaining eight are
+  the same per-plugin shape as plugin_histogram_to_csv so a
+  consumer that only knows the histogram CSV can read by skipping
+  the first three. BUCKET_DRILLDOWN_CSV_HEADER pub const for tests
+  + future reorders. Same byte-for-byte ISO format as install-log
+  + histogram + activity-timeline CSVs (pinned by test).
+  bucket_start_iso + last_occurred_at_iso both fed by iso8601_utc
+  so they cannot drift. total written verbatim (NOT re-summed) —
+  defence-in-depth so a future PluginHistogramRow axis can't
+  silently corrupt totals in the lag window. Granularity tag on
+  every row so a downstream pipeline concatenating drilldown
+  exports across multiple buckets can dispatch on the first cell.
+  13 tests pin header opt-in invariant + with-header has 2 lines
+  bare 1, empty with header is header-only, header/row column
+  count parity (11 cols both sides), documented column order with
+  values for a hand-built fixture (Nov 15 2023 bucket_start ISO
+  byte-equal), granularity tag on EVERY row (concat safety), ISO
+  matches install-log byte-for-byte (cross-export join
+  compatibility), preserves input order (caller may pre-sort;
+  exporter ships verbatim), zero timestamp renders 0 not empty
+  (NOT NULL contract for both bucket + last_occurred_at unix),
+  total verbatim (mismatch test confirms no re-sum), no None/null
+  leaks (catches future Option<_> addition), one row per input
+  invariant (n=0,1,5,30 for stable toast count), granularity tag
+  distinguishes export pairs (day/week differ only in column 0 on
+  identical input), escapes plugin_id with embedded comma (RFC-
+  4180 trip character).
+
+- Slice 111: bucket drilldown JSON envelope primitive (31de426,
+  345 LOC). Pure-data `bucket_drilldown_to_json(rows,
+  bucket_start_unix, granularity, grand_total) ->
+  BucketDrilldownExportEnvelope`. Eight fields: schema_version +
+  generated_at_iso + granularity + bucket_start_unix +
+  bucket_start_iso + row_count + grand_total + rows.
+  bucket_drilldown_to_json_with_now takes explicit now-seconds so
+  tests don't race the wall clock — matches the histogram +
+  timeline envelope helper pattern. BUCKET_DRILLDOWN_EXPORT_
+  SCHEMA_VERSION = 1, pub const PARALLEL-VERSIONED with the three
+  sibling envelopes (install-log + histogram + timeline). No
+  window-bounds fields — the bucket coords ARE the window.
+  grand_total + row_count ride through caller-supplied verbatim
+  (NOT re-summed) so a future PluginHistogramRow axis addition
+  can't silently diverge on disk. bucket_start_iso fed by
+  iso8601_utc so it matches the CSV exporter's column 2 + the
+  other envelopes' ISO format byte-for-byte. 13 tests pin
+  schema_v1 + equality to the const, bucket-coords verbatim from
+  caller (granularity + bucket_start_unix + bucket_start_iso),
+  row_count == rows.len() invariant (n=0,1,5,30), grand_total
+  verbatim (mismatch test confirms no re-sum), generated_at_iso
+  matches install-log byte-for-byte, preserves input row order
+  (out-of-order ships verbatim), rows are owned clones (caller
+  mutation isolation), serde round-trip full field-set, pretty-
+  print round-trip (Tauri layer uses to_string_pretty), empty
+  input renders cleanly with rows:[], parallel-versioning
+  equality vs install-log + histogram + timeline (all four v1),
+  granularity serde round-trips for all three lowercase tags,
+  bucket_start_iso matches CSV column 2 byte-for-byte (cross-
+  export join compatibility).
+
+- Slice 112: Bucket drilldown popover with export menu (2d8a29f,
+  1021 LOC across 5 files). The demo-able payoff tying slices
+  108-111 together. Three new Tauri commands:
+  slab_marketplace_install_log_bucket_drilldown (read) +
+  _export_bucket_drilldown_csv + _export_bucket_drilldown_json
+  (write). All three default granularity to Day + limit to 25 —
+  same defaults as the activity_timeline read endpoint, so "drill
+  into / export the bucket I'm looking at" is the natural reading.
+  All three registered in invoke_handler between the activity-
+  timeline export commands and the retention policy commands.
+  BucketDrilldownResult wire payload mirrors the histogram +
+  timeline result shapes (rows + bucket coords + grand_total).
+
+  TS surface: BucketDrilldownResult + BucketDrilldownExportFilter
+  interfaces mirroring the wire shapes. getBucketDrilldown async
+  wrapper (browser-mode returns empty result). exportInstallLog
+  BucketDrilldownCsv/Json lazy-import invoke wrappers (browser
+  no-op). suggestBucketDrilldownExportFilename producing
+  marketplace-bucket-drilldown-{day|week|month}_<bucketISO>_
+  <YYYY-MM-DD>.<ext> — bucket coord in the slot so a paralegal
+  collecting drilldowns sees them sort by bucket date first, then
+  by export date.
+
+  UI: 8 new state cells alongside the timeline cells (drilldown,
+  drilldownLoading, drilldownError, drilldownExportMenuOpen,
+  drilldownExporting, drilldownExportToast,
+  drilldownExportToastTimer named for cleanup, drilldown-export-
+  anchor for dismiss isolation from histogram + footer + timeline
+  anchors). Timeline bars upgraded from div to button (semantic +
+  keyboard accessible) — active bar gets accent inset shadow +
+  accent background tint so the chart shows which bucket the
+  popover is anchored to as the user scrolls. Empty buckets are
+  disabled (cursor stays default, no click handler fires).
+
+  openBucketDrilldown(start) handler: toggles off when re-clicking
+  the active bar, otherwise loads fresh (dismisses any stale
+  export popover from a prior bucket). runDrilldownExport(kind)
+  handler mirrors runTimelineExport's shape exactly — filter ships
+  in-state bucket coords, save dialog opened with kind-appropriate
+  filter, cancellation is a clean no-op, toast "Exported N plugins
+  as CSV/JSON (X.X KB)" accent-green tint with 0.16s fade-in
+  keyframe (reuses the timeline/histogram toast vocabulary).
+
+  Escape chain updated to put drilldownExportMenuOpen FIRST then
+  drilldown itself before timeline/histogram/footer popovers (most
+  recently opened, closest to user attention). onWindowClick adds
+  two dismissals: drilldown export anchor (same pattern as the
+  other three anchors) and the drilldown popover itself when the
+  click lands OUTSIDE both the popover AND any timeline bar (so
+  clicking a different bar re-anchors via openBucketDrilldown
+  rather than dismissing).
+
+  Popover markup: bucketIso title + grand_total/plugin_count/
+  granularity sub + Export… popover with anchor + close button
+  (✕); inline horizontal-bar list (max-height 220px with local
+  scroll so a busy bucket doesn't push the legend + axis off
+  screen) with the same install/update/uninstall/failed segment
+  vocabulary as the histogram + timeline; click a row to filter
+  the event list below (reuses onHistogramRowClick from slice 87);
+  legend footer explaining the surface.
+
+  8 inline-test scenarios in marketplace.test.ts (extends slice
+  106 file): default csv/json form for known bucket, granularity
+  in prefix for all three values, csv vs json differ ONLY in
+  suffix (slice-prefix equality), bucket slot == bucket UTC date,
+  today slug UTC, bucket slot identical across granularities for
+  same bucket_start, epoch bucket slug (1970-01-01 -> 19700101),
+  limit irrelevant to filename.
+
+Gates result: cargo fmt clean (one clippy doc-overindented-list-
+items fix folded into slice 108 before commit — the second
+section's bucket-length bullet list was 3-space-indented when
+clippy wants 2; reformatted to flat bullet list), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 7.98s, cargo test --lib 2437
+passed / 0 failed (round-22 baseline 2393 + 9 from slice 108 + 9
+from slice 109 + 13 from slice 110 + 13 from slice 111 = 2437),
+pnpm check 0 errors / 104 warnings (round-22 baseline preserved
+EXACTLY — zero new warnings from the bucket-drilldown TS surface,
+helpers, popover markup, scoped CSS, button-upgraded timeline
+bars), tsx src/lib/marketplace.test.ts 115 inline expects pass
+(round-22 baseline 102 + 13 from slice 112 = 115).
+
+PROCESS NOTES:
+- Round-22 closing notes listed "histogram hover-tooltip on bar
+  segments showing per-action breakdown without forcing the user
+  to read the legend" as a next-tick candidate; round 23 shipped a
+  STRONGER form of that idea — click-to-drill on the activity-
+  over-time chart instead of hover-tooltip on the histogram. The
+  hover-tooltip would have answered "what's that segment", but the
+  drilldown answers "WHICH plugins are in that bucket" — the more
+  valuable follow-up for a paralegal investigating an activity
+  spike.
+- Five slices, five commits, ONE logical subsystem (the bucket
+  drilldown). Mirrors the canonical five-layer cadence of
+  round-19 (drilldown CSV arc 88-91 + one composite slice 92),
+  round-20 (drilldown JSON arc 93-96 + histogram sort 97),
+  round-21 (histogram audit-export arc 98-102), and round-22
+  (activity timeline arc 103-107): backend helper -> backend
+  reader -> CSV primitive -> JSON primitive -> Tauri commands +
+  TS client + filename helper + demo-able UI. The split into
+  separate window-helper + reader (108 + 109) rather than one
+  combined "drilldown primitive" slice keeps the calendar-aware
+  bucket math (the only non-trivial part) testable in isolation
+  with 9 calendar-correctness tests that don't have to spin up
+  an in-memory log.
+- The BucketDrilldownExportEnvelope schema_version=1 matches the
+  install-log + histogram + activity-timeline envelopes'
+  constants by value today but they are PARALLEL-versioned (a
+  future shape change in one bumps that one only). A test pins
+  the four-way v1==v1 equality so a careless joint bump surfaces.
+- The 5-layer arc completes the install-log aggregate trio
+  (per-event timeline + per-plugin histogram + per-bucket
+  activity timeline) with a CROSS-PRODUCT drilldown (per-plugin
+  WITHIN per-bucket). The four surfaces close a 2x2 matrix over
+  the install log: per-event vs per-plugin (rows) crossed with
+  full-window vs per-bucket (columns). Slice 109's conservation
+  invariant test pins the cross-axis sum equality so the four
+  surfaces can't silently diverge.
+- The timeline-bar div-to-button upgrade is semantically the
+  right call (the bar IS a click target now) but it required
+  resetting button defaults (border:0, padding:0, margin:0,
+  background:transparent, color:inherit, cursor:pointer,
+  font:inherit) so the visual rendering stays identical to the
+  div form. The active-bar styling (inset accent box-shadow +
+  accent background tint) makes the click target's selected
+  state legible even when the popover scrolls below the
+  fold.
+- The drilldown popover renders BELOW the chart (sibling to the
+  axis + legend), NOT position:absolute over the chart. Two
+  reasons: (1) keeps the layout flow natural so the legend +
+  axis stay anchored when a busy popover scrolls; (2) lets the
+  popover grow vertically with row count without overflow math
+  — the popover's internal list has max-height:220px + local
+  scroll so the surrounding chart stays anchored.
+
+DESIGN NOTES:
+- The bucket coord (granularity + bucket_start_unix +
+  bucket_start_iso) appears as the FIRST three columns of the
+  drilldown CSV and the FIRST three fields of the JSON envelope
+  body (after the standard schema_version + generated_at_iso
+  header). Putting the coords FIRST (not last, not in a
+  metadata block) is deliberate — a downstream pipeline reading
+  one row at a time can dispatch on the bucket without
+  buffering the full per-plugin payload.
+- The drilldown DOES NOT carry a window-bounds field on the
+  JSON envelope (the install-log + histogram + activity-
+  timeline envelopes all have since/until pairs). The bucket
+  coords ARE the window — a window-bounds field would be
+  redundant + would invite a future bug where the two carriers
+  drift. Pinned by the BucketDrilldownExportEnvelope struct
+  shape (no since_unix / until_unix fields exist).
+- The drilldown popover's "Export…" button is positioned in the
+  popover head (right of the title), NOT in the chart legend
+  below. Reads as "controls for this view live with the view"
+  (same pattern as the histogram's Export beside Sort by, the
+  timeline's Export beside Bucket width). Same .export-menu
+  styling shared across all four export popovers (footer,
+  histogram, timeline, drilldown) so the verb feels like one
+  surface across the drawer.
+- The drilldown popover's close button (✕) is the FIRST
+  dismissal affordance a user sees, but the Escape chain places
+  the drilldown SECOND (after drilldownExportMenuOpen) so a
+  user with both the export menu and the drilldown open can
+  back out one layer at a time. Same nested-Escape pattern as
+  the rest of the drawer (suggest -> filter -> close).
+- The drilldown row's per-plugin bar is a HORIZONTAL bar
+  (mirrors the Top plugins histogram row) NOT a vertical
+  segmented stack — the bucket-drilldown shows MANY plugins for
+  one bucket, the activity-timeline shows ONE per-action
+  breakdown for many buckets. Same vocabulary, different
+  orientation per the right rendering for the data shape.
+
+## Roadmap — round 23 (Activity bucket drilldown) — ALL DONE
+
+Round 23 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the activity bucket drilldown (slices 108-112).
+One backend helper, one backend reader, one CSV primitive, one
+JSON envelope primitive, and one composite UI slice (Tauri
+commands + TS client + filename helper + demo-able popover). Same
+canonical five-layer pattern as round 19 (drilldown CSV arc) +
+round 20 (drilldown JSON + histogram sort) + round 21 (histogram
+export arc) + round 22 (activity timeline arc).
+
+108. ~~**bucket window helper**~~ —
+     DONE (2026-06-22 07:51 PT, c7e22d8, single commit, 169 LOC).
+     bucket_window_unix(bucket_start, granularity) -> (since,
+     until) inclusive-second-adjacent calendar-aware helper.
+     Day = 86_400s, Week = 7d, Month = chrono year-overflow.
+     9 tests pin Jan = 31d, Feb leap year = 29d, Feb non-leap =
+     28d, Nov = 30d, Dec rolls into Jan year+1, back-to-back
+     buckets second-adjacent, compose-with-floor invariant.
+109. ~~**activity bucket drilldown reader**~~ —
+     DONE (2026-06-22 07:51 PT, 7a25878, single commit, 204 LOC).
+     InstallLog::bucket_drilldown(bucket_start, granularity,
+     limit) -> Vec<PluginHistogramRow>. Thin composition of
+     bucket_window_unix with plugin_histogram. 9 tests pin only
+     plugins active in bucket appear, day-grain excludes next-day
+     events (boundary pin), week/month grain collapses correctly,
+     CONSERVATION INVARIANT vs activity_timeline totals across
+     all three granularities, DESC-by-total with id tiebreak,
+     empty bucket returns empty, limit caps results, negative
+     limit clamps to zero.
+110. ~~**bucket drilldown CSV export primitive**~~ —
+     DONE (2026-06-22 07:51 PT, 9c8782a, single commit, 314 LOC).
+     Pure-data bucket_drilldown_to_csv(rows, bucket_start,
+     granularity, include_header) -> String. 11 columns with
+     bucket coords leading. BUCKET_DRILLDOWN_CSV_HEADER pub
+     const. 13 tests pin header opt-in + column count parity +
+     documented order + granularity-on-every-row + ISO matches
+     install-log byte-for-byte + preserves input order + zero
+     timestamp renders 0 + total verbatim + no None/null leaks +
+     one row per input + granularity distinguishes export pairs
+     + escapes plugin_id with comma.
+111. ~~**bucket drilldown JSON envelope primitive**~~ —
+     DONE (2026-06-22 07:51 PT, 31de426, single commit, 345 LOC).
+     Pure-data bucket_drilldown_to_json(rows, bucket_start,
+     granularity, grand_total) -> BucketDrilldownExportEnvelope.
+     schema_version=1 PARALLEL-versioned with all three sibling
+     envelopes. No window-bounds (bucket coords ARE the window).
+     13 tests pin schema_v1 + bucket coords + row_count
+     invariant + grand_total verbatim + ISO matches install-log
+     + preserves order + owned clones + serde + pretty-print +
+     empty input + parallel-versioning + granularity serde +
+     CSV byte-for-byte cross-check.
+112. ~~**Bucket drilldown popover with export menu**~~ —
+     DONE (2026-06-22 07:51 PT, 2d8a29f, single commit, 1021
+     LOC across 5 files). The demo-able payoff. 3 Tauri commands
+     (read + CSV-export + JSON-export) defaulting to Day + limit
+     25. TS BucketDrilldownResult + BucketDrilldownExportFilter
+     interfaces. getBucketDrilldown async wrapper.
+     exportInstallLogBucketDrilldown Csv/Json lazy-import invoke
+     wrappers. suggestBucketDrilldownExportFilename producing
+     marketplace-bucket-drilldown-{granularity}_<bucketISO>_
+     <YYYY-MM-DD>.<ext>. Timeline bars upgraded div->button
+     (semantic + keyboard accessible). 8 state cells alongside
+     timeline cells. openBucketDrilldown + runDrilldownExport
+     handlers mirror runTimelineExport. Escape chain + onWindow
+     Click dismiss patterns. Popover anchors below chart with
+     title+sub+Export…+close (✕) + horizontal-bar per-plugin
+     list (max-height 220px local scroll) + legend footer.
+     8 new inline-test scenarios in marketplace.test.ts.
+
+     With round 23 done, the install log's read-side closes its
+     2x2 aggregate matrix (per-event timeline + per-plugin
+     histogram + per-bucket activity timeline + per-plugin-per-
+     bucket drilldown), all sharing the same window axis + the
+     same export-arc cadence + the same dark-glass design
+     language. Next subsystem candidates: Hopper rule reorder-
+     by-drag in the coverage panel (drag a dead row up to fix
+     shadowing in one motion), drilldown row → cross-surface
+     filter (clicking a fall-through filename in the popover
+     carries the search query into the document inspector),
+     Loom-grade tagging explorer, doc-detail metadata editor
+     read/write surface, Beacon cache inspector polish (column
+     sort by basename / model facet), Quill multi-document
+     field-detect queueing, install-log per-plugin retention
+     override (some plugins are audit-critical and want longer
+     retention than the global default), histogram hover-tooltip
+     on bar segments showing per-action breakdown (could still
+     ship as a smaller arc — drilldown gave the bigger payoff
+     for the time spent, hover-tooltip remains a useful nicety).
 
 ### What round-22 (2026-06-22 04:14 PT) just shipped
 
