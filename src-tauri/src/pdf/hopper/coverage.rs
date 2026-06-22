@@ -56,7 +56,7 @@ use super::rules::{Rule, RuleContext};
 /// A single file the coverage analyzer evaluates against the rule
 /// chain. Mirrors [`RuleContext`] but owned (the sample list lives
 /// across the lock guard that pulled it from the log).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleSample {
     pub filename: String,
     #[serde(default)]
@@ -304,6 +304,112 @@ pub fn compute_sample_drilldown(
         total_in_bucket: total,
         truncated,
     }
+}
+
+// ─── Slice 88 — drilldown CSV export primitive ───────────────────────
+//
+// Pure-data serialiser turning a [`SampleDrilldown`] into RFC-4180
+// CSV so the round-18 drilldown popover can offer "Save this list as
+// CSV…" — paralegals click into the fall-through bucket, see 23
+// orphaned files, then need to email that list to a partner before
+// tightening the rules. Mirrors `backfill_report_to_csv` (slice 13
+// audit-trail export) so paralegals see ONE consistent CSV idiom
+// across the audit surfaces.
+//
+// Columns:
+//   filename, size_bytes, page_count, text_sample, bucket_kind, bucket_name
+//
+// `bucket_kind` is the discriminator (`"fallthrough"` / `"rule"`)
+// matching the [`SampleBucket`] serde tag, so a script reading the
+// CSV can re-derive the bucket without guessing.
+//
+// `bucket_name` is the human label — `"Fall-through"` for the
+// catch-all bucket, the rule's display name (or `"Rule #N"` 1-based
+// fallback when the name is missing/blank) for rule buckets. Same
+// vocabulary as the TS `describeBucket` helper so the CSV reads like
+// the popover header reads.
+//
+// Header is opt-in (mirror backfill's signature) so an export that
+// appends to an existing audit log can suppress it.
+
+const SAMPLE_DRILLDOWN_CSV_HEADER: &str =
+    "filename,size_bytes,page_count,text_sample,bucket_kind,bucket_name";
+
+/// Render a [`SampleDrilldown`] as RFC-4180-compliant CSV.
+///
+/// `rule_names` is the parallel name array used to resolve a rule
+/// bucket's display label — pass the rule chain's names in input
+/// order. The function handles empty/whitespace/out-of-range names
+/// with a `Rule #N` (1-based) fallback so the CSV never reads as
+/// `,,` with an empty bucket label. Mirrors the TS `describeBucket`
+/// helper's fallback chain verbatim.
+///
+/// Pure function — never touches the filesystem; the Tauri command
+/// layer owns disk I/O. Same RFC-4180 escaping policy as
+/// [`crate::pdf::hopper::backfill::backfill_report_to_csv`]:
+/// fields containing `,`, `"`, `\r`, `\n` are quote-wrapped with
+/// embedded quotes doubled.
+pub fn sample_drilldown_to_csv(
+    drill: &SampleDrilldown,
+    rule_names: &[String],
+    include_header: bool,
+) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(SAMPLE_DRILLDOWN_CSV_HEADER);
+        out.push('\n');
+    }
+    let (kind, name) = bucket_csv_labels(drill.bucket, rule_names);
+    for s in &drill.samples {
+        let row = [
+            csv_escape(&s.filename),
+            s.size_bytes.to_string(),
+            s.page_count.map(|n| n.to_string()).unwrap_or_default(),
+            csv_escape(s.text_sample.as_deref().unwrap_or("")),
+            kind.to_string(),
+            csv_escape(&name),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+/// Resolve the `(bucket_kind, bucket_name)` pair for a bucket plus an
+/// optional rule-names array. Same fallback chain as the TS
+/// `describeBucket` helper:
+///
+/// - `Fallthrough` → `("fallthrough", "Fall-through")`.
+/// - `Rule { index }` → kind is `"rule"`; name is the trimmed
+///   `rule_names[index]` when present + non-empty, else `Rule #N`
+///   with `N = index + 1`.
+fn bucket_csv_labels(bucket: SampleBucket, rule_names: &[String]) -> (&'static str, String) {
+    match bucket {
+        SampleBucket::Fallthrough => ("fallthrough", "Fall-through".into()),
+        SampleBucket::Rule { index } => {
+            let resolved = rule_names
+                .get(index)
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Rule #{}", index + 1));
+            ("rule", resolved)
+        }
+    }
+}
+
+/// RFC-4180 field escape. Same policy as
+/// [`crate::pdf::hopper::backfill`]'s private helper; duplicated
+/// rather than re-exported so the two CSV emitters stay independent
+/// (a future change to one shouldn't silently affect the other).
+fn csv_escape(field: &str) -> String {
+    let needs_quoting =
+        field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r');
+    if !needs_quoting {
+        return field.to_string();
+    }
+    let escaped = field.replace('"', "\"\"");
+    format!("\"{escaped}\"")
 }
 
 #[cfg(test)]
@@ -906,5 +1012,252 @@ mod tests {
         assert!(json.contains("\"truncated\":true"));
         let back: SampleDrilldown = serde_json::from_str(&json).unwrap();
         assert_eq!(back, d);
+    }
+
+    // ── Slice 88 — sample_drilldown_to_csv ───────────────────────────
+
+    fn drill(bucket: SampleBucket, samples: Vec<RuleSample>) -> SampleDrilldown {
+        let n = samples.len() as u64;
+        SampleDrilldown {
+            bucket,
+            samples,
+            total_in_bucket: n,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn drilldown_csv_header_when_requested() {
+        let d = drill(SampleBucket::Fallthrough, vec![]);
+        let with_header = sample_drilldown_to_csv(&d, &[], true);
+        assert_eq!(
+            with_header.trim(),
+            "filename,size_bytes,page_count,text_sample,bucket_kind,bucket_name"
+        );
+        let without = sample_drilldown_to_csv(&d, &[], false);
+        assert!(without.is_empty(), "bare empty drilldown emits nothing");
+    }
+
+    #[test]
+    fn drilldown_csv_fallthrough_bucket_renders_label() {
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "orphan.pdf".into(),
+                size_bytes: 1024,
+                page_count: Some(3),
+                text_sample: None,
+                ..Default::default()
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        // No header → one data row.
+        let lines: Vec<&str> = csv.trim().lines().collect();
+        assert_eq!(lines.len(), 1);
+        let cols: Vec<&str> = lines[0].split(',').collect();
+        assert_eq!(cols[0], "orphan.pdf");
+        assert_eq!(cols[1], "1024");
+        assert_eq!(cols[2], "3");
+        assert_eq!(cols[3], ""); // no text sample
+        assert_eq!(cols[4], "fallthrough");
+        assert_eq!(cols[5], "Fall-through");
+    }
+
+    #[test]
+    fn drilldown_csv_rule_bucket_uses_rule_name() {
+        let d = drill(
+            SampleBucket::Rule { index: 1 },
+            vec![RuleSample {
+                filename: "tax_2025.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let names = vec!["Invoices".to_string(), "Tax forms".to_string()];
+        let csv = sample_drilldown_to_csv(&d, &names, false);
+        let cols: Vec<&str> = csv.trim().split(',').collect();
+        assert_eq!(cols[4], "rule");
+        assert_eq!(cols[5], "Tax forms");
+    }
+
+    #[test]
+    fn drilldown_csv_rule_bucket_falls_back_when_name_missing() {
+        // Empty names array → "Rule #N" (1-based) per the UI convention
+        // mirroring describeBucket in hopper.ts.
+        let d = drill(
+            SampleBucket::Rule { index: 2 },
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        let cols: Vec<&str> = csv.trim().split(',').collect();
+        assert_eq!(cols[5], "Rule #3");
+    }
+
+    #[test]
+    fn drilldown_csv_rule_bucket_falls_back_when_name_blank() {
+        // Whitespace-only / empty name → same "Rule #N" fallback so the
+        // CSV never reads as ",rule,," with a missing bucket label.
+        let d = drill(
+            SampleBucket::Rule { index: 0 },
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        for name in ["", "   "] {
+            let names = vec![name.to_string()];
+            let csv = sample_drilldown_to_csv(&d, &names, false);
+            let cols: Vec<&str> = csv.trim().split(',').collect();
+            assert_eq!(cols[5], "Rule #1", "blank name {:?} -> Rule #1", name);
+        }
+    }
+
+    #[test]
+    fn drilldown_csv_rule_bucket_out_of_range_falls_back() {
+        // Out-of-range index (more rules in the bucket index than the
+        // names array — possible if the UI passes a stale name list).
+        let d = drill(
+            SampleBucket::Rule { index: 99 },
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &["Tax".to_string()], false);
+        let cols: Vec<&str> = csv.trim().split(',').collect();
+        assert_eq!(cols[5], "Rule #100");
+    }
+
+    #[test]
+    fn drilldown_csv_escapes_commas_and_quotes_in_filename() {
+        // RFC-4180 escaping — same convention as backfill_report_to_csv.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "weird, \"file\".pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        // The field gets wrapped in quotes; embedded quotes doubled.
+        assert!(csv.contains("\"weird, \"\"file\"\".pdf\""));
+    }
+
+    #[test]
+    fn drilldown_csv_escapes_newlines_in_text_sample() {
+        // Text samples may carry embedded newlines from PDF extraction;
+        // the field has to be quote-wrapped so the CSV stays parsable.
+        let d = drill(
+            SampleBucket::Rule { index: 0 },
+            vec![RuleSample {
+                filename: "a.pdf".into(),
+                text_sample: Some("first line\nsecond line".into()),
+                ..Default::default()
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &["A".to_string()], false);
+        assert!(csv.contains("\"first line\nsecond line\""));
+    }
+
+    #[test]
+    fn drilldown_csv_omits_optional_columns_when_none() {
+        // Log-sourced samples have size=0 + page_count=None + text=None.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "log_only.pdf".into(),
+                size_bytes: 0,
+                page_count: None,
+                text_sample: None,
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        let cols: Vec<&str> = csv.trim().split(',').collect();
+        assert_eq!(cols[1], "0");
+        assert_eq!(cols[2], ""); // page_count None → empty cell
+        assert_eq!(cols[3], ""); // text_sample None → empty cell
+    }
+
+    #[test]
+    fn drilldown_csv_empty_samples_with_header_emits_header_only() {
+        let d = drill(SampleBucket::Fallthrough, vec![]);
+        let csv = sample_drilldown_to_csv(&d, &[], true);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("filename,"));
+    }
+
+    #[test]
+    fn drilldown_csv_preserves_input_order() {
+        // Order in the CSV matches the order in `drill.samples` — the
+        // UI lists samples newest-first from the run log, and the export
+        // should mirror exactly what the user saw on screen.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![
+                RuleSample {
+                    filename: "c.pdf".into(),
+                    ..Default::default()
+                },
+                RuleSample {
+                    filename: "a.pdf".into(),
+                    ..Default::default()
+                },
+                RuleSample {
+                    filename: "b.pdf".into(),
+                    ..Default::default()
+                },
+            ],
+        );
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        let first_col: Vec<&str> = csv
+            .trim()
+            .lines()
+            .map(|l| l.split(',').next().unwrap())
+            .collect();
+        assert_eq!(first_col, vec!["c.pdf", "a.pdf", "b.pdf"]);
+    }
+
+    #[test]
+    fn drilldown_csv_unicode_filename_passes_through_when_safe() {
+        // Non-ASCII filenames don't need quoting unless they contain
+        // CSV special chars — mirrors backfill_report_to_csv behaviour.
+        let d = drill(
+            SampleBucket::Fallthrough,
+            vec![RuleSample {
+                filename: "café.pdf".into(),
+                ..Default::default()
+            }],
+        );
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        let cols: Vec<&str> = csv.trim().split(',').collect();
+        assert_eq!(cols[0], "café.pdf");
+    }
+
+    #[test]
+    fn drilldown_csv_row_count_matches_samples_not_total() {
+        // total_in_bucket reports the FULL bucket size (pre-cap), but
+        // the CSV only emits rows for the samples actually carried in
+        // the drilldown (cap-trimmed). The truncation footnote belongs
+        // on the UI / the toast, not in the CSV.
+        let d = SampleDrilldown {
+            bucket: SampleBucket::Fallthrough,
+            samples: vec![
+                RuleSample {
+                    filename: "a.pdf".into(),
+                    ..Default::default()
+                },
+                RuleSample {
+                    filename: "b.pdf".into(),
+                    ..Default::default()
+                },
+            ],
+            total_in_bucket: 47,
+            truncated: true,
+        };
+        let csv = sample_drilldown_to_csv(&d, &[], false);
+        assert_eq!(csv.trim().lines().count(), 2);
     }
 }
