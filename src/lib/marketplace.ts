@@ -576,6 +576,110 @@ export function summarizeHistogram(result: PluginHistogramResult): string {
   return `${events} event${events === 1 ? "" : "s"} across ${n} plugin${n === 1 ? "" : "s"}`;
 }
 
+// ─── Histogram sort axis (v3.40 Slice 97) ───────────────────────────
+
+/**
+ * Sort keys the Top plugins histogram can be reordered by. The
+ * server emits rows sorted by `total` DESC (matching the default
+ * "most active first" mental model); the UI offers four extra axes
+ * so a paralegal can pivot the same row set:
+ *
+ *   - `"total"`     — sum across actions, server's default
+ *   - `"installs"`  — fresh-install volume only
+ *   - `"updates"`   — version-bump volume only
+ *   - `"failures"`  — failed install/update count (the bug hunt)
+ *   - `"recent"`    — most-recent last_occurred_at first
+ *
+ * Uninstalls is deliberately NOT a sort axis: uninstall-heavy
+ * plugins are an antipattern the user typically wants to spot via
+ * the bar segment, not as a sort default. Keeping the menu lean
+ * (5 axes, not 7) reads better and matches the four-action stacked
+ * bar segments minus the uninstall outlier.
+ */
+export type HistogramSortKey =
+  | "total"
+  | "installs"
+  | "updates"
+  | "failures"
+  | "recent";
+
+/**
+ * Stable in-place-equivalent sort for histogram rows. Always sorts
+ * descending on the requested axis (most-of-X-first reads more
+ * naturally than ascending for every count axis); secondary sort is
+ * ASC on `plugin_id` so ties are reproducible across calls and the
+ * row order doesn't reshuffle on a refresh.
+ *
+ * Pure function — returns a NEW array; the caller's input is not
+ * mutated. This matters because Svelte 5's `$state` proxies don't
+ * play nicely with in-place sorts, and the server payload should
+ * stay untouched in case a different sort gets re-applied later.
+ *
+ * The `recent` key sorts by `last_occurred_at` DESC; everything
+ * else is a count column.
+ */
+export function sortHistogramRows(
+  rows: readonly PluginHistogramRow[],
+  key: HistogramSortKey,
+): PluginHistogramRow[] {
+  const out = [...rows];
+  const valueOf = (row: PluginHistogramRow): number => {
+    switch (key) {
+      case "total":
+        return row.total;
+      case "installs":
+        return row.installs;
+      case "updates":
+        return row.updates;
+      case "failures":
+        return row.failures;
+      case "recent":
+        return row.last_occurred_at;
+    }
+  };
+  out.sort((a, b) => {
+    const diff = valueOf(b) - valueOf(a);
+    if (diff !== 0) return diff;
+    // Deterministic tiebreak so a refresh doesn't reshuffle.
+    return a.plugin_id.localeCompare(b.plugin_id);
+  });
+  return out;
+}
+
+/**
+ * Human label for a sort key — used in the toggle dropdown and the
+ * "Sorted by X" subtitle. Singular nouns match the rest of the
+ * drawer's voice; "Most recent" reads naturally for the timestamp
+ * axis (vs the count axes which already imply "most-of-X first").
+ */
+export function histogramSortLabel(key: HistogramSortKey): string {
+  switch (key) {
+    case "total":
+      return "Most active";
+    case "installs":
+      return "Most installs";
+    case "updates":
+      return "Most updates";
+    case "failures":
+      return "Most failures";
+    case "recent":
+      return "Most recent";
+  }
+}
+
+/**
+ * All sort keys in display order. Keep `total` first so it reads as
+ * the default; `recent` last because it's a timestamp axis and feels
+ * like a "switch the mental model" rather than a count-pivot.
+ */
+export const HISTOGRAM_SORT_KEYS: readonly HistogramSortKey[] = [
+  "total",
+  "installs",
+  "updates",
+  "failures",
+  "recent",
+] as const;
+
 /**
  * Human-friendly label for a set of action filters. Used in the
  * "Showing X of Y events" subtitle and the filter-bar empty-state.

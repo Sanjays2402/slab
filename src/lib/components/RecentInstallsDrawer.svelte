@@ -57,6 +57,10 @@
     type InstallLogRetentionPolicy,
     type InstallLogSummary,
     type PluginHistogramResult,
+    type HistogramSortKey,
+    HISTOGRAM_SORT_KEYS,
+    sortHistogramRows,
+    histogramSortLabel,
   } from "$lib/marketplace";
 
   type Props = {
@@ -165,6 +169,11 @@
   let histogramError = $state<string | null>(null);
   /** How many plugins to load — matches the server default. */
   let histogramLimit = $state<number>(25);
+  /** v3.40 Slice 97 — client-side sort axis for the Top plugins
+   *  histogram. Defaults to "total" matching the server's emit order;
+   *  the user can pivot to installs / updates / failures / recent
+   *  without a refetch (cheap pure-data sort on the loaded rows). */
+  let histogramSort = $state<HistogramSortKey>("total");
 
   /** Dirty when the draft diverges from the persisted policy. */
   let retentionDirty = $derived.by<boolean>(() => {
@@ -851,9 +860,24 @@
                 or installing a plugin from the Marketplace tab.
               </p>
             {:else}
+              <div class="top-plugins-sort">
+                <label class="top-plugins-sort-label" for="top-plugins-sort-select">
+                  Sort by
+                </label>
+                <select
+                  id="top-plugins-sort-select"
+                  class="top-plugins-sort-select"
+                  bind:value={histogramSort}
+                >
+                  {#each HISTOGRAM_SORT_KEYS as key}
+                    <option value={key}>{histogramSortLabel(key)}</option>
+                  {/each}
+                </select>
+              </div>
+              {@const sortedRows = sortHistogramRows(histogram.rows, histogramSort)}
               {@const maxTotal = histogram.rows[0]?.total ?? 1}
               <ul class="top-plugins-list" aria-label="Plugins by activity">
-                {#each histogram.rows as row (row.plugin_id)}
+                {#each sortedRows as row (row.plugin_id)}
                   {@const widthPct = maxTotal > 0 ? (row.total / maxTotal) * 100 : 0}
                   {@const installPct = row.total > 0 ? (row.installs / row.total) * widthPct : 0}
                   {@const updatePct = row.total > 0 ? (row.updates / row.total) * widthPct : 0}
@@ -905,10 +929,11 @@
                 {/each}
               </ul>
               <p class="top-plugins-legend">
-                Each row's bar is scaled relative to the most-active plugin. Stacked
+                Each row's bar is scaled relative to the most-active plugin's total. Stacked
                 segments break down by action — installs (green), updates (accent),
                 uninstalls (amber), failures (red). Click a row to filter the timeline
-                below to that plugin; click again to clear.
+                below to that plugin; click again to clear. Use the Sort by selector to
+                pivot the order (the bars stay anchored to total activity).
               </p>
             {/if}
           {/if}
@@ -1843,5 +1868,50 @@
     color: var(--text-3);
     font-size: 11px;
     line-height: 1.5;
+  }
+  /* Slice 97 — Sort by selector lives just above the histogram list,
+     compact horizontal label + native select. Native dropdown keeps
+     the keyboard-a11y story honest and matches the retention block's
+     control vocabulary. */
+  .top-plugins-sort {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 8px;
+  }
+  .top-plugins-sort-label {
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .top-plugins-sort-select {
+    appearance: none;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-1);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    padding: 3px 22px 3px 8px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    cursor: pointer;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
+      linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+    background-position:
+      calc(100% - 12px) 50%,
+      calc(100% - 8px) 50%;
+    background-size:
+      4px 4px,
+      4px 4px;
+    background-repeat: no-repeat;
+  }
+  .top-plugins-sort-select:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+  .top-plugins-sort-select:focus-visible {
+    outline: 2px solid rgba(124, 140, 255, 0.55);
+    outline-offset: 1px;
+    border-color: rgba(124, 140, 255, 0.55);
   }
 </style>
