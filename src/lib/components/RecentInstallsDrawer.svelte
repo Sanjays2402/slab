@@ -32,6 +32,8 @@
     ALL_INSTALL_ACTIONS,
     describeActionSet,
     exportInstallLogCsv,
+    exportInstallLogHistogramCsv,
+    exportInstallLogHistogramJson,
     exportInstallLogJson,
     formatBytes,
     formatInstallEventTime,
@@ -49,8 +51,10 @@
     recentInstallPluginIds,
     runInstallLogAutoPrune,
     setInstallLogRetentionDays,
+    suggestHistogramExportFilename,
     suggestInstallLogExportFilename,
     summarizeHistogram,
+    type HistogramExportFilter,
     type InstallEvent,
     type InstallEventQuery,
     type InstallLogExportFilter,
@@ -175,6 +179,23 @@
    *  without a refetch (cheap pure-data sort on the loaded rows). */
   let histogramSort = $state<HistogramSortKey>("total");
 
+  // ─── Histogram export state (v3.40 Slice 102) ─────────────────────
+  //
+  // Mirror of the install-log Export… popover in the drawer footer
+  // (slice 62), scoped to the Top plugins section so the export
+  // verb lives next to the artefact it exports. State cells live
+  // alongside the histogram cells above so the section's open/close
+  // can dismiss them cleanly.
+
+  /** Open state for the histogram Export… popover. */
+  let histogramExportMenuOpen = $state(false);
+  /** True while a save-as dialog or backend write is in flight. */
+  let histogramExporting = $state(false);
+  /** Slim 4-second toast for histogram export success. */
+  let histogramExportToast = $state<string | null>(null);
+  /** Names timeout handle so back-to-back exports don't pile up. */
+  let histogramExportToastTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Dirty when the draft diverges from the persisted policy. */
   let retentionDirty = $derived.by<boolean>(() => {
     if (!policy) return false;
@@ -284,6 +305,7 @@
     void load();
     return () => {
       if (queryDebounce) clearTimeout(queryDebounce);
+      if (histogramExportToastTimer) clearTimeout(histogramExportToastTimer);
     };
   });
 
@@ -443,6 +465,8 @@
       e.preventDefault();
       if (suggestOpen) {
         suggestOpen = false;
+      } else if (histogramExportMenuOpen) {
+        histogramExportMenuOpen = false;
       } else if (exportMenuOpen) {
         exportMenuOpen = false;
       } else if (confirmingPrune) {
@@ -575,17 +599,89 @@
     }
   }
 
+  /** Flash a 4s toast scoped to the Top plugins section. Uses its
+   *  own timer handle so back-to-back exports replace cleanly. */
+  function flashHistogramToast(msg: string): void {
+    histogramExportToast = msg;
+    if (histogramExportToastTimer) {
+      clearTimeout(histogramExportToastTimer);
+    }
+    histogramExportToastTimer = setTimeout(() => {
+      histogramExportToast = null;
+      histogramExportToastTimer = null;
+    }, 4000);
+  }
+
+  /**
+   * Export the current Top plugins histogram as CSV or JSON. Mirrors
+   * runExport (above) but scoped to the histogram view: window comes
+   * from the same windowSinceUnix axis that drives the timeline, so
+   * what the user sees is what they get; the row count shipped in
+   * the toast matches what the section currently renders.
+   *
+   * The handler ships the in-state histogram VERBATIM rather than
+   * re-fetching — a background prune / install can't sneak in a
+   * different aggregate between "click Export" and "click Save".
+   * The Tauri command re-queries the storage layer with the same
+   * window so the file content matches the on-screen view down to
+   * the row counts.
+   */
+  async function runHistogramExport(kind: "csv" | "json"): Promise<void> {
+    histogramExportMenuOpen = false;
+    histogramExporting = true;
+    try {
+      const filter: HistogramExportFilter = {
+        since_unix: windowSinceUnix,
+        limit: histogramLimit,
+      };
+      const defaultPath = suggestHistogramExportFilename(filter, kind);
+      const target = await saveDialog({
+        defaultPath,
+        filters: [
+          kind === "csv"
+            ? { name: "CSV", extensions: ["csv"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        kind === "csv"
+          ? await exportInstallLogHistogramCsv(target, filter)
+          : await exportInstallLogHistogramJson(target, filter);
+      const count = histogram?.rows.length ?? 0;
+      const label = kind === "csv" ? "CSV" : "JSON";
+      flashHistogramToast(
+        `Exported ${count} plugin${count === 1 ? "" : "s"} as ${label} (${formatBytes(bytes)})`,
+      );
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    } finally {
+      histogramExporting = false;
+    }
+  }
+
   /**
    * Dismiss the export popover on outside click — matches the
    * Notion / Linear convention. The check uses .closest() on the
    * anchor wrapper so clicks INSIDE the menu (its buttons) don't
    * dismiss it before the handler fires.
+   *
+   * Two anchors live in the drawer now (footer install-log Export…
+   * and Top plugins histogram Export…). Each has its own anchor
+   * class so an outside click on one doesn't accidentally close
+   * the other.
    */
   function onWindowClick(e: MouseEvent): void {
-    if (!exportMenuOpen) return;
     const target = e.target as HTMLElement | null;
-    if (target && !target.closest(".export-anchor")) {
-      exportMenuOpen = false;
+    if (exportMenuOpen) {
+      if (!target?.closest(".export-anchor")) {
+        exportMenuOpen = false;
+      }
+    }
+    if (histogramExportMenuOpen) {
+      if (!target?.closest(".histogram-export-anchor")) {
+        histogramExportMenuOpen = false;
+      }
     }
   }
 </script>
@@ -873,7 +969,49 @@
                     <option value={key}>{histogramSortLabel(key)}</option>
                   {/each}
                 </select>
+                <div class="histogram-export-anchor">
+                  <button
+                    type="button"
+                    class="top-plugins-export-btn"
+                    onclick={() => (histogramExportMenuOpen = !histogramExportMenuOpen)}
+                    disabled={histogramExporting || histogramLoading}
+                    aria-haspopup="menu"
+                    aria-expanded={histogramExportMenuOpen}
+                    title="Export the Top plugins histogram for the current window"
+                  >
+                    {histogramExporting ? "Exporting…" : "Export…"}
+                  </button>
+                  {#if histogramExportMenuOpen}
+                    <div class="export-menu histogram-export-menu" role="menu" aria-label="Export top plugins histogram">
+                      <button type="button" role="menuitem" onclick={() => void runHistogramExport("csv")}>
+                        <span class="menu-glyph" aria-hidden="true">⤓</span>
+                        <span class="menu-body">
+                          <span class="menu-title">Export as CSV…</span>
+                          <span class="menu-sub">
+                            {windowChoice === "all"
+                              ? "Whole log · spreadsheet-friendly"
+                              : `Last ${windowChoice} · spreadsheet-friendly`}
+                          </span>
+                        </span>
+                      </button>
+                      <button type="button" role="menuitem" onclick={() => void runHistogramExport("json")}>
+                        <span class="menu-glyph" aria-hidden="true">⤓</span>
+                        <span class="menu-body">
+                          <span class="menu-title">Export as JSON…</span>
+                          <span class="menu-sub">
+                            {windowChoice === "all"
+                              ? "Whole log · with envelope metadata"
+                              : `Last ${windowChoice} · with envelope metadata`}
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                  {/if}
+                </div>
               </div>
+              {#if histogramExportToast}
+                <p class="histogram-export-toast" role="status">{histogramExportToast}</p>
+              {/if}
               {@const sortedRows = sortHistogramRows(histogram.rows, histogramSort)}
               {@const maxTotal = histogram.rows[0]?.total ?? 1}
               <ul class="top-plugins-list" aria-label="Plugins by activity">
@@ -933,7 +1071,8 @@
                 segments break down by action — installs (green), updates (accent),
                 uninstalls (amber), failures (red). Click a row to filter the timeline
                 below to that plugin; click again to clear. Use the Sort by selector to
-                pivot the order (the bars stay anchored to total activity).
+                pivot the order (the bars stay anchored to total activity). Export… ships
+                the current window as a CSV (spreadsheet) or JSON (archive) snapshot.
               </p>
             {/if}
           {/if}
@@ -1913,5 +2052,81 @@
     outline: 2px solid rgba(124, 140, 255, 0.55);
     outline-offset: 1px;
     border-color: rgba(124, 140, 255, 0.55);
+  }
+
+  /* Slice 102 — histogram Export… button + popover. The button lives
+     beside the Sort by selector inside the top-plugins-sort row so
+     the export verb sits next to the artefact it exports. The
+     histogram-export-anchor pushes to the row's right so the sort
+     selector stays at the left edge (the more-frequently-used
+     control reads first). Popover anchors top-aligned BELOW the
+     button so it cascades down into the histogram body — opposite
+     of the footer's Export… popover which cascades UP into the
+     drawer body. */
+  .histogram-export-anchor {
+    position: relative;
+    margin-left: auto;
+  }
+  .top-plugins-export-btn {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 11.5px;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+  .top-plugins-export-btn:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.16);
+    color: var(--text);
+  }
+  .top-plugins-export-btn:focus-visible {
+    outline: 2px solid rgba(124, 140, 255, 0.55);
+    outline-offset: 1px;
+    border-color: rgba(124, 140, 255, 0.55);
+  }
+  .top-plugins-export-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  /* Popover anchors DOWN+RIGHT-aligned beneath the button (the sort
+     row sits at the top of the body, so opening UPWARDS would clip
+     against the section toggle). Reuses the .export-menu look-and-
+     feel from the footer popover so the two surfaces feel like one
+     verb across the drawer. */
+  .histogram-export-menu {
+    bottom: auto;
+    top: calc(100% + 6px);
+    left: auto;
+    right: 0;
+    min-width: 240px;
+  }
+  /* Slice 102 toast — slim inline notice anchored to the histogram
+     section so the user's eye doesn't jump to the footer. Same
+     vocabulary as the install-log .export-toast but tinted accent-
+     green to read as a positive write outcome. The 4s fade matches
+     the install-log toast duration. */
+  .histogram-export-toast {
+    margin: 6px 0 4px;
+    color: rgb(170, 230, 195);
+    font-size: 11.5px;
+    line-height: 1.3;
+    padding: 4px 10px;
+    border: 1px solid rgba(110, 220, 154, 0.36);
+    border-radius: 6px;
+    background: rgba(110, 220, 154, 0.06);
+    animation: histogram-toast-in 0.16s ease-out;
+  }
+  @keyframes histogram-toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 </style>
