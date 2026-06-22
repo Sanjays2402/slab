@@ -29,6 +29,7 @@
     slabHopperRuleCoverage,
     slabHopperSampleDrilldown,
     slabHopperExportDrilldownCsv,
+    slabHopperExportDrilldownJson,
     suggestDrilldownExportFilename,
     fallthroughPercent,
     ruleMatchPercent,
@@ -129,8 +130,11 @@
   /** v3.40 Slice 91 — drilldown CSV export state.
    *  `drilldownExporting` gates the Export button while the save
    *  dialog + write is in flight; `drilldownExportToast` carries
-   *  the 4s success notice ("Exported 23 files (1.4 KB)") so the
-   *  paralegal knows the file landed without staring at the disk. */
+   *  the 4s success notice ("Exported 23 files as CSV (1.4 KB)")
+   *  so the paralegal knows the file landed without staring at the
+   *  disk. Slice 96 added the JSON variant; both formats share the
+   *  same in-flight gate (a user can't open the save dialog twice)
+   *  so a click on the JSON button mid-CSV-export gets ignored. */
   let drilldownExporting = $state(false);
   let drilldownExportToast = $state<string | null>(null);
   let drilldownExportToastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -319,21 +323,30 @@
     if (openBucket !== null) refreshDrilldown();
   }
 
-  // ─── Slice 91 — drilldown CSV export handler ────────────────────────
+  // ─── Slice 91 / 96 — drilldown CSV+JSON export handler ──────────────
   //
-  // Wires the popover's "Export CSV" button. Resolves the suggested
-  // filename via the slice-90 helper, opens the native save-as dialog,
-  // ships the in-state drilldown + the current rule-name array to the
-  // slice-89 command, then shows a 4s success toast. Cancellation
-  // (user dismisses the dialog) is a clean no-op — the toast doesn't
-  // fire and `drilldownExporting` resets in the finally.
+  // Wires the popover's "Export CSV" + "Export JSON" buttons. Resolves
+  // the suggested filename via the slice-90/95 helper (passing the
+  // requested `ext`), opens the native save-as dialog, ships the
+  // in-state drilldown + the current rule-name array to the slice-89
+  // (CSV) / slice-94 (JSON) command, then shows a 4s success toast.
+  // Cancellation (user dismisses the dialog) is a clean no-op — the
+  // toast doesn't fire and `drilldownExporting` resets in the finally.
   //
-  // We pass the LOADED drilldown verbatim (not re-fetched) so the CSV
-  // matches exactly what the popover is currently rendering — a
-  // background rule edit can't sneak in a different bucket between
+  // Both formats share the same `drilldownExporting` gate, the same
+  // toast cell, and the same in-state-snapshot semantics — the only
+  // diffs are the suggested filename's suffix, the save dialog's
+  // filter, and which Tauri command runs the write. Keeping the
+  // dispatch in ONE function means a future audit-export change
+  // (e.g. logging exports to a per-watch audit trail) lands once
+  // and applies to both formats.
+  //
+  // We pass the LOADED drilldown verbatim (not re-fetched) so the
+  // export matches exactly what the popover is currently rendering —
+  // a background rule edit can't sneak in a different bucket between
   // "click Export" and "click Save".
 
-  async function exportDrilldownCsv() {
+  async function exportDrilldown(format: "csv" | "json") {
     if (drilldown === null || openBucket === null) return;
     if (drilldownExporting) return;
     drilldownExporting = true;
@@ -342,22 +355,27 @@
       const ruleNames = rules.map((r) => r.name);
       const defaultPath = suggestDrilldownExportFilename(openBucket, ruleNames, {
         watchId,
+        ext: format,
       });
+      const filterName = format === "csv" ? "CSV" : "JSON";
+      const title =
+        format === "csv"
+          ? "Export drilldown as CSV"
+          : "Export drilldown as JSON";
       const target = await saveDialog({
         defaultPath,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-        title: "Export drilldown as CSV",
+        filters: [{ name: filterName, extensions: [format] }],
+        title,
       });
       if (!target) return; // user cancelled
-      const bytes = await slabHopperExportDrilldownCsv(
-        drilldown,
-        ruleNames,
-        target,
-      );
+      const bytes =
+        format === "csv"
+          ? await slabHopperExportDrilldownCsv(drilldown, ruleNames, target)
+          : await slabHopperExportDrilldownJson(drilldown, ruleNames, target);
       const fileCount = drilldown.samples.length;
       drilldownExportToast =
         `Exported ${fileCount} ${fileCount === 1 ? "file" : "files"}` +
-        ` (${formatBytes(bytes)})`;
+        ` as ${filterName} (${formatBytes(bytes)})`;
       if (drilldownExportToastTimer) clearTimeout(drilldownExportToastTimer);
       drilldownExportToastTimer = setTimeout(() => {
         drilldownExportToast = null;
@@ -367,6 +385,18 @@
     } finally {
       drilldownExporting = false;
     }
+  }
+
+  /** Thin wrapper kept for the slice-91 "Export CSV" button's existing
+   *  binding. Equivalent to `exportDrilldown("csv")`. */
+  async function exportDrilldownCsv() {
+    await exportDrilldown("csv");
+  }
+
+  /** Slice 96 - JSON variant. Same dispatch as exportDrilldownCsv but
+   *  picks the slice-94 JSON command + envelope filename. */
+  async function exportDrilldownJson() {
+    await exportDrilldown("json");
   }
 
   /** Local KB/MB formatter for the export toast. Mirrors
@@ -959,6 +989,18 @@
           ? `Save ${drilldown.samples.length} ${drilldown.samples.length === 1 ? "file" : "files"} as CSV`
           : "No files in this bucket to export"}
       >{drilldownExporting ? "Exporting…" : "Export CSV"}</button>
+      <button
+        type="button"
+        class="ghost mini"
+        onclick={() => void exportDrilldownJson()}
+        disabled={drilldownExporting
+          || drilldownLoading
+          || drilldown === null
+          || drilldown.samples.length === 0}
+        title={drilldown && drilldown.samples.length > 0
+          ? `Save ${drilldown.samples.length} ${drilldown.samples.length === 1 ? "file" : "files"} as JSON envelope`
+          : "No files in this bucket to export"}
+      >{drilldownExporting ? "Exporting…" : "Export JSON"}</button>
       <button
         type="button"
         class="ghost mini"
