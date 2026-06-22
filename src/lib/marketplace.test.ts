@@ -11,6 +11,14 @@ import {
   suggestHistogramExportFilename,
   type HistogramSortKey,
   type PluginHistogramRow,
+  // Slice 106 — activity timeline TS surface
+  advanceBucketStart,
+  densifyActivityTimeline,
+  suggestActivityTimelineExportFilename,
+  timeBucketLabel,
+  TIME_BUCKET_GRANULARITIES,
+  type ActivityBucket,
+  type TimeBucketGranularity,
 } from "./marketplace";
 
 function expect(cond: boolean, label: string): void {
@@ -401,4 +409,297 @@ const NOW = 1_710_000_000_000;
     name.includes("_20240309."),
     `today slug uses UTC date (got ${name})`,
   );
+}
+
+// ─── Slice 106 — activity timeline TS helpers ──────────────────────
+
+function actBucket(
+  bucket_start_unix: number,
+  installs: number,
+  updates: number,
+  uninstalls: number,
+  failures: number,
+): ActivityBucket {
+  return {
+    bucket_start_unix,
+    installs,
+    updates,
+    uninstalls,
+    failures,
+    total: installs + updates + uninstalls + failures,
+  };
+}
+
+{
+  // TIME_BUCKET_GRANULARITIES must list all three values in order
+  // — Day first (UI + read-endpoint default), Month last (coarsest
+  // pivot). Adding a fourth granularity is a deliberate one-line
+  // edit; this test pins the current set.
+  expect(
+    TIME_BUCKET_GRANULARITIES.length === 3,
+    `TIME_BUCKET_GRANULARITIES length = 3 (got ${TIME_BUCKET_GRANULARITIES.length})`,
+  );
+  expect(
+    TIME_BUCKET_GRANULARITIES[0] === "day",
+    `TIME_BUCKET_GRANULARITIES[0] = "day"`,
+  );
+  expect(
+    TIME_BUCKET_GRANULARITIES[2] === "month",
+    `TIME_BUCKET_GRANULARITIES[2] = "month"`,
+  );
+}
+
+{
+  // timeBucketLabel renders the "Per X" cadence noun phrase for
+  // each granularity. Pinning the exact strings catches a copy
+  // change in the UI surface that drifts away from the helper.
+  expect(timeBucketLabel("day") === "Per day", `timeBucketLabel(day)`);
+  expect(timeBucketLabel("week") === "Per week", `timeBucketLabel(week)`);
+  expect(timeBucketLabel("month") === "Per month", `timeBucketLabel(month)`);
+}
+
+{
+  // advanceBucketStart: day = +86_400 exactly. Pins the day path's
+  // simple-arithmetic contract (no calendar correction needed for
+  // the fixed-width 86_400-second bucket).
+  const start = 1_700_000_000;
+  expect(
+    advanceBucketStart(start, "day") === start + 86_400,
+    `advanceBucketStart day = +86400`,
+  );
+}
+
+{
+  // advanceBucketStart: week = +7 * 86_400 exactly. Same
+  // simple-arithmetic contract — no DST shenanigans because UTC.
+  const start = 1_699_833_600; // 2023-11-13 (Monday UTC)
+  expect(
+    advanceBucketStart(start, "week") === start + 7 * 86_400,
+    `advanceBucketStart week = +7d`,
+  );
+}
+
+{
+  // advanceBucketStart: month = +1 calendar month (variable width).
+  // 2023-11-01T00:00:00Z -> 2023-12-01T00:00:00Z = 1_701_388_800.
+  // 1_698_796_800 is 2023-11-01.
+  expect(
+    advanceBucketStart(1_698_796_800, "month") === 1_701_388_800,
+    `advanceBucketStart month: Nov-1 -> Dec-1`,
+  );
+}
+
+{
+  // advanceBucketStart month: year overflow. Dec-1 -> Jan-1 of the
+  // next year. 2023-12-01T00:00:00Z = 1_701_388_800;
+  // 2024-01-01T00:00:00Z = 1_704_067_200.
+  expect(
+    advanceBucketStart(1_701_388_800, "month") === 1_704_067_200,
+    `advanceBucketStart month: Dec-1 -> Jan-1 (year overflow)`,
+  );
+}
+
+{
+  // advanceBucketStart month: 28-day February. 2024-02-01 ->
+  // 2024-03-01. 2024-02-01T00:00:00Z = 1_706_745_600;
+  // 2024-03-01T00:00:00Z = 1_709_251_200 (29 days, leap year).
+  expect(
+    advanceBucketStart(1_706_745_600, "month") === 1_709_251_200,
+    `advanceBucketStart month: Feb 2024 leap year (+29d)`,
+  );
+}
+
+{
+  // densifyActivityTimeline: empty input -> empty output. Cheap
+  // boundary case that protects the caller from defensive
+  // empty-checks in the rendering loop.
+  const out = densifyActivityTimeline([], "day");
+  expect(out.length === 0, `densify empty -> empty`);
+}
+
+{
+  // densifyActivityTimeline: single bucket -> same single bucket.
+  // No gap to fill; output's first + last are the input's only
+  // bucket verbatim.
+  const buckets = [actBucket(1_700_000_000, 1, 0, 0, 0)];
+  const out = densifyActivityTimeline(buckets, "day");
+  expect(out.length === 1, `densify single bucket -> length 1`);
+  expect(
+    out[0].bucket_start_unix === 1_700_000_000,
+    `densify single bucket preserves start`,
+  );
+  expect(out[0].installs === 1, `densify single bucket preserves counts`);
+}
+
+{
+  // densifyActivityTimeline day: three sparse buckets across a
+  // 5-day span -> five dense buckets (2 zero-bucket gaps inserted).
+  // Day 1 + Day 3 + Day 5 -> Days 1,2,3,4,5.
+  const buckets = [
+    actBucket(1_700_000_000, 1, 0, 0, 0), // day 1
+    actBucket(1_700_172_800, 0, 1, 0, 0), // day 3 (+2 days)
+    actBucket(1_700_345_600, 0, 0, 0, 1), // day 5 (+4 days)
+  ];
+  const out = densifyActivityTimeline(buckets, "day");
+  expect(out.length === 5, `densify day: 5 dense buckets (got ${out.length})`);
+  // First + last preserved verbatim.
+  expect(out[0].installs === 1, `densify day: first bucket carries data`);
+  expect(out[4].failures === 1, `densify day: last bucket carries data`);
+  // Gap buckets (index 1, 3) are zero-buckets.
+  expect(out[1].total === 0, `densify day: index 1 zero-bucket`);
+  expect(out[3].total === 0, `densify day: index 3 zero-bucket`);
+  // Spacing is +86_400 exactly.
+  for (let i = 1; i < out.length; i++) {
+    expect(
+      out[i].bucket_start_unix - out[i - 1].bucket_start_unix === 86_400,
+      `densify day: spacing at index ${i} = 86400`,
+    );
+  }
+}
+
+{
+  // densifyActivityTimeline returns a NEW array (input never
+  // mutated). Same posture as sortHistogramRows. Protects against
+  // a future refactor that switches to an in-place strategy.
+  const buckets = [actBucket(1_700_000_000, 1, 0, 0, 0)];
+  const out = densifyActivityTimeline(buckets, "day");
+  expect(out !== buckets, `densify returns NEW array`);
+}
+
+{
+  // densifyActivityTimeline week: two sparse week-buckets two
+  // weeks apart -> three dense buckets (one zero-bucket gap).
+  const week1 = 1_699_833_600; // 2023-11-13 Monday
+  const week3 = week1 + 14 * 86_400; // skip week 2
+  const buckets = [actBucket(week1, 1, 0, 0, 0), actBucket(week3, 0, 0, 0, 1)];
+  const out = densifyActivityTimeline(buckets, "week");
+  expect(out.length === 3, `densify week: 3 dense buckets (got ${out.length})`);
+  expect(out[1].total === 0, `densify week: middle is zero-bucket`);
+  expect(
+    out[1].bucket_start_unix === week1 + 7 * 86_400,
+    `densify week: middle bucket at week 2 start`,
+  );
+}
+
+{
+  // densifyActivityTimeline month: two months apart (Nov + Jan)
+  // -> three dense buckets (Dec is the zero-bucket between).
+  const nov = 1_698_796_800; // 2023-11-01
+  const jan = 1_704_067_200; // 2024-01-01
+  const buckets = [actBucket(nov, 1, 0, 0, 0), actBucket(jan, 0, 0, 0, 1)];
+  const out = densifyActivityTimeline(buckets, "month");
+  expect(out.length === 3, `densify month: 3 dense buckets (got ${out.length})`);
+  expect(out[0].bucket_start_unix === nov, `densify month: starts at Nov`);
+  expect(
+    out[1].bucket_start_unix === 1_701_388_800,
+    `densify month: middle is Dec`,
+  );
+  expect(out[2].bucket_start_unix === jan, `densify month: ends at Jan`);
+}
+
+{
+  // suggestActivityTimelineExportFilename: default granularity
+  // (omitted) reads as "day" — matches the read-endpoint default.
+  const name = suggestActivityTimelineExportFilename({}, "csv", NOW);
+  expect(
+    name === "marketplace-activity-day_all_20240309.csv",
+    `default granularity is "day" (got ${name})`,
+  );
+}
+
+{
+  // suggestActivityTimelineExportFilename: granularity in prefix
+  // (NOT window slot) — each value renders as its own prefix variant.
+  for (const g of TIME_BUCKET_GRANULARITIES) {
+    const name = suggestActivityTimelineExportFilename(
+      { granularity: g },
+      "csv",
+      NOW,
+    );
+    expect(
+      name === `marketplace-activity-${g}_all_20240309.csv`,
+      `granularity ${g} in prefix (got ${name})`,
+    );
+  }
+}
+
+{
+  // suggestActivityTimelineExportFilename: csv vs json differ ONLY
+  // in suffix. Same invariant as the histogram filename helper's
+  // ext-aware variant — mirrors slice 95 + 101 patterns.
+  const opts = { granularity: "week" as TimeBucketGranularity };
+  const csv = suggestActivityTimelineExportFilename(opts, "csv", NOW);
+  const json = suggestActivityTimelineExportFilename(opts, "json", NOW);
+  expect(csv.endsWith(".csv"), `csv ends .csv (${csv})`);
+  expect(json.endsWith(".json"), `json ends .json (${json})`);
+  expect(
+    csv.slice(0, -4) === json.slice(0, -5),
+    `csv/json prefix equality (${csv}, ${json})`,
+  );
+}
+
+{
+  // suggestActivityTimelineExportFilename: window slot mirrors the
+  // histogram filename's shape exactly so the two exports sort
+  // side-by-side in a directory. "all" / "from-X" / "to-X" /
+  // "X-Y".
+  const all = suggestActivityTimelineExportFilename({}, "csv", NOW);
+  expect(all.includes("_all_"), `_all_ for no-window (${all})`);
+  const onlySince = suggestActivityTimelineExportFilename(
+    { since_unix: 1_700_000_000 },
+    "csv",
+    NOW,
+  );
+  expect(
+    onlySince.includes("_from-20231114_"),
+    `from-YYYYMMDD slot (${onlySince})`,
+  );
+  const onlyUntil = suggestActivityTimelineExportFilename(
+    { until_unix: 1_700_000_000 },
+    "csv",
+    NOW,
+  );
+  expect(
+    onlyUntil.includes("_to-20231114_"),
+    `to-YYYYMMDD slot (${onlyUntil})`,
+  );
+  const both = suggestActivityTimelineExportFilename(
+    { since_unix: 1_700_000_000, until_unix: 1_710_000_000 },
+    "csv",
+    NOW,
+  );
+  expect(
+    both.includes("_20231114-20240309_"),
+    `YYYYMMDD-YYYYMMDD slot (${both})`,
+  );
+}
+
+{
+  // suggestActivityTimelineExportFilename: prefix preserved across
+  // all four window-shape variants — sorts next to other
+  // marketplace-activity-* exports in a directory.
+  for (const opts of [
+    {},
+    { since_unix: 1_700_000_000 },
+    { until_unix: 1_700_000_000 },
+    { since_unix: 1_700_000_000, until_unix: 1_710_000_000 },
+  ] satisfies Array<Parameters<typeof suggestActivityTimelineExportFilename>[0]>) {
+    const name = suggestActivityTimelineExportFilename(
+      { ...opts, granularity: "week" },
+      "csv",
+      NOW,
+    );
+    expect(
+      name.startsWith("marketplace-activity-week_"),
+      `prefix preserved for ${JSON.stringify(opts)} (${name})`,
+    );
+  }
+}
+
+{
+  // Today slug uses UTC date math. Pinning NOW gives a
+  // deterministic trailing date so the filename doesn't drift
+  // across a midnight UTC boundary.
+  const name = suggestActivityTimelineExportFilename({}, "csv", NOW);
+  expect(name.includes("_20240309."), `today slug uses UTC date (${name})`);
 }

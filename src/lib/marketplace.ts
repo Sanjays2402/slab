@@ -786,6 +786,330 @@ export const HISTOGRAM_SORT_KEYS: readonly HistogramSortKey[] = [
   "recent",
 ] as const;
 
+// ─── Activity timeline aggregate + export (v3.40 round-22 Slice 106) ─
+
+/**
+ * Bucket-width discriminator for the activity timeline aggregate.
+ * Matches `marketplace::TimeBucketGranularity` on the Rust side and
+ * its serde rename_all = "lowercase" so the wire form is exactly
+ * `"day"` / `"week"` / `"month"`.
+ *
+ *   - `"day"`   → 86_400-second wide buckets, floor to UTC midnight.
+ *   - `"week"`  → ISO-8601 week, floor to UTC Monday 00:00:00. Sunday
+ *                 belongs to the END of the prior week, not the start
+ *                 of the next.
+ *   - `"month"` → variable-width (28-31 day) bucket, floor to UTC
+ *                 first-of-month 00:00:00.
+ *
+ * All boundaries are UTC so two machines in different timezones
+ * produce the same buckets. The UI is free to render labels in local
+ * time; the buckets themselves don't drift.
+ */
+export type TimeBucketGranularity = "day" | "week" | "month";
+
+/**
+ * All bucket-width values in display order. Day-first matches the
+ * UI default + the read endpoint default; month-last because it's
+ * the coarsest pivot.
+ */
+export const TIME_BUCKET_GRANULARITIES: readonly TimeBucketGranularity[] = [
+  "day",
+  "week",
+  "month",
+] as const;
+
+/**
+ * Human label for a bucket width. Used in the "Activity over time"
+ * section's bucket-width toggle. Singular nouns match the rest of
+ * the drawer's voice; "Per X" reads naturally for the cadence axis
+ * (vs the histogram sort axes which already imply "most-of-X-first").
+ */
+export function timeBucketLabel(granularity: TimeBucketGranularity): string {
+  switch (granularity) {
+    case "day":
+      return "Per day";
+    case "week":
+      return "Per week";
+    case "month":
+      return "Per month";
+  }
+}
+
+/**
+ * One row of the activity-timeline aggregate. Mirrors
+ * `marketplace::ActivityBucket`. `total` is precomputed so the UI's
+ * bar-height computation doesn't have to re-add four columns per
+ * bucket; `bucket_start_unix` is the UTC-floored start of the bucket
+ * window per the request's granularity.
+ */
+export interface ActivityBucket {
+  bucket_start_unix: number;
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+  total: number;
+}
+
+/**
+ * Wire payload returned by [`getActivityTimeline`]. Echoes the
+ * effective window + granularity + grand_total so the UI can render
+ * "Showing 14 daily buckets, 87 events total" without remembering
+ * which defaults ran when the caller left an arg unset.
+ */
+export interface ActivityTimelineResult {
+  buckets: ActivityBucket[];
+  since_unix: number | null;
+  until_unix: number | null;
+  granularity: TimeBucketGranularity;
+  grand_total: number;
+}
+
+const EMPTY_TIMELINE_RESULT: ActivityTimelineResult = {
+  buckets: [],
+  since_unix: null,
+  until_unix: null,
+  granularity: "day",
+  grand_total: 0,
+};
+
+/**
+ * Aggregate the install log by calendar bucket within an optional
+ * time window. Returns the per-bucket counts ordered ASC by
+ * `bucket_start_unix` (oldest -> newest, natural reading direction).
+ * Powers the Recent installs drawer's "Activity over time" panel —
+ * the answer to "WHEN was install activity happening?".
+ *
+ * SPARSE: only buckets with at least one event are returned. The UI
+ * densifies (zero-fill the gap days/weeks/months) for rendering.
+ *
+ * Returns an empty result in browser mode (no Tauri context).
+ */
+export async function getActivityTimeline(opts: {
+  sinceUnix?: number | null;
+  untilUnix?: number | null;
+  granularity?: TimeBucketGranularity | null;
+} = {}): Promise<ActivityTimelineResult> {
+  if (!isInTauri()) return { ...EMPTY_TIMELINE_RESULT };
+  return invoke<ActivityTimelineResult>(
+    "slab_marketplace_install_log_activity_timeline",
+    {
+      sinceUnix: opts.sinceUnix ?? null,
+      untilUnix: opts.untilUnix ?? null,
+      granularity: opts.granularity ?? null,
+    },
+  );
+}
+
+/**
+ * Densify a sparse activity timeline by inserting zero-event buckets
+ * for every missing day/week/month between the first and last bucket
+ * the server returned (inclusive). The server's primitive is
+ * deliberately sparse (only non-empty buckets) so an idle corpus
+ * doesn't drag thousands of empty rows through IPC; the UI rendering
+ * a bar chart needs the dense form so gap days show as visible
+ * zero-bars rather than collapsing the time axis.
+ *
+ * Returns a NEW array (input never mutated, same posture as
+ * `sortHistogramRows`). The output's first + last buckets equal the
+ * input's first + last verbatim (boundary preservation); every
+ * intermediate bucket is either a verbatim copy from the input or a
+ * synthesised zero-bucket at the expected interval.
+ *
+ * Empty input -> empty output. Single-bucket input -> single-bucket
+ * output (no gap to fill).
+ *
+ * Pure helper — no I/O, no Tauri context required. The interval-
+ * advance arithmetic mirrors the Rust-side `bucket_floor_unix`
+ * semantics: day = +86_400 seconds, week = +7 * 86_400, month =
+ * UTC-calendar +1 month (variable width). The day/week paths use
+ * plain arithmetic; the month path goes through Date for calendar
+ * correctness (28/29/30/31).
+ */
+export function densifyActivityTimeline(
+  buckets: readonly ActivityBucket[],
+  granularity: TimeBucketGranularity,
+): ActivityBucket[] {
+  if (buckets.length === 0) return [];
+  // Build a quick lookup by bucket_start so we can re-use input
+  // buckets when they exist (carries their counts verbatim) and
+  // synthesise zero-buckets for the gaps.
+  const byStart = new Map<number, ActivityBucket>();
+  for (const b of buckets) byStart.set(b.bucket_start_unix, b);
+  const first = buckets[0].bucket_start_unix;
+  const last = buckets[buckets.length - 1].bucket_start_unix;
+  const out: ActivityBucket[] = [];
+  let cursor = first;
+  // Safety cap so a corrupted input (e.g. start > last) can't loop
+  // forever. 366 days * 5 years = 1830; pick something well above
+  // any realistic install-log span.
+  let guard = 5000;
+  while (cursor <= last && guard-- > 0) {
+    const existing = byStart.get(cursor);
+    if (existing) {
+      out.push(existing);
+    } else {
+      out.push({
+        bucket_start_unix: cursor,
+        installs: 0,
+        updates: 0,
+        uninstalls: 0,
+        failures: 0,
+        total: 0,
+      });
+    }
+    cursor = advanceBucketStart(cursor, granularity);
+  }
+  return out;
+}
+
+/**
+ * Advance a bucket-start timestamp to the start of the NEXT bucket
+ * per the granularity rules. Day/week are simple addition; month is
+ * calendar-aware (28-31 day variation) and routes through Date.
+ *
+ * Public for unit-testing the calendar arithmetic; production code
+ * goes through `densifyActivityTimeline`.
+ */
+export function advanceBucketStart(
+  start_unix: number,
+  granularity: TimeBucketGranularity,
+): number {
+  switch (granularity) {
+    case "day":
+      return start_unix + 86_400;
+    case "week":
+      return start_unix + 7 * 86_400;
+    case "month": {
+      const d = new Date(start_unix * 1000);
+      // UTC arithmetic to match the Rust-side bucket_floor_unix.
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth(); // 0..11
+      // Next month, same day-of-month. JavaScript's Date.UTC handles
+      // year overflow (Dec -> Jan next year) automatically. Anchor at
+      // day 1 so first-of-month inputs stay first-of-month.
+      const next = Date.UTC(y, m + 1, 1, 0, 0, 0, 0);
+      return Math.floor(next / 1000);
+    }
+  }
+}
+
+/**
+ * Optional time-window + granularity filter for an activity-timeline
+ * export. Mirrors the backend `activity_timeline` boundaries. Either
+ * or both of `since_unix` / `until_unix` may be omitted for "no
+ * lower / no upper bound"; `granularity` defaults to "day" on the
+ * backend if omitted.
+ */
+export interface ActivityTimelineExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  granularity?: TimeBucketGranularity | null;
+}
+
+const EMPTY_TIMELINE_FILTER: ActivityTimelineExportFilter = {};
+
+/**
+ * Write the activity timeline to `path` as RFC-4180 CSV. `path` is
+ * an absolute filesystem path the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()`.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported 14 buckets (1.2 KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op) so the drawer's export flow
+ * doesn't have to special-case the dev environment.
+ */
+export async function exportInstallLogActivityTimelineCsv(
+  path: string,
+  filter: ActivityTimelineExportFilter = EMPTY_TIMELINE_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_activity_timeline_csv",
+    {
+      path,
+      sinceUnix: filter.since_unix ?? null,
+      untilUnix: filter.until_unix ?? null,
+      granularity: filter.granularity ?? null,
+    },
+  );
+}
+
+/**
+ * Write the activity timeline to `path` as a pretty-printed JSON
+ * envelope (`ActivityTimelineExportEnvelope` shape: schema_version +
+ * generated_at_iso + granularity + window-bounds + bucket_count +
+ * grand_total + buckets). Mirrors `exportInstallLogActivityTimelineCsv`
+ * — same filter, same window semantics, same return.
+ */
+export async function exportInstallLogActivityTimelineJson(
+  path: string,
+  filter: ActivityTimelineExportFilter = EMPTY_TIMELINE_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_activity_timeline_json",
+    {
+      path,
+      sinceUnix: filter.since_unix ?? null,
+      untilUnix: filter.until_unix ?? null,
+      granularity: filter.granularity ?? null,
+    },
+  );
+}
+
+/**
+ * Suggest a default filename for an activity-timeline export.
+ * Mirrors the install-log + histogram export filename conventions
+ * (slices 61 + 101) so a paralegal sees ONE consistent naming
+ * pattern across every audit-export surface.
+ *
+ * Format: `marketplace-activity-{day|week|month}_<window>_<YYYY-MM-DD>.<ext>`.
+ *
+ * The `window` slot reads:
+ *   - `"all"` when neither bound is set,
+ *   - `"from-YYYYMMDD"` when only `since` is set,
+ *   - `"to-YYYYMMDD"` when only `until` is set,
+ *   - `"YYYYMMDD-YYYYMMDD"` when both are set,
+ *
+ * — IDENTICAL window shape to `suggestHistogramExportFilename` (slice
+ * 101) so the histogram + timeline exports for the same window
+ * naturally sort side-by-side in a directory.
+ *
+ * The granularity is woven into the prefix (`marketplace-activity-day`
+ * vs `marketplace-activity-week`) rather than the window slot because
+ * "activity" + "<width>" reads as a single noun phrase ("the daily
+ * activity export"); putting it in the window slot would read as
+ * data ("from-day-YYYYMMDD").
+ *
+ * Pure helper — no I/O, no Tauri context required. `now` is
+ * injectable for deterministic tests; production callers leave it
+ * unset and it reads `Date.now()`.
+ */
+export function suggestActivityTimelineExportFilename(
+  filter: ActivityTimelineExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const granularity = filter.granularity ?? "day";
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-activity-${granularity}_${window}_${today}.${ext}`;
+}
+
 /**
  * Human-friendly label for a set of action filters. Used in the
  * "Showing X of Y events" subtitle and the filter-bar empty-state.

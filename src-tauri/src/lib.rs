@@ -5707,7 +5707,144 @@ fn slab_marketplace_install_log_export_histogram_json(
     Ok(bytes.len() as u64)
 }
 
-// ─── Install log retention policy surface (v3.40 Slice 64) ──────────
+// ─── Activity timeline aggregate + export surface (Slice 106) ────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_activity_timeline`].
+/// Carries the buckets plus the effective window + granularity + the
+/// grand_total so the UI can render "Showing 14 daily buckets, 87
+/// events total" without re-summing client-side.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ActivityTimelineResult {
+    pub buckets: Vec<marketplace::ActivityBucket>,
+    pub since_unix: Option<i64>,
+    pub until_unix: Option<i64>,
+    pub granularity: marketplace::TimeBucketGranularity,
+    /// Sum of every bucket's `total` — the corpus-wide event count
+    /// within the window. Lets the UI render "87 events across 14
+    /// buckets" without re-summing client-side.
+    pub grand_total: i64,
+}
+
+/// Aggregate the install log by calendar bucket (day / week / month)
+/// within an optional time window. Returns one
+/// [`marketplace::ActivityBucket`] per non-empty bucket, ordered
+/// ASCENDING by `bucket_start_unix` so the UI renders the timeline
+/// left-to-right.
+///
+/// Powers the Recent installs drawer's "Activity over time" panel
+/// — the answer to "WHEN was install activity happening?" (a
+/// complementary axis to the slice-87 "Top plugins" histogram which
+/// answers "WHICH plugins were active?").
+///
+/// `granularity` defaults to [`marketplace::TimeBucketGranularity::Day`]
+/// when omitted — the most common UI default for the typical "last
+/// 30 days" view. Cheap (one indexed scan + a small in-memory bucket
+/// + sort).
+#[tauri::command]
+fn slab_marketplace_install_log_activity_timeline(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+) -> Result<ActivityTimelineResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let buckets = log
+        .activity_timeline(since_unix, until_unix, granularity)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = buckets.iter().map(|b| b.total).sum();
+    Ok(ActivityTimelineResult {
+        buckets,
+        since_unix,
+        until_unix,
+        granularity,
+        grand_total,
+    })
+}
+
+/// Write the activity timeline to disk as RFC-4180 CSV, filtered by
+/// an optional `[since_unix, until_unix]` window at the requested
+/// granularity. Mirrors the histogram CSV export shape (slice 100)
+/// but emits the per-bucket activity grid instead of the per-plugin
+/// aggregate.
+///
+/// `path` is an absolute filesystem path the frontend obtains from
+/// `@tauri-apps/plugin-dialog` save() so the write bypasses the
+/// default plugin-fs scope.
+///
+/// `granularity` defaults to Day when omitted — same default as the
+/// read endpoint above so "export the timeline I'm looking at" is
+/// the natural reading without remembering a custom export
+/// granularity.
+///
+/// Returns the byte count actually written. Idempotent — overwrites
+/// if the target file exists. Creates parent dirs if missing.
+#[tauri::command]
+fn slab_marketplace_install_log_export_activity_timeline_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let buckets = log
+        .activity_timeline(since_unix, until_unix, granularity)
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::activity_timeline_to_csv(&buckets, granularity, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the activity timeline to disk as a pretty-printed JSON
+/// envelope, filtered by an optional `[since_unix, until_unix]`
+/// window at the requested granularity. Mirrors the histogram JSON
+/// export (slice 100) but emits the
+/// [`marketplace::install_log::ActivityTimelineExportEnvelope`] shape
+/// (schema_version + generated_at_iso + granularity + window-bounds +
+/// bucket_count + grand_total + buckets array).
+///
+/// Same defaults as the CSV variant; returns the byte count actually
+/// written; idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_activity_timeline_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let buckets = log
+        .activity_timeline(since_unix, until_unix, granularity)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = buckets.iter().map(|b| b.total).sum();
+    let envelope = marketplace::install_log::activity_timeline_to_json(
+        &buckets,
+        granularity,
+        since_unix,
+        until_unix,
+        grand_total,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
 
 /// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
 /// Carries the user-visible retention window plus the floor + interval
@@ -7330,6 +7467,9 @@ pub fn run() {
             slab_marketplace_install_log_plugin_histogram,
             slab_marketplace_install_log_export_histogram_csv,
             slab_marketplace_install_log_export_histogram_json,
+            slab_marketplace_install_log_activity_timeline,
+            slab_marketplace_install_log_export_activity_timeline_csv,
+            slab_marketplace_install_log_export_activity_timeline_json,
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,
