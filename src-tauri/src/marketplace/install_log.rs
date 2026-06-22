@@ -1872,6 +1872,61 @@ pub fn bucket_drilldown_to_csv(
     out
 }
 
+// ─── Plugin retention overrides export (Slice 115) ────────────────────
+
+/// Documented column header for the per-plugin retention overrides
+/// CSV export. THREE columns: plugin_id (the override key),
+/// retain_days (override value, guaranteed `>= MIN_RETAIN_DAYS`),
+/// default_retain_days (the global default in force at export time).
+///
+/// `default_retain_days` is denormalised onto every row so a consumer
+/// looking at one row can see at a glance "this plugin retains for
+/// N days; the corpus default is M" without needing a sibling header
+/// row or a second file. Same "context-on-every-row" reasoning as
+/// the activity-timeline + bucket-drilldown CSVs' granularity column.
+///
+/// `pub const` so tests + future column reorders share one source
+/// of truth.
+pub const PLUGIN_RETENTION_CSV_HEADER: &str = "plugin_id,retain_days,default_retain_days";
+
+/// Serialise per-plugin retention overrides as RFC-4180 CSV. Three
+/// columns: plugin_id, retain_days, default_retain_days. The third
+/// column is denormalised onto every row so a consumer reading the
+/// file in isolation can see what global window was in force when
+/// the export was produced (no implicit "the default was 365" — the
+/// number rides along).
+///
+/// `include_header` opt-in (matches the install-log + histogram +
+/// activity-timeline + bucket-drilldown CSV API). `rows` ships in
+/// caller order verbatim — `plugin_retention_overrides()` emits DESC
+/// by retain_days with plugin_id ASC tie-break; the exporter ships
+/// whatever order it's handed so the on-disk CSV matches the
+/// in-app list ordering exactly.
+///
+/// Pure function — never touches the filesystem. The Tauri command
+/// layer (Slice 117) owns disk I/O.
+pub fn plugin_retention_overrides_to_csv(
+    rows: &[PluginRetentionOverride],
+    default_retain_days: i64,
+    include_header: bool,
+) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(PLUGIN_RETENTION_CSV_HEADER);
+        out.push('\n');
+    }
+    for r in rows {
+        let row = [
+            csv_escape(&r.plugin_id),
+            r.retain_days.to_string(),
+            default_retain_days.to_string(),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
 // ─── JSON export envelope (Slice 60) ─────────────────────────────────
 
 /// Wire shape for the JSON install-log export. Lifts the raw
@@ -5386,6 +5441,189 @@ mod tests {
         let row = hist_row("weird,id", 1, 0, 0, 0, 1_700_000_000);
         let csv = bucket_drilldown_to_csv(&[row], 1_700_000_000, TimeBucketGranularity::Day, false);
         assert!(csv.contains("\"weird,id\""));
+    }
+
+    // ─── Slice 115: plugin retention overrides CSV export ────────────
+
+    fn ov(id: &str, days: i64) -> PluginRetentionOverride {
+        PluginRetentionOverride {
+            plugin_id: id.into(),
+            retain_days: days,
+        }
+    }
+
+    #[test]
+    fn plugin_retention_csv_header_inclusion_is_caller_controlled() {
+        let rows = vec![ov("com.x", 30)];
+        let with_header = plugin_retention_overrides_to_csv(&rows, 365, true);
+        assert!(with_header.starts_with(PLUGIN_RETENTION_CSV_HEADER));
+        let lines: Vec<_> = with_header.lines().collect();
+        assert_eq!(lines.len(), 2, "header + one data row");
+        let bare = plugin_retention_overrides_to_csv(&rows, 365, false);
+        assert!(!bare.starts_with("plugin_id,"));
+        assert_eq!(bare.lines().count(), 1);
+    }
+
+    #[test]
+    fn plugin_retention_csv_empty_with_header_is_header_only() {
+        let csv = plugin_retention_overrides_to_csv(&[], 365, true);
+        assert_eq!(csv, format!("{}\n", PLUGIN_RETENTION_CSV_HEADER));
+        let bare = plugin_retention_overrides_to_csv(&[], 365, false);
+        assert_eq!(bare, "");
+    }
+
+    #[test]
+    fn plugin_retention_csv_header_column_count_matches_row() {
+        // The header column count must match the data-row column
+        // count exactly — a future column addition that lands on one
+        // but not the other corrupts every downstream parser.
+        let header_cols = PLUGIN_RETENTION_CSV_HEADER.split(',').count();
+        assert_eq!(header_cols, 3);
+        let rows = vec![ov("com.x", 30)];
+        let csv = plugin_retention_overrides_to_csv(&rows, 365, false);
+        let first = csv.lines().next().unwrap();
+        assert_eq!(first.split(',').count(), header_cols);
+    }
+
+    #[test]
+    fn plugin_retention_csv_columns_in_documented_order() {
+        // Pin column order so a future column shuffle that breaks
+        // downstream parsers surfaces here. plugin_id, retain_days,
+        // default_retain_days.
+        let row = ov("com.audit", 1825);
+        let csv = plugin_retention_overrides_to_csv(&[row], 365, false);
+        let line = csv.lines().next().unwrap();
+        let cells: Vec<&str> = line.split(',').collect();
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0], "com.audit");
+        assert_eq!(cells[1], "1825");
+        assert_eq!(cells[2], "365");
+    }
+
+    #[test]
+    fn plugin_retention_csv_default_repeated_on_every_row() {
+        // The default_retain_days is denormalised onto every row so
+        // a consumer reading one row in isolation sees the global
+        // window in force at export time. Pin that the value is
+        // identical on every row of a multi-row export.
+        let rows = vec![ov("com.a", 7), ov("com.b", 30), ov("com.c", 1825)];
+        let csv = plugin_retention_overrides_to_csv(&rows, 365, false);
+        for line in csv.lines() {
+            let cells: Vec<&str> = line.split(',').collect();
+            assert_eq!(cells[2], "365");
+        }
+    }
+
+    #[test]
+    fn plugin_retention_csv_preserves_input_order() {
+        // The exporter ships rows verbatim — the reader handles
+        // sort, the exporter mustn't second-guess it. Hand it an
+        // intentionally out-of-DESC-order slice and confirm the
+        // emitted lines match the input order.
+        let rows = vec![
+            ov("com.short", 7),
+            ov("com.long", 1825),
+            ov("com.medium", 30),
+        ];
+        let csv = plugin_retention_overrides_to_csv(&rows, 365, false);
+        let ids: Vec<&str> = csv.lines().map(|l| l.split(',').next().unwrap()).collect();
+        assert_eq!(ids, vec!["com.short", "com.long", "com.medium"]);
+    }
+
+    #[test]
+    fn plugin_retention_csv_escapes_plugin_id_with_comma() {
+        // The plugin_id is the only column that can plausibly contain
+        // an RFC-4180 trip character. Pin the escape behaviour so a
+        // future relaxation of the reverse-DNS id format doesn't
+        // silently corrupt downstream parsers.
+        let row = ov("weird,id", 30);
+        let csv = plugin_retention_overrides_to_csv(&[row], 365, false);
+        assert!(csv.contains("\"weird,id\""));
+    }
+
+    #[test]
+    fn plugin_retention_csv_one_row_per_input_invariant() {
+        // line_count == rows.len() (header omitted) across several
+        // sizes — catches a future regression that emits a multi-line
+        // expansion per row.
+        for n in [0usize, 1, 5, 30] {
+            let rows: Vec<PluginRetentionOverride> =
+                (0..n).map(|i| ov(&format!("com.p{i}"), 30)).collect();
+            let csv = plugin_retention_overrides_to_csv(&rows, 365, false);
+            assert_eq!(csv.lines().count(), n);
+        }
+    }
+
+    #[test]
+    fn plugin_retention_csv_no_none_or_null_leaks() {
+        // Catches a future Option<_> field that slips through as the
+        // literal "None" / "null" string.
+        let rows = vec![ov("com.x", 30)];
+        let csv = plugin_retention_overrides_to_csv(&rows, 365, true);
+        assert!(!csv.contains("None"));
+        assert!(!csv.contains("null"));
+    }
+
+    #[test]
+    fn plugin_retention_csv_negative_default_passes_through_verbatim() {
+        // The exporter does NOT clamp the default_retain_days — it
+        // ships whatever the caller hands it. (The wire layer clamps
+        // before calling, so in practice the value is always >=
+        // MIN_RETAIN_DAYS; but pinning verbatim defends against a
+        // future refactor that silently rewrites the column.)
+        let rows = vec![ov("com.x", 30)];
+        let csv = plugin_retention_overrides_to_csv(&rows, -1, false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[2], "-1");
+    }
+
+    #[test]
+    fn plugin_retention_csv_header_constant_value_pinned() {
+        // Anyone changing the header column order or names must
+        // update the constant + this test together — surfaces a
+        // careless rename.
+        assert_eq!(
+            PLUGIN_RETENTION_CSV_HEADER,
+            "plugin_id,retain_days,default_retain_days"
+        );
+    }
+
+    #[test]
+    fn plugin_retention_csv_retain_days_verbatim_no_re_clamp() {
+        // Defence-in-depth: the exporter ships the caller's
+        // retain_days verbatim (no re-clamping or arithmetic). A test
+        // row built with a value below MIN_RETAIN_DAYS (which the
+        // storage layer would never emit) ships verbatim — catches a
+        // future "sanitise on export" addition that would silently
+        // diverge from the in-app view.
+        let rows = vec![ov("com.x", 0)];
+        let csv = plugin_retention_overrides_to_csv(&rows, 365, false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[1], "0");
+    }
+
+    #[test]
+    fn plugin_retention_csv_round_trips_through_overrides_reader() {
+        // End-to-end check: feed plugin_retention_overrides() output
+        // through the exporter; pin that the per-row plugin_id +
+        // retain_days byte-equal what the reader emitted. Catches a
+        // future drift between the reader's column order and the
+        // exporter's column order.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_retain_days(365).unwrap();
+        log.set_plugin_retention_days("com.audit", 1825).unwrap();
+        log.set_plugin_retention_days("com.noisy", 7).unwrap();
+        let overrides = log.plugin_retention_overrides().unwrap();
+        let csv = plugin_retention_overrides_to_csv(&overrides, 365, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        // Reader emits DESC-by-retain_days: com.audit first, then com.noisy.
+        assert_eq!(lines.len(), 2);
+        let first: Vec<&str> = lines[0].split(',').collect();
+        let second: Vec<&str> = lines[1].split(',').collect();
+        assert_eq!(first[0], "com.audit");
+        assert_eq!(first[1], "1825");
+        assert_eq!(second[0], "com.noisy");
+        assert_eq!(second[1], "7");
     }
 
     // ─── Slice 99: histogram JSON envelope ───────────────────────────
