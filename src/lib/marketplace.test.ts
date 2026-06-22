@@ -8,6 +8,7 @@ import {
   HISTOGRAM_SORT_KEYS,
   histogramSortLabel,
   sortHistogramRows,
+  suggestHistogramExportFilename,
   type HistogramSortKey,
   type PluginHistogramRow,
 } from "./marketplace";
@@ -266,5 +267,138 @@ function row(
       }
     })(),
     `sortHistogramRows: bogus key doesn't throw`,
+  );
+}
+
+// ── Slice 101: suggestHistogramExportFilename ────────────────────────
+
+// 2024-03-09T16:00:00Z → today slug 20240309. Pin "now" so the
+// trailing slug is deterministic across timezones / wall-clock drift.
+const NOW = 1_710_000_000_000;
+
+{
+  // No window, csv ext — the bare "all" form.
+  const name = suggestHistogramExportFilename({}, "csv", NOW);
+  expect(
+    name === "marketplace-top-plugins_all_20240309.csv",
+    `suggestHistogramExportFilename: no window csv = ${name}`,
+  );
+  // Same shape with json ext — only the suffix differs.
+  const nameJson = suggestHistogramExportFilename({}, "json", NOW);
+  expect(
+    nameJson === "marketplace-top-plugins_all_20240309.json",
+    `suggestHistogramExportFilename: no window json = ${nameJson}`,
+  );
+}
+
+{
+  // Only since — "from-<date>" prefix.
+  // since_unix 1_700_000_000 → 2023-11-14
+  const name = suggestHistogramExportFilename(
+    { since_unix: 1_700_000_000 },
+    "csv",
+    NOW,
+  );
+  expect(
+    name === "marketplace-top-plugins_from-20231114_20240309.csv",
+    `suggestHistogramExportFilename: only-since = ${name}`,
+  );
+}
+
+{
+  // Only until — "to-<date>" prefix.
+  const name = suggestHistogramExportFilename(
+    { until_unix: 1_700_000_000 },
+    "csv",
+    NOW,
+  );
+  expect(
+    name === "marketplace-top-plugins_to-20231114_20240309.csv",
+    `suggestHistogramExportFilename: only-until = ${name}`,
+  );
+}
+
+{
+  // Both bounds — "<since>-<until>" window slot.
+  const name = suggestHistogramExportFilename(
+    { since_unix: 1_700_000_000, until_unix: 1_710_000_000 },
+    "json",
+    NOW,
+  );
+  expect(
+    name === "marketplace-top-plugins_20231114-20240309_20240309.json",
+    `suggestHistogramExportFilename: both bounds = ${name}`,
+  );
+}
+
+{
+  // csv ↔ json — paired forms differ ONLY in the suffix. Pin the
+  // invariant so a future rename can't make them diverge in any
+  // other slot. Mirrors the slice-95 ext-aware drilldown helper
+  // pairing test.
+  const csv = suggestHistogramExportFilename(
+    { since_unix: 1_700_000_000 },
+    "csv",
+    NOW,
+  );
+  const json = suggestHistogramExportFilename(
+    { since_unix: 1_700_000_000 },
+    "json",
+    NOW,
+  );
+  expect(
+    csv.replace(/\.csv$/, "") === json.replace(/\.json$/, ""),
+    `suggestHistogramExportFilename: csv/json differ only in suffix (csv=${csv}, json=${json})`,
+  );
+  expect(
+    csv.endsWith(".csv") && json.endsWith(".json"),
+    `suggestHistogramExportFilename: csv ends .csv, json ends .json`,
+  );
+}
+
+{
+  // Filename always carries the marketplace-top-plugins_ prefix so
+  // it groups next to other marketplace exports in a directory list.
+  for (const opts of [
+    {},
+    { since_unix: 1_700_000_000 },
+    { until_unix: 1_700_000_000 },
+    { since_unix: 1_700_000_000, until_unix: 1_710_000_000 },
+  ] satisfies Array<Parameters<typeof suggestHistogramExportFilename>[0]>) {
+    const name = suggestHistogramExportFilename(opts, "csv", NOW);
+    expect(
+      name.startsWith("marketplace-top-plugins_"),
+      `suggestHistogramExportFilename: prefix preserved for ${JSON.stringify(opts)} (${name})`,
+    );
+  }
+}
+
+{
+  // The window slot for "both bounds" uses YYYYMMDD-YYYYMMDD with
+  // no separators inside each date — matches the install-log helper's
+  // shape so the two filenames sort in a stable interleave.
+  const name = suggestHistogramExportFilename(
+    { since_unix: 1_700_000_000, until_unix: 1_710_000_000 },
+    "csv",
+    NOW,
+  );
+  // Window slot is the second underscore-separated segment.
+  const parts = name.split("_");
+  expect(parts.length === 3, `name has 3 underscore-segments (${parts.length})`);
+  const window = parts[1];
+  expect(
+    /^\d{8}-\d{8}$/.test(window),
+    `window slot is YYYYMMDD-YYYYMMDD (got ${window})`,
+  );
+}
+
+{
+  // Today slug uses UTC date math (matches the slugifier inside the
+  // helper). Pinning NOW gives a deterministic trailing date so the
+  // filename doesn't drift across a midnight UTC boundary.
+  const name = suggestHistogramExportFilename({}, "csv", NOW);
+  expect(
+    name.includes("_20240309."),
+    `today slug uses UTC date (got ${name})`,
   );
 }

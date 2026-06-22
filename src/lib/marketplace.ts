@@ -576,6 +576,112 @@ export function summarizeHistogram(result: PluginHistogramResult): string {
   return `${events} event${events === 1 ? "" : "s"} across ${n} plugin${n === 1 ? "" : "s"}`;
 }
 
+// ─── Histogram export surface (v3.40 round-21 Slice 101) ────────────
+
+/**
+ * Optional time-window + row-cap filter for a histogram export.
+ * Mirrors the backend `plugin_histogram` boundaries. Either or both
+ * of `since_unix` / `until_unix` may be omitted for "no lower / no
+ * upper bound"; both omitted exports across the whole log.
+ *
+ * `limit` clamps the number of plugin rows written (defaults to 25
+ * on the backend — matches the read endpoint's default so "export
+ * what I'm looking at" is the natural reading without remembering
+ * a custom export limit).
+ */
+export interface HistogramExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  limit?: number | null;
+}
+
+const EMPTY_HISTOGRAM_FILTER: HistogramExportFilter = {};
+
+/**
+ * Write the top-plugins histogram to `path` as RFC-4180 CSV. `path`
+ * is an absolute filesystem path the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()` so it bypasses the default
+ * plugin-fs scope.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported 12 plugins (1.8 KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op) so the drawer's export flow
+ * doesn't have to special-case the dev environment.
+ */
+export async function exportInstallLogHistogramCsv(
+  path: string,
+  filter: HistogramExportFilter = EMPTY_HISTOGRAM_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_histogram_csv", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Write the top-plugins histogram to `path` as a pretty-printed JSON
+ * envelope (`PluginHistogramExportEnvelope` shape: schema_version +
+ * generated_at_iso + window-bounds + row_count + grand_total + rows).
+ * Mirrors `exportInstallLogHistogramCsv` — same filter, same window
+ * semantics, same return.
+ */
+export async function exportInstallLogHistogramJson(
+  path: string,
+  filter: HistogramExportFilter = EMPTY_HISTOGRAM_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_histogram_json", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Suggest a default filename for a histogram export. Mirrors the
+ * install-log export filename convention (slice 61) so paralegals
+ * see one consistent naming pattern across the audit-export
+ * surfaces.
+ *
+ * Format: `marketplace-top-plugins_<window>_<YYYY-MM-DD>.<ext>`.
+ * The `window` slot reads "all" when both bounds are unset,
+ * "from-YYYYMMDD" when only `since` is set, "to-YYYYMMDD" when
+ * only `until` is set, and "YYYYMMDD-YYYYMMDD" when both are set —
+ * exactly the same shape as `suggestInstallLogExportFilename` so
+ * the two exports sort next to each other when a user collects
+ * audit files in a directory.
+ *
+ * Pure helper — no I/O, no Tauri context required. `now` is
+ * injectable for deterministic tests; production callers leave it
+ * unset and it reads `Date.now()`.
+ */
+export function suggestHistogramExportFilename(
+  filter: HistogramExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-top-plugins_${window}_${today}.${ext}`;
+}
+
 // ─── Histogram sort axis (v3.40 Slice 97) ───────────────────────────
 
 /**
