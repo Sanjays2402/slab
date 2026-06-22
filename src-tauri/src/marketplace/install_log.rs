@@ -1958,6 +1958,108 @@ pub fn activity_timeline_to_json_with_now(
     }
 }
 
+// ─── Bucket drilldown JSON export envelope (Slice 111) ───────────────
+
+/// JSON envelope for the activity-bucket drilldown export. Mirrors
+/// the [`ActivityTimelineExportEnvelope`] (slice 105) shape but
+/// scopes to a SINGLE bucket and ships the per-plugin breakdown
+/// instead of per-bucket counts:
+///
+///   `schema_version` + `generated_at_iso` + `granularity` +
+///   `bucket_start_unix` + `bucket_start_iso` + `row_count` +
+///   `grand_total` + `rows` (Vec<PluginHistogramRow>)
+///
+/// The bucket coordinates (`granularity` + `bucket_start_unix` +
+/// `bucket_start_iso`) reproduce the first three columns of the CSV
+/// export (slice 110) — same provenance, different surface.
+///
+/// `row_count` mirrors `rows.len()` and `grand_total` mirrors the
+/// sum of every row's `total` (caller-supplied verbatim, NOT re-
+/// summed here — same defence-in-depth as the histogram +
+/// activity-timeline envelopes' `grand_total`).
+///
+/// No window-bounds fields (unlike the wider envelopes) because the
+/// drilldown is INHERENTLY scoped to one bucket — the bucket
+/// coordinates ARE the window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BucketDrilldownExportEnvelope {
+    /// Schema version of the envelope (NOT of the
+    /// [`PluginHistogramRow`] body itself). Bumped on a non-additive
+    /// shape change.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced.
+    pub generated_at_iso: String,
+    /// Bucket width — `"day"` / `"week"` / `"month"`. Matches the
+    /// activity-timeline envelope's `granularity` semantics.
+    pub granularity: TimeBucketGranularity,
+    /// Unix-seconds start of the bucket the rows belong to.
+    pub bucket_start_unix: i64,
+    /// ISO-8601 UTC form of `bucket_start_unix` — same iso8601_utc
+    /// helper as every other audit export so the two timestamp
+    /// representations cannot drift.
+    pub bucket_start_iso: String,
+    /// Number of rows in `rows`. Redundant with `rows.len()` but
+    /// cheap and saves consumers a parse step.
+    pub row_count: usize,
+    /// Sum of every row's `total`. Caller-supplied verbatim (NOT
+    /// re-summed here) so a future change to `PluginHistogramRow.total`
+    /// semantics doesn't silently diverge.
+    pub grand_total: i64,
+    /// The per-plugin rows scoped to this bucket. Order is the
+    /// caller's order verbatim — `bucket_drilldown()` emits DESC by
+    /// total with plugin_id ASC tie-break; the envelope ships
+    /// whatever it gets.
+    pub rows: Vec<PluginHistogramRow>,
+}
+
+/// Schema version of the JSON bucket-drilldown export envelope.
+/// Starts at v1; bumped independently of the other audit-export
+/// envelope constants because their bodies are unrelated. Same
+/// parallel-versioning reasoning as the histogram + activity-
+/// timeline envelopes (slices 99 + 105).
+pub const BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Build the envelope from a slice of per-plugin rows + the bucket
+/// coordinates that produced them + the caller's `grand_total`. The
+/// envelope's `generated_at_iso` stamp uses the wall clock at call
+/// time; tests pass a fixed timestamp via
+/// [`bucket_drilldown_to_json_with_now`].
+pub fn bucket_drilldown_to_json(
+    rows: &[PluginHistogramRow],
+    bucket_start_unix: i64,
+    granularity: TimeBucketGranularity,
+    grand_total: i64,
+) -> BucketDrilldownExportEnvelope {
+    bucket_drilldown_to_json_with_now(
+        rows,
+        bucket_start_unix,
+        granularity,
+        grand_total,
+        unix_now(),
+    )
+}
+
+/// Same as [`bucket_drilldown_to_json`] but takes an explicit
+/// unix-seconds "now" so unit tests don't race the wall clock.
+pub fn bucket_drilldown_to_json_with_now(
+    rows: &[PluginHistogramRow],
+    bucket_start_unix: i64,
+    granularity: TimeBucketGranularity,
+    grand_total: i64,
+    now_unix: i64,
+) -> BucketDrilldownExportEnvelope {
+    BucketDrilldownExportEnvelope {
+        schema_version: BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: iso8601_utc(now_unix),
+        granularity,
+        bucket_start_unix,
+        bucket_start_iso: iso8601_utc(bucket_start_unix),
+        row_count: rows.len(),
+        grand_total,
+        rows: rows.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5057,5 +5159,248 @@ mod tests {
             let back: ActivityTimelineExportEnvelope = serde_json::from_str(&s).unwrap();
             assert_eq!(back.granularity, g);
         }
+    }
+
+    // ─── Slice 111: bucket drilldown JSON envelope ───────────────────
+
+    #[test]
+    fn bucket_drilldown_json_envelope_carries_schema_v1() {
+        let rows = vec![hist_row("com.x", 1, 0, 0, 0, 1_700_000_000)];
+        let env = bucket_drilldown_to_json_with_now(
+            &rows,
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            1,
+            1_710_000_000,
+        );
+        assert_eq!(env.schema_version, BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.schema_version, 1);
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_records_bucket_coords() {
+        // The envelope's three bucket-coordinate fields must round-trip
+        // verbatim from the caller — they're the primary key tying the
+        // export back to the activity-timeline aggregate that produced it.
+        let env = bucket_drilldown_to_json_with_now(
+            &[],
+            1_700_086_400,
+            TimeBucketGranularity::Week,
+            0,
+            1_710_000_000,
+        );
+        assert_eq!(env.granularity, TimeBucketGranularity::Week);
+        assert_eq!(env.bucket_start_unix, 1_700_086_400);
+        assert_eq!(env.bucket_start_iso, "2023-11-15T22:13:20Z");
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_row_count_mirrors_rows_len() {
+        // row_count is a parallel-key to rows.len() — a downstream
+        // consumer reads one int instead of parsing the array.
+        for n in [0, 1, 5, 30] {
+            let rows: Vec<PluginHistogramRow> = (0..n)
+                .map(|i| hist_row(&format!("p.{i:02}"), 1, 0, 0, 0, 1_700_000_000))
+                .collect();
+            let env = bucket_drilldown_to_json_with_now(
+                &rows,
+                1_700_000_000,
+                TimeBucketGranularity::Day,
+                n as i64,
+                1_710_000_000,
+            );
+            assert_eq!(env.row_count, n);
+            assert_eq!(env.row_count, env.rows.len());
+        }
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_grand_total_verbatim_from_caller() {
+        // grand_total is NOT re-summed from the row totals — a
+        // deliberately-wrong caller value rides through verbatim so a
+        // future PluginHistogramRow axis addition can't silently
+        // diverge from a stable on-disk envelope. Same defence-in-
+        // depth posture as the histogram + timeline envelopes.
+        let rows = vec![
+            hist_row("p.a", 1, 0, 0, 0, 1_700_000_000),
+            hist_row("p.b", 2, 0, 0, 0, 1_700_000_000),
+        ];
+        // Sum of row.total = 1 + 2 = 3, but caller supplies 999.
+        let env = bucket_drilldown_to_json_with_now(
+            &rows,
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            999,
+            1_710_000_000,
+        );
+        assert_eq!(env.grand_total, 999);
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_generated_at_iso_matches_install_log() {
+        // The generated_at_iso stamp must share the EXACT format the
+        // install-log envelope produces — a downstream consumer
+        // joining the four envelope kinds (install-log + histogram +
+        // timeline + drilldown) by export time keys on identical
+        // strings without timezone-format normalisation.
+        let env_drill = bucket_drilldown_to_json_with_now(
+            &[],
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            0,
+            1_710_000_000,
+        );
+        let env_log = install_log_to_json_with_now(&[], None, None, 1_710_000_000);
+        assert_eq!(env_drill.generated_at_iso, env_log.generated_at_iso);
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_preserves_input_row_order() {
+        // Rows ship verbatim — bucket_drilldown emits DESC-by-total
+        // with id-tiebreak; the envelope mustn't re-sort.
+        let rows = vec![
+            hist_row("p.z", 5, 0, 0, 0, 1_700_000_000),
+            hist_row("p.a", 1, 0, 0, 0, 1_700_000_000),
+            hist_row("p.m", 3, 0, 0, 0, 1_700_000_000),
+        ];
+        let env = bucket_drilldown_to_json_with_now(
+            &rows,
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            9,
+            1_710_000_000,
+        );
+        let ids: Vec<&str> = env.rows.iter().map(|r| r.plugin_id.as_str()).collect();
+        assert_eq!(ids, vec!["p.z", "p.a", "p.m"]);
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_rows_are_owned_clones() {
+        // The envelope owns its rows — a caller mutating the source
+        // slice after envelope construction mustn't change the
+        // envelope. Pin this by building, then mutating, then
+        // re-asserting. (Vec<PluginHistogramRow> is owned by the
+        // envelope; this pins the contract for future readers.)
+        let mut source = vec![hist_row("p", 1, 0, 0, 0, 1_700_000_000)];
+        let env = bucket_drilldown_to_json_with_now(
+            &source,
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            1,
+            1_710_000_000,
+        );
+        source.clear();
+        assert_eq!(env.rows.len(), 1);
+        assert_eq!(env.rows[0].plugin_id, "p");
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_serde_round_trip() {
+        // Full envelope serde round-trip — confirms every field
+        // survives serialisation and deserialisation byte-for-byte.
+        let rows = vec![hist_row("com.x", 3, 1, 0, 2, 1_700_000_000)];
+        let env = bucket_drilldown_to_json_with_now(
+            &rows,
+            1_700_086_400,
+            TimeBucketGranularity::Week,
+            6,
+            1_710_000_000,
+        );
+        let s = serde_json::to_string(&env).unwrap();
+        let back: BucketDrilldownExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_pretty_print_is_valid_json() {
+        // Tauri layer uses to_string_pretty — confirm the pretty
+        // form is still valid JSON that round-trips back to the
+        // same envelope.
+        let rows = vec![hist_row("p", 1, 0, 0, 0, 1_700_000_000)];
+        let env = bucket_drilldown_to_json_with_now(
+            &rows,
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            1,
+            1_710_000_000,
+        );
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        assert!(pretty.contains('\n'), "pretty form is multi-line");
+        let back: BucketDrilldownExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_empty_input_renders_cleanly() {
+        let env = bucket_drilldown_to_json_with_now(
+            &[],
+            1_700_000_000,
+            TimeBucketGranularity::Day,
+            0,
+            1_710_000_000,
+        );
+        assert_eq!(env.row_count, 0);
+        assert_eq!(env.grand_total, 0);
+        assert!(env.rows.is_empty());
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(s.contains("\"rows\":[]"));
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_parallel_versioned_with_other_envelopes() {
+        // All four envelope schema versions start at v1 today but are
+        // PARALLEL-versioned — a future shape change in one bumps
+        // that one only. Pin the v1==v1 equality so a careless joint
+        // bump surfaces here.
+        assert_eq!(
+            BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION, INSTALL_LOG_EXPORT_SCHEMA_VERSION,
+            "drilldown + install-log: bump independently when shapes diverge",
+        );
+        assert_eq!(
+            BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION, PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION,
+            "drilldown + histogram: bump independently when shapes diverge",
+        );
+        assert_eq!(
+            BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION, ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION,
+            "drilldown + timeline: bump independently when shapes diverge",
+        );
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_granularity_serde_round_trips_for_all_three() {
+        // Pin the lowercase-tag serde contract for every granularity
+        // value so a future granularity addition (e.g. "year") that
+        // forgets to bump the enum surfaces here.
+        for (g, tag) in [
+            (TimeBucketGranularity::Day, "day"),
+            (TimeBucketGranularity::Week, "week"),
+            (TimeBucketGranularity::Month, "month"),
+        ] {
+            let env = bucket_drilldown_to_json_with_now(&[], 1_700_000_000, g, 0, 0);
+            let s = serde_json::to_string(&env).unwrap();
+            assert!(s.contains(&format!("\"granularity\":\"{tag}\"")));
+            let back: BucketDrilldownExportEnvelope = serde_json::from_str(&s).unwrap();
+            assert_eq!(back.granularity, g);
+        }
+    }
+
+    #[test]
+    fn bucket_drilldown_json_envelope_bucket_start_iso_matches_csv_byte_for_byte() {
+        // The bucket_start_iso field must produce the SAME ISO string
+        // as the CSV exporter's column 2 for the same bucket_start —
+        // pinned so a paralegal joining the CSV and JSON exports on
+        // the bucket coord finds identical strings.
+        let ts = 1_700_086_400;
+        let row = hist_row("p", 1, 0, 0, 0, ts);
+        let env = bucket_drilldown_to_json_with_now(
+            &[row.clone()],
+            ts,
+            TimeBucketGranularity::Day,
+            1,
+            1_710_000_000,
+        );
+        let csv = bucket_drilldown_to_csv(&[row], ts, TimeBucketGranularity::Day, false);
+        let csv_iso = csv.lines().next().unwrap().split(',').nth(2).unwrap();
+        assert_eq!(env.bucket_start_iso, csv_iso);
     }
 }
