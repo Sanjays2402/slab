@@ -1379,6 +1379,94 @@ pub fn plugin_histogram_to_csv(rows: &[PluginHistogramRow], include_header: bool
     out
 }
 
+// ─── Activity timeline CSV export (Slice 104) ────────────────────────
+
+/// Header row for the activity-timeline CSV export. Kept as a module
+/// constant so tests + future column reorders share one source of
+/// truth — same convention as [`INSTALL_LOG_CSV_HEADER`] and
+/// [`PLUGIN_HISTOGRAM_CSV_HEADER`].
+///
+/// Eight columns matching the [`ActivityBucket`] shape plus a
+/// precomputed `bucket_start_iso` companion for human review AND a
+/// `granularity` tag column so a downstream consumer can re-derive
+/// the bucket semantics without the export filename:
+///
+/// ```text
+/// granularity,bucket_start_unix,bucket_start_iso,installs,updates,uninstalls,failures,total
+/// ```
+///
+/// The granularity tag is THE FIRST column rather than a constant
+/// trailing column because a downstream pipeline that concatenates
+/// day/week/month exports for archival reads the first column to
+/// dispatch — same reasoning as why the `bucket_kind` column in the
+/// drilldown CSV (slice 88) is positioned where it is.
+pub const ACTIVITY_TIMELINE_CSV_HEADER: &str =
+    "granularity,bucket_start_unix,bucket_start_iso,installs,updates,uninstalls,failures,total";
+
+/// Render a slice of [`ActivityBucket`] rows as RFC-4180 CSV. Columns
+/// match what the Recent installs drawer's "Activity over time"
+/// section will show, plus the canonical machine-friendly columns an
+/// auditor or downstream script needs:
+///
+/// `granularity, bucket_start_unix, bucket_start_iso, installs,
+///  updates, uninstalls, failures, total`
+///
+/// Two timestamp-related columns — the raw unix-seconds value
+/// (machine-friendly for joining with other audit logs) and the
+/// ISO-8601 UTC string (human-friendly for direct review in a
+/// spreadsheet). Both come from the same `bucket_start_unix` field
+/// so they can't drift, matching the install-log CSV's two-column
+/// timestamp pattern.
+///
+/// `bucket_start_unix` renders as `0` (not empty) when the bucket
+/// happens to carry a zero timestamp — matches the integer-column
+/// contract of the upstream sqlite schema. The ISO column degrades
+/// to empty when the unix value can't be represented, same as the
+/// install-log + histogram CSVs' ISO columns.
+///
+/// `granularity` is written verbatim as the input enum's lowercase
+/// tag (`"day"` / `"week"` / `"month"`) — same value across every
+/// row because a single export carries one granularity. Putting it
+/// on every row (rather than once in a comment header) lets a
+/// downstream pipeline concatenate day/week/month exports without
+/// losing the discriminator.
+///
+/// Escaping policy (RFC 4180 §2): same as [`install_log_to_csv`].
+/// In practice only the ISO column ever needs escaping (the integer
+/// columns never contain trip characters, and the granularity tag is
+/// a fixed lowercase enum) but the escaping is applied uniformly so
+/// a future field addition can't slip past.
+///
+/// Pure function — never touches the filesystem. The Tauri command
+/// layer (Slice 106) owns disk I/O.
+pub fn activity_timeline_to_csv(
+    buckets: &[ActivityBucket],
+    granularity: TimeBucketGranularity,
+    include_header: bool,
+) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(ACTIVITY_TIMELINE_CSV_HEADER);
+        out.push('\n');
+    }
+    let gran_str = granularity.as_str();
+    for b in buckets {
+        let row = [
+            gran_str.to_string(),
+            b.bucket_start_unix.to_string(),
+            csv_escape(&iso8601_utc(b.bucket_start_unix)),
+            b.installs.to_string(),
+            b.updates.to_string(),
+            b.uninstalls.to_string(),
+            b.failures.to_string(),
+            b.total.to_string(),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
 // ─── JSON export envelope (Slice 60) ─────────────────────────────────
 
 /// Wire shape for the JSON install-log export. Lifts the raw
@@ -3498,6 +3586,234 @@ mod tests {
         let csv = plugin_histogram_to_csv(&rows, true);
         assert!(!csv.contains("None"));
         assert!(!csv.to_lowercase().contains("null"));
+    }
+
+    // ─── Slice 104: activity timeline CSV export ─────────────────────
+
+    fn act_bucket(
+        bucket_start_unix: i64,
+        installs: i64,
+        updates: i64,
+        uninstalls: i64,
+        failures: i64,
+    ) -> ActivityBucket {
+        ActivityBucket {
+            bucket_start_unix,
+            installs,
+            updates,
+            uninstalls,
+            failures,
+            total: installs + updates + uninstalls + failures,
+        }
+    }
+
+    #[test]
+    fn activity_timeline_csv_header_inclusion_is_caller_controlled() {
+        let buckets = vec![act_bucket(1_700_000_000, 1, 0, 0, 0)];
+        let with_header = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, true);
+        assert!(with_header.starts_with(ACTIVITY_TIMELINE_CSV_HEADER));
+        let lines: Vec<_> = with_header.lines().collect();
+        assert_eq!(lines.len(), 2, "header + one data row");
+        let bare = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, false);
+        assert!(!bare.starts_with("granularity,"));
+        assert_eq!(bare.lines().count(), 1);
+    }
+
+    #[test]
+    fn activity_timeline_csv_empty_with_header_is_header_only() {
+        let csv = activity_timeline_to_csv(&[], TimeBucketGranularity::Day, true);
+        assert_eq!(csv, format!("{}\n", ACTIVITY_TIMELINE_CSV_HEADER));
+        let bare = activity_timeline_to_csv(&[], TimeBucketGranularity::Day, false);
+        assert!(bare.is_empty());
+    }
+
+    #[test]
+    fn activity_timeline_csv_header_column_count_matches_row() {
+        // Defensive: header and every row carry the same number of
+        // comma-separated fields. Protects future column additions
+        // from drifting one side without the other.
+        let buckets = vec![act_bucket(1_700_000_000, 1, 2, 3, 4)];
+        let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Week, true);
+        let lines: Vec<_> = csv.lines().collect();
+        let header_cols = lines[0].split(',').count();
+        let row_cols = lines[1].split(',').count();
+        assert_eq!(
+            header_cols, row_cols,
+            "header has {header_cols} cols, row has {row_cols}"
+        );
+        assert_eq!(header_cols, 8, "expected 8 columns");
+    }
+
+    #[test]
+    fn activity_timeline_csv_columns_in_documented_order() {
+        // Pin the column order so a refactor that reorders the header
+        // constant has to update this test in lockstep with the doc
+        // comment. 1_700_000_000 = 2023-11-14T22:13:20Z.
+        let bucket = act_bucket(1_700_000_000, 3, 1, 0, 2);
+        let csv = activity_timeline_to_csv(&[bucket], TimeBucketGranularity::Week, false);
+        let line = csv.lines().next().unwrap();
+        let cells: Vec<&str> = line.split(',').collect();
+        // granularity, bucket_start_unix, bucket_start_iso, installs,
+        // updates, uninstalls, failures, total
+        assert_eq!(cells[0], "week");
+        assert_eq!(cells[1], "1700000000");
+        assert_eq!(cells[2], "2023-11-14T22:13:20Z");
+        assert_eq!(cells[3], "3");
+        assert_eq!(cells[4], "1");
+        assert_eq!(cells[5], "0");
+        assert_eq!(cells[6], "2");
+        assert_eq!(cells[7], "6");
+    }
+
+    #[test]
+    fn activity_timeline_csv_granularity_tag_on_every_row() {
+        // The granularity column lives on every row (not in a comment
+        // header) so a downstream pipeline can concatenate
+        // day/week/month exports without losing the discriminator.
+        let buckets = vec![
+            act_bucket(1_700_000_000, 1, 0, 0, 0),
+            act_bucket(1_700_086_400, 0, 1, 0, 0),
+            act_bucket(1_700_172_800, 0, 0, 0, 1),
+        ];
+        let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, false);
+        for line in csv.lines() {
+            let first_cell = line.split(',').next().unwrap();
+            assert_eq!(first_cell, "day", "expected every row to start with 'day'");
+        }
+    }
+
+    #[test]
+    fn activity_timeline_csv_iso_matches_install_log_format_byte_for_byte() {
+        // Downstream join compatibility — pipe an activity-timeline
+        // CSV next to an install-log CSV and rely on the timestamp
+        // strings rendering identically when they refer to the same
+        // unix-seconds value.
+        let unix = 1_700_000_000;
+        let timeline_csv = activity_timeline_to_csv(
+            &[act_bucket(unix, 1, 0, 0, 0)],
+            TimeBucketGranularity::Day,
+            false,
+        );
+        let timeline_iso = timeline_csv.split(',').nth(2).unwrap();
+        // Synthesise an InstallEvent to render through install_log_to_csv.
+        let install_csv = install_log_to_csv(
+            &[InstallEvent {
+                id: 1,
+                plugin_id: "com.x".into(),
+                version: "1".into(),
+                action: InstallAction::Install,
+                occurred_at: unix,
+                source: None,
+                bytes_written: None,
+                files_extracted: None,
+                replaced_existing: None,
+                prior_version: None,
+                error_msg: None,
+            }],
+            false,
+        );
+        // install-log iso is at column index 5 (id, plugin_id,
+        // version, action, occurred_at_unix, occurred_at_iso).
+        let install_iso = install_csv.split(',').nth(5).unwrap();
+        assert_eq!(timeline_iso, install_iso);
+    }
+
+    #[test]
+    fn activity_timeline_csv_preserves_input_order() {
+        // The primitive emits ASC by bucket_start_unix (the server
+        // contract); the exporter ships the caller's order verbatim
+        // so a caller who pre-densified the timeline (zero-fill gap
+        // buckets, dense ASC) gets that order written through.
+        let buckets = vec![
+            act_bucket(1_700_172_800, 0, 0, 0, 1), // day 3 (third)
+            act_bucket(1_700_000_000, 1, 0, 0, 0), // day 1 (first)
+            act_bucket(1_700_086_400, 0, 1, 0, 0), // day 2 (second)
+        ];
+        let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, false);
+        let starts: Vec<&str> = csv.lines().map(|l| l.split(',').nth(1).unwrap()).collect();
+        // Out-of-order input ships verbatim.
+        assert_eq!(starts, vec!["1700172800", "1700000000", "1700086400"]);
+    }
+
+    #[test]
+    fn activity_timeline_csv_zero_timestamp_renders_zero_not_empty() {
+        // Defensive: a pathological zero bucket_start renders as the
+        // integer 0 (NOT empty), same as the histogram CSV's zero-
+        // timestamp behaviour. NOT NULL contract at the column level.
+        let buckets = vec![act_bucket(0, 1, 0, 0, 0)];
+        let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, false);
+        let line = csv.lines().next().unwrap();
+        let cells: Vec<&str> = line.split(',').collect();
+        assert_eq!(cells[1], "0", "bucket_start_unix should render as '0'");
+        // Don't assert specific ISO — chrono's epoch render is
+        // implementation-defined. The contract is "non-empty if the
+        // unix value renders" which the iso8601_utc helper already
+        // covers — confirm via the smoke check below.
+        assert!(
+            !cells[2].is_empty(),
+            "bucket_start_iso should be non-empty for unix 0"
+        );
+    }
+
+    #[test]
+    fn activity_timeline_csv_total_field_written_verbatim() {
+        // The total field is written verbatim (NOT re-summed from
+        // the four bucket columns) — same defence-in-depth as the
+        // histogram CSV. A caller-supplied mismatched total surfaces
+        // in the export rather than being silently corrected.
+        let mut bucket = act_bucket(1_700_000_000, 1, 1, 1, 1);
+        bucket.total = 999;
+        let csv = activity_timeline_to_csv(&[bucket], TimeBucketGranularity::Day, false);
+        let line = csv.lines().next().unwrap();
+        let last_cell = line.split(',').last().unwrap();
+        assert_eq!(last_cell, "999", "total written verbatim, not re-summed");
+    }
+
+    #[test]
+    fn activity_timeline_csv_no_none_or_null_strings_anywhere() {
+        // Defensive: no "None" / "null" tokens leak from any column.
+        // ActivityBucket has no Option<_> columns today so this is a
+        // contract check (catches a future Option addition that
+        // forgets to escape).
+        let buckets = vec![act_bucket(0, 0, 0, 0, 0)];
+        let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, true);
+        assert!(!csv.contains("None"));
+        assert!(!csv.to_lowercase().contains("null"));
+    }
+
+    #[test]
+    fn activity_timeline_csv_granularity_tag_distinguishes_export_pairs() {
+        // The granularity column distinguishes a Day-export from a
+        // Week-export from a Month-export at the row level, so a
+        // downstream concatenation of day.csv + week.csv + month.csv
+        // remains self-describing. Three single-row exports differ
+        // ONLY in the granularity column (modulo whatever cells the
+        // input buckets happen to populate — held constant here).
+        let buckets = vec![act_bucket(1_700_000_000, 1, 0, 0, 0)];
+        for (g, expected) in [
+            (TimeBucketGranularity::Day, "day"),
+            (TimeBucketGranularity::Week, "week"),
+            (TimeBucketGranularity::Month, "month"),
+        ] {
+            let csv = activity_timeline_to_csv(&buckets, g, false);
+            let first_cell = csv.lines().next().unwrap().split(',').next().unwrap();
+            assert_eq!(first_cell, expected);
+        }
+    }
+
+    #[test]
+    fn activity_timeline_csv_one_row_per_input_invariant() {
+        // The exporter ships exactly one CSV data row per input bucket
+        // — no truncation, no compression. Important when the caller
+        // wants to render a stable count in the UI toast ("Exported
+        // 30 buckets") without re-reading the file.
+        for n in [0, 1, 5, 30] {
+            let buckets: Vec<ActivityBucket> = (0..n)
+                .map(|i| act_bucket(1_700_000_000 + i * 86_400, 1, 0, 0, 0))
+                .collect();
+            let csv = activity_timeline_to_csv(&buckets, TimeBucketGranularity::Day, false);
+            assert_eq!(csv.lines().count(), n as usize, "n={n}");
+        }
     }
 
     // ─── Slice 99: histogram JSON envelope ───────────────────────────
