@@ -19,6 +19,7 @@ import {
   sampleBucketEquals,
   describeDrilldown,
   describeBucket,
+  suggestDrilldownExportFilename,
   type RuleCoverageReport,
   type RuleCoverage,
   type RuleSample,
@@ -353,5 +354,142 @@ function drilldown(
   expect(
     describeBucket(ruleBucket(99), ["Tax"]) === "Rule #100",
     "describeBucket: out-of-range index fallback",
+  );
+}
+
+// ── suggestDrilldownExportFilename (Slice 90) ────────────────────────
+
+// Use a fixed unix-millis for deterministic date assertions. 2026-06-21
+// (Pacific date, but the helper uses LOCAL time so the assertion will
+// hold for any reasonable test machine TZ assuming the unix-millis
+// rounds inside that local day).
+const FIXED_NOW = new Date("2026-06-21T19:00:00Z").getTime();
+
+{
+  // Fallthrough bucket, no watch id - reads "watch" + "fallthrough".
+  const name = suggestDrilldownExportFilename(FALLTHROUGH_BUCKET, null, {
+    now: FIXED_NOW,
+  });
+  expect(
+    /^hopper-drilldown_watch_fallthrough_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestDrilldownExportFilename: fallthrough no-watch shape (${name})`,
+  );
+}
+{
+  // Fallthrough bucket, with watch id.
+  const name = suggestDrilldownExportFilename(FALLTHROUGH_BUCKET, null, {
+    watchId: 7,
+    now: FIXED_NOW,
+  });
+  expect(
+    /^hopper-drilldown_watch-7_fallthrough_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestDrilldownExportFilename: fallthrough watch-7 shape (${name})`,
+  );
+}
+{
+  // Rule bucket, no names -> bare rule-N slot.
+  const name = suggestDrilldownExportFilename(ruleBucket(2), null, {
+    watchId: 3,
+    now: FIXED_NOW,
+  });
+  expect(
+    /^hopper-drilldown_watch-3_rule-3_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestDrilldownExportFilename: rule no-names shape (${name})`,
+  );
+}
+{
+  // Rule bucket with a clean name -> rule-N_<slug>.
+  const name = suggestDrilldownExportFilename(
+    ruleBucket(0),
+    ["Tax Forms 2026"],
+    { watchId: 1, now: FIXED_NOW },
+  );
+  expect(
+    /^hopper-drilldown_watch-1_rule-1_tax-forms-2026_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestDrilldownExportFilename: rule with slug (${name})`,
+  );
+}
+{
+  // Rule bucket with messy chars -> collapses to single dashes.
+  const name = suggestDrilldownExportFilename(
+    ruleBucket(0),
+    ["  Tax/Forms  &  Stuff!!  "],
+    { watchId: 1, now: FIXED_NOW },
+  );
+  expect(
+    /_rule-1_tax-forms-stuff_/.test(name),
+    `suggestDrilldownExportFilename: collapses messy chars to dashes (${name})`,
+  );
+}
+{
+  // Rule bucket with non-ASCII name -> NFD strips diacritics so the
+  // slug stays portable. "café" -> "cafe".
+  const name = suggestDrilldownExportFilename(ruleBucket(0), ["café"], {
+    watchId: 1,
+    now: FIXED_NOW,
+  });
+  expect(
+    /_rule-1_cafe_/.test(name),
+    `suggestDrilldownExportFilename: NFD strips diacritics (${name})`,
+  );
+}
+{
+  // Rule bucket with a name that's ALL non-ASCII / punctuation ->
+  // slug is empty so the helper falls back to bare rule-N (no
+  // double underscore between rule-N and the date).
+  const name = suggestDrilldownExportFilename(ruleBucket(0), ["★★★"], {
+    watchId: 1,
+    now: FIXED_NOW,
+  });
+  expect(
+    /^hopper-drilldown_watch-1_rule-1_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestDrilldownExportFilename: empty-slug falls back to bare rule-N (${name})`,
+  );
+}
+{
+  // Rule bucket with whitespace-only name -> bare rule-N.
+  const name = suggestDrilldownExportFilename(ruleBucket(0), ["   "], {
+    watchId: 1,
+    now: FIXED_NOW,
+  });
+  expect(
+    /_rule-1_\d{4}/.test(name),
+    `suggestDrilldownExportFilename: whitespace-only name falls back (${name})`,
+  );
+}
+{
+  // Negative watch id falls back to bare "watch" (defensive — the
+  // popover never has one but the contract should hold).
+  const name = suggestDrilldownExportFilename(
+    FALLTHROUGH_BUCKET,
+    null,
+    { watchId: -1, now: FIXED_NOW },
+  );
+  expect(
+    /^hopper-drilldown_watch_fallthrough_/.test(name),
+    `suggestDrilldownExportFilename: negative watch id falls back (${name})`,
+  );
+}
+{
+  // 1-based rule index — rule index 9 should read as rule-10, not rule-9.
+  const name = suggestDrilldownExportFilename(ruleBucket(9), null, {
+    watchId: 1,
+    now: FIXED_NOW,
+  });
+  expect(
+    /_rule-10_/.test(name),
+    `suggestDrilldownExportFilename: rule index is 1-based (${name})`,
+  );
+}
+{
+  // Filename ends in .csv (every audit-export suggestion does).
+  const name = suggestDrilldownExportFilename(
+    FALLTHROUGH_BUCKET,
+    null,
+    { watchId: 1, now: FIXED_NOW },
+  );
+  expect(
+    name.endsWith(".csv"),
+    `suggestDrilldownExportFilename: ends with .csv (${name})`,
   );
 }

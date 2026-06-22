@@ -424,6 +424,105 @@ export function describeBucket(
   return `Rule #${i + 1}`;
 }
 
+// ─── v3.40 Slice 90 — drilldown CSV export TS wrapper ────────────────
+//
+// Mirrors exportInstallLogCsv / slabHopperExportBackfillCsv: an absolute
+// path the caller usually obtains from @tauri-apps/plugin-dialog `save()`
+// + the same drilldown shape the popover already has loaded in state,
+// plus the rule-names array so the bucket_name column reads exactly
+// like the popover header. Returns the byte count written so the toast
+// can show "Exported 23 files (1.4 KB)" without re-reading the file.
+
+/** Write a [`SampleDrilldown`] to `path` as RFC-4180 CSV. The path is
+ *  an absolute filesystem path the caller usually obtains from
+ *  `@tauri-apps/plugin-dialog` `save()` so it bypasses the default
+ *  plugin-fs scope. `ruleNames` is the in-flight rule-name array
+ *  (typically `rules.map(r => r.name)`) used to resolve a rule
+ *  bucket's display label — same `Rule #N` (1-based) fallback as
+ *  `describeBucket` for missing/blank/out-of-range names.
+ *
+ *  Returns the byte count actually written. Returns 0 in browser
+ *  mode (no-op). */
+export async function slabHopperExportDrilldownCsv(
+  drilldown: SampleDrilldown,
+  ruleNames: readonly string[],
+  path: string,
+): Promise<number> {
+  // Lazy import keeps the test file (which runs under node) from
+  // pulling the Tauri plugin chain just to type-check the helpers.
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_hopper_export_drilldown_csv", {
+    drilldown,
+    ruleNames: [...ruleNames],
+    path,
+  });
+}
+
+/** Suggest a default filename for a drilldown CSV export. Mirrors the
+ *  marketplace install-log + hopper backfill conventions so paralegals
+ *  see ONE consistent naming pattern across the audit-export surfaces.
+ *
+ *  Format: `hopper-drilldown_<watch>_<bucket>_<YYYY-MM-DD>.csv`.
+ *
+ *  - `<watch>` slot is the watch id (`watch-7`) when supplied or
+ *    `watch` when the caller doesn't have one handy (the popover
+ *    always has one; the slot exists so the suggestion remains
+ *    well-formed even on a future surface).
+ *  - `<bucket>` slot reads `fallthrough` for the catch-all bucket;
+ *    for rule buckets it reads `rule-<N>` (1-based, matching the
+ *    popover labels), with an optional `_<slug>` of the rule name
+ *    when it's available + non-empty. Names are slugified to
+ *    `[a-z0-9-]` ASCII (lowercase + dashes for non-alphanumeric runs)
+ *    so the suggested filename survives a Windows filesystem.
+ *  - The trailing date uses the caller's local time (the suggestion
+ *    is for a save dialog the user is about to confirm — local-time
+ *    matches what their calendar says today is).
+ *
+ *  Pure helper — no I/O, no Tauri. */
+export function suggestDrilldownExportFilename(
+  bucket: SampleBucket,
+  ruleNames: readonly string[] | null,
+  opts: { watchId?: number | null; now?: number } = {},
+): string {
+  const watchSlot =
+    opts.watchId != null && Number.isFinite(opts.watchId) && opts.watchId >= 0
+      ? `watch-${Math.trunc(opts.watchId)}`
+      : "watch";
+
+  const bucketSlot = (() => {
+    if (bucket.kind === "fallthrough") return "fallthrough";
+    const i = bucket.index;
+    const base = `rule-${i + 1}`;
+    const name = ruleNames?.[i];
+    if (!name) return base;
+    const slug = slugifyForFilename(name);
+    return slug ? `${base}_${slug}` : base;
+  })();
+
+  const d = new Date(opts.now ?? Date.now());
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `hopper-drilldown_${watchSlot}_${bucketSlot}_${y}-${m}-${day}.csv`;
+}
+
+/** Slugify a rule name for inclusion in a filename. Lowercase ASCII
+ *  letters/digits survive; runs of anything else collapse to a single
+ *  dash; leading/trailing dashes are trimmed. Returns an empty string
+ *  when nothing survives (caller falls back to bare bucket slot). */
+function slugifyForFilename(raw: string): string {
+  const lower = raw.toLowerCase();
+  // Replace any run of non-[a-z0-9] (Unicode-letter included via NFD strip)
+  // with a single dash; trim leading/trailing dashes.
+  // We don't try to transliterate non-ASCII letters (café -> caf) — that's
+  // surprising in a filename. Better to drop them and lean on the watch +
+  // bucket numeric slots which are always meaningful.
+  const ascii = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const dashed = ascii.replace(/[^a-z0-9]+/g, "-");
+  return dashed.replace(/^-+|-+$/g, "");
+}
+
 // ---------------------------------------------------------------------
 // Predicate helpers — small but worth their weight in keystroke-saving
 // when the editor wires up 6 different predicate kinds.
