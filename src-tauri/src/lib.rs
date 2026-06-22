@@ -5846,6 +5846,139 @@ fn slab_marketplace_install_log_export_activity_timeline_json(
     Ok(bytes.len() as u64)
 }
 
+// ─── Activity bucket drilldown surface (Slice 112) ───────────────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_bucket_drilldown`].
+/// Carries the per-plugin rows plus the bucket coordinates + the
+/// `grand_total` so the UI can render "12 plugins, 87 events total
+/// in this day" without re-summing client-side.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BucketDrilldownResult {
+    pub rows: Vec<marketplace::PluginHistogramRow>,
+    pub bucket_start_unix: i64,
+    pub granularity: marketplace::TimeBucketGranularity,
+    /// Sum of every row's `total` — the corpus-wide event count
+    /// within the bucket. Lets the UI render "87 events across 12
+    /// plugins" without re-summing client-side.
+    pub grand_total: i64,
+}
+
+/// Per-plugin breakdown of install-log activity within a single
+/// activity-timeline bucket. Composes
+/// [`marketplace::InstallLog::bucket_drilldown`] (which composes
+/// `bucket_window_unix` with `plugin_histogram`) with the wire-layer
+/// log-open boilerplate.
+///
+/// `bucket_start_unix` must come from an `activity_timeline` bucket
+/// (i.e. already calendar-floored to the granularity's boundary).
+/// `granularity` defaults to Day when omitted — same default as the
+/// activity-timeline read endpoint so "drill into the timeline I'm
+/// looking at" is the natural reading.
+///
+/// `limit` defaults to 25 — same default as the histogram + drilldown
+/// already use across the install-log read surface; large enough that
+/// the typical bucket fits, small enough that a pathologically-busy
+/// day doesn't drag a giant grid into IPC.
+#[tauri::command]
+fn slab_marketplace_install_log_bucket_drilldown(
+    bucket_start_unix: i64,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+    limit: Option<i64>,
+) -> Result<BucketDrilldownResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .bucket_drilldown(bucket_start_unix, granularity, limit)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = rows.iter().map(|r| r.total).sum();
+    Ok(BucketDrilldownResult {
+        rows,
+        bucket_start_unix,
+        granularity,
+        grand_total,
+    })
+}
+
+/// Write the bucket drilldown to disk as RFC-4180 CSV. Mirrors the
+/// activity-timeline CSV export (slice 106) but scopes to a SINGLE
+/// bucket and ships the per-plugin breakdown.
+///
+/// Same defaults as the read endpoint above (granularity defaults to
+/// Day, limit to 25). Returns the byte count actually written;
+/// idempotent — overwrites if the target file exists; creates parent
+/// dirs if missing.
+#[tauri::command]
+fn slab_marketplace_install_log_export_bucket_drilldown_csv(
+    path: String,
+    bucket_start_unix: i64,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .bucket_drilldown(bucket_start_unix, granularity, limit)
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::bucket_drilldown_to_csv(
+        &rows,
+        bucket_start_unix,
+        granularity,
+        true,
+    );
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the bucket drilldown to disk as a pretty-printed JSON
+/// envelope. Mirrors the activity-timeline JSON export (slice 106)
+/// but scopes to a SINGLE bucket and ships the
+/// [`marketplace::install_log::BucketDrilldownExportEnvelope`] shape.
+///
+/// Same defaults as the CSV variant; returns the byte count actually
+/// written; idempotent.
+#[tauri::command]
+fn slab_marketplace_install_log_export_bucket_drilldown_json(
+    path: String,
+    bucket_start_unix: i64,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .bucket_drilldown(bucket_start_unix, granularity, limit)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = rows.iter().map(|r| r.total).sum();
+    let envelope = marketplace::install_log::bucket_drilldown_to_json(
+        &rows,
+        bucket_start_unix,
+        granularity,
+        grand_total,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 /// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
 /// Carries the user-visible retention window plus the floor + interval
 /// constants so the UI doesn't have to hard-code them on the TS side.
@@ -7470,6 +7603,9 @@ pub fn run() {
             slab_marketplace_install_log_activity_timeline,
             slab_marketplace_install_log_export_activity_timeline_csv,
             slab_marketplace_install_log_export_activity_timeline_json,
+            slab_marketplace_install_log_bucket_drilldown,
+            slab_marketplace_install_log_export_bucket_drilldown_csv,
+            slab_marketplace_install_log_export_bucket_drilldown_json,
             slab_marketplace_install_log_retention_policy,
             slab_marketplace_install_log_set_retention_days,
             slab_marketplace_install_log_auto_prune,

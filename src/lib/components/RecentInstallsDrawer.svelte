@@ -37,6 +37,8 @@
     exportInstallLogJson,
     exportInstallLogActivityTimelineCsv,
     exportInstallLogActivityTimelineJson,
+    exportInstallLogBucketDrilldownCsv,
+    exportInstallLogBucketDrilldownJson,
     formatBytes,
     formatInstallEventTime,
     formatLastAutoPrune,
@@ -45,6 +47,7 @@
     getInstallLogRetentionPolicy,
     getPluginInstallHistogram,
     getActivityTimeline,
+    getBucketDrilldown,
     densifyActivityTimeline,
     installEventGlyph,
     installLogSummary,
@@ -57,11 +60,14 @@
     setInstallLogRetentionDays,
     suggestHistogramExportFilename,
     suggestActivityTimelineExportFilename,
+    suggestBucketDrilldownExportFilename,
     suggestInstallLogExportFilename,
     summarizeHistogram,
     type HistogramExportFilter,
     type ActivityTimelineExportFilter,
     type ActivityTimelineResult,
+    type BucketDrilldownExportFilter,
+    type BucketDrilldownResult,
     type TimeBucketGranularity,
     TIME_BUCKET_GRANULARITIES,
     timeBucketLabel,
@@ -241,6 +247,42 @@
   /** Named timeout handle so back-to-back exports replace cleanly. */
   let timelineExportToastTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ─── Bucket drilldown popover (Slice 112 — round 23) ──────────────
+  //
+  // Click a bar in the Activity over time chart -> open a focused
+  // popover anchored to the bar showing the per-plugin breakdown
+  // for that bucket. Answers the natural follow-up: "OK, that day
+  // had 23 events — WHICH plugins drove it?". Same canonical
+  // popover pattern as the hopper coverage drilldown (round 19).
+  //
+  // The popover is dismissed by:
+  // - Clicking outside the popover (handled by the existing
+  //   onWindowClick dispatcher)
+  // - Pressing Escape (highest-priority entry in onKeydown's chain
+  //   so it dismisses BEFORE the histogram + footer popovers)
+  // - Clicking the same bar again (toggle off)
+  // - Clicking another bar (the popover anchors to the new bar)
+  //
+  // State cells live alongside the timeline cells above so the
+  // section's open/close can dismiss them cleanly. The export
+  // popover has its own anchor so it dismisses independently from
+  // the histogram + footer + timeline anchors.
+
+  /** Drilldown result. Null when no bucket is selected. */
+  let drilldown = $state<BucketDrilldownResult | null>(null);
+  /** True while a drilldown fetch is in flight. */
+  let drilldownLoading = $state(false);
+  /** Last error from the drilldown loader, surfaced inline. */
+  let drilldownError = $state<string | null>(null);
+  /** Open state for the drilldown export popover. */
+  let drilldownExportMenuOpen = $state(false);
+  /** True while a drilldown save-as dialog or backend write is in flight. */
+  let drilldownExporting = $state(false);
+  /** Slim 4-second toast for drilldown export success. */
+  let drilldownExportToast = $state<string | null>(null);
+  /** Named timeout handle so back-to-back exports replace cleanly. */
+  let drilldownExportToastTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Dirty when the draft diverges from the persisted policy. */
   let retentionDirty = $derived.by<boolean>(() => {
     if (!policy) return false;
@@ -352,6 +394,7 @@
       if (queryDebounce) clearTimeout(queryDebounce);
       if (histogramExportToastTimer) clearTimeout(histogramExportToastTimer);
       if (timelineExportToastTimer) clearTimeout(timelineExportToastTimer);
+      if (drilldownExportToastTimer) clearTimeout(drilldownExportToastTimer);
     };
   });
 
@@ -551,6 +594,11 @@
       e.preventDefault();
       if (suggestOpen) {
         suggestOpen = false;
+      } else if (drilldownExportMenuOpen) {
+        drilldownExportMenuOpen = false;
+      } else if (drilldown !== null) {
+        drilldown = null;
+        drilldownError = null;
       } else if (timelineExportMenuOpen) {
         timelineExportMenuOpen = false;
       } else if (histogramExportMenuOpen) {
@@ -805,6 +853,93 @@
     }
   }
 
+  // ─── Slice 112: bucket drilldown handlers ──────────────────────────
+
+  /** Flash the drilldown export toast. Same 4s lifecycle + named-
+   *  timer-replace contract as the histogram + timeline toasts. */
+  function flashDrilldownToast(msg: string): void {
+    if (drilldownExportToastTimer) {
+      clearTimeout(drilldownExportToastTimer);
+    }
+    drilldownExportToast = msg;
+    drilldownExportToastTimer = setTimeout(() => {
+      drilldownExportToast = null;
+      drilldownExportToastTimer = null;
+    }, 4_000);
+  }
+
+  /**
+   * Open the bucket drilldown for `bucketStartUnix`. If the popover
+   * is already open for the same bucket, toggle it off. Otherwise
+   * (closed OR open for a different bucket) load fresh.
+   */
+  async function openBucketDrilldown(bucketStartUnix: number): Promise<void> {
+    // Toggle off when re-clicking the active bar.
+    if (drilldown && drilldown.bucket_start_unix === bucketStartUnix) {
+      drilldown = null;
+      drilldownError = null;
+      drilldownExportMenuOpen = false;
+      return;
+    }
+    drilldownLoading = true;
+    drilldownError = null;
+    drilldownExportMenuOpen = false; // dismiss any stale popover from a prior bucket
+    try {
+      drilldown = await getBucketDrilldown({
+        bucketStartUnix,
+        granularity: timelineGranularity,
+      });
+    } catch (e) {
+      drilldownError = e instanceof Error ? e.message : String(e);
+      drilldown = null;
+    } finally {
+      drilldownLoading = false;
+    }
+  }
+
+  /**
+   * Save the bucket drilldown to disk as CSV / JSON. Mirrors
+   * runTimelineExport's shape exactly: filter ships in-state
+   * bucket coords, default filename via the slice-112 suggester,
+   * save dialog opened with the kind-appropriate filter,
+   * cancellation is a clean no-op, bytes returned surfaces in the
+   * toast for visual feedback.
+   */
+  async function runDrilldownExport(kind: "csv" | "json"): Promise<void> {
+    drilldownExportMenuOpen = false;
+    if (!drilldown) return;
+    drilldownExporting = true;
+    try {
+      const filter: BucketDrilldownExportFilter = {
+        bucket_start_unix: drilldown.bucket_start_unix,
+        granularity: drilldown.granularity,
+      };
+      const defaultPath = suggestBucketDrilldownExportFilename(filter, kind);
+      const target = await saveDialog({
+        defaultPath,
+        filters: [
+          kind === "csv"
+            ? { name: "CSV", extensions: ["csv"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        kind === "csv"
+          ? await exportInstallLogBucketDrilldownCsv(target, filter)
+          : await exportInstallLogBucketDrilldownJson(target, filter);
+      const count = drilldown.rows.length;
+      const label = kind === "csv" ? "CSV" : "JSON";
+      flashDrilldownToast(
+        `Exported ${count} plugin${count === 1 ? "" : "s"} as ${label} (${formatBytes(bytes)})`,
+      );
+    } catch (e) {
+      err = e instanceof Error ? e.message : String(e);
+    } finally {
+      drilldownExporting = false;
+    }
+  }
+
   /**
    * Dismiss the export popover on outside click — matches the
    * Notion / Linear convention. The check uses .closest() on the
@@ -832,6 +967,24 @@
       if (!target?.closest(".timeline-export-anchor")) {
         timelineExportMenuOpen = false;
       }
+    }
+    if (drilldownExportMenuOpen) {
+      if (!target?.closest(".drilldown-export-anchor")) {
+        drilldownExportMenuOpen = false;
+      }
+    }
+    // Dismiss the drilldown popover entirely when the click lands
+    // OUTSIDE the popover AND outside the timeline chart (clicking
+    // a different bar should anchor the popover to that bar, not
+    // dismiss it — openBucketDrilldown handles the re-anchor).
+    if (
+      drilldown !== null &&
+      !target?.closest(".bucket-drilldown-popover") &&
+      !target?.closest(".timeline-bar")
+    ) {
+      drilldown = null;
+      drilldownError = null;
+      drilldownExportMenuOpen = false;
     }
   }
 </script>
@@ -1335,10 +1488,23 @@
                   {@const updatePct = b.total > 0 ? (b.updates / b.total) * heightPct : 0}
                   {@const uninstallPct = b.total > 0 ? (b.uninstalls / b.total) * heightPct : 0}
                   {@const failedPct = b.total > 0 ? (b.failures / b.total) * heightPct : 0}
-                  <div
+                  {@const isActiveBucket = drilldown?.bucket_start_unix === b.bucket_start_unix}
+                  <button
+                    type="button"
                     class="timeline-bar"
                     class:empty-bar={b.total === 0}
-                    title="{new Date(b.bucket_start_unix * 1000).toISOString().slice(0, 10)} — {b.total} event{b.total === 1 ? '' : 's'}: {b.installs}i {b.updates}u {b.uninstalls}x {b.failures}f"
+                    class:active-bar={isActiveBucket}
+                    disabled={b.total === 0}
+                    aria-pressed={isActiveBucket}
+                    aria-label={b.total === 0
+                      ? `No events on ${new Date(b.bucket_start_unix * 1000).toISOString().slice(0, 10)}`
+                      : `Drill into ${new Date(b.bucket_start_unix * 1000).toISOString().slice(0, 10)} — ${b.total} event${b.total === 1 ? "" : "s"}`}
+                    title={b.total === 0
+                      ? `${new Date(b.bucket_start_unix * 1000).toISOString().slice(0, 10)} — no events`
+                      : `Click to drill into ${new Date(b.bucket_start_unix * 1000).toISOString().slice(0, 10)} (${b.total} event${b.total === 1 ? "" : "s"}: ${b.installs}i ${b.updates}u ${b.uninstalls}x ${b.failures}f)`}
+                    onclick={() => {
+                      if (b.total > 0) void openBucketDrilldown(b.bucket_start_unix);
+                    }}
                   >
                     {#if b.failures > 0}
                       <div class="bar-seg seg-failed" style="height: {failedPct}%"></div>
@@ -1355,9 +1521,158 @@
                     {#if b.total === 0}
                       <div class="bar-zero" aria-hidden="true"></div>
                     {/if}
-                  </div>
+                  </button>
                 {/each}
               </div>
+              {#if drilldownLoading || drilldownError || drilldown}
+                <div class="bucket-drilldown-popover" role="region" aria-label="Bucket drilldown">
+                  {#if drilldownLoading}
+                    <p class="drilldown-loading">Loading bucket drilldown…</p>
+                  {:else if drilldownError}
+                    <p class="drilldown-error" role="alert">
+                      Could not load drilldown: {drilldownError}
+                    </p>
+                  {:else if drilldown}
+                    {@const bucketIso = new Date(drilldown.bucket_start_unix * 1000)
+                      .toISOString()
+                      .slice(0, 10)}
+                    <div class="drilldown-head">
+                      <div class="drilldown-title-block">
+                        <span class="drilldown-title">{bucketIso}</span>
+                        <span class="drilldown-sub">
+                          {drilldown.grand_total} event{drilldown.grand_total === 1 ? "" : "s"} ·
+                          {drilldown.rows.length} plugin{drilldown.rows.length === 1 ? "" : "s"} ·
+                          {timeBucketLabel(drilldown.granularity)}
+                        </span>
+                      </div>
+                      <div class="drilldown-actions">
+                        <div class="drilldown-export-anchor">
+                          <button
+                            type="button"
+                            class="drilldown-export-btn"
+                            onclick={() => (drilldownExportMenuOpen = !drilldownExportMenuOpen)}
+                            disabled={drilldownExporting || drilldown.rows.length === 0}
+                            aria-haspopup="menu"
+                            aria-expanded={drilldownExportMenuOpen}
+                            title={drilldown.rows.length === 0
+                              ? "No plugins to export"
+                              : `Export the ${bucketIso} drilldown`}
+                          >
+                            {drilldownExporting ? "Exporting…" : "Export…"}
+                          </button>
+                          {#if drilldownExportMenuOpen}
+                            <div
+                              class="export-menu drilldown-export-menu"
+                              role="menu"
+                              aria-label="Export bucket drilldown"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onclick={() => void runDrilldownExport("csv")}
+                              >
+                                <span class="menu-glyph" aria-hidden="true">⤓</span>
+                                <span class="menu-body">
+                                  <span class="menu-title">Export as CSV…</span>
+                                  <span class="menu-sub">
+                                    {bucketIso} · spreadsheet-friendly
+                                  </span>
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onclick={() => void runDrilldownExport("json")}
+                              >
+                                <span class="menu-glyph" aria-hidden="true">⤓</span>
+                                <span class="menu-body">
+                                  <span class="menu-title">Export as JSON…</span>
+                                  <span class="menu-sub">
+                                    {bucketIso} · with envelope metadata
+                                  </span>
+                                </span>
+                              </button>
+                            </div>
+                          {/if}
+                        </div>
+                        <button
+                          type="button"
+                          class="drilldown-close"
+                          onclick={() => {
+                            drilldown = null;
+                            drilldownError = null;
+                            drilldownExportMenuOpen = false;
+                          }}
+                          aria-label="Close drilldown"
+                          title="Close drilldown (Esc)"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                    {#if drilldownExportToast}
+                      <p class="drilldown-export-toast" role="status">{drilldownExportToast}</p>
+                    {/if}
+                    {#if drilldown.rows.length === 0}
+                      <p class="drilldown-empty">
+                        No plugin activity in this bucket. (Empty buckets shouldn't be
+                        clickable — this is unexpected.)
+                      </p>
+                    {:else}
+                      {@const maxRowTotal = drilldown.rows[0]?.total ?? 1}
+                      <ul class="drilldown-list" aria-label="Plugins in bucket">
+                        {#each drilldown.rows as row (row.plugin_id)}
+                          {@const widthPct = maxRowTotal > 0 ? (row.total / maxRowTotal) * 100 : 0}
+                          {@const installPct = row.total > 0 ? (row.installs / row.total) * widthPct : 0}
+                          {@const updatePct = row.total > 0 ? (row.updates / row.total) * widthPct : 0}
+                          {@const uninstallPct = row.total > 0 ? (row.uninstalls / row.total) * widthPct : 0}
+                          {@const failedPct = row.total > 0 ? (row.failures / row.total) * widthPct : 0}
+                          {@const isActiveFilter = pluginQueryActive === row.plugin_id}
+                          <li>
+                            <button
+                              type="button"
+                              class="drilldown-row"
+                              class:active={isActiveFilter}
+                              onclick={() => onHistogramRowClick(row.plugin_id)}
+                              aria-pressed={isActiveFilter}
+                              title={isActiveFilter
+                                ? `Clear filter on ${row.plugin_id}`
+                                : `Filter timeline below to ${row.plugin_id}`}
+                            >
+                              <div class="dd-name" title={row.plugin_id}>
+                                <span class="dd-id">{row.plugin_id}</span>
+                              </div>
+                              <div class="dd-bar">
+                                {#if row.installs > 0}
+                                  <div class="dd-seg seg-install" style="width: {installPct}%"></div>
+                                {/if}
+                                {#if row.updates > 0}
+                                  <div class="dd-seg seg-update" style="width: {updatePct}%"></div>
+                                {/if}
+                                {#if row.uninstalls > 0}
+                                  <div class="dd-seg seg-uninstall" style="width: {uninstallPct}%"></div>
+                                {/if}
+                                {#if row.failures > 0}
+                                  <div class="dd-seg seg-failed" style="width: {failedPct}%"></div>
+                                {/if}
+                              </div>
+                              <div class="dd-counts">
+                                <span class="dd-total">{row.total}</span>
+                              </div>
+                            </button>
+                          </li>
+                        {/each}
+                      </ul>
+                      <p class="drilldown-legend">
+                        Per-plugin breakdown of activity in this {timeBucketLabel(drilldown.granularity).toLowerCase()}.
+                        Stacked segments by action (install green, update accent, uninstall amber,
+                        failed red). Click a row to filter the event list below to that plugin;
+                        Export… saves the breakdown as CSV or JSON.
+                      </p>
+                    {/if}
+                  {/if}
+                </div>
+              {/if}
               {@const firstStartLabel = new Date(firstStart * 1000).toISOString().slice(0, 10)}
               {@const lastStartLabel = new Date(lastStart * 1000).toISOString().slice(0, 10)}
               <div class="timeline-axis" aria-hidden="true">
@@ -2613,12 +2928,38 @@
     flex-direction: column-reverse;
     justify-content: flex-start;
     align-items: stretch;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
     border-radius: 2px 2px 0 0;
     overflow: hidden;
-    transition: background-color 0.12s ease;
+    transition:
+      background-color 0.12s ease,
+      box-shadow 0.12s ease;
   }
-  .timeline-bar:hover {
+  .timeline-bar:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.03);
+  }
+  .timeline-bar:focus-visible {
+    outline: 1px solid rgb(124, 140, 255);
+    outline-offset: 1px;
+  }
+  .timeline-bar:disabled {
+    cursor: default;
+  }
+  /* Active bucket: persistent outline + accent glow ring above the
+     bar so the user always knows which bucket the drilldown popover
+     is anchored to as they scroll the chart. */
+  .timeline-bar.active-bar {
+    background: rgba(124, 140, 255, 0.1);
+    box-shadow: 0 -2px 0 0 rgb(124, 140, 255) inset;
+  }
+  .timeline-bar.active-bar:hover:not(:disabled) {
+    background: rgba(124, 140, 255, 0.16);
   }
   .timeline-bar .bar-seg {
     width: 100%;
@@ -2668,6 +3009,228 @@
     margin: 4px 4px 0;
     color: var(--text-2);
     font-size: 11px;
+    line-height: 1.4;
+  }
+
+  /* ─── Slice 112: bucket drilldown popover ──────────────────────── */
+
+  /* The popover renders BELOW the timeline chart (sibling to the
+     axis + legend) so it doesn't have to be position:absolute over
+     the chart — keeps the layout flow natural and lets the popover
+     grow vertically with rows. */
+  .bucket-drilldown-popover {
+    margin: 8px 4px 0;
+    padding: 12px;
+    border: 1px solid rgba(124, 140, 255, 0.18);
+    background: linear-gradient(
+      180deg,
+      rgba(124, 140, 255, 0.06) 0%,
+      rgba(124, 140, 255, 0.02) 100%
+    );
+    border-radius: 8px;
+    animation: drilldown-fade-in 0.18s ease;
+  }
+  @keyframes drilldown-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .drilldown-loading {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 12px;
+    font-style: italic;
+  }
+  .drilldown-error {
+    margin: 0;
+    color: rgb(240, 130, 130);
+    font-size: 12px;
+  }
+  .drilldown-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .drilldown-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .drilldown-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+  .drilldown-sub {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .drilldown-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+  .drilldown-export-anchor {
+    position: relative;
+  }
+  .drilldown-export-btn {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-1);
+    cursor: pointer;
+    font-size: 11.5px;
+    transition: background-color 0.12s ease;
+  }
+  .drilldown-export-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .drilldown-export-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .drilldown-export-menu {
+    right: 0;
+    left: auto;
+    top: calc(100% + 4px);
+    bottom: auto;
+  }
+  .drilldown-close {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    transition: background-color 0.12s ease;
+  }
+  .drilldown-close:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-1);
+  }
+  .drilldown-export-toast {
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    color: rgb(170, 230, 195);
+    background: rgba(170, 230, 195, 0.08);
+    border: 1px solid rgba(170, 230, 195, 0.18);
+    border-radius: 6px;
+    font-size: 11.5px;
+    animation: drilldown-fade-in 0.16s ease;
+  }
+  .drilldown-empty {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 12px;
+  }
+  .drilldown-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    /* Cap the popover height so a busy bucket doesn't push the
+       legend + axis labels off-screen. The scroll is local to the
+       popover so the surrounding chart stays anchored. */
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .drilldown-list li {
+    margin: 0;
+  }
+  .drilldown-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(60px, 1.4fr) auto;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    transition:
+      background-color 0.12s ease,
+      border-color 0.12s ease;
+  }
+  .drilldown-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .drilldown-row.active {
+    border-color: rgba(124, 140, 255, 0.4);
+    background: rgba(124, 140, 255, 0.08);
+  }
+  .dd-name {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .dd-id {
+    font-size: 11.5px;
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dd-bar {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+  }
+  .dd-seg {
+    height: 100%;
+    flex: none;
+  }
+  .dd-seg.seg-install {
+    background: rgb(110, 220, 154);
+  }
+  .dd-seg.seg-update {
+    background: rgb(124, 140, 255);
+  }
+  .dd-seg.seg-uninstall {
+    background: rgb(240, 178, 100);
+  }
+  .dd-seg.seg-failed {
+    background: rgb(240, 130, 130);
+  }
+  .dd-counts {
+    font-size: 11.5px;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+    min-width: 24px;
+    text-align: right;
+  }
+  .dd-total {
+    font-weight: 500;
+  }
+  .drilldown-legend {
+    margin: 8px 0 0;
+    color: var(--text-2);
+    font-size: 10.5px;
     line-height: 1.4;
   }
 </style>

@@ -1365,17 +1365,15 @@ pub(crate) fn bucket_floor_unix(unix_seconds: i64, granularity: TimeBucketGranul
 /// boundary.
 ///
 /// Bucket lengths:
-///   - `Day`   → +86_400 s   (24h, exact in UTC because the bucket
-///                            floor is UTC midnight; DST is a local-
-///                            time concern that doesn't touch UTC
-///                            arithmetic).
-///   - `Week`  → +7 × 86_400 (7 UTC days, exact).
-///   - `Month` → calendar-aware via chrono. We compute the start of
-///               the NEXT month (year/month + 1, with December
-///               rolling into January of year+1) and subtract one
-///               second — so February drills as 28 / 29 days,
-///               November as 30, January as 31. The `with_year` /
-///               `with_month` plumbing handles year overflow.
+/// - `Day`   → +86_400 s   (24h, exact in UTC because the bucket
+///   floor is UTC midnight; DST is a local-time concern that doesn't
+///   touch UTC arithmetic).
+/// - `Week`  → +7 × 86_400 (7 UTC days, exact).
+/// - `Month` → calendar-aware via chrono. We compute the start of
+///   the NEXT month (year/month + 1, with December rolling into
+///   January of year+1) and subtract one second — so February drills
+///   as 28 / 29 days, November as 30, January as 31. The `with_year` /
+///   `with_month` plumbing handles year overflow.
 ///
 /// Falls back to the input `bucket_start` for both bounds when the
 /// timestamp can't be represented as a UTC datetime — same defensive

@@ -19,6 +19,9 @@ import {
   TIME_BUCKET_GRANULARITIES,
   type ActivityBucket,
   type TimeBucketGranularity,
+  // Slice 112 — bucket drilldown TS surface
+  suggestBucketDrilldownExportFilename,
+  type BucketDrilldownExportFilter,
 } from "./marketplace";
 
 function expect(cond: boolean, label: string): void {
@@ -702,4 +705,157 @@ function actBucket(
   // across a midnight UTC boundary.
   const name = suggestActivityTimelineExportFilename({}, "csv", NOW);
   expect(name.includes("_20240309."), `today slug uses UTC date (${name})`);
+}
+
+// ─── Slice 112 — bucket drilldown export filename helper ─────────────
+
+{
+  // Default shape: produces the standard 4-segment filename with
+  // marketplace-bucket-drilldown- prefix + granularity, bucket ISO,
+  // today ISO, extension.
+  const filter: BucketDrilldownExportFilter = {
+    bucket_start_unix: 1_699_920_000, // 2023-11-14T00:00:00Z
+    granularity: "day",
+  };
+  const name = suggestBucketDrilldownExportFilename(filter, "csv", NOW);
+  expect(
+    name === "marketplace-bucket-drilldown-day_20231114_20240309.csv",
+    `default csv form (${name})`,
+  );
+  const json = suggestBucketDrilldownExportFilename(filter, "json", NOW);
+  expect(
+    json === "marketplace-bucket-drilldown-day_20231114_20240309.json",
+    `default json form (${json})`,
+  );
+}
+
+{
+  // Granularity in the prefix for all three values — the bucket slot
+  // is the bucket's date so day/week/month don't change the bucket
+  // slot, they change the prefix.
+  for (const g of ["day", "week", "month"] as const) {
+    const name = suggestBucketDrilldownExportFilename(
+      { bucket_start_unix: 1_699_920_000, granularity: g },
+      "csv",
+      NOW,
+    );
+    expect(
+      name.startsWith(`marketplace-bucket-drilldown-${g}_`),
+      `${g} in prefix (${name})`,
+    );
+  }
+}
+
+{
+  // csv vs json differ ONLY in the suffix — prefix + slugs match
+  // byte-for-byte. Pins the same invariant the histogram +
+  // activity-timeline helpers hold.
+  const filter: BucketDrilldownExportFilter = {
+    bucket_start_unix: 1_699_920_000,
+    granularity: "week",
+  };
+  const csv = suggestBucketDrilldownExportFilename(filter, "csv", NOW);
+  const json = suggestBucketDrilldownExportFilename(filter, "json", NOW);
+  const csvBare = csv.slice(0, -4);
+  const jsonBare = json.slice(0, -5);
+  expect(
+    csvBare === jsonBare,
+    `csv/json differ only in suffix (csv=${csv} json=${json})`,
+  );
+  expect(csv.endsWith(".csv"), `csv ends .csv (${csv})`);
+  expect(json.endsWith(".json"), `json ends .json (${json})`);
+}
+
+{
+  // Bucket slot is the bucket's UTC date — pin the round-trip for
+  // a known timestamp (1_699_920_000 -> 2023-11-14T00:00:00Z ->
+  // 20231114).
+  const filter: BucketDrilldownExportFilter = {
+    bucket_start_unix: 1_699_920_000,
+    granularity: "day",
+  };
+  const name = suggestBucketDrilldownExportFilename(filter, "csv", NOW);
+  expect(
+    name.includes("_20231114_"),
+    `bucket slug == bucket UTC date (${name})`,
+  );
+}
+
+{
+  // Today slug uses UTC date math — pinning NOW gives a
+  // deterministic trailing date so the filename doesn't drift
+  // across a midnight UTC boundary.
+  const name = suggestBucketDrilldownExportFilename(
+    { bucket_start_unix: 1_699_920_000, granularity: "day" },
+    "csv",
+    NOW,
+  );
+  expect(
+    name.endsWith("_20240309.csv"),
+    `today slug uses UTC date (${name})`,
+  );
+}
+
+{
+  // Bucket slot is independent of granularity for the same
+  // bucket_start. Two filenames at the same bucket but different
+  // granularities differ ONLY in the prefix's granularity tag.
+  const day = suggestBucketDrilldownExportFilename(
+    { bucket_start_unix: 1_699_920_000, granularity: "day" },
+    "csv",
+    NOW,
+  );
+  const week = suggestBucketDrilldownExportFilename(
+    { bucket_start_unix: 1_699_920_000, granularity: "week" },
+    "csv",
+    NOW,
+  );
+  // Strip the granularity tag — the rest must match exactly.
+  const dayAfter = day.replace(
+    "marketplace-bucket-drilldown-day_",
+    "",
+  );
+  const weekAfter = week.replace(
+    "marketplace-bucket-drilldown-week_",
+    "",
+  );
+  expect(
+    dayAfter === weekAfter,
+    `bucket slot identical for same bucket_start across granularities (day=${day} week=${week})`,
+  );
+}
+
+{
+  // Epoch timestamp edge case: bucket_start = 0 -> 1970-01-01
+  // -> 19700101 slug. Pins the iso() helper's behaviour at the
+  // lower bound so a corrupted-state caller stays predictable.
+  const name = suggestBucketDrilldownExportFilename(
+    { bucket_start_unix: 0, granularity: "day" },
+    "csv",
+    NOW,
+  );
+  expect(
+    name === "marketplace-bucket-drilldown-day_19700101_20240309.csv",
+    `epoch bucket slug (${name})`,
+  );
+}
+
+{
+  // limit field is irrelevant to the filename — the bucket coords +
+  // granularity + ext determine the name. Pin this so a future
+  // change that accidentally pulls limit into the filename surfaces.
+  const noLimit = suggestBucketDrilldownExportFilename(
+    { bucket_start_unix: 1_699_920_000, granularity: "day" },
+    "csv",
+    NOW,
+  );
+  const withLimit = suggestBucketDrilldownExportFilename(
+    { bucket_start_unix: 1_699_920_000, granularity: "day", limit: 100 },
+    "csv",
+    NOW,
+  );
+  expect(
+    noLimit === withLimit,
+    `limit irrelevant to filename (no=${noLimit} with=${withLimit})`,
+  );
 }

@@ -1110,6 +1110,158 @@ export function suggestActivityTimelineExportFilename(
   return `marketplace-activity-${granularity}_${window}_${today}.${ext}`;
 }
 
+// ─── Bucket drilldown surface (v3.40 Slice 112) ─────────────────────
+
+/**
+ * Wire payload returned by [`getBucketDrilldown`]. Mirrors the
+ * Rust-side `BucketDrilldownResult`. Carries the per-plugin rows
+ * plus the bucket coordinates + `grand_total` so the UI can render
+ * "12 plugins, 87 events total in this day" without re-summing.
+ */
+export interface BucketDrilldownResult {
+  rows: PluginHistogramRow[];
+  bucket_start_unix: number;
+  granularity: TimeBucketGranularity;
+  grand_total: number;
+}
+
+const EMPTY_BUCKET_DRILLDOWN_RESULT: BucketDrilldownResult = {
+  rows: [],
+  bucket_start_unix: 0,
+  granularity: "day",
+  grand_total: 0,
+};
+
+/**
+ * Per-plugin breakdown of activity inside a single activity-timeline
+ * bucket. Powers the "WHICH plugins drove THIS bucket?" follow-up to
+ * the Activity-over-time chart — the natural drilldown from a user
+ * clicking a bar.
+ *
+ * `bucketStartUnix` must come from an activity_timeline bucket (i.e.
+ * already calendar-floored to the granularity's boundary). The
+ * underlying Tauri command composes `bucket_window_unix` with
+ * `plugin_histogram` so the rows are scoped to exactly the same
+ * window the timeline bucket represents — no double-counting at
+ * boundaries.
+ *
+ * Returns an empty result in browser mode (no Tauri context).
+ */
+export async function getBucketDrilldown(opts: {
+  bucketStartUnix: number;
+  granularity?: TimeBucketGranularity | null;
+  limit?: number | null;
+}): Promise<BucketDrilldownResult> {
+  if (!isInTauri()) return { ...EMPTY_BUCKET_DRILLDOWN_RESULT };
+  return invoke<BucketDrilldownResult>(
+    "slab_marketplace_install_log_bucket_drilldown",
+    {
+      bucketStartUnix: opts.bucketStartUnix,
+      granularity: opts.granularity ?? null,
+      limit: opts.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Optional bucket-coords filter for a drilldown export. The
+ * `bucket_start_unix` + `granularity` together identify the bucket
+ * the export is scoped to — they're REQUIRED on the wire (not
+ * optional like the timeline window) because the drilldown is
+ * inherently per-bucket.
+ *
+ * `limit` is optional and defaults to 25 server-side.
+ */
+export interface BucketDrilldownExportFilter {
+  bucket_start_unix: number;
+  granularity: TimeBucketGranularity;
+  limit?: number | null;
+}
+
+/**
+ * Write the bucket drilldown to `path` as RFC-4180 CSV. `path` is an
+ * absolute filesystem path the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()`.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported 12 plugins (1.8 KB)" without re-reading the file. 0 in
+ * browser mode (no-op).
+ */
+export async function exportInstallLogBucketDrilldownCsv(
+  path: string,
+  filter: BucketDrilldownExportFilter,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_bucket_drilldown_csv",
+    {
+      path,
+      bucketStartUnix: filter.bucket_start_unix,
+      granularity: filter.granularity,
+      limit: filter.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Write the bucket drilldown to `path` as a pretty-printed JSON
+ * envelope (`BucketDrilldownExportEnvelope` shape: schema_version +
+ * generated_at_iso + granularity + bucket_start_unix +
+ * bucket_start_iso + row_count + grand_total + rows). Mirrors
+ * `exportInstallLogBucketDrilldownCsv` — same filter, same return.
+ */
+export async function exportInstallLogBucketDrilldownJson(
+  path: string,
+  filter: BucketDrilldownExportFilter,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_bucket_drilldown_json",
+    {
+      path,
+      bucketStartUnix: filter.bucket_start_unix,
+      granularity: filter.granularity,
+      limit: filter.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Suggest a default filename for a bucket-drilldown export. Mirrors
+ * the install-log + histogram + activity-timeline export filename
+ * conventions (slices 61 + 101 + 106) so a paralegal sees ONE
+ * consistent naming pattern across every audit-export surface.
+ *
+ * Format:
+ *   `marketplace-bucket-drilldown-{day|week|month}_<bucketISO>_<YYYY-MM-DD>.<ext>`
+ *
+ * The bucket slot is the bucket_start's ISO date (`YYYYMMDD`) — a
+ * paralegal collecting drilldown exports for the same bucket across
+ * different days will see them sort by bucket date first, then by
+ * export date, which is the natural reading order.
+ *
+ * Pure helper — no I/O, no Tauri context required. `now` is
+ * injectable for deterministic tests; production callers leave it
+ * unset and it reads `Date.now()`.
+ */
+export function suggestBucketDrilldownExportFilename(
+  filter: BucketDrilldownExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const bucketSlug = iso(filter.bucket_start_unix);
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-bucket-drilldown-${filter.granularity}_${bucketSlug}_${today}.${ext}`;
+}
+
 /**
  * Human-friendly label for a set of action filters. Used in the
  * "Showing X of Y events" subtitle and the filter-bar empty-state.
