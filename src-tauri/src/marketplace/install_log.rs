@@ -2334,6 +2334,104 @@ pub fn bucket_drilldown_to_json_with_now(
     }
 }
 
+// ─── Plugin retention overrides JSON envelope (Slice 116) ────────────
+
+/// JSON envelope for the per-plugin retention overrides export.
+/// Sibling to [`PluginHistogramExportEnvelope`] /
+/// [`ActivityTimelineExportEnvelope`] /
+/// [`BucketDrilldownExportEnvelope`] — same schema_version +
+/// generated_at_iso header convention so a downstream pipeline can
+/// dispatch on `schema_version` without learning a fifth envelope
+/// shape.
+///
+/// Body shape:
+///
+///   `schema_version` + `generated_at_iso` + `default_retain_days`
+///   + `min_retain_days` + `row_count` + `rows`
+///   (Vec<PluginRetentionOverride>)
+///
+/// `default_retain_days` is the global retention window in force at
+/// export time — same value the CSV exporter denormalises onto every
+/// row. `min_retain_days` is the floor constant included so a
+/// consumer auditing the file can verify the per-row retain_days
+/// all sit above the floor without hard-coding it. Both values
+/// belong at the envelope level (one per export) rather than per-
+/// row because they're export-scoped invariants, not per-override
+/// properties.
+///
+/// `row_count` mirrors `rows.len()` (redundant but cheap; saves a
+/// parse step). No window-bounds fields — the overrides export is
+/// inherently corpus-wide, not window-scoped.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginRetentionExportEnvelope {
+    /// Schema version of the envelope (NOT of the
+    /// [`PluginRetentionOverride`] body itself). Bumped on a
+    /// non-additive shape change.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced.
+    pub generated_at_iso: String,
+    /// Global retention window in force at export time — same value
+    /// the CSV exporter denormalises onto every row.
+    pub default_retain_days: i64,
+    /// Floor constant. Each `rows[i].retain_days` is guaranteed
+    /// `>= min_retain_days` because the storage layer clamps writes
+    /// + the readers re-clamp on read. Included on the envelope so
+    /// a consumer can pin the invariant without hard-coding the
+    /// floor.
+    pub min_retain_days: i64,
+    /// Number of rows in `rows`. Redundant with `rows.len()` but
+    /// cheap and saves consumers a parse step.
+    pub row_count: usize,
+    /// The per-plugin overrides. Order is the caller's order
+    /// verbatim — `plugin_retention_overrides()` emits DESC by
+    /// retain_days with plugin_id ASC tie-break; the envelope ships
+    /// whatever it gets.
+    pub rows: Vec<PluginRetentionOverride>,
+}
+
+/// Schema version of the JSON per-plugin retention overrides export
+/// envelope. Starts at v1; bumped independently of the four sibling
+/// envelope constants because their bodies are unrelated. Same
+/// parallel-versioning reasoning as the histogram + activity-
+/// timeline + bucket-drilldown envelopes (slices 99 + 105 + 111).
+pub const PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Build the envelope from a slice of overrides + the global default
+/// + the floor constant. The envelope's `generated_at_iso` stamp
+/// uses the wall clock at call time; tests pass a fixed timestamp
+/// via [`plugin_retention_overrides_to_json_with_now`].
+pub fn plugin_retention_overrides_to_json(
+    rows: &[PluginRetentionOverride],
+    default_retain_days: i64,
+    min_retain_days: i64,
+) -> PluginRetentionExportEnvelope {
+    plugin_retention_overrides_to_json_with_now(
+        rows,
+        default_retain_days,
+        min_retain_days,
+        unix_now(),
+    )
+}
+
+/// Same as [`plugin_retention_overrides_to_json`] but takes an
+/// explicit unix-seconds "now" so unit tests don't race the wall
+/// clock.
+pub fn plugin_retention_overrides_to_json_with_now(
+    rows: &[PluginRetentionOverride],
+    default_retain_days: i64,
+    min_retain_days: i64,
+    now_unix: i64,
+) -> PluginRetentionExportEnvelope {
+    PluginRetentionExportEnvelope {
+        schema_version: PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: iso8601_utc(now_unix),
+        default_retain_days,
+        min_retain_days,
+        row_count: rows.len(),
+        rows: rows.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6313,5 +6411,180 @@ mod tests {
         let csv = bucket_drilldown_to_csv(&[row], ts, TimeBucketGranularity::Day, false);
         let csv_iso = csv.lines().next().unwrap().split(',').nth(2).unwrap();
         assert_eq!(env.bucket_start_iso, csv_iso);
+    }
+
+    // ─── Slice 116: plugin retention overrides JSON envelope ─────────
+
+    #[test]
+    fn plugin_retention_json_envelope_carries_schema_v1() {
+        let rows = vec![ov("com.x", 30)];
+        let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+        assert_eq!(env.schema_version, PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.schema_version, 1);
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_default_and_min_verbatim_from_caller() {
+        // Both envelope-level numeric fields ship verbatim from the
+        // caller. Pin so a future change can't silently substitute
+        // "actual values from the log" for "what the caller passed".
+        let env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, 1_710_000_000);
+        assert_eq!(env.default_retain_days, 365);
+        assert_eq!(env.min_retain_days, 1);
+        // Distinct values to catch a swapped-fields regression.
+        let env2 = plugin_retention_overrides_to_json_with_now(&[], 42, 7, 1_710_000_000);
+        assert_eq!(env2.default_retain_days, 42);
+        assert_eq!(env2.min_retain_days, 7);
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_row_count_mirrors_rows_len() {
+        for n in [0usize, 1, 5, 30] {
+            let rows: Vec<PluginRetentionOverride> =
+                (0..n).map(|i| ov(&format!("com.p{i}"), 30)).collect();
+            let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+            assert_eq!(env.row_count, n);
+            assert_eq!(env.rows.len(), n);
+        }
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_generated_at_iso_matches_install_log() {
+        // The generated_at_iso stamp must share the exact format the
+        // install-log + histogram + activity-timeline + bucket-
+        // drilldown envelopes produce — a downstream consumer joining
+        // exports on the timestamp finds identical strings.
+        let env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, 1_700_086_400);
+        // Same format as the install-log envelope: YYYY-MM-DDTHH:MM:SSZ.
+        assert_eq!(env.generated_at_iso, "2023-11-15T22:13:20Z");
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_preserves_input_row_order() {
+        // Rows ship verbatim — plugin_retention_overrides() emits
+        // DESC-by-retain_days; the envelope mustn't re-sort. Hand it
+        // intentionally out-of-DESC input and confirm it lands
+        // unchanged.
+        let rows = vec![
+            ov("com.short", 7),
+            ov("com.long", 1825),
+            ov("com.medium", 30),
+        ];
+        let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+        let ids: Vec<&str> = env.rows.iter().map(|r| r.plugin_id.as_str()).collect();
+        assert_eq!(ids, vec!["com.short", "com.long", "com.medium"]);
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_rows_are_owned_clones() {
+        // The envelope owns its rows — a caller mutating the source
+        // slice after envelope construction mustn't change the
+        // envelope's contents.
+        let mut rows = vec![ov("com.x", 30)];
+        let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+        rows[0].retain_days = 9999;
+        assert_eq!(env.rows[0].retain_days, 30);
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_serde_round_trip() {
+        // Full envelope serde round-trip — every field survives
+        // serialisation and deserialisation byte-for-byte.
+        let rows = vec![ov("com.x", 30), ov("com.y", 7)];
+        let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+        let s = serde_json::to_string(&env).unwrap();
+        let back: PluginRetentionExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_pretty_print_is_valid_json() {
+        // Tauri layer uses to_string_pretty — confirm the pretty form
+        // is still valid JSON that round-trips back to the same
+        // envelope.
+        let rows = vec![ov("com.x", 30)];
+        let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        let back: PluginRetentionExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+        // And the pretty form actually has multiple lines (sanity
+        // check that to_string_pretty did its job).
+        assert!(pretty.lines().count() > 5);
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_empty_input_renders_cleanly() {
+        let env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, 1_710_000_000);
+        assert_eq!(env.row_count, 0);
+        assert!(env.rows.is_empty());
+        // Serialised form has rows:[] not rows:null.
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(s.contains("\"rows\":[]"));
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_parallel_versioned_with_other_envelopes() {
+        // The five envelope constants are PARALLEL-versioned — each
+        // bumps independently. They happen to all be 1 today; the
+        // four-way equality pins that careless joint bumps surface
+        // here. (When a future shape change lands on one envelope,
+        // it bumps that constant alone + this assertion drops the
+        // bumped axis from the equality chain.)
+        assert_eq!(
+            PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION,
+            INSTALL_LOG_EXPORT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION,
+            PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION,
+            ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION,
+            BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_no_window_bounds_fields() {
+        // The overrides export is corpus-wide, not window-scoped —
+        // pin by serialising and confirming no since_unix /
+        // until_unix slot exists. Catches a future copy-paste from
+        // the install-log envelope that would add unused window
+        // fields.
+        let env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, 1_710_000_000);
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(!s.contains("since_unix"));
+        assert!(!s.contains("until_unix"));
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_rows_field_carries_overrides_shape() {
+        // Pin field names of the embedded PluginRetentionOverride
+        // shape inside the envelope so the JS bridge can't break
+        // silently if someone renames PluginRetentionOverride
+        // fields. Defence-in-depth on top of the Slice 113 standalone
+        // serde test.
+        let rows = vec![ov("com.audit", 1825)];
+        let env = plugin_retention_overrides_to_json_with_now(&rows, 365, 1, 1_710_000_000);
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(s.contains("\"plugin_id\":\"com.audit\""));
+        assert!(s.contains("\"retain_days\":1825"));
+    }
+
+    #[test]
+    fn plugin_retention_json_envelope_iso_matches_install_log_byte_for_byte() {
+        // The generated_at_iso must produce the SAME string as the
+        // install-log envelope helper for the same now_unix — a
+        // downstream pipeline joining exports on the timestamp finds
+        // identical strings. Same defence-in-depth as the bucket-
+        // drilldown envelope test.
+        let now = 1_700_086_400;
+        let ret_env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, now);
+        let inst_env = install_log_to_json_with_now(&[], None, None, now);
+        assert_eq!(ret_env.generated_at_iso, inst_env.generated_at_iso);
     }
 }
