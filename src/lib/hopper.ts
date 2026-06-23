@@ -557,6 +557,92 @@ function slugifyForFilename(raw: string): string {
   return dashed.replace(/^-+|-+$/g, "");
 }
 
+// ─── v3.40 Slice 125 — rule coverage CSV+JSON export TS wrappers ─────
+//
+// Mirrors the drilldown export wrappers (slices 90 + 95) and the
+// install-log Export… popover shape: an absolute path the caller
+// usually obtains from `@tauri-apps/plugin-dialog` `save()`, the
+// in-flight RuleCoverageReport already loaded in panel state, and
+// the Tauri command picks the serialiser. Returns the byte count
+// written so the toast can read "Exported 8 rules as CSV (1.2 KB)"
+// without re-reading the file.
+//
+// The caller passes the report DIRECTLY (no re-fetch) — exporting
+// what the user is looking at matches their mental model and avoids
+// a brief race window where the in-flight rule edit + 600ms
+// debounce would let a re-run return a slightly different report.
+
+/** Write a [`RuleCoverageReport`] to `path` as RFC-4180 CSV (slice 123
+ *  shape, header included). Same lazy-import + browser no-op posture
+ *  as `slabHopperExportDrilldownCsv`.
+ *
+ *  Returns the byte count actually written. Returns 0 in browser
+ *  mode (no-op). */
+export async function slabHopperExportCoverageCsv(
+  report: RuleCoverageReport,
+  path: string,
+): Promise<number> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_hopper_export_coverage_csv", { report, path });
+}
+
+/** Write a [`RuleCoverageReport`] to `path` as a pretty-printed JSON
+ *  envelope (slice 124 `RuleCoverageExportEnvelope` shape on the Rust
+ *  side: schema_version + generated_at_iso + envelope-level
+ *  chain-health totals + rules). Same call shape as
+ *  `slabHopperExportCoverageCsv`; the Tauri command picks the
+ *  serialiser.
+ *
+ *  Returns the byte count actually written. Returns 0 in browser
+ *  mode (no-op). */
+export async function slabHopperExportCoverageJson(
+  report: RuleCoverageReport,
+  path: string,
+): Promise<number> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_hopper_export_coverage_json", { report, path });
+}
+
+/** Suggest a default filename for a coverage CSV/JSON export.
+ *  Mirrors the drilldown filename helper conventions so paralegals
+ *  see one consistent naming pattern across the audit-export
+ *  surfaces.
+ *
+ *  Format: `hopper-coverage_<watch>_<YYYY-MM-DD>.<ext>`.
+ *
+ *  - `<watch>` slot is the watch id (`watch-7`) when supplied or
+ *    `watch` when the caller doesn't have one handy. The coverage
+ *    panel always has one; the optional slot mirrors
+ *    `suggestDrilldownExportFilename` for symmetry.
+ *  - `<ext>` defaults to `"csv"`; pass `"json"` for the envelope
+ *    export.
+ *  - The trailing date uses the caller's local time (same as the
+ *    drilldown filename helper — a save dialog the user is about
+ *    to confirm).
+ *
+ *  Note the coverage export has NO per-bucket slot (unlike the
+ *  drilldown filename which carries `fallthrough` or `rule-N`) —
+ *  a coverage export covers the WHOLE chain, not a single bucket.
+ *
+ *  Pure helper — no I/O, no Tauri. */
+export function suggestCoverageExportFilename(
+  opts: { watchId?: number | null; now?: number; ext?: "csv" | "json" } = {},
+): string {
+  const watchSlot =
+    opts.watchId != null && Number.isFinite(opts.watchId) && opts.watchId >= 0
+      ? `watch-${Math.trunc(opts.watchId)}`
+      : "watch";
+
+  const d = new Date(opts.now ?? Date.now());
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const ext = opts.ext ?? "csv";
+  return `hopper-coverage_${watchSlot}_${y}-${m}-${day}.${ext}`;
+}
+
 // ---------------------------------------------------------------------
 // Predicate helpers — small but worth their weight in keystroke-saving
 // when the editor wires up 6 different predicate kinds.

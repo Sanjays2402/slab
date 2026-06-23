@@ -786,6 +786,70 @@ pub fn slab_hopper_export_drilldown_json(
     Ok(bytes.len() as u64)
 }
 
+// ─── Slice 125 — rule coverage CSV+JSON export command surface ──────
+//
+// Two commands wrapping slice 123's CSV serialiser and slice 124's
+// JSON envelope. Same call shape as the drilldown export commands
+// (slices 89 + 94): the frontend gathers the absolute destination
+// from a native save-as dialog and ships the path here so the Tauri
+// layer owns disk I/O (the @tauri-apps/plugin-fs scope doesn't
+// cover arbitrary user-chosen paths). Idempotent — overwrites if
+// the target exists; the save dialog handles overwrite confirmation
+// so we don't double-confirm.
+//
+// The two commands accept a RuleCoverageReport DIRECTLY rather than
+// re-running `slab_hopper_rule_coverage` server-side. The coverage
+// panel already has the report loaded in state at click time;
+// re-running risks shipping a slightly different report than what
+// the user sees (the in-flight rule-edit + 600ms-debounced coverage
+// recompute creates a brief window where the panel and the server's
+// re-derivation can diverge). Trusting the client-supplied report
+// means "export what's visible" matches the user's mental model.
+
+/// `slab_hopper_export_coverage_csv` — write a
+/// [`super::coverage::RuleCoverageReport`] to disk as RFC-4180 CSV
+/// (slice 123 [`super::coverage::rule_coverage_to_csv`] shape, with
+/// header included). Returns the byte count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_coverage_csv(
+    report: super::coverage::RuleCoverageReport,
+    path: String,
+) -> CmdResult<u64> {
+    let csv = super::coverage::rule_coverage_to_csv(&report, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// `slab_hopper_export_coverage_json` — write a
+/// [`super::coverage::RuleCoverageReport`] to disk as a pretty-
+/// printed JSON envelope (slice 124
+/// [`super::coverage::RuleCoverageExportEnvelope`] shape with the
+/// envelope-level diagnostic counts pre-computed). Returns the byte
+/// count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_coverage_json(
+    report: super::coverage::RuleCoverageReport,
+    path: String,
+) -> CmdResult<u64> {
+    let envelope = super::coverage::rule_coverage_to_json(&report);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 // ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------

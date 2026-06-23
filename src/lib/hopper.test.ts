@@ -20,6 +20,7 @@ import {
   describeDrilldown,
   describeBucket,
   suggestDrilldownExportFilename,
+  suggestCoverageExportFilename,
   type RuleCoverageReport,
   type RuleCoverage,
   type RuleSample,
@@ -582,5 +583,119 @@ const FIXED_NOW = new Date("2026-06-21T19:00:00Z").getTime();
   expect(
     /^hopper-drilldown_watch-1_rule-1_tax-forms-2026_\d{4}-\d{2}-\d{2}\.json$/.test(name),
     `suggestDrilldownExportFilename: rule slug + ext json (${name})`,
+  );
+}
+
+// ── suggestCoverageExportFilename (Slice 125) ────────────────────────
+// Same shape conventions as suggestDrilldownExportFilename but for a
+// chain-wide coverage export — no per-bucket slot. Pin the format
+// and the ext/watch slot behaviour.
+
+const FIXED_COVERAGE_NOW = new Date("2026-06-22T10:30:00").getTime();
+
+{
+  const name = suggestCoverageExportFilename({ now: FIXED_COVERAGE_NOW });
+  expect(
+    /^hopper-coverage_watch_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestCoverageExportFilename: no-watch shape (${name})`,
+  );
+}
+
+{
+  const name = suggestCoverageExportFilename({
+    watchId: 7,
+    now: FIXED_COVERAGE_NOW,
+  });
+  expect(
+    /^hopper-coverage_watch-7_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `suggestCoverageExportFilename: watch-7 shape (${name})`,
+  );
+}
+
+{
+  const name = suggestCoverageExportFilename({
+    watchId: 3,
+    now: FIXED_COVERAGE_NOW,
+    ext: "json",
+  });
+  expect(
+    /^hopper-coverage_watch-3_\d{4}-\d{2}-\d{2}\.json$/.test(name),
+    `suggestCoverageExportFilename: json ext shape (${name})`,
+  );
+}
+
+{
+  // Same-epoch reproducibility: identical inputs produce identical
+  // output strings (no internal date randomisation).
+  const a = suggestCoverageExportFilename({
+    watchId: 7,
+    now: FIXED_COVERAGE_NOW,
+  });
+  const b = suggestCoverageExportFilename({
+    watchId: 7,
+    now: FIXED_COVERAGE_NOW,
+  });
+  expect(a === b, `suggestCoverageExportFilename: same-epoch reproducibility (${a})`);
+}
+
+{
+  // ext switch ONLY affects the suffix — watch slot + date stay
+  // identical between the two ext forms. Mirrors the parallel
+  // contract on the drilldown filename helper.
+  const csv = suggestCoverageExportFilename({
+    watchId: 5,
+    now: FIXED_COVERAGE_NOW,
+    ext: "csv",
+  });
+  const json = suggestCoverageExportFilename({
+    watchId: 5,
+    now: FIXED_COVERAGE_NOW,
+    ext: "json",
+  });
+  expect(
+    csv.endsWith(".csv") && json.endsWith(".json"),
+    `suggestCoverageExportFilename: paired ext suffixes (${csv}, ${json})`,
+  );
+  expect(
+    csv.slice(0, -4) === json.slice(0, -5),
+    `suggestCoverageExportFilename: only suffix differs between ext forms (${csv}, ${json})`,
+  );
+}
+
+{
+  // Invalid watch id slots fall back to the bare `watch` slot
+  // matching the drilldown helper's defensive posture (negative or
+  // NaN watch ids would otherwise produce ugly `watch--1` slots).
+  const negative = suggestCoverageExportFilename({
+    watchId: -1,
+    now: FIXED_COVERAGE_NOW,
+  });
+  expect(
+    /^hopper-coverage_watch_\d{4}-\d{2}-\d{2}\.csv$/.test(negative),
+    `suggestCoverageExportFilename: negative watch id falls back (${negative})`,
+  );
+
+  const nullWatch = suggestCoverageExportFilename({
+    watchId: null,
+    now: FIXED_COVERAGE_NOW,
+  });
+  expect(
+    /^hopper-coverage_watch_\d{4}-\d{2}-\d{2}\.csv$/.test(nullWatch),
+    `suggestCoverageExportFilename: null watch id falls back (${nullWatch})`,
+  );
+}
+
+{
+  // Coverage filename has NO per-bucket slot (unlike the drilldown
+  // filename helper). Pin that the chain-wide export name doesn't
+  // accidentally pick up a fallthrough/rule slot from a future copy-
+  // paste regression.
+  const name = suggestCoverageExportFilename({
+    watchId: 1,
+    now: FIXED_COVERAGE_NOW,
+  });
+  expect(
+    !name.includes("fallthrough") && !name.includes("rule-"),
+    `suggestCoverageExportFilename: no bucket slot in chain-wide export (${name})`,
   );
 }
