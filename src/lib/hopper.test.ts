@@ -22,6 +22,11 @@ import {
   describeBucket,
   suggestDrilldownExportFilename,
   suggestCoverageExportFilename,
+  filterCoverageByDiagnostic,
+  ruleMatchesCoverageFilter,
+  formatCoverageFilterSummary,
+  COVERAGE_FILTER_KINDS,
+  type CoverageDiagnosticFilter,
   type CoverageHealth,
   type RuleCoverageReport,
   type RuleCoverage,
@@ -935,4 +940,315 @@ function healthReport(
   );
   expect(h.fallthrough === 3, `health: fallthrough verbatim (${h.fallthrough})`);
   expect(h.fallthroughPct === 30, `health: fallthroughPct (${h.fallthroughPct})`);
+}
+
+// ── Slice 129 — filterCoverageByDiagnostic + helpers ────────────────────
+//
+// Mirror the Rust filter primitive's test coverage: priority chain,
+// totals preservation, input-order preservation, identity transform,
+// and the formatCoverageFilterSummary copy contract. Uses the same
+// mixed-diagnostic 5-rule fixture for parity with the Rust side so a
+// regression in either layer surfaces against the same data.
+
+function mixedDiagnosticReport(): RuleCoverageReport {
+  return healthReport(
+    [
+      // Healthy: predicate matches some samples + no shadow.
+      cov(0, "Healthy A", 4, 4, false),
+      // Dead at position: never wins here but would win earlier.
+      // Priority dead > shadowed > zero applies.
+      cov(1, "Dead B", 0, 3, true),
+      // Partially shadowed: would_match > first_match, first_match > 0.
+      cov(2, "Shadowed C", 1, 5, false),
+      // Zero coverage: predicate matches nothing at all.
+      cov(3, "Zero D", 0, 0, false),
+      // Another healthy row so the All / Healthy filter counts are
+      // non-trivial.
+      cov(4, "Healthy E", 2, 2, false),
+    ],
+    7,
+    17,
+  );
+}
+
+// ── COVERAGE_FILTER_KINDS array shape ───────────────────────────────────
+
+{
+  // Every variant present + display order is "all > dead > shadowed
+  // > zero > healthy" — pinned so the filter-chip row's button
+  // ordering can't drift silently.
+  expect(
+    COVERAGE_FILTER_KINDS.length === 5,
+    `COVERAGE_FILTER_KINDS: 5 variants (got ${COVERAGE_FILTER_KINDS.length})`,
+  );
+  expect(
+    COVERAGE_FILTER_KINDS[0] === "all",
+    `COVERAGE_FILTER_KINDS: 'all' first (got ${COVERAGE_FILTER_KINDS[0]})`,
+  );
+  expect(
+    COVERAGE_FILTER_KINDS[1] === "dead",
+    `COVERAGE_FILTER_KINDS: 'dead' second (got ${COVERAGE_FILTER_KINDS[1]})`,
+  );
+  expect(
+    COVERAGE_FILTER_KINDS[2] === "shadowed",
+    `COVERAGE_FILTER_KINDS: 'shadowed' third (got ${COVERAGE_FILTER_KINDS[2]})`,
+  );
+  expect(
+    COVERAGE_FILTER_KINDS[3] === "zero",
+    `COVERAGE_FILTER_KINDS: 'zero' fourth (got ${COVERAGE_FILTER_KINDS[3]})`,
+  );
+  expect(
+    COVERAGE_FILTER_KINDS[4] === "healthy",
+    `COVERAGE_FILTER_KINDS: 'healthy' last (got ${COVERAGE_FILTER_KINDS[4]})`,
+  );
+}
+
+// ── ruleMatchesCoverageFilter ───────────────────────────────────────────
+
+{
+  // All filter matches every rule — the identity predicate.
+  const r = cov(0, "Any", 5, 5, false);
+  expect(
+    ruleMatchesCoverageFilter(r, "all"),
+    "ruleMatchesCoverageFilter: 'all' matches every rule",
+  );
+}
+{
+  const r = cov(0, "Dead", 0, 3, true);
+  expect(
+    ruleMatchesCoverageFilter(r, "dead"),
+    "ruleMatchesCoverageFilter: dead rule matches 'dead'",
+  );
+  expect(
+    !ruleMatchesCoverageFilter(r, "shadowed"),
+    "ruleMatchesCoverageFilter: dead rule does NOT match 'shadowed' (priority)",
+  );
+  expect(
+    !ruleMatchesCoverageFilter(r, "healthy"),
+    "ruleMatchesCoverageFilter: dead rule does NOT match 'healthy'",
+  );
+}
+{
+  const r = cov(0, "Shadowed", 1, 5, false);
+  expect(
+    ruleMatchesCoverageFilter(r, "shadowed"),
+    "ruleMatchesCoverageFilter: shadowed rule matches 'shadowed'",
+  );
+  expect(
+    !ruleMatchesCoverageFilter(r, "dead"),
+    "ruleMatchesCoverageFilter: shadowed-not-dead does NOT match 'dead'",
+  );
+}
+{
+  const r = cov(0, "Zero", 0, 0, false);
+  expect(
+    ruleMatchesCoverageFilter(r, "zero"),
+    "ruleMatchesCoverageFilter: zero-coverage rule matches 'zero'",
+  );
+  expect(
+    !ruleMatchesCoverageFilter(r, "shadowed"),
+    "ruleMatchesCoverageFilter: zero rule does NOT match 'shadowed'",
+  );
+}
+{
+  const r = cov(0, "Healthy", 5, 5, false);
+  expect(
+    ruleMatchesCoverageFilter(r, "healthy"),
+    "ruleMatchesCoverageFilter: healthy rule matches 'healthy'",
+  );
+  expect(
+    !ruleMatchesCoverageFilter(r, "dead"),
+    "ruleMatchesCoverageFilter: healthy rule does NOT match 'dead'",
+  );
+}
+
+// ── filterCoverageByDiagnostic ──────────────────────────────────────────
+
+{
+  // 'all' is the identity transform — same rules, same counts.
+  const src = mixedDiagnosticReport();
+  const got = filterCoverageByDiagnostic(src, "all");
+  expect(
+    got.rules.length === src.rules.length,
+    `filter 'all': preserves rule count (got ${got.rules.length})`,
+  );
+  expect(
+    got.fallthrough === src.fallthrough && got.total_samples === src.total_samples,
+    "filter 'all': preserves totals",
+  );
+}
+{
+  const src = mixedDiagnosticReport();
+  const got = filterCoverageByDiagnostic(src, "dead");
+  expect(got.rules.length === 1, `filter 'dead': 1 row (got ${got.rules.length})`);
+  expect(got.rules[0].name === "Dead B", `filter 'dead': Dead B (got ${got.rules[0].name})`);
+  // Totals preserved verbatim.
+  expect(
+    got.fallthrough === 7 && got.total_samples === 17,
+    "filter 'dead': preserves fallthrough + total_samples",
+  );
+}
+{
+  // Shadowed filter EXCLUDES dead rules even though a dead rule's
+  // would_match > first_match satisfies the shadowed predicate.
+  // Pin the priority chain end-to-end matching the Rust side.
+  const src = mixedDiagnosticReport();
+  const got = filterCoverageByDiagnostic(src, "shadowed");
+  expect(
+    got.rules.length === 1,
+    `filter 'shadowed': 1 row (got ${got.rules.length})`,
+  );
+  expect(
+    got.rules[0].name === "Shadowed C",
+    `filter 'shadowed': Shadowed C (got ${got.rules[0].name})`,
+  );
+  expect(
+    got.rules.every((r) => !r.dead_at_position),
+    "filter 'shadowed': excludes dead rules (priority)",
+  );
+}
+{
+  const src = mixedDiagnosticReport();
+  const got = filterCoverageByDiagnostic(src, "zero");
+  expect(got.rules.length === 1, `filter 'zero': 1 row (got ${got.rules.length})`);
+  expect(got.rules[0].name === "Zero D", `filter 'zero': Zero D`);
+}
+{
+  const src = mixedDiagnosticReport();
+  const got = filterCoverageByDiagnostic(src, "healthy");
+  expect(
+    got.rules.length === 2,
+    `filter 'healthy': 2 rows (got ${got.rules.length})`,
+  );
+  expect(
+    got.rules[0].name === "Healthy A" && got.rules[1].name === "Healthy E",
+    "filter 'healthy': order preserved (A then E, not resorted)",
+  );
+}
+{
+  // Conservation invariant — sum of the four bucket counts ==
+  // total rule count. Mirrors the Rust side's
+  // filter_envelope_counts_agree_with_filter_results test.
+  const src = mixedDiagnosticReport();
+  const dead = filterCoverageByDiagnostic(src, "dead").rules.length;
+  const zero = filterCoverageByDiagnostic(src, "zero").rules.length;
+  const shadowed = filterCoverageByDiagnostic(src, "shadowed").rules.length;
+  const healthy = filterCoverageByDiagnostic(src, "healthy").rules.length;
+  expect(
+    dead + zero + shadowed + healthy === src.rules.length,
+    `filter conservation: ${dead}+${zero}+${shadowed}+${healthy} == ${src.rules.length}`,
+  );
+}
+{
+  // Empty input -> empty rules, totals preserved.
+  const src = healthReport([], 5, 5);
+  for (const f of COVERAGE_FILTER_KINDS) {
+    const got = filterCoverageByDiagnostic(src, f);
+    expect(
+      got.rules.length === 0,
+      `filter '${f}' on empty rules: 0 rows (got ${got.rules.length})`,
+    );
+    expect(
+      got.fallthrough === 5 && got.total_samples === 5,
+      `filter '${f}' on empty rules: totals preserved`,
+    );
+  }
+}
+{
+  // Purity: source must not mutate after filtering. A regression
+  // in the identity-clone path would surface here.
+  const src = mixedDiagnosticReport();
+  const beforeLen = src.rules.length;
+  const beforeName = src.rules[0].name;
+  filterCoverageByDiagnostic(src, "dead");
+  filterCoverageByDiagnostic(src, "all"); // identity transform
+  expect(src.rules.length === beforeLen, "filter purity: rules.length unchanged");
+  expect(src.rules[0].name === beforeName, "filter purity: rules[0].name unchanged");
+}
+{
+  // Identity transform returns a SHALLOW CLONE, not the same array
+  // reference — pinning so a future "return report" shortcut can't
+  // leak mutations back through `.slice()`.
+  const src = mixedDiagnosticReport();
+  const got = filterCoverageByDiagnostic(src, "all");
+  expect(
+    got.rules !== src.rules,
+    "filter 'all': returns a NEW rules array (shallow clone)",
+  );
+  // But the per-rule object identity IS shared (shallow clone).
+  expect(
+    got.rules[0] === src.rules[0],
+    "filter 'all': per-rule object identity preserved (shallow)",
+  );
+}
+
+// ── formatCoverageFilterSummary ─────────────────────────────────────────
+
+{
+  // 'all' filter with multiple rules — "Showing all N rules".
+  const s: CoverageDiagnosticFilter = "all";
+  expect(
+    formatCoverageFilterSummary(s, 6, 6) === "Showing all 6 rules",
+    "filter summary 'all': 'Showing all 6 rules'",
+  );
+}
+{
+  // 'all' filter with one rule — singular noun.
+  expect(
+    formatCoverageFilterSummary("all", 1, 1) === "Showing all 1 rule",
+    "filter summary 'all' singular: 'Showing all 1 rule'",
+  );
+}
+{
+  // Non-'all' filter — "Showing X of Y rules — <kind>".
+  expect(
+    formatCoverageFilterSummary("dead", 2, 6) === "Showing 2 of 6 rules — dead",
+    "filter summary 'dead' plural",
+  );
+  expect(
+    formatCoverageFilterSummary("shadowed", 3, 7)
+      === "Showing 3 of 7 rules — shadowed",
+    "filter summary 'shadowed' plural",
+  );
+  expect(
+    formatCoverageFilterSummary("zero", 1, 5) === "Showing 1 of 5 rules — zero",
+    "filter summary 'zero' plural still uses 'rules' noun",
+  );
+  expect(
+    formatCoverageFilterSummary("healthy", 4, 4)
+      === "Showing 4 of 4 rules — healthy",
+    "filter summary 'healthy' all-match",
+  );
+}
+{
+  // Zero-rule chain — distinct empty-state copy that doesn't
+  // pluralise weirdly.
+  expect(
+    formatCoverageFilterSummary("all", 0, 0) === "Showing 0 rules",
+    "filter summary empty chain: 'Showing 0 rules'",
+  );
+  expect(
+    formatCoverageFilterSummary("dead", 0, 0) === "Showing 0 rules",
+    "filter summary empty chain non-'all': same empty copy",
+  );
+}
+{
+  // No rules match the filter — "Showing 0 of 6 rules — dead".
+  // Honest copy; the UI surfaces this beside the chain-health chip
+  // so a user clicking through to a kind with zero matches sees
+  // exactly why the list is empty.
+  expect(
+    formatCoverageFilterSummary("dead", 0, 6)
+      === "Showing 0 of 6 rules — dead",
+    "filter summary no matches",
+  );
+}
+{
+  // Single-rule total still uses 'rule' (singular) noun on a
+  // narrowing filter — matches the 'all' singular branch above.
+  expect(
+    formatCoverageFilterSummary("healthy", 1, 1)
+      === "Showing 1 of 1 rule — healthy",
+    "filter summary singular total",
+  );
 }

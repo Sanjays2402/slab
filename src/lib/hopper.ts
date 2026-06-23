@@ -518,6 +518,129 @@ export function summarizeCoverageHealth(
   };
 }
 
+// ─── v3.40 Slice 129 — coverage diagnostic filter (TS mirror) ────────
+//
+// Round 26's chain-health chip surfaces the chain-level story
+// ("2 dead rules — reorder or tighten the shadowing rules"); slice
+// 128 (backend) shipped a pure-data filter for narrowing the
+// coverage report to one diagnostic kind. This TS mirror lets the
+// editor compute the same narrowing CLIENT-SIDE without an extra
+// Tauri round-trip for the common "click the chip, see only the
+// dead rules" path. The wire-side Tauri command (slice 130) is for
+// the export path — the rule list rendering uses the local mirror
+// so it reacts instantly to a chip click.
+//
+// Same priority chain as `ruleCoverageDiagnostic` /
+// `coverage_diagnostic_str`: dead > zero > shadowed > healthy.
+// `All` is the identity filter so the UI can wire one helper for
+// both filtered and unfiltered code paths.
+//
+// Returns a NEW RuleCoverageReport with `fallthrough` /
+// `total_samples` preserved verbatim (matches the Rust primitive).
+// A filtered export's fall-through accounting still names the same
+// number of samples that fell through to the watch defaults.
+
+/** Discriminator for the coverage filter. Mirrors the Rust
+ *  `CoverageFilter` enum (slice 128). Mutually exclusive — exactly
+ *  one filter applies at a time. */
+export type CoverageDiagnosticFilter =
+  | "all"
+  | "dead"
+  | "zero"
+  | "shadowed"
+  | "healthy";
+
+/** All filter kinds in display order, for the UI's filter-chip row
+ *  and the "Showing X of Y" summary's discriminated copy. Kept as
+ *  `readonly` so a careless mutation can't reorder the buttons at
+ *  runtime. */
+export const COVERAGE_FILTER_KINDS: readonly CoverageDiagnosticFilter[] = [
+  "all",
+  "dead",
+  "shadowed",
+  "zero",
+  "healthy",
+] as const;
+
+/** Diagnostic-bucket classification for one rule, matching the
+ *  established priority chain. Internal helper — composed by
+ *  `filterCoverageByDiagnostic` and `formatCoverageFilterSummary`.
+ *  Returns the bucket the rule lives in (`"healthy"` is a real
+ *  bucket here, not "no diagnostic"). */
+function coverageRuleBucket(
+  rule: RuleCoverage,
+): "dead" | "zero" | "shadowed" | "healthy" {
+  if (rule.dead_at_position) return "dead";
+  if (rule.would_match === 0) return "zero";
+  if (rule.would_match > rule.first_match) return "shadowed";
+  return "healthy";
+}
+
+/** True iff `rule` matches `filter`. Composed from
+ *  `coverageRuleBucket` so the filter and `ruleCoverageDiagnostic`
+ *  share one classifier — a future change to the priority chain
+ *  propagates to both without manual mirror-work. */
+export function ruleMatchesCoverageFilter(
+  rule: RuleCoverage,
+  filter: CoverageDiagnosticFilter,
+): boolean {
+  if (filter === "all") return true;
+  return coverageRuleBucket(rule) === filter;
+}
+
+/** Apply a `CoverageDiagnosticFilter` to a report, returning a new
+ *  report with `rules` narrowed to those passing the filter and
+ *  `fallthrough` / `total_samples` preserved verbatim. Pure helper —
+ *  no I/O, no Tauri. Mirrors the Rust
+ *  `filter_coverage_by_diagnostic` (slice 128) 1:1. */
+export function filterCoverageByDiagnostic(
+  report: RuleCoverageReport,
+  filter: CoverageDiagnosticFilter,
+): RuleCoverageReport {
+  if (filter === "all") {
+    // Return a shallow clone so a downstream mutation doesn't leak
+    // into the source. Matches the Rust primitive's purity contract.
+    return {
+      rules: report.rules.slice(),
+      fallthrough: report.fallthrough,
+      total_samples: report.total_samples,
+    };
+  }
+  return {
+    rules: report.rules.filter((r) => ruleMatchesCoverageFilter(r, filter)),
+    fallthrough: report.fallthrough,
+    total_samples: report.total_samples,
+  };
+}
+
+/** One-line summary for the coverage panel's "filter active" sub-line.
+ *  Renders the discriminated copy:
+ *
+ *   - "Showing all 6 rules"                  (filter === "all")
+ *   - "Showing 1 of 6 rules — dead"          (filter !== "all", 1)
+ *   - "Showing 2 of 6 rules — shadowed"      (filter !== "all", N)
+ *   - "Showing 0 of 6 rules — dead"          (no rules match the filter)
+ *   - "Showing 0 rules"                      (rule_count === 0)
+ *
+ *  The trailing diagnostic tag matches the slug exactly so a user
+ *  scanning across the chip + the summary + the filtered export's
+ *  filename sees one consistent vocabulary.
+ *
+ *  Pure helper — no I/O. */
+export function formatCoverageFilterSummary(
+  filter: CoverageDiagnosticFilter,
+  shown: number,
+  total: number,
+): string {
+  if (total === 0) return "Showing 0 rules";
+  if (filter === "all") {
+    const noun = total === 1 ? "rule" : "rules";
+    return `Showing all ${total} ${noun}`;
+  }
+  const noun = total === 1 ? "rule" : "rules";
+  return `Showing ${shown} of ${total} ${noun} — ${filter}`;
+}
+
 // ---------------------------------------------------------------------
 // v3.40 Slice 85 — sample drilldown TS client
 // ---------------------------------------------------------------------
