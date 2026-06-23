@@ -1,13 +1,346 @@
 # Slab Cron State
 
-Last updated: 2026-06-23 04:55 PT by Cake (cron) — round-28 BATCH shipped: 5 slices closing one cohesive arc. Hopper dead-rule fix-it action (slices 133-137): pure-data plan_dead_rule_reorder(rules, report) -> Vec<ReorderProposal> with per-proposal target_index heuristic (EARLIEST Always in [0..rule_index) when one exists, fallback to target=0 + empty shadowing_rule_name otherwise) + target_index < rule_index invariant + stale-row defence + 12 tests (slice 133); TS mirror planDeadRuleReorder(rules, report) + applyReorderProposal(rules, proposal) returning NEW array with shared rule object identity + no-op guards + formatReorderProposal discriminated copy (with/without shadower, plural-aware, zero-recovered, empty-name positional fallback) + 39 inline tests (slice 134); slab_hopper_plan_dead_rule_reorder Tauri command wired into invoke handler + slabHopperPlanDeadRuleReorder async wrapper with browser-mode delegation to local TS helper + 6 wrapper-delegation tests pinning all 5 ReorderProposal fields (slice 135); reorderProposalConfidence(proposal) -> "high"|"medium"|"low" classifier composed from proposal alone (named-shadower + recovered>0 = high, named-shadower + recovered=0 = medium, no-shadower = low) with whitespace-trim contract + filterProposalsByConfidence helper with input-order preservation + describeReorderConfidence discriminated copy ("Confident fix..." / "Structurally correct..." / "Aggressive fix...") + 21 inline tests (slice 136); demo-able UI with "Fix it · +N" pill on dead-row chips (sibling of cov-row button to avoid nested HTML buttons, negative-margin overlay) + confidence-tier color treatment via three class:directives (.conf-high green / .conf-medium orange / .conf-low muted) + 280px confirm popover with formatted-proposal copy + confidence-tier subline + Apply/Cancel + optimistic apply via applyReorderProposal then persist via slabHopperSetRules (same path manual moves use) with rollback on failure + toast shares cov-export-toast surface + Escape chain extended (fix-it > Export menu > drilldown > filter clear) + ~150 lines scoped CSS (slice 137).
+Last updated: 2026-06-23 09:35 PT by Cake (cron) — round-29 BATCH shipped: 5 slices closing one cohesive arc. Hopper batch fix-all action (slices 138-142): pure-data apply_reorder_proposals_batch(rules, proposals) -> BatchReorderOutcome with by-name source resolution (index drift from prior moves means we MUST resolve by name) + by-name shadower target resolution with target=0 fallback + RuleNotFound/AlreadyEarlier skip discriminator + conservation invariant applied+skipped==input + saturating_add on u64 + 14 tests (slice 138); TS mirror applyReorderProposalsBatch 1:1 + summarizeBatchReorderOutcome discriminated copy (empty/all-applied with/without recovered/partial with/without recovered/nothing) + describeSkipReason + RULE_NOT_FOUND/ALREADY_EARLIER stable singletons + 58 inline tests (slice 139); slab_hopper_batch_reorder_dead_rules Tauri command wired into invoke handler + slabHopperBatchReorderDeadRules async wrapper with browser-mode delegation + 13 wrapper-delegation tests pinning every BatchReorderOutcome field (slice 140); worstReorderConfidence(proposals) -> "high"|"medium"|"low"|null with worst-tier-wins short-circuit + summarizeProposalTierBreakdown {high,medium,low,total} with total-invariant + describeProposalBatch discriminated copy ("3 fixes — 1 high, 2 medium" / "1 fix — high" single-tier shortcut / "No fixes" empty / order-independent enumeration) + 32 inline tests (slice 141); demo-able UI "Fix all · N" button as SIBLING of the chain-health chip + worst-tier-color treatment via three class:directives + 380px confirm popover with breakdown header + describeReorderConfidence tone subline + per-proposal preview list with tier-colored dots + scrollable max-height 180px + Cancel/Apply actions + optimistic apply via applyReorderProposalsBatch then persist via slabHopperSetRules with rollback on failure + applied=0 surfaces toast without persist + outcome toast shares cov-export-toast surface + skipped proposals log to console.info for audit + Escape chain extended (Fix-all > per-row fix-it > Export menu > drilldown > filter clear) + ~160 lines scoped CSS (slice 142). Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings PASSED in 11.52s, cargo test --lib 2581 passed / 0 failed (round-28 baseline 2567 + 14 batch primitive tests), pnpm check 0 errors / 104 warnings (round-28 baseline preserved EXACTLY), tsx hopper.test.ts 359 inline expects pass (256 + 58 + 13 + 32 = 359), tsx marketplace.test.ts 138 unchanged.
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `6383a35` — "feat(hopper): dead-rule fix-it pill with confirm popover".
+Latest commit: `dab4715` — "feat(hopper): batch fix-all button with confirm popover and preview list".
+
+### What round-29 (2026-06-23 09:35 PT) just shipped
+
+Five slices closing one cohesive arc. Round 28's per-row "Fix it"
+pill closed the diagnose -> drill -> fix loop for ONE dead rule
+at a time, but a chain with 3 dead rules still required three
+separate clicks (open pill -> Apply -> wait for refresh -> open
+next pill -> Apply -> ...). In a chain with 5 dead rules and
+mixed-tier proposals (some high-confidence, some low) that's
+five sequential operations the user has to babysit. Tonight that
+batch path closes end-to-end: a pure-data applier composing N
+proposals into one chain reorder pass (resolving by NAME because
+indices drift after each splice), TS mirror for instant client-
+side reactivity, server-side wire command for the audit/script
+path, a worst-tier-color bridge helper composing the batch's
+mixed evidence into ONE button color tone, and a demo-able UI
+surfacing "Fix all · N" next to the chain-health chip with a
+confirm popover carrying the per-proposal preview list.
+
+Round 28's closing notes listed "batch fix-it ('Fix all dead
+rules' button on the chain-health chip that walks proposals in
+input order and applies them one at a time with a debounced
+refresh between each)" as a candidate; round 29 picked it
+because it's the structurally-cleanest 5-layer arc that EXTENDS
+the same fix-it surface (the per-row pill going from one-shot
+to batch closes the "fix one / fix all" two-mode loop) without
+inventing a new gesture vocabulary. The implementation differs
+from the closing-notes' "one at a time with a debounced refresh
+between each" — instead of iterating with refreshes, we compose
+ALL proposals into one outcome via the slice-138 primitive and
+ship one set-rules round-trip. The by-name resolution makes
+this safe (index drift handled in pure-data) and atomic (one
+save = one auto-revert opportunity if the user wants to undo).
+
+- Slice 138: batch reorder applier primitive (5faa433).
+  apply_reorder_proposals_batch(rules, proposals) ->
+  BatchReorderOutcome composing N proposals into one chain
+  reorder pass. The KEY invariant: indices drift after each
+  splice, so the applier resolves the source rule by NAME at
+  each step against the running chain (not by the planner's
+  recorded rule_index). Target is resolved by shadower name
+  when present so a proposal lands "before the named shadower"
+  even if that shadower has itself moved; fallback to target=0
+  when the shadower name is empty (planner's fallback) or the
+  shadower drifted out of the chain. Conservation invariant
+  applied.length + skipped.length == input proposal count
+  pinned by test. BatchReorderSkipReason discriminated as
+  snake_case "kind" for the TS mirror (rule_not_found |
+  already_earlier). SkippedProposal carries input_index (NOT
+  chain index) + echoed proposal + reason so the UI can render
+  a skipped breakdown without round-tripping. total_recovered
+  is pre-summed via saturating_add on u64 so a planner with
+  enormous would_match counts can't wrap (pinned by u64::MAX
+  test). Source slice never mutated (pinned by snapshot test).
+  Each outcome rule is a clone of source (no reference alias —
+  pinned by identity test). Snake-case serde field names pinned
+  by round-trip test for the TS mirror to read. 14 tests.
+
+- Slice 139: TS mirror + summary helper (e1c840e).
+  applyReorderProposalsBatch 1:1 mirror with same by-name source
+  resolution, by-name shadower lookup with target=0 fallback,
+  RuleNotFound/AlreadyEarlier discriminator, conservation
+  invariant, source-not-mutated, shared per-rule object identity
+  (no deep clone — mirrors slice 134's applyReorderProposal
+  contract). RULE_NOT_FOUND and ALREADY_EARLIER exported as
+  stable singleton constructors so the UI can compare reasons
+  by identity rather than re-instantiating the literal at each
+  call site. summarizeBatchReorderOutcome(outcome) -> string
+  is a five-branch discriminated copy with plural-aware nouns
+  (rules/matches): "No dead rules to fix" / "Fixed 3 rules —
+  recovered 12 matches" / "Fixed 3 rules" (zero recovered) /
+  "Fixed 2 of 3 rules — recovered 5 matches (1 skipped)"
+  (partial) / "Fixed 1 of 2 rules (1 skipped)" (partial zero
+  recovered) / "No rules fixed (3 skipped)" (nothing applied).
+  describeSkipReason maps the discriminator to "rule no longer
+  in chain" / "rule already earlier than target" for the per-
+  proposal skipped-list entry. 58 inline tests including a
+  cross-helper test feeding planDeadRuleReorder into the batch
+  applier end-to-end.
+
+- Slice 140: server-side batch command + TS wrapper (7e7267d).
+  slab_hopper_batch_reorder_dead_rules Tauri command wraps
+  slice 138 1:1 registered in lib.rs invoke handler. Reasons
+  for a server-side command at all (the TS mirror already
+  handles the in-panel fix-all rendering): (1) a future
+  scripted-audit consumer (CLI driver, cron health-check, "fix
+  my chain non-interactively" subcommand) gets the batch
+  applier as a first-class command rather than having to mirror
+  the by-name resolution heuristic in TS; (2) server-side
+  guarantees the applier compares rule names against the SAME
+  Rule type the runtime evaluator uses — a future Rule field
+  added on Rust but not yet mirrored in TS would silently widen
+  / narrow the equality contract on the TS side; the server-
+  side command keeps the by-name resolution authoritative.
+  slabHopperBatchReorderDeadRules async wrapper with browser-
+  mode delegation. 13 wrapper-delegation tests pinning every
+  BatchReorderOutcome field.
+
+- Slice 141: batch-confidence bridge helper (be3f801).
+  worstReorderConfidence(proposals) -> "high"|"medium"|"low"|null
+  returns the WORST tier present in the batch (low > medium >
+  high priority). Empty -> null. The "Fix all" path implicitly
+  accepts ALL proposals so the button's color must reflect the
+  worst-case posture — a batch of one high + one low is NOT a
+  green batch. Short-circuits on "low" since it's the worst.
+  Order-independent (pinned by test pair).
+  summarizeProposalTierBreakdown counts per tier with total
+  pre-summed (total === high + medium + low invariant pinned).
+  describeProposalBatch is a discriminated copy renderer with
+  a single-tier shortcut to avoid "1 fix - 1 high" redundancy:
+  "No fixes" (empty) / "1 fix — high" / "3 fixes — high"
+  (single-tier) / "2 fixes — 1 high, 1 medium" (two-tier) /
+  "3 fixes — 1 high, 1 medium, 1 low" (three-tier). Enumeration
+  order is high > medium > low regardless of input order
+  (pinned by order-independence test). Plural-aware on
+  "fix"/"fixes". 32 inline tests.
+
+- Slice 142: demo-able UI (dab4715). "Fix all · N" button as
+  SIBLING of the chain-health chip inside .cov-title (after
+  the chip, before the loading dot). Renders only when
+  reorderProposals.length > 0. Confidence tier (slice 141)
+  drives the button's color treatment via three
+  class:directives (.conf-high green / .conf-medium orange /
+  .conf-low muted) matching the per-row fix-it pill's palette.
+  380px confirm popover anchored beneath the button with
+  header (describeProposalBatch breakdown +
+  describeReorderConfidence tone subline based on worst tier)
+  + per-proposal preview list (one item per proposal with
+  tier-colored dot + formatReorderProposal copy, scrollable
+  at max-height 180px so a 20-dead-rule chain doesn't blow up
+  the panel chrome) + Cancel / "Apply N" actions. Apply is
+  OPTIMISTIC: applyReorderProposalsBatch reorders the chain
+  locally then slabHopperSetRules persists through the same
+  path manual moves use; on failure the chain rolls back +
+  the error lands in errorMsg. The applied=0 path (every
+  proposal skipped by chain drift) surfaces the toast WITHOUT
+  persisting a no-op set-rules round-trip. Outcome toast
+  shares cov-export-toast surface — ONE in-panel toast
+  surface for all of {export, fix-it, fix-all} with the same
+  4s dwell. Toast copy is summarizeBatchReorderOutcome.
+  Skipped proposals log per-proposal reason via console.info
+  for a power user with devtools to audit a partial batch.
+  fixAllConfidence + fixAllBreakdown $derived state composed
+  from worstReorderConfidence + describeProposalBatch on
+  reorderProposals — reactive over manual reorder + auto-
+  refresh. Escape chain extended: Fix-all popover dismisses
+  FIRST (most-recently-opened chain-wide overlay) BEFORE
+  per-row fix-it popover (slice 137) > coverage Export menu
+  (slice 127) > drilldown popover > coverage filter clear.
+  A user with all five active gets a clean five-keystroke
+  unwind. Opening Fix-all auto-closes the per-row fix-it
+  popover + drilldown + Export menu (they're stale once the
+  chain is about to reorder). ~160 lines scoped CSS:
+  .cov-fixall-anchor (position-relative inline-flex wrap),
+  .cov-fixall-btn (pill + hover lift + focus ring + .open
+  inset shadow + three .conf-{high,medium,low} tints),
+  .cov-fixall-popover (380px dark panel with confidence-tier
+  border tint), .cov-fixall-header / -breakdown / -tone
+  (header layout), .cov-fixall-list / -item / -dot / -copy
+  (preview list with tier-colored dots, overflow-y auto),
+  .cov-fixall-actions / -cancel / -apply (action button row).
+  Reuses cov-export-toast-fade-in keyframes for the popover
+  entrance animation.
+
+Gates result: cargo fmt clean (no changes needed), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 11.52s, cargo test --lib
+2581 passed / 0 failed (round-28 baseline 2567 + 14 batch
+primitive tests for slice 138 = 2581), pnpm check 0 errors /
+104 warnings (round-28 baseline preserved EXACTLY — zero new
+warnings from the Fix-all button markup, the confirm popover
+dialog, the preview list {#each}, the two new $derived blocks,
+or any of the ~160 lines of new CSS), tsx
+src/lib/hopper.test.ts 359 inline expects pass (round-28
+baseline 256 + 58 from slice 139 + 13 from slice 140 + 32 from
+slice 141 = 359; slice 142 is a UI slice with no new TS-helper
+assertions), tsx src/lib/marketplace.test.ts 138 inline expects
+pass unchanged (no marketplace changes this tick).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-28: backend
+  primitive -> TS mirror primitive -> Tauri command + TS client
+  wrapper -> pure-helper bridge (slice 141 — the worst-tier +
+  breakdown classifier composing proposal list evidence to UI
+  color + copy) -> demo-able UI slice. Round 29 differs from
+  round 28's arc in that the bridge helper (slice 141) is
+  composed from a LIST of proposals rather than from a single
+  proposal — the bridge crosses from "what the planner's whole
+  batch looks like" to "what tone the batch button should
+  carry" rather than from "what one proposal looks like" to
+  "what tone one pill should carry". The 5-layer cadence
+  remains the canonical batch shape.
+- Round 29 picked the batch fix-all path over rule reorder-by-
+  drag (rounds 26-28's deferred candidate) because it's the
+  structurally-cleanest 5-layer arc that EXTENDS the same fix-
+  it surface (the per-row pill going from one-shot to batch
+  closes the "fix one / fix all" two-mode loop) without
+  inventing a new gesture vocabulary. Reorder-by-drag stays on
+  the candidates list — it's a richer interaction model worth
+  a dedicated round, and the batch path arguably reduces the
+  need for it (a chain with three dead rules now fixes in ONE
+  click rather than three drags).
+- The by-name source resolution is the load-bearing piece. A
+  naive batch applier that walked rule_index directly would
+  break on the second proposal because indices shift after
+  every splice. By-name resolution makes the order of
+  proposals in the batch IRRELEVANT to correctness; only the
+  by-name identity of the rule matters.
+
+DESIGN NOTES:
+- The "Fix all · N" count suffix is a deliberate trust signal —
+  it lets the user see HOW MANY fixes are about to land before
+  clicking. A user with three dead rules sees "Fix all · 3"
+  and immediately knows the scope. The chain-health chip
+  ALSO says "3 dead rules" so the user has TWO confirmations
+  of the scope before opening the popover.
+- Worst-tier color choice (slice 141) is the right default for
+  a batch action: a user who clicks "Fix all" implicitly
+  accepts every proposal, including the lowest-confidence one.
+  Coloring the button by AVERAGE tier would hide the weakest
+  proposal from the user; coloring by BEST would over-promise.
+  Worst-tier is the honest signal — "the most aggressive fix
+  in this batch is X, click if you accept that level of
+  aggression."
+- Per-proposal preview list (not just a count) is critical for
+  a batch action. A user reading "Fix all · 3" without the
+  preview has no idea what the 3 fixes are; they have to open
+  each row individually to inspect, which defeats the batch
+  affordance. The preview list with tier-colored dots gives
+  the user EVERY proposal's copy at a glance, and the dots
+  let them see the tier distribution at a glance ("two green
+  dots + one muted dot — mostly confident, one aggressive").
+- The optimistic apply pattern matches round 28's per-row fix-
+  it path EXACTLY (same try/catch + rollback + scheduleSave
+  trigger + 4s dwell toast). A user who's used the per-row
+  pill gets the same mental model for the batch button — no
+  new affordance to learn, just "Apply N at once" instead of
+  "Apply 1 at a time."
+- The applied=0 fast path matters: if every proposal in the
+  batch is skipped by chain drift (e.g. the user manually
+  reordered between planner and apply), persisting a no-op
+  set-rules round-trip would be wasteful AND would briefly
+  trigger the "Saving…" indicator for nothing. The fast path
+  surfaces "No rules fixed (N skipped)" in the toast and
+  returns without persisting.
+- console.info breakdown for skipped proposals is a power-user
+  affordance — most users will never open devtools, but a
+  paralegal who clicked "Fix all" and saw "Fixed 2 of 3
+  rules" can pop devtools to see WHY the third was skipped.
+  This is cheaper than surfacing per-proposal reasons in the
+  toast (which would balloon the toast copy) or in a modal
+  (which would interrupt the user's flow).
+- Escape chain prioritises Fix-all FIRST because it's the most-
+  recently-opened CHAIN-WIDE overlay (the user opened it to
+  affect the whole chain, not a specific row). The per-row
+  fix-it popover is per-row anchored and comes second; the
+  Export menu is chain-wide but pre-existing; the drilldown
+  is per-row; the filter is the deepest (persists across
+  edits). The unwind order matches the user's mental "stack"
+  of "what did I just open?".
+
+## Roadmap — round 29 (Hopper batch fix-all action) — ALL DONE
+
+Round 29 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the batch fix-all action path (slices 138-142).
+One backend pure-data batch applier primitive, one TS mirror +
+summary helpers + describeSkipReason, one server-side wire
+command + TS client wrapper, one worst-tier-color + breakdown
+bridge helper, and one demo-able composite UI slice. Same
+canonical five-layer pattern as rounds 19-28.
+
+138. ~~**batch reorder applier primitive**~~ —
+     DONE (2026-06-23 09:18 PT, 5faa433). apply_reorder_proposals_batch(
+     rules, proposals) -> BatchReorderOutcome with by-name source
+     resolution + by-name shadower target with target=0 fallback +
+     RuleNotFound/AlreadyEarlier skip discriminator + conservation
+     invariant applied+skipped==input + saturating_add on u64 +
+     snake-case serde round-trip + source-not-mutated +
+     clone-not-alias rule identity. 14 tests.
+139. ~~**batch applier TS mirror + summary**~~ —
+     DONE (2026-06-23 09:23 PT, e1c840e). applyReorderProposalsBatch
+     1:1 mirror with shared per-rule object identity + RULE_NOT_FOUND
+     /ALREADY_EARLIER singletons + summarizeBatchReorderOutcome
+     five-branch discriminated copy with plural-aware nouns +
+     describeSkipReason. 58 inline tests including end-to-end
+     planDeadRuleReorder -> applyReorderProposalsBatch cross-helper.
+140. ~~**batch applier Tauri command + TS wrapper**~~ —
+     DONE (2026-06-23 09:26 PT, 7e7267d). slab_hopper_batch_reorder_dead_rules
+     Tauri command wired into invoke handler +
+     slabHopperBatchReorderDeadRules async wrapper with browser-
+     mode delegation. 13 wrapper-delegation tests pinning every
+     BatchReorderOutcome field.
+141. ~~**batch-confidence bridge helper**~~ —
+     DONE (2026-06-23 09:30 PT, be3f801). worstReorderConfidence(proposals)
+     -> "high"|"medium"|"low"|null with worst-tier-wins short-
+     circuit + order-independence + summarizeProposalTierBreakdown
+     with total-invariant + describeProposalBatch discriminated copy
+     with single-tier shortcut + order-independent enumeration +
+     plural-aware noun. 32 inline tests.
+142. ~~**Fix all batch fix-it button**~~ —
+     DONE (2026-06-23 09:35 PT, dab4715). "Fix all · N" button as
+     sibling of chain-health chip + worst-tier color treatment +
+     380px confirm popover with breakdown header + tone subline +
+     per-proposal preview list with tier-colored dots (scrollable
+     max-height 180px) + Cancel/Apply actions + optimistic apply
+     via applyReorderProposalsBatch then persist via
+     slabHopperSetRules with rollback on failure + applied=0 fast
+     path skipping no-op persist + outcome toast shares
+     cov-export-toast surface + skipped proposals log to
+     console.info for audit + Escape chain extended (Fix-all >
+     per-row fix-it > Export menu > drilldown > filter clear) +
+     ~160 lines scoped CSS.
+
+     With round 29 done, the dead-rule "what / now what / how /
+     all at once" four-step loop closes — a paralegal seeing
+     "3 dead rules" can drill into them in one click (round 27),
+     FIX one in one more click (round 28), or FIX ALL in one
+     click (round 29). Next subsystem candidates: Hopper rule
+     reorder-by-drag (rounds 26-29's deferred candidate now made
+     even less critical by the batch fix-all but still a richer
+     interaction model worth a dedicated round),
+     undo-the-fix-it/fix-all ("Undo" button in the toast that
+     pops the chain back to its prior state via a captured
+     `prev` snapshot — same pattern as the personal-preset
+     duplicate toast, particularly useful for the batch path
+     where reverting a five-rule reorder by hand is tedious),
+     drilldown row -> cross-surface filter (clicking a fall-
+     through filename in the popover carries the search query
+     into the document inspector), Loom-grade tagging explorer,
+     doc-detail metadata editor read/write surface, Beacon cache
+     inspector polish (column sort by basename / model facet),
+     Quill multi-document field-detect queueing, histogram
+     hover-tooltip on bar segments, per-plugin "Run prune now"
+     affordance (round 25's deferred candidate).
 
 ### What round-28 (2026-06-23 04:55 PT) just shipped
 
