@@ -1,13 +1,306 @@
 # Slab Cron State
 
-Last updated: 2026-06-23 01:30 PT by Cake (cron) — round-27 BATCH shipped: 5 slices closing one cohesive arc. Hopper coverage diagnostic filter (slices 128-132): pure-data filter_coverage_by_diagnostic(report, CoverageFilter) -> RuleCoverageReport with CoverageFilter discriminator (All|Dead|Zero|Shadowed|Healthy) + slug() helper + private rule_matches_filter composed from coverage_diagnostic_str so the filter + the CSV diagnostic column never drift apart + priority chain dead>zero>shadowed>healthy preserved end-to-end (dead rule excluded from shadowed filter pinned by dedicated test) + totals preserved verbatim (fallthrough + total_samples are corpus-scoped invariants of the underlying chain RUN) + conservation invariant test (dead+zero+shadowed+healthy == rule_count) (slice 128); TS mirror filterCoverageByDiagnostic(report, kind) + ruleMatchesCoverageFilter(rule, kind) + CoverageDiagnosticFilter type ("all"|"dead"|"zero"|"shadowed"|"healthy") + COVERAGE_FILTER_KINDS readonly array (display order: all > dead > shadowed > zero > healthy) + private coverageRuleBucket classifier composed once for both helpers + formatCoverageFilterSummary("Showing all 6 rules" / "Showing 2 of 6 rules — dead" / "Showing 0 rules" empty-chain / singular "rule" noun) + identity transform returns NEW shallow-clone rules array (slice 129); slab_hopper_filter_coverage Tauri command wired into invoke handler + slabHopperFilterCoverage async wrapper with browser-mode delegation to local TS helper + suggestCoverageExportFilename gains optional `filter` parameter inserting slug between watch + date with "all"/unset omitting slot entirely (back-compat with round-26 export filenames byte-for-byte) (slice 130); coverageHealthClickTarget(health) -> CoverageDiagnosticFilter | null bridge composing priority chain (critical->dead, warn+shadowed->shadowed, warn+zero->zero, warn+high-fallthrough->null because no rule-level filter expresses fall-through, healthy/empty/null->null) matching summarizeCoverageHealth EXACTLY pinned by cross-helper-agreement test + never-returns-"all" pin (slice 131); demo-able UI clickable chain-health chip routing through clickCoverageHealth handler with conditional <button vs span> render preserving chip color + 5-chip diagnostic filter row (All|Dead|Shadowed|Zero|Healthy) with active state + aria-pressed + Cmd-shared setCoverageFilter handler auto-closing export menu + "Showing X of Y" sub-line (aria-live) + Clear filter button (right-anchored, conditional on coverageFilter !== "all") + filtered rule list with accent rail .cov-list.filtered + fall-through synthetic row HIDES while filtered (not a rule bucket) + no-matches empty cell with inline link-style clear-filter button + filtered exports ship displayedCoverage with filter slug in filename + toast appends "(filtered: dead)" + Escape chain extended (filter clears LAST — Notion-style deepest-state stack entry) + ~130 lines scoped CSS for .cov-health-btn + .cov-filters + .cov-filter-chip + .cov-filter-summary + .cov-filter-clear + .cov-list.filtered + .cov-empty-filter (slice 132).
+Last updated: 2026-06-23 04:55 PT by Cake (cron) — round-28 BATCH shipped: 5 slices closing one cohesive arc. Hopper dead-rule fix-it action (slices 133-137): pure-data plan_dead_rule_reorder(rules, report) -> Vec<ReorderProposal> with per-proposal target_index heuristic (EARLIEST Always in [0..rule_index) when one exists, fallback to target=0 + empty shadowing_rule_name otherwise) + target_index < rule_index invariant + stale-row defence + 12 tests (slice 133); TS mirror planDeadRuleReorder(rules, report) + applyReorderProposal(rules, proposal) returning NEW array with shared rule object identity + no-op guards + formatReorderProposal discriminated copy (with/without shadower, plural-aware, zero-recovered, empty-name positional fallback) + 39 inline tests (slice 134); slab_hopper_plan_dead_rule_reorder Tauri command wired into invoke handler + slabHopperPlanDeadRuleReorder async wrapper with browser-mode delegation to local TS helper + 6 wrapper-delegation tests pinning all 5 ReorderProposal fields (slice 135); reorderProposalConfidence(proposal) -> "high"|"medium"|"low" classifier composed from proposal alone (named-shadower + recovered>0 = high, named-shadower + recovered=0 = medium, no-shadower = low) with whitespace-trim contract + filterProposalsByConfidence helper with input-order preservation + describeReorderConfidence discriminated copy ("Confident fix..." / "Structurally correct..." / "Aggressive fix...") + 21 inline tests (slice 136); demo-able UI with "Fix it · +N" pill on dead-row chips (sibling of cov-row button to avoid nested HTML buttons, negative-margin overlay) + confidence-tier color treatment via three class:directives (.conf-high green / .conf-medium orange / .conf-low muted) + 280px confirm popover with formatted-proposal copy + confidence-tier subline + Apply/Cancel + optimistic apply via applyReorderProposal then persist via slabHopperSetRules (same path manual moves use) with rollback on failure + toast shares cov-export-toast surface + Escape chain extended (fix-it > Export menu > drilldown > filter clear) + ~150 lines scoped CSS (slice 137).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `84f4784` — "feat(hopper): coverage diagnostic filter UI with clickable chain-health chip".
+Latest commit: `6383a35` — "feat(hopper): dead-rule fix-it pill with confirm popover".
+
+### What round-28 (2026-06-23 04:55 PT) just shipped
+
+Five slices closing one cohesive arc. Round 27's chain-health chip
++ diagnostic filter row closed the diagnose + drill loop ("2 dead
+rules" -> click chip -> filter narrows to those 2 rules -> drill
+into each one's empty bucket). The natural follow-up — "OK, FIX
+it for me" — had no answer; the user had to read the rule chain,
+identify which earlier rule was shadowing the dead one, and
+manually drag the dead row earlier. In a 20-rule chain with three
+dead rules that's tedious; in a 6-rule chain with one shadowing
+Always catch-all the fix is mechanical and deserves a one-click
+action. Tonight that fix-it loop closes end-to-end: pure-data
+planner primitive on the backend computing the minimal reorder
+per dead rule, TS mirror for instant client-side reactivity,
+server-side wire command for the audit/export path, a confidence-
+tier classifier composing the proposal's evidence into a
+green/orange/muted UI tone, and a demo-able UI surfacing the
+fix-it pill INLINE on each dead row with a confirm popover and
+optimistic apply.
+
+Round 27's closing notes listed "Hopper rule reorder-by-drag in
+the coverage panel (drag a dead row up to fix shadowing in one
+motion)" as a candidate; round 28 picked the "Fix it" pill +
+planner path instead because it's the structurally-cleanest
+5-layer arc that EXTENDS the same dead-row chip surface (the dead
+chip going from informational to actionable closes the
+"what / now what / how" three-step loop) without inventing a new
+gesture vocabulary (drag-to-reorder is a richer interaction model
+worth a dedicated future round). The planner heuristic also gives
+the user a CONFIDENCE TIER (high/medium/low) that drag-to-reorder
+can't surface — knowing whether a move is high-evidence vs
+aggressive matters more than the gesture saving a click.
+
+- Slice 133: dead-rule reorder planner primitive (9e7efeb).
+  plan_dead_rule_reorder(rules, report) -> Vec<ReorderProposal>
+  for every dead_at_position rule in the coverage report.
+  ReorderProposal carries rule_index + rule_name + target_index +
+  shadowing_rule_name + samples_recovered (== would_match
+  verbatim). Per-proposal target_index heuristic: EARLIEST Always
+  in [0..rule_index) when one exists (the only predicate that
+  PROVABLY shadows ANY other rule — by definition it catches every
+  sample), falls back to target=0 + empty shadowing_rule_name
+  otherwise (the UI gates on the empty name to render generic
+  "Move to the front" copy rather than naming a wrong rule).
+  target_index < rule_index is an INVARIANT pinned by dedicated
+  test — the planner never proposes a move that can't help.
+  Stale-report defence: rows whose rule_index >= rules.len() are
+  skipped silently rather than panic'd. Input-order preservation
+  pinned (planner stays predictable; UI may re-sort if it wants).
+  Snake-case serde field names pinned by round-trip test for the
+  TS mirror to read. 12 tests.
+
+- Slice 134: TS mirror + helpers (4052d75). planDeadRuleReorder
+  mirrors slice 133 1:1 (same heuristic, same stale-row defence,
+  same input-order preservation). applyReorderProposal(rules,
+  proposal) returns a NEW array with the rule lifted from
+  rule_index and re-inserted at target_index; rule object
+  identity is SHARED across the moved row (so a downstream
+  renderer's per-object identity checks stay stable on unmoved
+  rows) and the source array is never mutated. Out-of-range /
+  no-op proposals (target >= rule_index, stale rule_index)
+  return the source verbatim — pinned by dedicated no-op tests.
+  formatReorderProposal produces the single human-facing copy
+  line shared by the fix-it pill's title, the confirm popover
+  body, and the applied-toast suffix: with-shadower "Move 'Tax'
+  before 'Catch-all' to recover 3 matches" / without-shadower
+  "Move 'Tax' to the front of the chain to recover 3 matches" /
+  zero-recovered "Move 'Tax' before 'Catch-all' (predicate now
+  matches 0 samples)". Plural-aware noun. Empty rule name
+  falls back to positional "Rule #4" label so copy never reads
+  "Move '' before ...". 39 inline tests.
+
+- Slice 135: server-side planner command + TS wrapper (37945b9).
+  slab_hopper_plan_dead_rule_reorder Tauri command wraps slice
+  133 1:1 registered in lib.rs invoke handler. Reasons for a
+  server-side command at all (the TS mirror already handles the
+  in-panel fix-it chip rendering): (1) a future scripted-audit
+  consumer (CLI driver, cron health-check, "what would my chain
+  look like fixed?" subcommand) gets the planner as a
+  first-class command rather than having to mirror the heuristic
+  in TS itself; (2) server-side guarantees the planner output
+  is computed against the SAME RulePredicate variant set the
+  runtime evaluator uses — a future Rust predicate kind not yet
+  mirrored in TS would silently fall through to the no-Always
+  fallback in the TS planner; the server-side command catches
+  the same case authoritatively. slabHopperPlanDeadRuleReorder
+  async wrapper with browser-mode delegation. 6 wrapper-
+  delegation tests pinning all 5 ReorderProposal fields
+  (rule_index, target_index, shadowing_rule_name,
+  samples_recovered, length) + healthy-chain empty-result path.
+
+- Slice 136: confidence classifier bridge helper (55bd526).
+  Pure helper reorderProposalConfidence(proposal) ->
+  "high"|"medium"|"low" composed from the proposal alone (no
+  need to re-inspect the report or rules):
+    high   — named shadower AND samples_recovered > 0. Reads
+             like a recipe — green chip, click with confidence.
+    medium — named shadower BUT samples_recovered = 0.
+             Predicate too narrow for current corpus but
+             structurally shadowed; reorder is correct, gain
+             is theoretical. Orange chip, hesitate.
+    low    — no named shadower (fallback to target=0).
+             Aggressive jump-to-front; correct in the sense of
+             move-earlier-only but more aggressive than
+             necessary. Muted chip, read carefully.
+  Whitespace-only shadower name treated as empty (low) — pinned
+  by trim-contract test. filterProposalsByConfidence helper
+  with min='low'/'medium'/'high' thresholds + input-order
+  preservation. describeReorderConfidence discriminated copy
+  with tier-discriminative phrasing ("Confident" / "Structurally"
+  / "Aggressive") pinned by substring tests. 21 inline tests.
+
+- Slice 137: demo-able UI (6383a35). "Fix it · +N" pill anchored
+  to each dead row's upper-right corner. SIBLING of the cov-row
+  <button> (HTML doesn't allow nested buttons) inside the
+  .cov-row-wrap, floated above via negative margin so it
+  visually overlays without disturbing the row's grid columns.
+  Confidence tier (slice 136) drives the pill's color treatment
+  via three class:directives — .conf-high green / .conf-medium
+  orange / .conf-low muted. "+N" suffix renders only when
+  samples_recovered > 0 (a zero-recovery proposal reads "Fix it"
+  alone rather than "Fix it · +0"). 280px confirm popover
+  anchored beneath the pill carrying the formatted-proposal
+  copy + the confidence-tier subline + Cancel/Apply buttons.
+  Apply is OPTIMISTIC: applyReorderProposal reorders the chain
+  locally, then slabHopperSetRules persists through the same
+  path manual moveUp/moveDown uses. On failure the chain rolls
+  back + the error lands in errorMsg. The coverage panel
+  auto-refreshes via the existing scheduleSave -> scheduleCoverage
+  chain so the dead row's chip recomputes (and likely disappears)
+  on the next 600ms-debounced refresh. Applied-toast shares the
+  cov-export-toast surface (one fade-in cell for any in-panel
+  async confirmation) — ONE in-panel toast surface for all of
+  {export, fix-it} with the same 4s dwell. reorderProposals +
+  proposalByRuleIndex $derived state composed from
+  planDeadRuleReorder(rules, coverage) — reactive over manual
+  reorder + auto-refresh. The map avoids a per-iteration find()
+  in the {#each} template. Escape chain extended: fix-it
+  popover dismisses FIRST (most-recently-opened per-row anchored
+  overlay) BEFORE coverage Export menu > drilldown popover >
+  coverage filter clear. A user with all four active gets a
+  clean four-keystroke unwind. ~150 lines scoped CSS:
+  .cov-fixit-anchor (position-relative wrap with negative
+  margin), .cov-fixit-pill (pill + hover lift + focus ring +
+  .open inset shadow + three .conf-{high,medium,low} tints),
+  .cov-fixit-popover (280px dark panel with confidence-tier
+  border tint mirroring the pill's color), .cov-fixit-copy
+  / -tone / -actions / -cancel / -apply (layout + button
+  styling). Reuses cov-export-toast-fade-in keyframes for the
+  popover's entrance animation.
+
+Gates result: cargo fmt clean (no changes needed), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 11.88s, cargo test --lib
+2567 passed / 0 failed (round-27 baseline 2555 + 12 planner
+tests for slice 133 = 2567), pnpm check 0 errors / 104 warnings
+(round-27 baseline preserved EXACTLY — zero new warnings from
+the fix-it pill markup, the three new $derived blocks, the
+confirm popover dialog, or any of the ~150 lines of new CSS),
+tsx src/lib/hopper.test.ts 256 inline expects pass (round-27
+baseline 190 + 39 from slice 134 + 6 from slice 135 + 21 from
+slice 136 = 256; slice 137 is a UI slice with no new TS-helper
+assertions), tsx src/lib/marketplace.test.ts 138 inline expects
+pass unchanged (no marketplace changes this tick).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-27: backend
+  primitive -> TS mirror primitive -> Tauri command + TS client
+  wrapper -> pure-helper bridge (slice 136 — the confidence
+  tier classifier composing proposal evidence to UI color tone)
+  -> demo-able UI slice. Round 28 differs from round 27's arc
+  in that the bridge helper (slice 136) is composed from the
+  PROPOSAL alone rather than from the chain-health summary —
+  the bridge crosses from "what the planner produced" to "how
+  the UI should color it" rather than from "what the chain
+  looks like" to "what filter the chip click should activate".
+  The 5-layer cadence remains the canonical batch shape.
+- Round 28 picked the fix-it pill path over rule reorder-by-drag
+  (round 27's deferred candidate) because it's the structurally-
+  cleanest 5-layer arc that EXTENDS the same dead-row chip
+  surface (the dead chip going from informational to actionable
+  closes the "what / now what / how" three-step loop) without
+  inventing a new gesture vocabulary. The planner heuristic
+  also gives the user a CONFIDENCE TIER that drag-to-reorder
+  can't surface — knowing whether a move is high-evidence vs
+  aggressive matters more than the gesture saving a click.
+  Reorder-by-drag stays on the candidates list for a future
+  tick — it's a richer interaction model worth a dedicated round.
+- The planner's per-proposal heuristic is INDEPENDENT — fixing
+  one dead rule rearranges the chain and MAY reclassify a
+  previously-dead rule (or rarely create a new one). The UI
+  applies one proposal at a time and lets the next 600ms
+  coverage refresh re-derive the chain state; the planner runs
+  again against the new chain. This keeps each fix-it action
+  atomic and revertible.
+
+DESIGN NOTES:
+- The "+N" suffix on the pill is a deliberate trust signal —
+  it lets the user see the ESTIMATED RECOVERY before clicking.
+  A user with three dead rules sees "Fix it · +12" / "Fix it
+  · +3" / "Fix it" and immediately knows which fix to apply
+  first. Zero-recovery proposals omit the suffix so the chip
+  doesn't lie about a non-existent improvement.
+- Confidence tier color choice mirrors the existing chain-
+  health chip palette: green (healthy / high), orange
+  (warn / medium / shadowed), neutral-muted (low / no-data) —
+  consistency across the panel so a user scanning the surface
+  reads one color story.
+- Popover anchored to the pill (not the row) so it doesn't push
+  the row layout when it appears + dismisses without a layout
+  shift on the cov-list. The 280px width holds the longest
+  expected copy line ("Move 'Long Rule Name' before 'Catch-all'
+  to recover 99 matches") at the panel's default rendering
+  without wrapping.
+- The applied-toast deliberately uses the EXISTING cov-export-toast
+  cell rather than a new toast surface. ONE in-panel async
+  confirmation surface keeps the panel's chrome lean and gives
+  users a single place to look for "what just happened" feedback.
+  4s dwell matches the export toasts so the muscle memory of
+  "wait for the toast then keep working" stays consistent.
+- Escape chain prioritises the fix-it popover FIRST because it's
+  per-row anchored (the user opened it most recently to a
+  specific row) rather than chain-wide (Export menu, filter,
+  drilldown). The unwind order matches the user's mental "stack"
+  of "what did I just open?".
+
+## Roadmap — round 28 (Hopper dead-rule fix-it action) — ALL DONE
+
+Round 28 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the dead-rule fix-it action path (slices
+133-137). One backend pure-data planner primitive, one TS mirror
++ apply/format helpers, one server-side wire command + TS client
+wrapper, one confidence-tier classifier composing proposal
+evidence to UI tone, and one demo-able composite UI slice. Same
+canonical five-layer pattern as rounds 19-27.
+
+133. ~~**dead-rule reorder planner primitive**~~ —
+     DONE (2026-06-23 04:30 PT, 9e7efeb). plan_dead_rule_reorder(
+     rules, report) -> Vec<ReorderProposal> with EARLIEST-Always
+     target heuristic + index-zero fallback for the no-Always
+     case + target_index < rule_index invariant + stale-row
+     defence + snake-case serde field names round-trip pin.
+     12 tests.
+134. ~~**planner TS mirror + helpers**~~ —
+     DONE (2026-06-23 04:40 PT, 4052d75). planDeadRuleReorder
+     1:1 mirror + applyReorderProposal returning NEW array with
+     shared rule object identity + no-op guards +
+     formatReorderProposal discriminated copy with plural-aware
+     noun + empty-name positional fallback. 39 inline tests.
+135. ~~**planner Tauri command + TS wrapper**~~ —
+     DONE (2026-06-23 04:45 PT, 37945b9). slab_hopper_plan_dead_rule_reorder
+     Tauri command wired into invoke handler + slabHopperPlanDeadRuleReorder
+     async wrapper with browser-mode delegation. 6 wrapper-
+     delegation tests pinning all 5 ReorderProposal fields.
+136. ~~**reorder-proposal confidence classifier**~~ —
+     DONE (2026-06-23 04:50 PT, 55bd526). Pure helper
+     reorderProposalConfidence(proposal) -> "high"|"medium"|"low"
+     composed from proposal alone with named-shadower + recovered
+     branching, whitespace-trim contract, +
+     filterProposalsByConfidence with threshold ranking +
+     describeReorderConfidence discriminated copy. 21 inline tests.
+137. ~~**dead-rule fix-it pill with confirm popover**~~ —
+     DONE (2026-06-23 04:55 PT, 6383a35). "Fix it · +N" pill on
+     each dead-row chip (sibling of cov-row button to avoid
+     nested HTML buttons, negative-margin overlay) + confidence-
+     tier color treatment + 280px confirm popover with formatted-
+     proposal copy + confidence-tier subline + optimistic apply
+     via applyReorderProposal then persist via slabHopperSetRules
+     with rollback on failure + toast shares cov-export-toast
+     surface + Escape chain extended (fix-it > Export menu >
+     drilldown > filter clear) + ~150 lines scoped CSS.
+
+     With round 28 done, the dead-rule "what / now what / how"
+     three-step loop closes — a paralegal seeing "2 dead rules"
+     can drill into them in one click (round 27) and now FIX
+     them in one more click. Next subsystem candidates: Hopper
+     rule reorder-by-drag (round 27's deferred candidate now
+     paired with the fix-it pill as a richer alternative for
+     multi-rule reorganisations), undo-the-fix-it ("Undo" button
+     in the toast that pops the chain back to its prior state
+     via a captured `prev` snapshot — same pattern as the
+     personal-preset duplicate toast), batch fix-it ("Fix all
+     dead rules" button on the chain-health chip that walks
+     proposals in input order and applies them one at a time
+     with a debounced refresh between each), drilldown row ->
+     cross-surface filter (clicking a fall-through filename in
+     the popover carries the search query into the document
+     inspector), Loom-grade tagging explorer, doc-detail
+     metadata editor read/write surface, Beacon cache inspector
+     polish (column sort by basename / model facet), Quill
+     multi-document field-detect queueing, histogram hover-
+     tooltip on bar segments, per-plugin "Run prune now"
+     affordance (round 25's deferred candidate).
 
 ### What round-27 (2026-06-23 01:30 PT) just shipped
 
