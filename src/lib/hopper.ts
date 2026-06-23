@@ -829,6 +829,94 @@ export function formatReorderProposal(proposal: ReorderProposal): string {
   return `Move '${ruleLabel}' ${target} to recover ${n} ${noun}`;
 }
 
+// ─── Slice 136 — reorder-proposal confidence classifier ──────────────
+//
+// The planner (slice 133) produces ONE proposal per dead rule, but
+// not every proposal has equal evidence behind it. Three quality
+// levels matter to the user:
+//
+//   high   — the planner identified a NAMED Always shadower AND the
+//            proposed move strictly improves the chain (at least 1
+//            sample recovered). "Move 'Tax' before 'Catch-all' to
+//            recover 3 matches" reads exactly like a recipe — green
+//            chip, the user clicks with confidence.
+//   medium — the planner identified an Always shadower BUT the
+//            dead rule recovers ZERO samples (predicate too narrow
+//            for the current corpus, even though it's structurally
+//            shadowed). The reorder is still STRUCTURALLY correct
+//            — the rule will fire on future matching files — but
+//            the user's gain is theoretical, not retrospective.
+//            Orange chip, hesitate before clicking.
+//   low    — the planner fell back to target_index = 0 with an
+//            empty shadowing_rule_name (no Always identified). The
+//            move IS guaranteed-correct in the sense of being
+//            move-earlier-only, but it's MORE AGGRESSIVE than
+//            necessary (the dead rule jumps the whole chain
+//            instead of just the shadower) and may surprise a user
+//            who's manually ordered the chain. Muted chip, the
+//            user reads the copy carefully before clicking.
+//
+// The classifier is composed from the proposal alone — no need to
+// inspect the report or the rules again. Pure helper; the UI gates
+// the pill's color tint and the confirm popover's tone on this
+// kind.
+
+/** Confidence tier for a `ReorderProposal`. Drives the fix-it pill's
+ *  color treatment (green/orange/muted) and the confirm popover's
+ *  copy tone. */
+export type ReorderProposalConfidence = "high" | "medium" | "low";
+
+/** Classify the confidence behind a `ReorderProposal`. Pure helper —
+ *  no I/O, no Tauri.
+ *
+ *  - `high`   — named shadower AND samples_recovered > 0.
+ *  - `medium` — named shadower but samples_recovered == 0.
+ *  - `low`    — no named shadower (fallback to target = 0). */
+export function reorderProposalConfidence(
+  proposal: ReorderProposal,
+): ReorderProposalConfidence {
+  const hasShadower = proposal.shadowing_rule_name.trim().length > 0;
+  if (!hasShadower) return "low";
+  if (proposal.samples_recovered === 0) return "medium";
+  return "high";
+}
+
+/** Filter a list of `ReorderProposal`s to those with confidence
+ *  >= `minConfidence`. Convenience for the UI which wants a "show
+ *  only confident fixes" toggle. Pure helper.
+ *
+ *  Order of priority (high to low): high > medium > low. A min of
+ *  "low" returns every proposal; "high" returns only the green ones. */
+export function filterProposalsByConfidence(
+  proposals: ReorderProposal[],
+  minConfidence: ReorderProposalConfidence,
+): ReorderProposal[] {
+  const rank: Record<ReorderProposalConfidence, number> = {
+    high: 3,
+    medium: 2,
+    low: 1,
+  };
+  const min = rank[minConfidence];
+  return proposals.filter((p) => rank[reorderProposalConfidence(p)] >= min);
+}
+
+/** One-line summary copy describing the confidence tier — used by
+ *  the confirm popover's tone subline + the no-proposals empty
+ *  state. Discriminated and self-contained so the UI doesn't have
+ *  to gate copy on the tier string itself. */
+export function describeReorderConfidence(
+  confidence: ReorderProposalConfidence,
+): string {
+  switch (confidence) {
+    case "high":
+      return "Confident fix — the dead rule will fire on its current matches";
+    case "medium":
+      return "Structurally correct — the rule will fire on future matching files";
+    case "low":
+      return "Aggressive fix — the dead rule jumps to the front of the chain";
+  }
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors

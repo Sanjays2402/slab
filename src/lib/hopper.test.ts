@@ -30,6 +30,10 @@ import {
   applyReorderProposal,
   formatReorderProposal,
   slabHopperPlanDeadRuleReorder,
+  reorderProposalConfidence,
+  filterProposalsByConfidence,
+  describeReorderConfidence,
+  type ReorderProposalConfidence,
   COVERAGE_FILTER_KINDS,
   type CoverageDiagnosticFilter,
   type CoverageHealth,
@@ -1980,4 +1984,219 @@ function ruleFor(
       `slabHopperPlanDeadRuleReorder: healthy chain -> empty`,
     );
   });
+}
+
+// ─── Slice 136 — reorderProposalConfidence / filter / describe ───────
+
+{
+  // High confidence: named shadower + samples_recovered > 0.
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "Catch-all",
+    samples_recovered: 3,
+  };
+  expect(
+    reorderProposalConfidence(p) === "high",
+    `confidence: named shadower + recovered > 0 -> high (got ${reorderProposalConfidence(p)})`,
+  );
+}
+
+{
+  // Medium confidence: named shadower BUT zero samples recovered.
+  // The reorder is structurally correct; the gain is theoretical.
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Future-tax",
+    target_index: 0,
+    shadowing_rule_name: "Catch-all",
+    samples_recovered: 0,
+  };
+  expect(
+    reorderProposalConfidence(p) === "medium",
+    `confidence: named shadower + recovered=0 -> medium (got ${reorderProposalConfidence(p)})`,
+  );
+}
+
+{
+  // Low confidence: NO named shadower (fallback to target=0).
+  // Aggressive jump-to-front; the user should read carefully.
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "",
+    samples_recovered: 3,
+  };
+  expect(
+    reorderProposalConfidence(p) === "low",
+    `confidence: no shadower -> low (got ${reorderProposalConfidence(p)})`,
+  );
+}
+
+{
+  // Whitespace-only shadower name treated as empty (low).
+  // A future regression that didn't .trim() would mis-classify
+  // these as "high" — pin the trim contract.
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "   ",
+    samples_recovered: 3,
+  };
+  expect(
+    reorderProposalConfidence(p) === "low",
+    `confidence: whitespace-only shadower -> low`,
+  );
+}
+
+{
+  // filterProposalsByConfidence: min='low' returns everything.
+  const proposals: ReorderProposal[] = [
+    {
+      rule_index: 1,
+      rule_name: "A",
+      target_index: 0,
+      shadowing_rule_name: "All",
+      samples_recovered: 3,
+    },
+    {
+      rule_index: 2,
+      rule_name: "B",
+      target_index: 0,
+      shadowing_rule_name: "All",
+      samples_recovered: 0,
+    },
+    {
+      rule_index: 3,
+      rule_name: "C",
+      target_index: 0,
+      shadowing_rule_name: "",
+      samples_recovered: 1,
+    },
+  ];
+  expect(
+    filterProposalsByConfidence(proposals, "low").length === 3,
+    `filterProposalsByConfidence: min=low keeps all`,
+  );
+  expect(
+    filterProposalsByConfidence(proposals, "medium").length === 2,
+    `filterProposalsByConfidence: min=medium drops low (keeps high+medium)`,
+  );
+  expect(
+    filterProposalsByConfidence(proposals, "high").length === 1,
+    `filterProposalsByConfidence: min=high keeps only high`,
+  );
+}
+
+{
+  // filterProposalsByConfidence: input order preserved within the
+  // filtered subset (filter doesn't re-sort).
+  const proposals: ReorderProposal[] = [
+    {
+      rule_index: 5,
+      rule_name: "High1",
+      target_index: 0,
+      shadowing_rule_name: "All",
+      samples_recovered: 3,
+    },
+    {
+      rule_index: 2,
+      rule_name: "Low",
+      target_index: 0,
+      shadowing_rule_name: "",
+      samples_recovered: 1,
+    },
+    {
+      rule_index: 7,
+      rule_name: "High2",
+      target_index: 0,
+      shadowing_rule_name: "All",
+      samples_recovered: 5,
+    },
+  ];
+  const high = filterProposalsByConfidence(proposals, "high");
+  expect(
+    high.length === 2 && high[0].rule_name === "High1" && high[1].rule_name === "High2",
+    `filterProposalsByConfidence: input order preserved`,
+  );
+}
+
+{
+  // describeReorderConfidence: every tier has unique non-empty copy.
+  const tiers: ReorderProposalConfidence[] = ["high", "medium", "low"];
+  const copies = tiers.map(describeReorderConfidence);
+  for (const c of copies) {
+    expect(c.length > 0, `describeReorderConfidence: non-empty copy for every tier`);
+  }
+  expect(
+    new Set(copies).size === 3,
+    `describeReorderConfidence: every tier has unique copy (no two reuse the same line)`,
+  );
+}
+
+{
+  // describeReorderConfidence: tier-discriminative phrasing pinned.
+  // The UI relies on the substring "Confident" appearing only for
+  // the high tier; pin that so a future copy refactor surfaces here.
+  expect(
+    describeReorderConfidence("high").includes("Confident"),
+    `describeReorderConfidence: high includes 'Confident'`,
+  );
+  expect(
+    describeReorderConfidence("medium").includes("Structurally"),
+    `describeReorderConfidence: medium includes 'Structurally'`,
+  );
+  expect(
+    describeReorderConfidence("low").includes("Aggressive"),
+    `describeReorderConfidence: low includes 'Aggressive'`,
+  );
+}
+
+{
+  // Cross-helper: every proposal from a real planner run is
+  // classifiable (no proposal escapes the three-tier union).
+  const rules = [
+    ruleFor("Catch-all", "always"),
+    ruleFor("High", "filename-glob", "h_*"),
+    ruleFor("Medium", "filename-glob", "m_*"),
+    ruleFor("Low", "filename-glob", "l_*"),
+  ];
+  const r = healthReport(
+    [
+      cov(0, "Catch-all", 10, 10, false),
+      cov(1, "High", 0, 3, true),
+      cov(2, "Medium", 0, 0, true),
+      cov(3, "Low", 0, 0, true),
+    ],
+    0,
+    10,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  for (const p of proposals) {
+    const tier = reorderProposalConfidence(p);
+    expect(
+      tier === "high" || tier === "medium" || tier === "low",
+      `cross-helper: every proposal has valid confidence tier (got ${tier})`,
+    );
+  }
+  // High: index 1 (named shadower + recovered>0)
+  // Medium: index 2 (named shadower + recovered=0)
+  // Medium: index 3 (named shadower + recovered=0; note: shadower
+  //   is "Catch-all" for both 2 and 3 because earliest-Always
+  //   is index 0 in both cases)
+  expect(
+    reorderProposalConfidence(proposals[0]) === "high",
+    `cross-helper: proposals[0] is high`,
+  );
+  expect(
+    reorderProposalConfidence(proposals[1]) === "medium",
+    `cross-helper: proposals[1] is medium (zero recovered)`,
+  );
+  expect(
+    reorderProposalConfidence(proposals[2]) === "medium",
+    `cross-helper: proposals[2] is medium (zero recovered)`,
+  );
 }
