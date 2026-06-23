@@ -695,9 +695,141 @@ export function coverageHealthClickTarget(
   return null;
 }
 
-// ---------------------------------------------------------------------
-// v3.40 Slice 85 — sample drilldown TS client
-// ---------------------------------------------------------------------
+// ─── Slice 134 — dead-rule reorder planner TS mirror ─────────────────
+//
+// Round 27 (slices 128-132) closed the "diagnose + drill in" loop;
+// slice 133 added the backend planner primitive that suggests the
+// minimal reorder fix for each dead rule. This slice mirrors that
+// primitive in TS so the UI can:
+//
+//   1. Plan client-side from the loaded coverage report (instant —
+//      no IPC round-trip needed for the in-panel fix-it chip).
+//   2. Apply a proposal optimistically (re-render the chain BEFORE
+//      the persistence round-trip completes), and
+//   3. Format the proposal's human-facing copy uniformly across the
+//      pill, the confirm popover, and the toast.
+//
+// The Rust planner remains the authority for export-path callers
+// (slice 135 wraps it as a Tauri command); the TS mirror exists so
+// the in-panel render path doesn't pay an IPC tax per coverage
+// refresh.
+
+/** One reorder suggestion. Mirrors `pdf::hopper::coverage::ReorderProposal`.
+ *  All counts are read verbatim from the coverage report; the planner
+ *  doesn't re-derive them. */
+export interface ReorderProposal {
+  /** 0-based index of the dead rule in the current chain. */
+  rule_index: number;
+  /** User-visible name of the dead rule. */
+  rule_name: string;
+  /** 0-based index to move the rule TO. Always strictly less than
+   *  `rule_index`. */
+  target_index: number;
+  /** User-visible name of the rule at `target_index`. Empty when the
+   *  planner picked target_index = 0 as the conservative fallback
+   *  (no `Always` shadower identified) — the UI gates on the empty
+   *  string to render a generic "Move to the front of the chain"
+   *  copy rather than naming a wrong rule. */
+  shadowing_rule_name: string;
+  /** Number of samples the dead rule would route AFTER the move —
+   *  equal to `would_match` from the coverage row. */
+  samples_recovered: number;
+}
+
+/** Plan minimal-reorder fixes for every dead rule in `report`.
+ *  Mirrors `pdf::hopper::coverage::plan_dead_rule_reorder` 1:1.
+ *
+ *  Per-proposal heuristic for `target_index`:
+ *  - If any rule in `rules[0..rule_index]` has predicate `kind ===
+ *    "always"`, `target_index` = index of the EARLIEST such rule.
+ *    `shadowing_rule_name` is that rule's name.
+ *  - Otherwise `target_index = 0` and `shadowing_rule_name` is empty.
+ *
+ *  Defensive: dead rows whose `rule_index >= rules.length` are
+ *  skipped silently (stale-report safety). Pure helper. */
+export function planDeadRuleReorder(
+  rules: Rule[],
+  report: RuleCoverageReport,
+): ReorderProposal[] {
+  if (rules.length === 0) return [];
+  const out: ReorderProposal[] = [];
+  for (const cov of report.rules) {
+    if (!cov.dead_at_position) continue;
+    if (cov.index >= rules.length) continue;
+    // Find the EARLIEST Always in [0..rule_index).
+    let earliestAlways: number = -1;
+    for (let j = 0; j < cov.index; j++) {
+      if (rules[j].predicate.kind === "always") {
+        earliestAlways = j;
+        break;
+      }
+    }
+    const target_index = earliestAlways >= 0 ? earliestAlways : 0;
+    const shadowing_rule_name = earliestAlways >= 0 ? rules[earliestAlways].name : "";
+    out.push({
+      rule_index: cov.index,
+      rule_name: cov.name,
+      target_index,
+      shadowing_rule_name,
+      samples_recovered: cov.would_match,
+    });
+  }
+  return out;
+}
+
+/** Apply a `ReorderProposal` to a `Rule[]`, returning a NEW array
+ *  with the rule at `rule_index` lifted out and re-inserted at
+ *  `target_index`. Pure helper — the source array is not mutated;
+ *  every rule object is the same reference (shallow copy of the
+ *  array, deep references shared) so a downstream renderer's
+ *  identity comparisons stay stable on the unmoved rows.
+ *
+ *  Invariants the planner provides + this helper relies on:
+ *  - `target_index < rule_index` (move-earlier only).
+ *  - `rule_index < rules.length` (in-range).
+ *
+ *  Out-of-range indices return the source array UNCHANGED rather
+ *  than throwing — the planner skips stale rows, but a caller
+ *  hand-rolling a proposal shouldn't crash the UI either. */
+export function applyReorderProposal(
+  rules: Rule[],
+  proposal: ReorderProposal,
+): Rule[] {
+  const { rule_index, target_index } = proposal;
+  if (rule_index < 0 || rule_index >= rules.length) return rules;
+  if (target_index < 0 || target_index >= rules.length) return rules;
+  if (target_index >= rule_index) return rules;
+  const next = rules.slice();
+  const [moved] = next.splice(rule_index, 1);
+  next.splice(target_index, 0, moved);
+  return next;
+}
+
+/** Human-facing copy for a `ReorderProposal`. Used by the fix-it
+ *  pill's title attribute, the confirm popover's body, and the
+ *  applied-toast suffix. Discriminated on whether the proposal
+ *  has a named shadower:
+ *
+ *    With shadower:    "Move 'Tax' before 'Catch-all' to recover 3 matches"
+ *    Without shadower: "Move 'Tax' to the front of the chain to recover 3 matches"
+ *    Zero recovered:   "Move 'Tax' before 'Catch-all' (predicate now matches 0 samples)"
+ *
+ *  Plural-aware on the match count noun ("1 match" / "3 matches").
+ *  Empty rule name falls back to a positional label ("Rule #4") so
+ *  the copy never reads "Move '' before 'Catch-all'". */
+export function formatReorderProposal(proposal: ReorderProposal): string {
+  const ruleLabel = proposal.rule_name.trim() || `Rule #${proposal.rule_index + 1}`;
+  const shadower = proposal.shadowing_rule_name.trim();
+  const target = shadower ? `before '${shadower}'` : "to the front of the chain";
+  if (proposal.samples_recovered === 0) {
+    return `Move '${ruleLabel}' ${target} (predicate now matches 0 samples)`;
+  }
+  const n = proposal.samples_recovered;
+  const noun = n === 1 ? "match" : "matches";
+  return `Move '${ruleLabel}' ${target} to recover ${n} ${noun}`;
+}
+
+// ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors
  *  `pdf::hopper::coverage::SampleBucket` — a `kind`-tagged union.

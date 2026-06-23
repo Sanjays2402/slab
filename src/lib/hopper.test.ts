@@ -26,9 +26,14 @@ import {
   ruleMatchesCoverageFilter,
   formatCoverageFilterSummary,
   coverageHealthClickTarget,
+  planDeadRuleReorder,
+  applyReorderProposal,
+  formatReorderProposal,
   COVERAGE_FILTER_KINDS,
   type CoverageDiagnosticFilter,
   type CoverageHealth,
+  type ReorderProposal,
+  type Rule,
   type RuleCoverageReport,
   type RuleCoverage,
   type RuleSample,
@@ -1542,4 +1547,371 @@ function mixedDiagnosticReport(): RuleCoverageReport {
       `coverageHealthClickTarget: only returns dead/shadowed/zero/null (got ${target})`,
     );
   }
+}
+
+// ─── Slice 134 — planDeadRuleReorder / applyReorderProposal / formatReorderProposal ──
+
+/** Build a Rule with the given name + predicate kind. The fix-it
+ *  planner only inspects predicate.kind ("always" vs the rest) and
+ *  the name, so a minimal rule object suffices. */
+function ruleFor(
+  name: string,
+  kind: "always" | "filename-glob" = "filename-glob",
+  pattern = "*.pdf",
+): Rule {
+  if (kind === "always") {
+    return { name, predicate: { kind: "always" }, action: {} };
+  }
+  return {
+    name,
+    predicate: { kind: "filename-glob", pattern },
+    action: {},
+  };
+}
+
+{
+  // planDeadRuleReorder: empty rules -> empty proposals.
+  const proposals = planDeadRuleReorder([], healthReport([], 0, 0));
+  expect(proposals.length === 0, "planDeadRuleReorder: empty rules -> empty");
+}
+
+{
+  // planDeadRuleReorder: healthy chain -> empty proposals (no dead).
+  const rules = [ruleFor("Tax"), ruleFor("All", "always")];
+  const r = healthReport(
+    [cov(0, "Tax", 3, 3, false), cov(1, "All", 7, 7, false)],
+    0,
+    10,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 0, "planDeadRuleReorder: healthy -> empty");
+}
+
+{
+  // planDeadRuleReorder: classic Always-shadows-Tax case.
+  const rules = [ruleFor("Catch-all", "always"), ruleFor("Tax", "filename-glob", "tax_*")];
+  const r = healthReport(
+    [cov(0, "Catch-all", 10, 10, false), cov(1, "Tax", 0, 3, true)],
+    0,
+    10,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 1, "planDeadRuleReorder: one dead -> one proposal");
+  const p = proposals[0];
+  expect(p.rule_index === 1, `planDeadRuleReorder: rule_index=1 (got ${p.rule_index})`);
+  expect(p.rule_name === "Tax", `planDeadRuleReorder: rule_name=Tax`);
+  expect(p.target_index === 0, `planDeadRuleReorder: target_index=0`);
+  expect(
+    p.shadowing_rule_name === "Catch-all",
+    `planDeadRuleReorder: shadowing_rule_name=Catch-all`,
+  );
+  expect(p.samples_recovered === 3, `planDeadRuleReorder: samples_recovered=3`);
+}
+
+{
+  // planDeadRuleReorder: earliest Always selected across multiple.
+  const rules = [
+    ruleFor("Early all", "always"),
+    ruleFor("Spec", "filename-glob", "s_*"),
+    ruleFor("Late all", "always"),
+    ruleFor("Tax", "filename-glob", "t_*"),
+  ];
+  const r = healthReport(
+    [
+      cov(0, "Early all", 10, 10, false),
+      cov(1, "Spec", 0, 2, true),
+      cov(2, "Late all", 0, 0, false),
+      cov(3, "Tax", 0, 3, true),
+    ],
+    0,
+    10,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 2, "planDeadRuleReorder: 2 dead -> 2 proposals");
+  for (const p of proposals) {
+    expect(
+      p.target_index === 0,
+      `planDeadRuleReorder: earliest Always (got ${p.target_index})`,
+    );
+    expect(
+      p.shadowing_rule_name === "Early all",
+      `planDeadRuleReorder: shadower=Early all`,
+    );
+  }
+}
+
+{
+  // planDeadRuleReorder: no Always shadower -> target=0 + empty
+  // shadowing_rule_name (UI generic-copy path).
+  const rules = [
+    ruleFor("Wide", "filename-glob", "*.pdf"),
+    ruleFor("Tax", "filename-glob", "tax_*"),
+  ];
+  const r = healthReport(
+    [cov(0, "Wide", 5, 5, false), cov(1, "Tax", 0, 2, true)],
+    0,
+    5,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 1, "planDeadRuleReorder: no-Always one proposal");
+  const p = proposals[0];
+  expect(p.target_index === 0, `planDeadRuleReorder: fallback target=0`);
+  expect(
+    p.shadowing_rule_name === "",
+    `planDeadRuleReorder: fallback empty shadower (got '${p.shadowing_rule_name}')`,
+  );
+}
+
+{
+  // planDeadRuleReorder: input order preserved (not severity-sorted).
+  const rules = [
+    ruleFor("All", "always"),
+    ruleFor("Low", "filename-glob", "*.pdf"),
+    ruleFor("Healthy", "always"),
+    ruleFor("High", "filename-glob", "*.pdf"),
+  ];
+  const r = healthReport(
+    [
+      cov(0, "All", 5, 5, false),
+      cov(1, "Low", 0, 1, true),
+      cov(2, "Healthy", 0, 0, false),
+      cov(3, "High", 0, 99, true),
+    ],
+    0,
+    5,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(
+    proposals.length === 2 && proposals[0].rule_index === 1 && proposals[1].rule_index === 3,
+    `planDeadRuleReorder: input order preserved`,
+  );
+  expect(
+    proposals[0].samples_recovered === 1 && proposals[1].samples_recovered === 99,
+    `planDeadRuleReorder: counts preserved`,
+  );
+}
+
+{
+  // planDeadRuleReorder: stale row (index > rules.length) skipped.
+  const rules = [ruleFor("All", "always"), ruleFor("A", "filename-glob", "a_*")];
+  const r = healthReport(
+    [
+      cov(0, "All", 5, 5, false),
+      cov(1, "A", 0, 1, true),
+      cov(5, "Stale", 0, 99, true),
+    ],
+    0,
+    5,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 1, "planDeadRuleReorder: stale row skipped");
+  expect(proposals[0].rule_index === 1, "planDeadRuleReorder: in-range row kept");
+}
+
+{
+  // planDeadRuleReorder: target_index < rule_index invariant.
+  const rules = [
+    ruleFor("All", "always"),
+    ruleFor("A", "filename-glob", "a_*"),
+    ruleFor("B", "filename-glob", "b_*"),
+  ];
+  const r = healthReport(
+    [
+      cov(0, "All", 5, 5, false),
+      cov(1, "A", 0, 1, true),
+      cov(2, "B", 0, 2, true),
+    ],
+    0,
+    5,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  for (const p of proposals) {
+    expect(
+      p.target_index < p.rule_index,
+      `planDeadRuleReorder: target_index < rule_index (got t=${p.target_index} r=${p.rule_index})`,
+    );
+  }
+}
+
+{
+  // applyReorderProposal: moves rule from rule_index to target_index.
+  const rules = [
+    ruleFor("All", "always"),
+    ruleFor("Tax", "filename-glob", "tax_*"),
+  ];
+  const proposal: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "All",
+    samples_recovered: 3,
+  };
+  const next = applyReorderProposal(rules, proposal);
+  expect(next[0].name === "Tax", "applyReorderProposal: Tax now at index 0");
+  expect(next[1].name === "All", "applyReorderProposal: All pushed to index 1");
+  expect(next.length === 2, "applyReorderProposal: length preserved");
+  // Pure function — source unmodified.
+  expect(rules[0].name === "All", "applyReorderProposal: source unmutated");
+}
+
+{
+  // applyReorderProposal: returns NEW array (not same reference).
+  const rules = [ruleFor("A", "always"), ruleFor("B")];
+  const proposal: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "B",
+    target_index: 0,
+    shadowing_rule_name: "A",
+    samples_recovered: 1,
+  };
+  const next = applyReorderProposal(rules, proposal);
+  expect(next !== rules, "applyReorderProposal: NEW array, not same reference");
+  // Shared rule object identity — moved object is still ===.
+  expect(next[0] === rules[1], "applyReorderProposal: moved rule object identity shared");
+}
+
+{
+  // applyReorderProposal: target >= rule_index is a no-op (returns source).
+  const rules = [ruleFor("A"), ruleFor("B")];
+  const noop: ReorderProposal = {
+    rule_index: 0,
+    rule_name: "A",
+    target_index: 1,
+    shadowing_rule_name: "",
+    samples_recovered: 0,
+  };
+  const next = applyReorderProposal(rules, noop);
+  expect(next === rules, "applyReorderProposal: target>=rule_index is no-op");
+}
+
+{
+  // applyReorderProposal: out-of-range rule_index is a no-op.
+  const rules = [ruleFor("A"), ruleFor("B")];
+  const stale: ReorderProposal = {
+    rule_index: 5,
+    rule_name: "Stale",
+    target_index: 0,
+    shadowing_rule_name: "",
+    samples_recovered: 1,
+  };
+  const next = applyReorderProposal(rules, stale);
+  expect(next === rules, "applyReorderProposal: stale index is no-op");
+}
+
+{
+  // applyReorderProposal: three-rule chain, middle moves to front.
+  const rules = [ruleFor("Wide", "always"), ruleFor("Mid"), ruleFor("Last")];
+  const proposal: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Mid",
+    target_index: 0,
+    shadowing_rule_name: "Wide",
+    samples_recovered: 2,
+  };
+  const next = applyReorderProposal(rules, proposal);
+  expect(
+    next[0].name === "Mid" && next[1].name === "Wide" && next[2].name === "Last",
+    `applyReorderProposal: middle->front (got ${next.map((r) => r.name).join(",")})`,
+  );
+}
+
+{
+  // formatReorderProposal: with shadower, plural matches.
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "Catch-all",
+    samples_recovered: 3,
+  };
+  const copy = formatReorderProposal(p);
+  expect(
+    copy === "Move 'Tax' before 'Catch-all' to recover 3 matches",
+    `formatReorderProposal: with-shadower plural: ${copy}`,
+  );
+}
+
+{
+  // formatReorderProposal: with shadower, singular match.
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "Catch-all",
+    samples_recovered: 1,
+  };
+  const copy = formatReorderProposal(p);
+  expect(
+    copy === "Move 'Tax' before 'Catch-all' to recover 1 match",
+    `formatReorderProposal: with-shadower singular: ${copy}`,
+  );
+}
+
+{
+  // formatReorderProposal: without shadower (front-of-chain copy).
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "",
+    samples_recovered: 2,
+  };
+  const copy = formatReorderProposal(p);
+  expect(
+    copy === "Move 'Tax' to the front of the chain to recover 2 matches",
+    `formatReorderProposal: without-shadower: ${copy}`,
+  );
+}
+
+{
+  // formatReorderProposal: zero recovered (predicate now matches 0).
+  const p: ReorderProposal = {
+    rule_index: 1,
+    rule_name: "Tax",
+    target_index: 0,
+    shadowing_rule_name: "Catch-all",
+    samples_recovered: 0,
+  };
+  const copy = formatReorderProposal(p);
+  expect(
+    copy === "Move 'Tax' before 'Catch-all' (predicate now matches 0 samples)",
+    `formatReorderProposal: zero recovered: ${copy}`,
+  );
+}
+
+{
+  // formatReorderProposal: empty rule name falls back to positional.
+  const p: ReorderProposal = {
+    rule_index: 3,
+    rule_name: "",
+    target_index: 0,
+    shadowing_rule_name: "Catch-all",
+    samples_recovered: 5,
+  };
+  const copy = formatReorderProposal(p);
+  expect(
+    copy === "Move 'Rule #4' before 'Catch-all' to recover 5 matches",
+    `formatReorderProposal: empty name -> Rule #N: ${copy}`,
+  );
+}
+
+{
+  // Cross-helper round-trip: plan + apply + format compose cleanly.
+  const rules = [
+    ruleFor("Catch-all", "always"),
+    ruleFor("Tax", "filename-glob", "tax_*"),
+  ];
+  const r = healthReport(
+    [cov(0, "Catch-all", 10, 10, false), cov(1, "Tax", 0, 3, true)],
+    0,
+    10,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 1, "round-trip: one proposal");
+  const next = applyReorderProposal(rules, proposals[0]);
+  expect(next[0].name === "Tax", "round-trip: Tax now first");
+  expect(
+    formatReorderProposal(proposals[0]).includes("Move 'Tax'"),
+    "round-trip: copy mentions Tax",
+  );
 }
