@@ -1348,6 +1348,177 @@ export function isReorderEffectNoop(effect: ReorderEffect): boolean {
   );
 }
 
+// ─── Slice 146 — undo-entry bridge primitive (round-30) ──────────────
+//
+// Bridges slices 143-145's structural primitives to the UI's undo
+// affordance. A `ReorderUndoEntry` is the atomic record the UI
+// stashes after every fix-it / fix-all apply — a snapshot of the
+// rules chain BEFORE the apply landed, plus a label, a timestamp,
+// and a structural breadcrumb (`appliedEffect`) describing what
+// just changed.
+//
+// The bridge layer exists because the UI has two distinct concerns
+// that need to compose cleanly without leaking into the Svelte
+// component:
+//
+// 1. STALENESS GATE. Between the fix-it apply and the undo click
+//    the user might manually edit the chain (add a rule, rename
+//    one, drag-reorder). Reverting blindly to the snapshot would
+//    silently drop the added rule or rename. The gate composes
+//    summarizeReorderEffect(snapshot, currentChain) and refuses
+//    when the effect is NOT a pure permutation — the snapshot's
+//    rule set no longer matches the current rule set.
+//
+// 2. UNDO COPY. The button copy "Undo · Move 3 rules back" needs
+//    a count derived from the GATE'S effect (not the apply-time
+//    effect) so a user who manually moved one rule between apply
+//    and undo sees the right count. The bridge composes the
+//    copy from the live computeUndoStatus result.
+//
+// All bridge helpers are pure — no Svelte runes, no Tauri. The
+// UI slice (147) holds the $state and the button.
+
+/** One stashed undo entry: a snapshot of the chain BEFORE a
+ *  reorder landed, plus enough context for the UI to render the
+ *  undo button copy + the audit log. Carried in $state by the UI
+ *  slice; created via `captureUndoEntry`. */
+export interface ReorderUndoEntry {
+  /** Snapshot of `rules` BEFORE the reorder. Reverting = handing
+   *  this array back through `slabHopperSetRules`. */
+  snapshot: Rule[];
+  /** Human-facing label for the action being undone, sourced from
+   *  the call site (e.g. "fix-all" / "fix-it: Tax"). Used by the
+   *  undo button's accessible label + the toast suffix. */
+  label: string;
+  /** Unix-ms timestamp of when the snapshot was captured. Used by
+   *  the UI's auto-expiry timer (undo affordance dwells with the
+   *  toast for 4s) and by audit logging. */
+  capturedAt: number;
+  /** Structural breadcrumb describing what the reorder DID, in
+   *  AFTER-vs-BEFORE terms. Pre-computed at capture time so a
+   *  scripted-audit consumer can read the entry without re-running
+   *  the diff. Not the same as the live staleness check (which
+   *  re-runs against the CURRENT chain at click time). */
+  appliedEffect: ReorderEffect;
+}
+
+/** Capture a new undo entry for an apply-time `before` + `after`
+ *  chain pair. The snapshot is `before` (the chain to revert TO);
+ *  the applied effect is summarized once so the entry carries its
+ *  own breadcrumb.
+ *
+ *  Pure helper — takes a `now` injectable so tests don't race the
+ *  wall clock. Defaults to `Date.now()` at call site. */
+export function captureUndoEntry(
+  before: Rule[],
+  after: Rule[],
+  label: string,
+  now: number = Date.now(),
+): ReorderUndoEntry {
+  return {
+    snapshot: before.slice(),
+    label,
+    capturedAt: now,
+    appliedEffect: summarizeReorderEffect(before, after),
+  };
+}
+
+/** Discriminated status of an undo entry against the LIVE chain.
+ *  Computed at click time so a user who edited rules between apply
+ *  and undo gets the right behaviour. */
+export type ReorderUndoStatus =
+  /** Chain is identical to the snapshot — nothing to undo. The UI
+   *  hides the button (or disables it). */
+  | { kind: "noop" }
+  /** Chain has DRIFTED away from a clean permutation of the
+   *  snapshot — undo would silently drop / duplicate / rename
+   *  rules. The UI shows a disabled "Undo (stale)" badge with the
+   *  `reason` as tooltip rather than the live undo button. */
+  | { kind: "stale"; reason: string; effect: ReorderEffect }
+  /** Chain is a clean permutation of the snapshot — undo is
+   *  ready. `effect` describes what undo will DO (move N rules
+   *  back, in revert direction). */
+  | { kind: "ready"; effect: ReorderEffect };
+
+/** Compose an undo status from an entry + the live chain.
+ *
+ *  Algorithm:
+ *    1. Diff the snapshot against the current chain.
+ *    2. If the diff is a no-op -> `noop`.
+ *    3. If the diff is NOT a permutation -> `stale` with a
+ *       human-facing reason ("rules added since fix-all" /
+ *       "rules removed since fix-all" / "rules renamed since
+ *       fix-all"). The reason is a SINGLE breadcrumb (the dominant
+ *       bucket) so the tooltip stays short; the underlying
+ *       `effect` field carries the full breakdown for the rare
+ *       caller that wants it.
+ *    4. Otherwise -> `ready` with the inverse-direction effect
+ *       (the effect of moving FROM the live chain BACK to the
+ *       snapshot, which is what undo will produce).
+ *
+ *  Pure helper — composed entirely from the entry + the live chain. */
+export function computeUndoStatus(
+  entry: ReorderUndoEntry,
+  current: Rule[],
+): ReorderUndoStatus {
+  // The effect from current -> snapshot is what undo will DO; we
+  // want copy / staleness reasoning from THIS direction so the
+  // user reads "Move 3 rules back" rather than "Move 3 rules
+  // forward".
+  const undoDirection = summarizeReorderEffect(current, entry.snapshot);
+  if (isReorderEffectNoop(undoDirection)) {
+    return { kind: "noop" };
+  }
+  if (!undoDirection.is_permutation) {
+    // Pick the dominant drift bucket for the short reason string.
+    // The undoDirection is FROM current TO snapshot, so:
+    //   undoDirection.added   = rules in SNAPSHOT but not CURRENT
+    //                         = rules the user REMOVED since apply
+    //   undoDirection.removed = rules in CURRENT but not SNAPSHOT
+    //                         = rules the user ADDED since apply
+    const userAdded = undoDirection.removed.length;
+    const userRemoved = undoDirection.added.length;
+    const isPlural = (n: number) => (n === 1 ? "" : "s");
+    let reason: string;
+    if (userAdded > 0 && userRemoved > 0) {
+      // Mixed: dominant bucket wins; tie -> renamed framing.
+      if (userAdded === userRemoved) {
+        reason = `${userAdded} rule${isPlural(userAdded)} renamed since ${entry.label}`;
+      } else if (userAdded > userRemoved) {
+        reason = `${userAdded} rule${isPlural(userAdded)} added since ${entry.label}`;
+      } else {
+        reason = `${userRemoved} rule${isPlural(userRemoved)} removed since ${entry.label}`;
+      }
+    } else if (userAdded > 0) {
+      reason = `${userAdded} rule${isPlural(userAdded)} added since ${entry.label}`;
+    } else {
+      reason = `${userRemoved} rule${isPlural(userRemoved)} removed since ${entry.label}`;
+    }
+    return { kind: "stale", reason, effect: undoDirection };
+  }
+  return { kind: "ready", effect: undoDirection };
+}
+
+/** Human-facing copy for an undo status — the button label + the
+ *  short tooltip suffix. Discriminated on the status kind:
+ *
+ *    noop:    "Nothing to undo"
+ *    stale:   "Undo unavailable — <reason>"
+ *    ready:   "Undo · Move N rules back"
+ *
+ *  Pure helper — composes with `describeReorderEffect` to keep the
+ *  copy consistent with the rest of the round-30 vocabulary. */
+export function describeUndoStatus(status: ReorderUndoStatus): string {
+  switch (status.kind) {
+    case "noop":
+      return "Nothing to undo";
+    case "stale":
+      return `Undo unavailable — ${status.reason}`;
+    case "ready":
+      return `Undo · ${describeReorderEffect(status.effect)}`;
+  }
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors

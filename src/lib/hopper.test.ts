@@ -3244,3 +3244,189 @@ import { slabHopperSummarizeReorderEffect } from "./hopper";
   expect(effect.moved.length === 0 && effect.added.length === 0 && effect.removed.length === 0, "wrapper: empty round-trip");
   expect(effect.is_permutation === true, "wrapper: empty trivially permutation");
 }
+
+// ── Slice 146 — captureUndoEntry / computeUndoStatus / describeUndoStatus ──
+
+import {
+  captureUndoEntry,
+  computeUndoStatus,
+  describeUndoStatus,
+  type ReorderUndoEntry,
+  type ReorderUndoStatus,
+} from "./hopper";
+
+{
+  // captureUndoEntry copies the snapshot defensively.
+  const before = [makeRule("A"), makeRule("B")];
+  const after = [makeRule("B"), makeRule("A")];
+  const entry = captureUndoEntry(before, after, "fix-it: Tax", 1700000000000);
+  expect(entry.label === "fix-it: Tax", "capture: label round-trips");
+  expect(entry.capturedAt === 1700000000000, "capture: capturedAt round-trips");
+  expect(entry.snapshot.length === 2 && entry.snapshot[0].name === "A", "capture: snapshot length + content");
+  // Mutating the source after capture must not affect the entry.
+  before[0] = makeRule("Mutated");
+  expect(entry.snapshot[0].name === "A", "capture: snapshot is defensively copied");
+  // Applied effect is pre-computed.
+  expect(entry.appliedEffect.moved.length === 2, "capture: appliedEffect has correct moves");
+  expect(entry.appliedEffect.is_permutation === true, "capture: appliedEffect.is_permutation");
+}
+
+{
+  // captureUndoEntry: now defaults to Date.now() when not passed.
+  const before = [makeRule("A")];
+  const after = [makeRule("A")];
+  const start = Date.now();
+  const entry = captureUndoEntry(before, after, "test");
+  const end = Date.now();
+  expect(entry.capturedAt >= start && entry.capturedAt <= end, "capture: default now is current time");
+}
+
+{
+  // computeUndoStatus: chain matches snapshot exactly -> noop.
+  const snapshot = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const entry: ReorderUndoEntry = {
+    snapshot,
+    label: "fix-all",
+    capturedAt: 0,
+    appliedEffect: { moved: [], added: [], removed: [], is_permutation: true },
+  };
+  const status = computeUndoStatus(entry, snapshot);
+  expect(status.kind === "noop", "status: snapshot === current -> noop");
+}
+
+{
+  // computeUndoStatus: chain is a clean permutation of snapshot -> ready.
+  // Apply path was [All, Tax, Receipts] -> [Tax, Receipts, All]; the
+  // entry's snapshot is the BEFORE chain.
+  const snapshot = [makeRule("All"), makeRule("Tax"), makeRule("Receipts")];
+  const current = [makeRule("Tax"), makeRule("Receipts"), makeRule("All")];
+  const entry = captureUndoEntry(snapshot, current, "fix-all", 0);
+  const status = computeUndoStatus(entry, current);
+  expect(status.kind === "ready", "status: permutation -> ready");
+  if (status.kind === "ready") {
+    expect(status.effect.is_permutation === true, "status: ready effect is permutation");
+    expect(status.effect.moved.length === 3, "status: ready effect has 3 moves");
+  }
+}
+
+{
+  // computeUndoStatus: user ADDED a rule since the apply -> stale.
+  const snapshot = [makeRule("All"), makeRule("Tax")];
+  const current = [makeRule("Tax"), makeRule("All"), makeRule("NewRule")];
+  const entry = captureUndoEntry(snapshot, [makeRule("Tax"), makeRule("All")], "fix-it", 0);
+  const status = computeUndoStatus(entry, current);
+  expect(status.kind === "stale", "status: added rule -> stale");
+  if (status.kind === "stale") {
+    expect(status.reason.includes("added"), "status: stale reason includes 'added'");
+    expect(status.reason.includes("fix-it"), "status: stale reason includes label");
+    expect(status.reason.includes("1 rule"), "status: stale reason includes correct singular count");
+  }
+}
+
+{
+  // computeUndoStatus: user REMOVED a rule since the apply -> stale.
+  const snapshot = [makeRule("All"), makeRule("Tax"), makeRule("Receipts")];
+  const current = [makeRule("Tax"), makeRule("All")];
+  const entry = captureUndoEntry(snapshot, [makeRule("Tax"), makeRule("All"), makeRule("Receipts")], "fix-all", 0);
+  const status = computeUndoStatus(entry, current);
+  expect(status.kind === "stale", "status: removed rule -> stale");
+  if (status.kind === "stale") {
+    expect(status.reason.includes("removed"), "status: stale reason includes 'removed'");
+    expect(status.reason.includes("1 rule"), "status: stale reason singular");
+  }
+}
+
+{
+  // computeUndoStatus: user ADDED multiple rules -> plural reason.
+  const snapshot = [makeRule("A"), makeRule("B")];
+  const current = [makeRule("B"), makeRule("A"), makeRule("X"), makeRule("Y")];
+  const entry = captureUndoEntry(snapshot, [makeRule("B"), makeRule("A")], "fix-it", 0);
+  const status = computeUndoStatus(entry, current);
+  expect(status.kind === "stale", "status: multi-add -> stale");
+  if (status.kind === "stale") {
+    expect(status.reason.includes("2 rules"), "status: plural rules count");
+  }
+}
+
+{
+  // computeUndoStatus: renamed rule (equal add + remove) -> "renamed" framing.
+  const snapshot = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const current = [makeRule("A"), makeRule("B-renamed"), makeRule("C")];
+  const entry = captureUndoEntry(snapshot, [makeRule("A"), makeRule("B"), makeRule("C")], "fix-it", 0);
+  const status = computeUndoStatus(entry, current);
+  expect(status.kind === "stale", "status: rename -> stale");
+  if (status.kind === "stale") {
+    expect(status.reason.includes("renamed"), "status: rename -> 'renamed' framing");
+  }
+}
+
+{
+  // describeUndoStatus: noop branch.
+  const status: ReorderUndoStatus = { kind: "noop" };
+  expect(describeUndoStatus(status) === "Nothing to undo", "describeUndoStatus: noop");
+}
+
+{
+  // describeUndoStatus: stale branch.
+  const status: ReorderUndoStatus = {
+    kind: "stale",
+    reason: "1 rule added since fix-it",
+    effect: { moved: [], added: ["X"], removed: [], is_permutation: false },
+  };
+  expect(
+    describeUndoStatus(status) === "Undo unavailable — 1 rule added since fix-it",
+    "describeUndoStatus: stale",
+  );
+}
+
+{
+  // describeUndoStatus: ready branch.
+  const status: ReorderUndoStatus = {
+    kind: "ready",
+    effect: {
+      moved: [
+        { rule_name: "A", from_index: 1, to_index: 0 },
+        { rule_name: "B", from_index: 0, to_index: 1 },
+      ],
+      added: [],
+      removed: [],
+      is_permutation: true,
+    },
+  };
+  expect(describeUndoStatus(status) === "Undo · Move 2 rules back", "describeUndoStatus: ready");
+}
+
+{
+  // describeUndoStatus: ready singular.
+  const status: ReorderUndoStatus = {
+    kind: "ready",
+    effect: {
+      moved: [{ rule_name: "A", from_index: 1, to_index: 0 }],
+      added: [],
+      removed: [],
+      is_permutation: true,
+    },
+  };
+  expect(
+    describeUndoStatus(status) === "Undo · Move 1 rule back",
+    "describeUndoStatus: ready singular",
+  );
+}
+
+{
+  // End-to-end: capture -> compute -> describe a fix-all undo round.
+  const original = [makeRule("All"), makeRule("Tax"), makeRule("Receipts")];
+  const props: ReorderProposal[] = [
+    { rule_index: 1, rule_name: "Tax", target_index: 0, shadowing_rule_name: "All", samples_recovered: 2 },
+    { rule_index: 2, rule_name: "Receipts", target_index: 0, shadowing_rule_name: "All", samples_recovered: 4 },
+  ];
+  const outcome = applyReorderProposalsBatch(original, props);
+  const entry = captureUndoEntry(original, outcome.rules, "fix-all", 1700000000000);
+  // No subsequent edit -> ready.
+  const ready = computeUndoStatus(entry, outcome.rules);
+  expect(ready.kind === "ready", "end-to-end: post-apply -> ready");
+  expect(describeUndoStatus(ready).startsWith("Undo · Move "), "end-to-end: ready copy");
+  // After undoing (= snapshot back) -> noop.
+  const afterUndo = computeUndoStatus(entry, original);
+  expect(afterUndo.kind === "noop", "end-to-end: post-undo -> noop");
+}
