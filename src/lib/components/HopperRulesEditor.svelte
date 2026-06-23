@@ -30,11 +30,15 @@
     slabHopperSampleDrilldown,
     slabHopperExportDrilldownCsv,
     slabHopperExportDrilldownJson,
+    slabHopperExportCoverageCsv,
+    slabHopperExportCoverageJson,
     suggestDrilldownExportFilename,
+    suggestCoverageExportFilename,
     fallthroughPercent,
     ruleMatchPercent,
     ruleCoverageDiagnostic,
     summarizeCoverage,
+    summarizeCoverageHealth,
     ruleBucket,
     FALLTHROUGH_BUCKET,
     sampleBucketEquals,
@@ -138,6 +142,19 @@
   let drilldownExporting = $state(false);
   let drilldownExportToast = $state<string | null>(null);
   let drilldownExportToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** v3.40 Slice 127 — coverage CSV+JSON export state.
+   *  Mirrors the drilldown export state above: one in-flight gate
+   *  (`coverageExporting`) so back-to-back CSV/JSON clicks don't
+   *  pile up; one shared toast cell (`coverageExportToast`) for the
+   *  "Exported N rules as CSV/JSON (X.X KB)" success notice;
+   *  `coverageExportMenuOpen` controls the inline Export… popover
+   *  visibility (CSV/JSON branches live in the popover, not as
+   *  sibling buttons, to keep the cov-head action row compact). */
+  let coverageExporting = $state(false);
+  let coverageExportMenuOpen = $state(false);
+  let coverageExportToast = $state<string | null>(null);
+  let coverageExportToastTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** v3.22.0 Hopper Loop — when true, the BackfillPanel overlay is
    *  mounted. Driven by the "Test on this folder" button below and by
@@ -270,6 +287,16 @@
     if (coverageOpen) scheduleCoverage(150);
   }
 
+  /** v3.40 Slice 127 — chain-health summary derived from the
+   *  in-flight coverage report. Null when no report has loaded yet
+   *  (the UI hides the chip in that case). Reactive — recomputes
+   *  whenever the coverage state cell changes, which means a rule
+   *  edit + 400ms-debounced coverage refresh paints the new chip
+   *  the moment the report lands. */
+  let coverageHealth = $derived.by(() =>
+    coverage ? summarizeCoverageHealth(coverage) : null,
+  );
+
   // -------------------------------------------------------------------
   // v3.40 Slice 86 — sample drilldown
   // -------------------------------------------------------------------
@@ -399,6 +426,72 @@
     await exportDrilldown("json");
   }
 
+  // ─── Slice 127 — coverage CSV+JSON export handler ───────────────────
+  //
+  // Mirrors exportDrilldown exactly in shape: resolve the suggested
+  // filename via the slice-125 helper (passing the requested `ext`),
+  // open the native save-as dialog, ship the in-state coverage
+  // verbatim (the LOADED report, NOT a re-fetch — same in-state-
+  // snapshot semantics as the drilldown export so "click Export"
+  // and "click Save" carry the SAME report a background rule edit
+  // can't sneak past) to the slice-125 command, then flash a 4s
+  // success toast.
+  //
+  // Cancellation (user dismisses the dialog) is a clean no-op — the
+  // toast doesn't fire and `coverageExporting` resets in the
+  // finally. Both formats share the same in-flight gate so the
+  // user can't double-trigger or split the popover state.
+  //
+  // The Export… popover closes on a successful export so the panel
+  // doesn't carry stale state; on cancellation it stays open so the
+  // user can retry with the other format.
+
+  async function exportCoverage(format: "csv" | "json") {
+    if (coverage === null) return;
+    if (coverageExporting) return;
+    coverageExporting = true;
+    coverageExportToast = null;
+    try {
+      const defaultPath = suggestCoverageExportFilename({
+        watchId,
+        ext: format,
+      });
+      const filterName = format === "csv" ? "CSV" : "JSON";
+      const title =
+        format === "csv"
+          ? "Export coverage as CSV"
+          : "Export coverage as JSON";
+      const target = await saveDialog({
+        defaultPath,
+        filters: [{ name: filterName, extensions: [format] }],
+        title,
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        format === "csv"
+          ? await slabHopperExportCoverageCsv(coverage, target)
+          : await slabHopperExportCoverageJson(coverage, target);
+      // Count rules in the body; the fall-through synthetic row is
+      // implicit (the CSV adds it, the JSON envelope carries
+      // fallthrough_count). Toast reads "rules" rather than "rows"
+      // so the user knows what they exported without parsing the
+      // file.
+      const ruleCount = coverage.rules.length;
+      const ruleNoun = ruleCount === 1 ? "rule" : "rules";
+      coverageExportToast =
+        `Exported ${ruleCount} ${ruleNoun} as ${filterName} (${formatBytes(bytes)})`;
+      coverageExportMenuOpen = false;
+      if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
+      coverageExportToastTimer = setTimeout(() => {
+        coverageExportToast = null;
+      }, 4000);
+    } catch (e) {
+      coverageError = `Export failed: ${String(e)}`;
+    } finally {
+      coverageExporting = false;
+    }
+  }
+
   /** Local KB/MB formatter for the export toast. Mirrors
    *  RecentInstallsDrawer's formatBytes shape (1 decimal place,
    *  K/M/G suffixes). Kept local because the hopper.ts formatBytes
@@ -414,9 +507,20 @@
   /** Window-level Escape closes the drilldown popover. We don't
    *  install a click-outside listener — clicking elsewhere on the
    *  page is typically a deliberate navigation, and the explicit
-   *  Close button is always visible inside the popover. */
+   *  Close button is always visible inside the popover.
+   *
+   *  Slice 127: the coverage Export… popover is ALSO dismissed on
+   *  Escape, taking priority over the drilldown popover so a user
+   *  who opened both gets the most-recently-opened one closed first
+   *  (Notion-style stacked-overlay chain). */
   function onWindowKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && openBucket !== null) {
+    if (e.key !== "Escape") return;
+    if (coverageExportMenuOpen) {
+      e.stopPropagation();
+      coverageExportMenuOpen = false;
+      return;
+    }
+    if (openBucket !== null) {
       e.stopPropagation();
       closeDrilldown();
     }
@@ -784,6 +888,16 @@
           <span class="cov-summary">
             {coverage ? summarizeCoverage(coverage) : "Loading…"}
           </span>
+          {#if coverageHealth && coverageHealth.kind !== "empty"}
+            <span
+              class="cov-health"
+              class:healthy={coverageHealth.kind === "healthy"}
+              class:warn={coverageHealth.kind === "warn"}
+              class:critical={coverageHealth.kind === "critical"}
+              title={coverageHealth.text}
+              aria-label="Chain health: {coverageHealth.text}"
+            >{coverageHealth.text}</span>
+          {/if}
           {#if coverageLoading}
             <span class="dot"></span>
           {/if}
@@ -809,8 +923,44 @@
             disabled={coverageLoading}
             title="Recompute coverage"
           >Refresh</button>
+          <div class="cov-export-anchor">
+            <button
+              type="button"
+              class="ghost"
+              onclick={() => (coverageExportMenuOpen = !coverageExportMenuOpen)}
+              disabled={coverage === null
+                || coverage.rules.length === 0
+                || coverageExporting}
+              aria-haspopup="menu"
+              aria-expanded={coverageExportMenuOpen}
+              title={coverage && coverage.rules.length > 0
+                ? `Save the coverage report (${coverage.rules.length} rule${coverage.rules.length === 1 ? "" : "s"})`
+                : "Add a rule before exporting the coverage report"}
+            >{coverageExporting ? "Exporting…" : "Export…"}</button>
+            {#if coverageExportMenuOpen && coverage && coverage.rules.length > 0}
+              <div class="cov-export-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onclick={() => void exportCoverage("csv")}
+                  disabled={coverageExporting}
+                  title="RFC-4180 CSV with per-rule rows + trailing fall-through row"
+                >Export as CSV</button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onclick={() => void exportCoverage("json")}
+                  disabled={coverageExporting}
+                  title="Self-describing JSON envelope with chain-health totals"
+                >Export as JSON</button>
+              </div>
+            {/if}
+          </div>
         </div>
       </header>
+      {#if coverageExportToast}
+        <p class="cov-export-toast" role="status">{coverageExportToast}</p>
+      {/if}
 
       {#if coverageError}
         <div class="cov-error" role="alert">{coverageError}</div>
@@ -1506,6 +1656,96 @@
     color: inherit;
     font-size: 12px;
     font-family: ui-monospace, SFMono-Regular, monospace;
+  }
+
+  /* Slice 127 — chain-health chip beside the summary line. Three
+     visual treatments: neutral healthy, warm warn, danger critical.
+     Empty kind is filtered upstream so the chip never renders for
+     "no samples yet" — the cov-summary's "Loading…" / "No recent
+     runs" copy carries that state. */
+  .cov-health {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.78);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .cov-health.healthy {
+    background: color-mix(in srgb, #6edc9a 14%, transparent);
+    border-color: color-mix(in srgb, #6edc9a 32%, transparent);
+    color: #b6f1cd;
+  }
+  .cov-health.warn {
+    background: color-mix(in srgb, #ffb648 14%, transparent);
+    border-color: color-mix(in srgb, #ffb648 32%, transparent);
+    color: #ffd9a2;
+  }
+  .cov-health.critical {
+    background: color-mix(in srgb, #ff5d6c 16%, transparent);
+    border-color: color-mix(in srgb, #ff5d6c 38%, transparent);
+    color: #ffb8be;
+  }
+
+  /* Slice 127 — Export popover anchor + menu. Same shape as the
+     drilldown popover Export… affordance but lives on the coverage
+     section's action row (cov-actions). The anchor is position:
+     relative so the absolute-positioned menu lands right-aligned to
+     the trigger; menu z-index sits above the drilldown popover so
+     the user can layer them. */
+  .cov-export-anchor {
+    position: relative;
+    display: inline-block;
+  }
+  .cov-export-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    background: rgba(20, 24, 36, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    min-width: 160px;
+  }
+  .cov-export-menu button {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.86);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 6px 10px;
+    text-align: left;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .cov-export-menu button:hover {
+    background: rgba(124, 140, 255, 0.14);
+    border-color: rgba(124, 140, 255, 0.32);
+  }
+  .cov-export-menu button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .cov-export-toast {
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: rgb(170, 230, 195);
+    background: rgba(110, 220, 154, 0.1);
+    border: 1px solid rgba(110, 220, 154, 0.22);
+    border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+    animation: cov-export-toast-fade-in 0.16s ease-out;
+  }
+  @keyframes cov-export-toast-fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
 
   .cov-error {
