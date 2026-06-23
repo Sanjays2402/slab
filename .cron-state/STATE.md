@@ -1,13 +1,325 @@
 # Slab Cron State
 
-Last updated: 2026-06-22 21:30 PT by Cake (cron) — round-26 BATCH shipped: 5 slices closing one cohesive arc. Hopper rule coverage export (slices 123-127): rule_coverage_to_csv(report, include_header) -> String 6-column RFC-4180 with one-row-per-rule + trailing synthetic Fall-through row (emitted even when zero — audit signal not silence) + RULE_COVERAGE_CSV_HEADER pub const + private pct_two_decimal divide-by-zero guard + coverage_diagnostic_str mirroring TS ruleCoverageDiagnostic priority chain dead>zero>shadowed>healthy (slice 123); pure-data rule_coverage_to_json(report) -> RuleCoverageExportEnvelope 10-field with envelope-level chain-health totals pre-derived in ONE pass (dead_rule_count + shadowed_rule_count + zero_coverage_rule_count) + fallthrough_pct rounded to two decimals matching the CSV serialiser EXACTLY + RULE_COVERAGE_EXPORT_SCHEMA_VERSION = 1 PARALLEL-versioned with all seven sibling envelopes (slice 124); 2 Tauri commands (slab_hopper_export_coverage_csv + _json) wired into invoke handler + TS surface (slabHopperExportCoverageCsv + slabHopperExportCoverageJson async wrappers + suggestCoverageExportFilename emitting hopper-coverage_<watch>_<YYYY-MM-DD>.<ext> with NO per-bucket slot — chain-wide export) (slice 125); pure helper summarizeCoverageHealth(report, opts) -> CoverageHealth { kind, text, dead, shadowed, zero, fallthrough, fallthroughPct } with four mutually-exclusive priority-ordered kinds empty>critical>warn>healthy + pluralisation contract (slice 126); coverage panel Export… popover + 3-state chain-health chip (neutral healthy / warm warn / danger critical) inline beside the routed-percentage summary + exportCoverage(format) handler mirroring exportDrilldown shape + Escape chain extended with coverageExportMenuOpen first (Notion-style stacked dismissal) + scoped CSS for .cov-health + .cov-export-anchor + .cov-export-menu + .cov-export-toast (slice 127).
+Last updated: 2026-06-23 01:30 PT by Cake (cron) — round-27 BATCH shipped: 5 slices closing one cohesive arc. Hopper coverage diagnostic filter (slices 128-132): pure-data filter_coverage_by_diagnostic(report, CoverageFilter) -> RuleCoverageReport with CoverageFilter discriminator (All|Dead|Zero|Shadowed|Healthy) + slug() helper + private rule_matches_filter composed from coverage_diagnostic_str so the filter + the CSV diagnostic column never drift apart + priority chain dead>zero>shadowed>healthy preserved end-to-end (dead rule excluded from shadowed filter pinned by dedicated test) + totals preserved verbatim (fallthrough + total_samples are corpus-scoped invariants of the underlying chain RUN) + conservation invariant test (dead+zero+shadowed+healthy == rule_count) (slice 128); TS mirror filterCoverageByDiagnostic(report, kind) + ruleMatchesCoverageFilter(rule, kind) + CoverageDiagnosticFilter type ("all"|"dead"|"zero"|"shadowed"|"healthy") + COVERAGE_FILTER_KINDS readonly array (display order: all > dead > shadowed > zero > healthy) + private coverageRuleBucket classifier composed once for both helpers + formatCoverageFilterSummary("Showing all 6 rules" / "Showing 2 of 6 rules — dead" / "Showing 0 rules" empty-chain / singular "rule" noun) + identity transform returns NEW shallow-clone rules array (slice 129); slab_hopper_filter_coverage Tauri command wired into invoke handler + slabHopperFilterCoverage async wrapper with browser-mode delegation to local TS helper + suggestCoverageExportFilename gains optional `filter` parameter inserting slug between watch + date with "all"/unset omitting slot entirely (back-compat with round-26 export filenames byte-for-byte) (slice 130); coverageHealthClickTarget(health) -> CoverageDiagnosticFilter | null bridge composing priority chain (critical->dead, warn+shadowed->shadowed, warn+zero->zero, warn+high-fallthrough->null because no rule-level filter expresses fall-through, healthy/empty/null->null) matching summarizeCoverageHealth EXACTLY pinned by cross-helper-agreement test + never-returns-"all" pin (slice 131); demo-able UI clickable chain-health chip routing through clickCoverageHealth handler with conditional <button vs span> render preserving chip color + 5-chip diagnostic filter row (All|Dead|Shadowed|Zero|Healthy) with active state + aria-pressed + Cmd-shared setCoverageFilter handler auto-closing export menu + "Showing X of Y" sub-line (aria-live) + Clear filter button (right-anchored, conditional on coverageFilter !== "all") + filtered rule list with accent rail .cov-list.filtered + fall-through synthetic row HIDES while filtered (not a rule bucket) + no-matches empty cell with inline link-style clear-filter button + filtered exports ship displayedCoverage with filter slug in filename + toast appends "(filtered: dead)" + Escape chain extended (filter clears LAST — Notion-style deepest-state stack entry) + ~130 lines scoped CSS for .cov-health-btn + .cov-filters + .cov-filter-chip + .cov-filter-summary + .cov-filter-clear + .cov-list.filtered + .cov-empty-filter (slice 132).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `4765bdf` — "feat(hopper): coverage panel Export menu with chain-health chip".
+Latest commit: `84f4784` — "feat(hopper): coverage diagnostic filter UI with clickable chain-health chip".
+
+### What round-27 (2026-06-23 01:30 PT) just shipped
+
+Five slices closing one cohesive arc. Round 26's chain-health
+chip surfaced the chain-level story ("2 dead rules — reorder or
+tighten the shadowing rules") but the natural follow-up — "OK,
+WHICH 2 rules?" — had no answer without manually scanning the
+per-rule list for matching chips. In a 20-rule chain that's
+tedious; in a chain with mixed diagnostics (1 dead + 3 shadowed)
+the chip's count didn't tell the user where to start looking.
+Tonight that drilldown closes end-to-end: pure-data filter
+primitive on the backend, TS mirror for instant client-side
+reactivity, server-side wire command for the export path, a
+bridge helper composing the chain-health priority into a filter
+click target, and a demo-able UI making the chain-health chip
+itself clickable.
+
+Round 26's closing notes listed "Hopper rule reorder-by-drag in
+the coverage panel (drag a dead row up to fix shadowing in one
+motion — natural follow-up to the chip surfacing the problem)"
+as a candidate; round 27 picked the diagnostic FILTER path
+instead because it's the structurally-cleanest 5-layer arc that
+extends the same chain-health-chip surface (the chip going from
+informational to clickable closes the "what / now what" loop)
+without inventing a new gesture vocabulary. Reorder-by-drag
+stays on the candidates list for a future tick.
+
+- Slice 128: rule coverage diagnostic filter primitive (050f16e).
+  filter_coverage_by_diagnostic(report, CoverageFilter) ->
+  RuleCoverageReport. CoverageFilter discriminator with five
+  variants (All | Dead | Zero | Shadowed | Healthy) +
+  slug() helper mapping each to its wire string ("all" / "dead"
+  / "zero" / "shadowed" / "healthy"). Private rule_matches_filter
+  predicate composed from coverage_diagnostic_str so the filter
+  + the CSV diagnostic column never drift apart. Priority chain
+  dead > zero > shadowed > healthy preserved end-to-end — a
+  rule classified as dead does NOT pass the shadowed filter
+  even though its predicate (would_match > first_match)
+  satisfies the shadowed condition. Pinned by
+  filter_shadowed_excludes_dead_even_though_dead_is_also_shadowed
+  + a conservation invariant test
+  (filter_envelope_counts_agree_with_filter_results) that
+  asserts dead+zero+shadowed+healthy == rule_count, matching the
+  RuleCoverageExportEnvelope's *_rule_count fields exactly.
+  Totals preserved verbatim — fallthrough + total_samples are
+  corpus-scoped invariants of the underlying chain RUN, NOT
+  properties of the filtered slice. A consumer reading a
+  filtered hopper-coverage_watch-7_dead_2026-06-23.csv and the
+  unfiltered hopper-coverage_watch-7_2026-06-23.csv of the same
+  run sees identical fall-through accounting; only the per-rule
+  rows differ. 11 tests.
+
+- Slice 129: TS mirror + summary helper (83ddbe3).
+  filterCoverageByDiagnostic(report, kind) +
+  ruleMatchesCoverageFilter(rule, kind) + CoverageDiagnosticFilter
+  type ("all"|"dead"|"zero"|"shadowed"|"healthy") +
+  COVERAGE_FILTER_KINDS readonly array names display order
+  (all > dead > shadowed > zero > healthy) so the UI's filter-
+  chip row can iterate without re-listing variants. Private
+  coverageRuleBucket() classifier returns the bucket each rule
+  lives in ("healthy" as a real bucket here, not "no
+  diagnostic") so the filter and the formatter compose from one
+  classifier — a future change to the priority chain doesn't
+  have to be mirrored twice. Identity transform ("all") returns
+  a SHALLOW CLONE (rules.slice()) so a downstream mutation
+  can't leak back into the source. Per-rule object identity IS
+  shared — pinned by an explicit object-identity test.
+  formatCoverageFilterSummary discriminated copy: "Showing all 6
+  rules" / "Showing 1 of 6 rules — dead" / "Showing 0 of 6
+  rules — dead" (no rows match) / "Showing 1 of 1 rule —
+  healthy" (singular total) / "Showing 0 rules" (empty chain).
+  53 inline tests.
+
+- Slice 130: server-side filter command + filename slot (8a0ecaa).
+  slab_hopper_filter_coverage Tauri command wraps slice 128 1:1
+  registered in lib.rs invoke handler. Reasons for a server-side
+  command at all (the TS mirror already handles in-panel
+  rendering): (1) export path produces a self-consistent wire
+  shape via the SAME rule_coverage_to_csv / rule_coverage_to_json
+  primitives — no parallel renderer-side filter to drift out of
+  sync; (2) a future scripted-export consumer (CLI driver,
+  cron audit dump) gets the filter as a first-class command
+  rather than having to ship a TS pre-filter step. slabHopperFilterCoverage
+  async wrapper delegates to local TS helper in browser-mode.
+  suggestCoverageExportFilename gains optional `filter` parameter
+  inserting the slug between watch + date — "all"/unset OMITS
+  the slot entirely (no "_all_" literal) preserving round-26
+  filenames byte-for-byte. A narrowing filter produces
+  hopper-coverage_watch-7_dead_2026-06-23.csv so the filename
+  itself advertises what's in the file. 10 tests.
+
+- Slice 131: coverageHealthClickTarget bridge helper (522b1ad).
+  Pure helper bridging CoverageHealth (chain-level chip state)
+  to the CoverageDiagnosticFilter kind whose chip the click-
+  through should activate. Critical (dead > 0) -> "dead". Warn
+  + shadowed > 0 -> "shadowed". Warn + zero > 0 -> "zero". Warn
+  + high-fall-through only (no rule kind) -> null because no
+  rule-level filter expresses "this percentage of files fell
+  through" — the fall-through ROW is a separate UI affordance.
+  Healthy / empty / null health -> null. Same priority chain as
+  summarizeCoverageHealth EXACTLY pinned by a cross-helper
+  agreement test that constructs five different health states
+  via summarizeCoverageHealth and asserts the click target is
+  reachable through the filter helper for every one. Never
+  returns "all" (which would be a no-op transition) — pinned by
+  a dedicated never-returns-"all" test. Returns only one of
+  dead/shadowed/zero/null. 26 tests.
+
+- Slice 132: demo-able UI (84f4784). The clickable chain-health
+  chip + 5-chip diagnostic filter row + "Showing X of Y" sub-
+  line + filtered rule list + filtered exports + Escape chain
+  extension. Conditional <button vs span> render for the
+  chain-health chip — when coverageHealthClickTarget returns a
+  non-null filter kind the chip becomes a <button> with
+  pointer cursor + hover lift + focus ring + .active inset
+  shadow when the chip's filter is currently selected; when
+  the click target is null (healthy / empty / warn-only-
+  fall-through) it stays a passive <span> with the same color
+  treatment. clickCoverageHealth handler routes through the
+  slice-131 helper so the Svelte component never knows the
+  priority chain. 5-chip diagnostic filter row (All / Dead /
+  Shadowed / Zero / Healthy) with active state + aria-pressed
+  + shared setCoverageFilter handler auto-closing the export
+  menu (the menu's text says "Export N rules" — the count is
+  about to change). "Showing X of Y rules — dead" sub-line
+  with aria-live so a screen reader announces the count
+  change. Clear filter button right-anchored via margin-left:auto
+  so it's pinned to the row's right edge regardless of
+  filter-chip count drift. Filtered rule list reads
+  displayedCoverage.rules (slice 129 helper output);
+  cov-list.filtered class paints a subtle accent rail on the
+  left so a user glancing at the panel knows the list isn't
+  the full chain. Fall-through synthetic row HIDES while
+  filtered — a narrowing filter narrows to RULES, and the
+  fall-through is not a rule bucket; keeping it would confuse
+  the per-rule export filename's "_dead_" slug with the
+  unrelated fall-through count. No-matches empty state (e.g.
+  clicking "Dead" on a fully-healthy chain) renders a
+  dashed-border empty cell with an inline link-style "clear
+  the filter" button. Filtered exports ship displayedCoverage
+  (not raw coverage) to the export commands AND pass the
+  filter slug to suggestCoverageExportFilename — a filtered
+  "dead" CSV produces hopper-coverage_watch-7_dead_<date>.csv
+  carrying ONLY the dead rules. Toast appends "(filtered:
+  dead)" when a narrowing filter is active so the user has a
+  third confirmation of what just landed. Escape chain
+  extended: filter clears LAST after coverage Export menu
+  (slice 127) and drilldown popover — the filter is the
+  least-modal of the three states (persists across rule edits)
+  so it's the deepest stack entry. ~130 lines scoped CSS:
+  .cov-health-btn (chip-as-button + hover lift + focus ring +
+  .active inset shadow), .cov-filters (flex row, gap 6px,
+  wraps), .cov-filter-chip (pill, text-transform lowercase to
+  match the chip's slug vocabulary, hover + focus + active
+  with same accent color as the chain-health chip's neutral
+  state), .cov-filter-summary (muted sub-text), .cov-filter-clear
+  (small ghost button, margin-left auto), .cov-list.filtered
+  (accent rail left border), .cov-empty-filter (dashed cell
+  with inline link-style clear button).
+
+Gates result: cargo fmt clean (no changes needed), cargo
+clippy --lib -- -D warnings PASSED CLEAN in 12.79s, cargo test
+--lib 2555 passed / 0 failed (round-26 baseline 2544 + 11
+filter primitive tests for slice 128 = 2555), pnpm check 0
+errors / 104 warnings (round-26 baseline preserved EXACTLY —
+zero new warnings from the filter row markup, the chain-health
+button swap, the displayedCoverage iteration, the conditional
+fall-through row, the no-match empty cell, or any of the new
+CSS), tsx src/lib/hopper.test.ts 190 inline expects pass
+(round-26 baseline 101 + 53 from slice 129 + 10 from slice 130
++ 26 from slice 131 = 190), tsx src/lib/marketplace.test.ts 138
+inline expects pass unchanged (no marketplace changes this tick).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-26: backend
+  primitive -> TS mirror primitive -> Tauri command + filename
+  helper extension -> pure-helper composer (slice 131 — the
+  bridge from chain-health to filter kind) -> demo-able UI
+  slice. Round 27 differs from earlier arcs in that the
+  backend primitive is a FILTER (not an exporter or analyser),
+  reflecting that round 26 already shipped the analyser + the
+  exporter; the natural next layer was "narrow what we have"
+  rather than "compute something new". The 5-layer cadence
+  remains the canonical batch shape.
+- Round 27 picked the chain-health-chip click-through path
+  rather than rule reorder-by-drag (round 26's closing
+  candidate) because it's the structurally-cleanest 5-layer
+  arc that EXTENDS the same chain-health-chip surface (the
+  chip going from informational to clickable closes the
+  "what / now what" loop) without inventing a new gesture
+  vocabulary. Reorder-by-drag stays on the candidates list
+  for a future tick — it's a richer interaction model
+  worth a dedicated round.
+- The bridge helper (slice 131) is the load-bearing piece. By
+  composing the priority chain ONCE in coverageHealthClickTarget,
+  the UI never needs to know dead > shadowed > zero — that
+  knowledge lives in the helper. A future change to either
+  summarizeCoverageHealth or filterCoverageByDiagnostic that
+  reorders the chain bumps both helpers + this bridge
+  together; the cross-helper-agreement test pins the
+  three-way contract.
+- Filter slot in suggestCoverageExportFilename is the second
+  TWO-slot extension to the canonical filename shape (the
+  drilldown helper has bucket; coverage has filter). Both
+  optional, both omitted on the chain-wide / unfiltered
+  default path, both inserting between the watch slot and
+  the date so the date stays the most-recent-thing-on-the-
+  right anchor across the family.
+
+DESIGN NOTES:
+- The chain-health chip is now a TWO-affordance surface: read
+  the copy + click to drill in. Conditional <button vs span>
+  preserves the chip's accent color (.healthy/.warn/.critical
+  class:directives apply to both elements) while gating the
+  pointer cursor + hover lift + focus ring to the clickable
+  variant. .cov-health-btn.active inset shadow signals
+  "your last click landed on me" without changing the chip's
+  primary color (which is reserved for the chain-health
+  classification, not the filter state).
+- Filter chip row uses lowercase chip labels (text-transform:
+  lowercase) so they match the slug vocabulary used in the
+  filename slot + the filter summary + the toast suffix —
+  one consistent string ("dead" / "shadowed" / "zero" /
+  "healthy") appears across the chip + the chain-health
+  copy + the export filename + the no-match empty state.
+- Fall-through synthetic row HIDES while filtered. A
+  narrowing filter narrows to RULES; the fall-through is
+  not a rule bucket. Keeping it would let a user export a
+  "_dead_" CSV that includes the fall-through count and
+  produce confusing reading of the file later. The drilldown
+  fall-through bucket (slice 86) remains accessible from
+  the cov-list when the filter is "all".
+- Escape chain stacking order matches the visual stacking
+  z-index: coverage Export menu (z 12) > drilldown popover
+  (z 10) > diagnostic filter (no z, persistent panel state).
+  A user with all three active gets a clean three-keystroke
+  unwind: Esc -> menu closes; Esc -> popover closes; Esc ->
+  filter clears.
+- Filtered-export toast suffix "(filtered: dead)" is the
+  THIRD confirmation of what just landed on disk (chip
+  active + summary sub-line + toast) — a paralegal who
+  scrolls past the toast before reading still has the
+  filename's slug to tell them what's in the file.
+
+## Roadmap — round 27 (Hopper coverage diagnostic filter) — ALL DONE
+
+Round 27 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the Hopper coverage diagnostic filter path
+(slices 128-132). One backend pure-data primitive, one TS
+mirror + summary helper, one server-side wire command + filename
+slot extension, one bridge helper composing chain-health to
+filter kind, and one demo-able composite UI slice. Same canonical
+five-layer pattern as rounds 19-26.
+
+128. ~~**rule coverage diagnostic filter primitive**~~ —
+     DONE (2026-06-23 01:05 PT, 050f16e). Pure-data
+     filter_coverage_by_diagnostic(report, CoverageFilter) ->
+     RuleCoverageReport with CoverageFilter discriminator
+     (All|Dead|Zero|Shadowed|Healthy) + slug() helper + private
+     rule_matches_filter composed from coverage_diagnostic_str
+     + priority chain dead>zero>shadowed>healthy preserved
+     end-to-end + totals preserved verbatim. 11 tests.
+129. ~~**coverage diagnostic filter TS mirror + summary**~~ —
+     DONE (2026-06-23 01:10 PT, 83ddbe3). filterCoverageByDiagnostic
+     + ruleMatchesCoverageFilter + CoverageDiagnosticFilter type
+     + COVERAGE_FILTER_KINDS readonly array + private
+     coverageRuleBucket classifier + formatCoverageFilterSummary
+     discriminated copy + identity transform returns NEW shallow-
+     clone rules array. 53 inline tests.
+130. ~~**coverage filter Tauri command + filename slot**~~ —
+     DONE (2026-06-23 01:15 PT, 8a0ecaa). slab_hopper_filter_coverage
+     Tauri command wired into invoke handler +
+     slabHopperFilterCoverage async wrapper with browser-mode
+     delegation + suggestCoverageExportFilename gains optional
+     `filter` parameter with back-compat "all"/unset omitting
+     slot entirely. 10 inline tests.
+131. ~~**coverageHealthClickTarget bridge helper**~~ —
+     DONE (2026-06-23 01:20 PT, 522b1ad). Pure helper bridging
+     CoverageHealth -> CoverageDiagnosticFilter | null with
+     critical->dead, warn+shadowed->shadowed, warn+zero->zero,
+     warn+high-fallthrough->null, healthy/empty/null->null.
+     Matches summarizeCoverageHealth EXACTLY pinned by
+     cross-helper-agreement test + never-returns-"all" pin.
+     26 inline tests.
+132. ~~**coverage diagnostic filter UI with clickable chip**~~ —
+     DONE (2026-06-23 01:30 PT, 84f4784). Clickable chain-
+     health chip (conditional <button vs span>) + 5-chip
+     diagnostic filter row + "Showing X of Y" aria-live sub-
+     line + Clear filter button + filtered rule list with
+     accent rail + fall-through row hides while filtered +
+     no-matches empty cell + filtered exports ship
+     displayedCoverage + toast suffix + Escape chain extended
+     + ~130 lines scoped CSS.
+
+     With round 27 done, the chain-health chip's "what / now
+     what" loop closes — a paralegal seeing "2 dead rules"
+     can now drill into those 2 rules in one click + export
+     them as a filtered audit-trail CSV in two more. Next
+     subsystem candidates: Hopper rule reorder-by-drag in the
+     coverage panel (round 26's deferred candidate — natural
+     follow-up that lets the user FIX the dead rules they
+     just drilled into), drilldown row -> cross-surface filter
+     (clicking a fall-through filename in the popover carries
+     the search query into the document inspector), coverage
+     panel "Show only X" filter could pair with a "Reorder
+     mode" toggle so the dead-filtered list becomes a drag
+     surface, Loom-grade tagging explorer, doc-detail
+     metadata editor read/write surface, Beacon cache
+     inspector polish (column sort by basename / model facet),
+     Quill multi-document field-detect queueing, histogram
+     hover-tooltip on bar segments, per-plugin "Run prune
+     now" affordance (round 25's deferred candidate).
 
 ### What round-26 (2026-06-22 21:30 PT) just shipped
 
@@ -7767,5 +8079,46 @@ tag-filter surface is mature. Ship ONE complete vertical slice per tick.
   demo-able with this batch. Next subsystem candidates: smart-folders
   hub UI polish, collections, doc-detail metadata editor, Beacon cache
   inspector, plugin marketplace.
+- 2026-06-23 01:30 PT (Cake, cron): round-27 BATCH shipped — Hopper
+  coverage diagnostic filter, 5 slices closing one cohesive arc.
+  Slice 128 (050f16e) backend filter_coverage_by_diagnostic primitive
+  + CoverageFilter enum (All|Dead|Zero|Shadowed|Healthy) + slug()
+  helper + priority chain dead>zero>shadowed>healthy preserved
+  end-to-end + 11 tests. Slice 129 (83ddbe3) TS mirror
+  filterCoverageByDiagnostic + ruleMatchesCoverageFilter +
+  CoverageDiagnosticFilter type + COVERAGE_FILTER_KINDS readonly
+  array + formatCoverageFilterSummary discriminated copy + 53 tests.
+  Slice 130 (8a0ecaa) slab_hopper_filter_coverage Tauri command +
+  slabHopperFilterCoverage async wrapper + suggestCoverageExportFilename
+  optional filter slot inserting slug between watch + date with
+  "all"/unset omitting slot entirely (round-26 back-compat
+  byte-for-byte) + 10 tests. Slice 131 (522b1ad)
+  coverageHealthClickTarget bridge composing chain-health priority
+  (critical->dead, warn+shadowed->shadowed, warn+zero->zero,
+  warn+high-fallthrough->null, healthy/empty->null) with
+  cross-helper-agreement pin + never-returns-"all" pin + 26 tests.
+  Slice 132 (84f4784) demo UI clickable chain-health chip
+  (conditional button/span render) + 5-chip diagnostic filter row
+  with active state + aria-pressed + shared setCoverageFilter
+  handler + "Showing X of Y rules — dead" aria-live sub-line +
+  right-anchored Clear filter button + filtered rule list with
+  accent rail + fall-through synthetic row HIDES while filtered +
+  no-matches empty cell with inline link-style clear-filter button
+  + filtered exports ship displayedCoverage to export commands
+  with filter slug in filename + toast suffix "(filtered: dead)" +
+  Escape chain extended (filter clears LAST — least-modal state
+  is deepest stack entry) + ~130 lines scoped CSS. Gates: cargo
+  fmt clean, cargo clippy --lib -D warnings clean in 12.79s,
+  cargo test --lib 2555 passed / 0 failed (round-26 baseline 2544
+  + 11 from slice 128 = 2555), pnpm check 0 errors / 104 warnings
+  (round-26 baseline preserved EXACTLY), tsx hopper.test.ts 190
+  inline expects pass (round-26 101 + 53 + 10 + 26 = 190), tsx
+  marketplace.test.ts 138 unchanged. Pushed origin/main
+  29a4ce9..84f4784, verified landed. Next candidates: rule
+  reorder-by-drag (round 26's deferred, natural follow-up that
+  lets the user FIX the dead rules they just drilled into),
+  drilldown row -> cross-surface filter, coverage panel
+  "Show only X" pairing with reorder mode, per-plugin "Run
+  prune now" affordance.
 
 
