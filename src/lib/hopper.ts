@@ -917,6 +917,172 @@ export function describeReorderConfidence(
   }
 }
 
+// ─── Slice 139 — batch reorder applier (TS mirror of slice 138) ──────
+//
+// Round 28 shipped the per-row "Fix it" pill that applies ONE
+// proposal at a time. The natural next-layer affordance is "Fix
+// ALL dead rules" — apply every planner proposal in one click.
+//
+// The applier walks the proposal list in INPUT order, resolving
+// the source rule by NAME at each step against the running chain
+// (NOT by index — the index drift from prior moves makes the
+// planner's recorded indices stale halfway through the batch).
+// The target is resolved by shadower name when present so a
+// proposal lands "before the named shadower" even if that
+// shadower has itself moved; fallback to target = 0 when the
+// shadower name is empty (planner's fallback) or the shadower
+// drifted out of the chain.
+//
+// Mirrors `pdf::hopper::coverage::apply_reorder_proposals_batch`
+// 1:1. The wire shapes (BatchReorderSkipReason, SkippedProposal,
+// BatchReorderOutcome) use snake_case to match the Rust side; a
+// browser-mode caller goes through this helper directly, a
+// Tauri-mode caller round-trips through `slabHopperBatchReorderDeadRules`
+// (slice 140) and reads the same wire shape.
+
+/** Why a proposal was skipped during a batch apply. Mirrors
+ *  `pdf::hopper::coverage::BatchReorderSkipReason`. */
+export type BatchReorderSkipReason =
+  | { kind: "rule_not_found" }
+  | { kind: "already_earlier" };
+
+/** Stable singleton constructors for the two reason variants — saves
+ *  per-call object literals when comparing reasons in the UI. */
+export const RULE_NOT_FOUND: BatchReorderSkipReason = { kind: "rule_not_found" } as const;
+export const ALREADY_EARLIER: BatchReorderSkipReason = { kind: "already_earlier" } as const;
+
+/** A proposal that was not applied by `applyReorderProposalsBatch`,
+ *  carried alongside the new chain so the UI can render an audit
+ *  breakdown. Mirrors `pdf::hopper::coverage::SkippedProposal`. */
+export interface SkippedProposal {
+  /** 0-based index into the INPUT proposal list (NOT the chain). */
+  input_index: number;
+  /** Echo of the proposal that was skipped. */
+  proposal: ReorderProposal;
+  /** Why the proposal was skipped. */
+  reason: BatchReorderSkipReason;
+}
+
+/** Outcome of a batch reorder application. Mirrors
+ *  `pdf::hopper::coverage::BatchReorderOutcome`. */
+export interface BatchReorderOutcome {
+  /** The chain AFTER every applied proposal landed. */
+  rules: Rule[];
+  /** Input-order indices of proposals that landed. */
+  applied: number[];
+  /** Proposals that did not land, with reason — in input order
+   *  (`skipped[i].input_index` is strictly monotonic). */
+  skipped: SkippedProposal[];
+  /** Total recovered samples across applied proposals. Pre-summed
+   *  so the UI doesn't have to re-walk the slice for the toast. */
+  total_recovered: number;
+}
+
+/** Apply every proposal in `proposals` to `rules` in input order,
+ *  resolving the source rule by NAME at each step. Pure helper.
+ *
+ *  Conservation invariant: `applied.length + skipped.length ===
+ *  proposals.length` — every input proposal lands in exactly one
+ *  bucket.
+ *
+ *  Returns a NEW Rule[] (shallow clone of the source array); the
+ *  source array is never mutated. Per-rule object identity is
+ *  shared with the source (no deep clone). */
+export function applyReorderProposalsBatch(
+  rules: Rule[],
+  proposals: ReorderProposal[],
+): BatchReorderOutcome {
+  const chain: Rule[] = rules.slice();
+  const applied: number[] = [];
+  const skipped: SkippedProposal[] = [];
+  let total_recovered = 0;
+  for (let i = 0; i < proposals.length; i++) {
+    const p = proposals[i];
+    // Resolve source by name in the CURRENT chain.
+    const srcIdx = chain.findIndex((r) => r.name === p.rule_name);
+    if (srcIdx < 0) {
+      skipped.push({
+        input_index: i,
+        proposal: p,
+        reason: RULE_NOT_FOUND,
+      });
+      continue;
+    }
+    // Resolve target by shadower name when possible.
+    let target: number;
+    if (p.shadowing_rule_name.length > 0) {
+      const sIdx = chain.findIndex((r) => r.name === p.shadowing_rule_name);
+      target = sIdx >= 0 ? sIdx : 0;
+    } else {
+      target = 0;
+    }
+    if (target >= srcIdx) {
+      skipped.push({
+        input_index: i,
+        proposal: p,
+        reason: ALREADY_EARLIER,
+      });
+      continue;
+    }
+    const [moved] = chain.splice(srcIdx, 1);
+    chain.splice(target, 0, moved);
+    applied.push(i);
+    total_recovered += p.samples_recovered;
+  }
+  return {
+    rules: chain,
+    applied,
+    skipped,
+    total_recovered,
+  };
+}
+
+/** Human-facing summary copy for a `BatchReorderOutcome`. Used by
+ *  the batch-apply confirm popover's preview line + the post-apply
+ *  toast. Discriminated on the applied/skipped/recovered counts:
+ *
+ *    All applied + recovered>0: "Fixed 3 rules — recovered 12 matches"
+ *    All applied + recovered=0: "Fixed 3 rules"
+ *    Partial:                   "Fixed 2 of 3 rules — recovered 5 matches (1 skipped)"
+ *    Nothing applied:           "No rules fixed (3 skipped)"
+ *    Empty input:               "No dead rules to fix"
+ *
+ *  Plural-aware on both nouns (rules/matches) and the parenthetical
+ *  count. */
+export function summarizeBatchReorderOutcome(outcome: BatchReorderOutcome): string {
+  const total = outcome.applied.length + outcome.skipped.length;
+  if (total === 0) return "No dead rules to fix";
+  const a = outcome.applied.length;
+  const s = outcome.skipped.length;
+  const rec = outcome.total_recovered;
+  const rulesNoun = (n: number) => (n === 1 ? "rule" : "rules");
+  const matchesNoun = (n: number) => (n === 1 ? "match" : "matches");
+  if (a === 0) {
+    return `No rules fixed (${s} skipped)`;
+  }
+  if (s === 0) {
+    if (rec === 0) return `Fixed ${a} ${rulesNoun(a)}`;
+    return `Fixed ${a} ${rulesNoun(a)} — recovered ${rec} ${matchesNoun(rec)}`;
+  }
+  // Partial.
+  if (rec === 0) {
+    return `Fixed ${a} of ${total} ${rulesNoun(total)} (${s} skipped)`;
+  }
+  return `Fixed ${a} of ${total} ${rulesNoun(total)} — recovered ${rec} ${matchesNoun(rec)} (${s} skipped)`;
+}
+
+/** Human-facing copy for a `BatchReorderSkipReason`. Used by the
+ *  per-proposal skipped-list entry in the confirm popover so the
+ *  user knows WHY each skipped proposal isn't being applied. */
+export function describeSkipReason(reason: BatchReorderSkipReason): string {
+  switch (reason.kind) {
+    case "rule_not_found":
+      return "rule no longer in chain";
+    case "already_earlier":
+      return "rule already earlier than target";
+  }
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors

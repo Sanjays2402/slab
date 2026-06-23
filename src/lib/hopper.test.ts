@@ -33,7 +33,15 @@ import {
   reorderProposalConfidence,
   filterProposalsByConfidence,
   describeReorderConfidence,
+  applyReorderProposalsBatch,
+  summarizeBatchReorderOutcome,
+  describeSkipReason,
+  RULE_NOT_FOUND,
+  ALREADY_EARLIER,
   type ReorderProposalConfidence,
+  type BatchReorderOutcome,
+  type BatchReorderSkipReason,
+  type SkippedProposal,
   COVERAGE_FILTER_KINDS,
   type CoverageDiagnosticFilter,
   type CoverageHealth,
@@ -2198,5 +2206,434 @@ function ruleFor(
   expect(
     reorderProposalConfidence(proposals[2]) === "medium",
     `cross-helper: proposals[2] is medium (zero recovered)`,
+  );
+}
+
+// ─── Slice 139 — applyReorderProposalsBatch / summarize / describeSkip ──
+
+/** Build a proposal directly. Mirrors the batch tests in coverage.rs;
+ *  the applier doesn't care which planner produced the proposal so
+ *  these tests can hand-roll inputs that exercise edge cases the
+ *  planner wouldn't normally emit. */
+function proposalFor(
+  rule_index: number,
+  rule_name: string,
+  target_index: number,
+  shadowing_rule_name: string,
+  samples_recovered: number,
+): ReorderProposal {
+  return {
+    rule_index,
+    rule_name,
+    target_index,
+    shadowing_rule_name,
+    samples_recovered,
+  };
+}
+
+{
+  // applyReorderProposalsBatch: empty proposals -> source chain
+  // verbatim (per-rule object identity shared with source).
+  const rules = [ruleFor("A", "always"), ruleFor("B")];
+  const outcome = applyReorderProposalsBatch(rules, []);
+  expect(
+    outcome.rules.length === 2 && outcome.rules[0] === rules[0] && outcome.rules[1] === rules[1],
+    "batch: empty proposals returns source chain verbatim with shared identity",
+  );
+  expect(outcome.applied.length === 0, "batch: empty proposals -> applied empty");
+  expect(outcome.skipped.length === 0, "batch: empty proposals -> skipped empty");
+  expect(outcome.total_recovered === 0, "batch: empty proposals -> 0 recovered");
+}
+
+{
+  // applyReorderProposalsBatch: empty rules -> every proposal
+  // skipped as RuleNotFound.
+  const proposals = [proposalFor(1, "Tax", 0, "Catch-all", 3)];
+  const outcome = applyReorderProposalsBatch([], proposals);
+  expect(outcome.rules.length === 0, "batch: empty rules -> empty chain");
+  expect(outcome.applied.length === 0, "batch: empty rules -> applied empty");
+  expect(outcome.skipped.length === 1, "batch: empty rules -> all skipped");
+  expect(
+    outcome.skipped[0].reason.kind === "rule_not_found",
+    "batch: empty rules -> reason rule_not_found",
+  );
+  expect(outcome.skipped[0].input_index === 0, "batch: skipped input_index = 0");
+}
+
+{
+  // applyReorderProposalsBatch: single proposal moves Tax before
+  // Catch-all. Classic case mirroring the Rust test.
+  const rules = [ruleFor("Catch-all", "always"), ruleFor("Tax")];
+  const proposals = [proposalFor(1, "Tax", 0, "Catch-all", 3)];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(outcome.applied.length === 1 && outcome.applied[0] === 0, "batch: single applied");
+  expect(outcome.skipped.length === 0, "batch: single -> no skipped");
+  expect(outcome.rules[0].name === "Tax", "batch: single -> Tax now first");
+  expect(outcome.rules[1].name === "Catch-all", "batch: single -> Catch-all now second");
+  expect(outcome.total_recovered === 3, "batch: single -> recovered 3");
+}
+
+{
+  // applyReorderProposalsBatch: KEY invariant — source resolved by
+  // NAME after a prior move. Original [Catch-all, Tax, Receipts];
+  // both proposals target_index=0 against the ORIGINAL chain, but
+  // after Tax moves, Receipts' rule_index=2 is stale. The applier
+  // resolves by name so it lands correctly.
+  const rules = [
+    ruleFor("Catch-all", "always"),
+    ruleFor("Tax", "filename-glob", "t_*"),
+    ruleFor("Receipts", "filename-glob", "r_*"),
+  ];
+  const proposals = [
+    proposalFor(1, "Tax", 0, "Catch-all", 3),
+    proposalFor(2, "Receipts", 0, "Catch-all", 5),
+  ];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(
+    outcome.applied.length === 2 && outcome.applied[0] === 0 && outcome.applied[1] === 1,
+    "batch: both proposals applied",
+  );
+  expect(outcome.skipped.length === 0, "batch: no skipped");
+  const names = outcome.rules.map((r) => r.name).join(",");
+  expect(
+    names === "Tax,Receipts,Catch-all",
+    `batch: by-name resolution lands correct order (got ${names})`,
+  );
+  expect(outcome.total_recovered === 8, "batch: total_recovered = 3 + 5");
+}
+
+{
+  // applyReorderProposalsBatch: rule renamed -> skipped as
+  // RuleNotFound, chain unchanged.
+  const rules = [ruleFor("All", "always"), ruleFor("Renamed")];
+  const proposals = [proposalFor(1, "Tax", 0, "All", 2)];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(outcome.applied.length === 0, "batch: rename -> applied empty");
+  expect(outcome.skipped.length === 1, "batch: rename -> skipped 1");
+  expect(
+    outcome.skipped[0].reason.kind === "rule_not_found",
+    "batch: rename -> reason rule_not_found",
+  );
+  expect(
+    outcome.rules.length === 2 && outcome.rules[0].name === "All",
+    "batch: rename -> chain unchanged",
+  );
+}
+
+{
+  // applyReorderProposalsBatch: duplicate proposal -> first
+  // applies, second skipped as AlreadyEarlier.
+  const rules = [ruleFor("A", "always"), ruleFor("B"), ruleFor("C")];
+  const proposals = [
+    proposalFor(1, "B", 0, "A", 2),
+    proposalFor(1, "B", 0, "A", 2),
+  ];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(outcome.applied.length === 1 && outcome.applied[0] === 0, "batch: first dup applied");
+  expect(outcome.skipped.length === 1, "batch: dup -> one skipped");
+  expect(outcome.skipped[0].input_index === 1, "batch: dup skipped is index 1");
+  expect(
+    outcome.skipped[0].reason.kind === "already_earlier",
+    "batch: dup -> reason already_earlier",
+  );
+}
+
+{
+  // applyReorderProposalsBatch: empty shadower name -> fallback to
+  // target = 0.
+  const rules = [
+    ruleFor("First"),
+    ruleFor("Second"),
+    ruleFor("Dead"),
+  ];
+  const proposals = [proposalFor(2, "Dead", 0, "", 0)];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(outcome.applied.length === 1, "batch: empty-shadower fallback applies");
+  expect(outcome.rules[0].name === "Dead", "batch: empty-shadower -> Dead moved to front");
+}
+
+{
+  // applyReorderProposalsBatch: shadower drifted out -> fallback
+  // to target = 0.
+  const rules = [ruleFor("First"), ruleFor("Dead")];
+  const proposals = [proposalFor(1, "Dead", 0, "Catch-all-gone", 0)];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(outcome.applied.length === 1, "batch: drifted-shadower fallback applies");
+  expect(outcome.rules[0].name === "Dead", "batch: drifted-shadower -> Dead moved to front");
+}
+
+{
+  // applyReorderProposalsBatch: mixed applied + skipped preserves
+  // input order. Three proposals, middle is missing rule.
+  const rules = [ruleFor("All", "always"), ruleFor("Tax"), ruleFor("Receipts")];
+  const proposals = [
+    proposalFor(1, "Tax", 0, "All", 2),
+    proposalFor(99, "ghost", 0, "All", 7),
+    proposalFor(2, "Receipts", 0, "All", 4),
+  ];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(
+    outcome.applied.length === 2 && outcome.applied[0] === 0 && outcome.applied[1] === 2,
+    "batch: mixed -> applied [0, 2]",
+  );
+  expect(outcome.skipped.length === 1 && outcome.skipped[0].input_index === 1, "batch: mixed -> skipped index 1");
+  expect(outcome.total_recovered === 6, "batch: mixed -> recovered 6 (skipped 7 excluded)");
+}
+
+{
+  // applyReorderProposalsBatch: conservation invariant —
+  // applied.length + skipped.length === proposals.length across a
+  // moderately busy mixed batch.
+  const rules = [
+    ruleFor("All", "always"),
+    ruleFor("Tax"),
+    ruleFor("Receipts"),
+    ruleFor("Invoices"),
+  ];
+  const proposals = [
+    proposalFor(1, "Tax", 0, "All", 2),
+    proposalFor(2, "Receipts", 0, "All", 4),
+    proposalFor(99, "ghost", 0, "All", 7),
+    proposalFor(3, "Invoices", 0, "All", 1),
+  ];
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(
+    outcome.applied.length + outcome.skipped.length === proposals.length,
+    "batch: conservation — applied + skipped == input count",
+  );
+  // Skipped input_indices strictly monotonic.
+  let prev = -1;
+  let monotonic = true;
+  for (const s of outcome.skipped) {
+    if (s.input_index <= prev) {
+      monotonic = false;
+      break;
+    }
+    prev = s.input_index;
+  }
+  expect(monotonic, "batch: skipped input_indices strictly monotonic");
+}
+
+{
+  // applyReorderProposalsBatch: source array is NOT mutated.
+  const rules = [ruleFor("All", "always"), ruleFor("Tax")];
+  const snapshotNames = rules.map((r) => r.name).join(",");
+  const proposals = [proposalFor(1, "Tax", 0, "All", 3)];
+  const _ = applyReorderProposalsBatch(rules, proposals);
+  expect(
+    rules.map((r) => r.name).join(",") === snapshotNames,
+    "batch: source array names unchanged",
+  );
+  expect(rules.length === 2, "batch: source array length unchanged");
+}
+
+{
+  // applyReorderProposalsBatch: per-rule object identity is SHARED
+  // with the source array (no deep clone). Mirrors slice 134's
+  // applyReorderProposal identity contract.
+  const all = ruleFor("All", "always");
+  const tax = ruleFor("Tax");
+  const proposals = [proposalFor(1, "Tax", 0, "All", 3)];
+  const outcome = applyReorderProposalsBatch([all, tax], proposals);
+  expect(outcome.rules[0] === tax, "batch: identity — tax in outcome === source tax");
+  expect(outcome.rules[1] === all, "batch: identity — all in outcome === source all");
+}
+
+{
+  // summarizeBatchReorderOutcome: empty input -> "No dead rules to fix".
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [],
+    skipped: [],
+    total_recovered: 0,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "No dead rules to fix",
+    "summarize: empty -> No dead rules to fix",
+  );
+}
+
+{
+  // summarizeBatchReorderOutcome: all applied + recovered > 0.
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [0, 1, 2],
+    skipped: [],
+    total_recovered: 12,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "Fixed 3 rules — recovered 12 matches",
+    `summarize: all applied + 12 recovered (got ${summarizeBatchReorderOutcome(outcome)})`,
+  );
+}
+
+{
+  // summarizeBatchReorderOutcome: all applied + recovered = 0.
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [0, 1],
+    skipped: [],
+    total_recovered: 0,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "Fixed 2 rules",
+    "summarize: all applied + 0 recovered -> no match clause",
+  );
+}
+
+{
+  // summarizeBatchReorderOutcome: singular rule + singular match.
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [0],
+    skipped: [],
+    total_recovered: 1,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "Fixed 1 rule — recovered 1 match",
+    "summarize: plural-aware — 1 rule + 1 match (singular both)",
+  );
+}
+
+{
+  // summarizeBatchReorderOutcome: partial with recovered > 0.
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [0, 2],
+    skipped: [
+      {
+        input_index: 1,
+        proposal: proposalFor(0, "x", 0, "", 0),
+        reason: RULE_NOT_FOUND,
+      },
+    ],
+    total_recovered: 5,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) ===
+      "Fixed 2 of 3 rules — recovered 5 matches (1 skipped)",
+    `summarize: partial + recovered (got ${summarizeBatchReorderOutcome(outcome)})`,
+  );
+}
+
+{
+  // summarizeBatchReorderOutcome: partial with recovered = 0.
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [0],
+    skipped: [
+      {
+        input_index: 1,
+        proposal: proposalFor(0, "x", 0, "", 0),
+        reason: ALREADY_EARLIER,
+      },
+    ],
+    total_recovered: 0,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "Fixed 1 of 2 rules (1 skipped)",
+    "summarize: partial + 0 recovered -> no match clause",
+  );
+}
+
+{
+  // summarizeBatchReorderOutcome: nothing applied.
+  const outcome: BatchReorderOutcome = {
+    rules: [],
+    applied: [],
+    skipped: [
+      {
+        input_index: 0,
+        proposal: proposalFor(0, "x", 0, "", 0),
+        reason: RULE_NOT_FOUND,
+      },
+      {
+        input_index: 1,
+        proposal: proposalFor(0, "y", 0, "", 0),
+        reason: RULE_NOT_FOUND,
+      },
+      {
+        input_index: 2,
+        proposal: proposalFor(0, "z", 0, "", 0),
+        reason: RULE_NOT_FOUND,
+      },
+    ],
+    total_recovered: 0,
+  };
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "No rules fixed (3 skipped)",
+    "summarize: nothing applied -> No rules fixed",
+  );
+}
+
+{
+  // describeSkipReason: both variants.
+  expect(
+    describeSkipReason(RULE_NOT_FOUND) === "rule no longer in chain",
+    "describeSkipReason: rule_not_found",
+  );
+  expect(
+    describeSkipReason(ALREADY_EARLIER) === "rule already earlier than target",
+    "describeSkipReason: already_earlier",
+  );
+}
+
+{
+  // Stable singleton identity — RULE_NOT_FOUND is one object across
+  // helper calls.
+  expect(
+    RULE_NOT_FOUND === RULE_NOT_FOUND,
+    "RULE_NOT_FOUND singleton identity",
+  );
+  expect(
+    ALREADY_EARLIER === ALREADY_EARLIER,
+    "ALREADY_EARLIER singleton identity",
+  );
+  expect(
+    RULE_NOT_FOUND.kind === "rule_not_found",
+    "RULE_NOT_FOUND.kind discriminator",
+  );
+  expect(
+    ALREADY_EARLIER.kind === "already_earlier",
+    "ALREADY_EARLIER.kind discriminator",
+  );
+}
+
+{
+  // Cross-helper: planDeadRuleReorder feeding applyReorderProposalsBatch
+  // — the canonical end-to-end batch path. Three dead rules + Always
+  // shadower at index 0 -> three proposals -> all three applied,
+  // dead rules now at the front.
+  const rules = [
+    ruleFor("Catch-all", "always"),
+    ruleFor("Tax", "filename-glob", "t_*"),
+    ruleFor("Receipts", "filename-glob", "r_*"),
+    ruleFor("Invoices", "filename-glob", "i_*"),
+  ];
+  const r = healthReport(
+    [
+      cov(0, "Catch-all", 10, 10, false),
+      cov(1, "Tax", 0, 3, true),
+      cov(2, "Receipts", 0, 5, true),
+      cov(3, "Invoices", 0, 2, true),
+    ],
+    0,
+    10,
+  );
+  const proposals = planDeadRuleReorder(rules, r);
+  expect(proposals.length === 3, "cross-helper: 3 dead -> 3 proposals");
+  const outcome = applyReorderProposalsBatch(rules, proposals);
+  expect(outcome.applied.length === 3, "cross-helper: all 3 applied");
+  expect(outcome.skipped.length === 0, "cross-helper: none skipped");
+  // Dead rules now at the front (input order), Catch-all last.
+  const names = outcome.rules.map((r) => r.name).join(",");
+  expect(
+    names === "Tax,Receipts,Invoices,Catch-all",
+    `cross-helper: chain order after batch (got ${names})`,
+  );
+  expect(outcome.total_recovered === 10, "cross-helper: recovered 3 + 5 + 2 = 10");
+  expect(
+    summarizeBatchReorderOutcome(outcome) === "Fixed 3 rules — recovered 10 matches",
+    "cross-helper: summary copy matches",
   );
 }
