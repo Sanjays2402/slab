@@ -25,6 +25,7 @@ import {
   filterCoverageByDiagnostic,
   ruleMatchesCoverageFilter,
   formatCoverageFilterSummary,
+  coverageHealthClickTarget,
   COVERAGE_FILTER_KINDS,
   type CoverageDiagnosticFilter,
   type CoverageHealth,
@@ -1340,4 +1341,205 @@ function mixedDiagnosticReport(): RuleCoverageReport {
     /^hopper-coverage_watch_zero_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
     `coverage filename: filter + watch-fallback (${name})`,
   );
+}
+
+// ── Slice 131 — coverageHealthClickTarget ──────────────────────────────
+//
+// Bridge from CoverageHealth (chain-level chip state) to the
+// CoverageDiagnosticFilter kind whose chip the click-through should
+// activate. Pin the priority chain (dead > shadowed > zero > high-
+// fall-through has no rule-level target) end-to-end against the
+// summarizeCoverageHealth classifier so a future change to either
+// helper surfaces here when the two drift.
+
+{
+  // null health -> null target. UI calls this before the report
+  // loads, when there's nothing to click.
+  expect(
+    coverageHealthClickTarget(null) === null,
+    "coverageHealthClickTarget: null -> null",
+  );
+}
+
+{
+  // Empty corpus -> null target. The chip is hidden upstream but
+  // pin the contract anyway so a stale chip can't click into a
+  // filter view that has nothing to show.
+  const h = summarizeCoverageHealth(healthReport([], 0, 0));
+  expect(
+    coverageHealthClickTarget(h) === null,
+    `coverageHealthClickTarget: empty -> null (kind=${h.kind})`,
+  );
+}
+
+{
+  // Healthy chain -> null target. There's no diagnostic to drill
+  // into; the chip itself is informational only.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "OK", 5, 5, false)], 0, 5),
+  );
+  expect(
+    coverageHealthClickTarget(h) === null,
+    `coverageHealthClickTarget: healthy -> null (kind=${h.kind})`,
+  );
+}
+
+{
+  // Critical (dead rule) -> "dead". Mirror the
+  // summarizeCoverageHealth priority chain — dead is the
+  // most-actionable insight and the chip's copy points there
+  // ("1 dead rule — reorder or tighten the shadowing rules").
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 5, 5, false),
+        cov(1, "Dead", 0, 2, true),
+      ],
+      0,
+      5,
+    ),
+  );
+  expect(h.kind === "critical", `coverageHealthClickTarget: setup critical`);
+  expect(
+    coverageHealthClickTarget(h) === "dead",
+    `coverageHealthClickTarget: critical -> 'dead' (got ${coverageHealthClickTarget(h)})`,
+  );
+}
+
+{
+  // Warn (shadowed only) -> "shadowed". Priority chain:
+  // shadowed > zero > high-fall-through.
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Tax", 3, 5, false), // partially shadowed
+        cov(1, "OK", 2, 2, false),
+      ],
+      0,
+      5,
+    ),
+  );
+  expect(h.kind === "warn", `coverageHealthClickTarget: setup warn (shadowed)`);
+  expect(
+    coverageHealthClickTarget(h) === "shadowed",
+    `coverageHealthClickTarget: warn shadowed -> 'shadowed' (got ${coverageHealthClickTarget(h)})`,
+  );
+}
+
+{
+  // Warn (zero only) -> "zero".
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Never", 0, 0, false), // zero-coverage
+        cov(1, "OK", 5, 5, false),
+      ],
+      0,
+      5,
+    ),
+  );
+  expect(h.kind === "warn", `coverageHealthClickTarget: setup warn (zero)`);
+  expect(
+    coverageHealthClickTarget(h) === "zero",
+    `coverageHealthClickTarget: warn zero -> 'zero' (got ${coverageHealthClickTarget(h)})`,
+  );
+}
+
+{
+  // Warn (mixed: 2 shadowed + 1 zero) -> "shadowed" (priority).
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Tax", 3, 5, false), // shadowed
+        cov(1, "Inv", 2, 4, false), // shadowed
+        cov(2, "Never", 0, 0, false), // zero
+        cov(3, "OK", 2, 2, false),
+      ],
+      0,
+      7,
+    ),
+  );
+  expect(h.kind === "warn", `coverageHealthClickTarget: setup warn (mixed)`);
+  expect(
+    coverageHealthClickTarget(h) === "shadowed",
+    `coverageHealthClickTarget: warn mixed -> 'shadowed' (got ${coverageHealthClickTarget(h)})`,
+  );
+}
+
+{
+  // Warn (high fall-through with no dead/shadowed/zero) -> null.
+  // No rule-level filter expresses "this percentage of files fell
+  // through" — the fall-through ROW is a separate UI affordance.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "Tax", 5, 5, false)], 5, 10),
+  );
+  expect(h.kind === "warn", `coverageHealthClickTarget: setup warn (high-ft)`);
+  expect(h.dead === 0 && h.shadowed === 0 && h.zero === 0, "warn-only fall-through");
+  expect(
+    coverageHealthClickTarget(h) === null,
+    `coverageHealthClickTarget: warn high-ft -> null (got ${coverageHealthClickTarget(h)})`,
+  );
+}
+
+{
+  // Critical-with-mixed: dead rule + shadowed rule -> "dead" wins.
+  // Pin the cross-kind priority so a critical chain ALWAYS goes
+  // to dead, regardless of other diagnostics.
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 6, 6, false),
+        cov(1, "Dead", 0, 2, true),
+        cov(2, "Shadowed", 1, 4, false),
+      ],
+      0,
+      7,
+    ),
+  );
+  expect(h.kind === "critical", `coverageHealthClickTarget: setup critical-mixed`);
+  expect(
+    coverageHealthClickTarget(h) === "dead",
+    `coverageHealthClickTarget: critical with shadowed too -> 'dead' (got ${coverageHealthClickTarget(h)})`,
+  );
+}
+
+{
+  // Cross-helper agreement: every health.kind reachable via
+  // summarizeCoverageHealth has a click-target the filter helper
+  // can actually return. Pin the contract: the click target is
+  // ALWAYS one of "all"-less filter kinds (or null) — never "all"
+  // (which would be a no-op transition).
+  for (const target of [
+    coverageHealthClickTarget(summarizeCoverageHealth(healthReport([], 0, 0))),
+    coverageHealthClickTarget(
+      summarizeCoverageHealth(
+        healthReport([cov(0, "Dead", 0, 2, true), cov(1, "OK", 5, 5, false)], 0, 5),
+      ),
+    ),
+    coverageHealthClickTarget(
+      summarizeCoverageHealth(
+        healthReport([cov(0, "Sh", 3, 5, false), cov(1, "OK", 2, 2, false)], 0, 5),
+      ),
+    ),
+    coverageHealthClickTarget(
+      summarizeCoverageHealth(
+        healthReport([cov(0, "Z", 0, 0, false), cov(1, "OK", 5, 5, false)], 0, 5),
+      ),
+    ),
+    coverageHealthClickTarget(
+      summarizeCoverageHealth(healthReport([cov(0, "OK", 5, 5, false)], 0, 5)),
+    ),
+  ]) {
+    expect(
+      target !== "all",
+      `coverageHealthClickTarget: never returns "all" (got ${target})`,
+    );
+    expect(
+      target === null
+        || target === "dead"
+        || target === "shadowed"
+        || target === "zero",
+      `coverageHealthClickTarget: only returns dead/shadowed/zero/null (got ${target})`,
+    );
+  }
 }

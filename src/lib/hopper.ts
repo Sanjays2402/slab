@@ -641,6 +641,60 @@ export function formatCoverageFilterSummary(
   return `Showing ${shown} of ${total} ${noun} — ${filter}`;
 }
 
+// ─── v3.40 Slice 131 — coverage health -> filter click target ────────
+//
+// Round 26's chain-health chip surfaces a copy line ("2 dead rules
+// — reorder or tighten the shadowing rules"); slices 128/129/130
+// shipped the filter machinery. The missing piece is the bridge: a
+// pure helper that, given a CoverageHealth, returns the diagnostic
+// filter kind whose chip should activate on click. The UI cannot
+// safely re-derive this from `health.kind` alone (which is
+// "critical" / "warn" / "healthy" / "empty" — broader than the
+// filter slugs) without leaking the chain-health priority chain
+// into the Svelte component.
+//
+// This helper composes the priority chain in one place:
+//
+//   empty                                  -> null (chip hidden)
+//   critical (dead > 0)                    -> "dead"
+//   warn + shadowed > 0                    -> "shadowed"
+//   warn + zero > 0                        -> "zero"
+//   warn + high-fall-through (no rule kind) -> null
+//                                             (no rule-level filter
+//                                             can show fall-through;
+//                                             the fall-through row
+//                                             is a separate UI affordance)
+//   healthy                                -> null (nothing to filter to)
+//
+// The priority chain (dead > shadowed > zero) matches
+// summarizeCoverageHealth EXACTLY so a user clicking the chip
+// always lands in the bucket the chip is describing. A future
+// change to the chain bumps both helpers together, and the test
+// suite pins the agreement.
+
+/** Given a CoverageHealth summary, return the CoverageDiagnosticFilter
+ *  kind whose chip should activate on click. Returns null when the
+ *  chip is empty/healthy (nothing to drill into) or when the warn
+ *  reason has no rule-level filter (high fall-through). Pure helper. */
+export function coverageHealthClickTarget(
+  health: CoverageHealth | null,
+): CoverageDiagnosticFilter | null {
+  if (!health || health.kind === "empty" || health.kind === "healthy") {
+    return null;
+  }
+  // Same priority chain as summarizeCoverageHealth's copy generation:
+  // dead > shadowed > zero > high-fall-through (no target).
+  if (health.dead > 0) return "dead";
+  if (health.shadowed > 0) return "shadowed";
+  if (health.zero > 0) return "zero";
+  // Warn reason is the high-fall-through case. No rule-level filter
+  // can show fall-through samples — the fall-through ROW (the
+  // synthetic last row in the coverage list) is a separate UI
+  // affordance, not a diagnostic the rule filter can express. Return
+  // null and let the UI handle that state explicitly.
+  return null;
+}
+
 // ---------------------------------------------------------------------
 // v3.40 Slice 85 — sample drilldown TS client
 // ---------------------------------------------------------------------
