@@ -1,13 +1,336 @@
 # Slab Cron State
 
-Last updated: 2026-06-22 14:57 PT by Cake (cron) — round-24 BATCH shipped: 5 slices closing one cohesive arc. Per-plugin retention overrides (slices 113-117): schema v2->v3 install_log_plugin_retention(plugin_id PRIMARY KEY, retain_days) + four storage primitives plugin_retention_days / set_plugin_retention_days(UPSERT, clamp >= MIN_RETAIN_DAYS) / clear_plugin_retention / plugin_retention_overrides (slice 113); effective_retain_days(plugin_id) resolver + auto-prune driver rewrite to two disjoint passes (per-plugin DELETEs for every override row, then global DELETE with plugin_id NOT IN clause so overridden plugins skip the global cutoff) + AutoPruneOutcome::Pruned gains overrides_applied + overrides_rows_removed for UI attribution (slice 114); pure-data plugin_retention_overrides_to_csv(rows, default_retain_days, include_header) -> String 3-column RFC-4180 with denormalised default-on-every-row + PLUGIN_RETENTION_CSV_HEADER pub const (slice 115); pure-data plugin_retention_overrides_to_json(rows, default_retain_days, min_retain_days) -> PluginRetentionExportEnvelope 6-field envelope schema_version=1 PARALLEL-versioned with all four sibling envelopes (slice 116); 5 Tauri commands (slab_marketplace_install_log_plugin_retention_overrides + _set_plugin_retention + _clear_plugin_retention + _export_plugin_retention_csv + _export_plugin_retention_json) + TS surface (getPluginRetentionOverrides + setPluginRetentionDays + clearPluginRetention + exportPluginRetentionOverrides Csv/Json + suggestPluginRetentionExportFilename) + nested overrides sub-block inside Retention section with composer + per-row Edit/Clear + longer/shorter badge + Export… popover (slice 117).
+Last updated: 2026-06-22 18:35 PT by Cake (cron) — round-25 BATCH shipped: 5 slices closing one cohesive arc. Auto-prune run history (slices 118-122): schema v3->v4 install_log_auto_prune_runs(id, ran_at_unix, rows_removed, retain_days, cutoff_unix, overrides_applied, overrides_rows_removed) + ran_at_unix DESC index + four storage primitives record_auto_prune_run / auto_prune_runs(limit) DESC ran_at_unix with id DESC tie-break / auto_prune_runs_total / clear_auto_prune_runs idempotent DELETE (slice 118); auto_prune_if_due rewritten to record each Pruned outcome to history (even zero-row prunes — audit signal not silence) while Skipped outcomes do NOT record (debounce-window invariant) (slice 119); pure-data auto_prune_runs_to_csv(rows, include_header) -> String RFC-4180 8-column with ran_at_iso byte-equal to install-log CSV + AUTO_PRUNE_RUNS_CSV_HEADER pub const (slice 120); pure-data auto_prune_runs_to_json(rows) -> AutoPruneRunsExportEnvelope 6-field with pre-summed total_rows_removed + total_overrides_rows_removed across input runs + AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION=1 PARALLEL-versioned with all five sibling envelopes (slice 121); 4 Tauri commands (slab_marketplace_install_log_auto_prune_runs + _clear_auto_prune_runs + _export_auto_prune_runs_csv + _export_auto_prune_runs_json) + InstallLogAutoPruneOutcome TS extended with overrides_applied + overrides_rows_removed + TS surface (getAutoPruneRuns + clearAutoPruneRuns + exportAutoPruneRuns Csv/Json + suggestAutoPruneRunsExportFilename + formatAutoPruneAttributionToast) + nested history sub-block inside Retention section with count meta + Export… popover + danger-tinted Clear history button gated behind confirm dialog + per-row 4-column grid (when + count + 3-state attribution badge + window snapshot) + runAutoPruneNow toast upgraded to attribution-aware copy (slice 122).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `d024824` — "feat(plugins): per-plugin retention overrides UI with export menu".
+Latest commit: `614fc5d` — "feat(install-log): auto-prune run history UI with attribution toast".
+
+### What round-25 (2026-06-22 18:35 PT) just shipped
+
+Five slices closing one cohesive arc. Before this tick slice 114
+plumbed `overrides_applied` and `overrides_rows_removed` through
+`AutoPruneOutcome::Pruned` but those values vanished after each
+toast — a user opening the Retention section three weeks after a
+policy tweak could not tell whether the global window or a per-
+plugin override removed which events, or how often the prune had
+run since they tuned the policy. Tonight that "vanishing
+attribution" gap closes end-to-end: the four-table storage layer
+persists every run, the auto-prune driver writes to it, CSV +
+JSON exports preserve the attribution split, and a nested history
+sub-block inside the Retention section renders the runs with a
+three-state attribution badge plus the runAutoPruneNow toast now
+spells out the split inline ("Auto-pruned 23 events older than
+365d (5 from 2 per-plugin overrides)").
+
+Round 24's closing notes listed "install-log auto-prune toast
+that breaks out the per-plugin vs global attribution from
+AutoPruneOutcome::Pruned (slice 114 already plumbs the fields,
+the UI just doesn't render the split yet — short follow-up)" as
+a candidate; round 25 shipped it as the FULL 5-layer arc rather
+than the minimum follow-up: storage + auto-prune driver writes +
+CSV + JSON + UI sub-block with toast. The history table is the
+load-bearing piece — without it the attribution split would
+still be a transient toast value, lost the next time the user
+looks.
+
+- Slice 118: auto-prune run history storage (0b5fbea).
+  Schema bump v3 -> v4 (pure additive — every v3 row stays valid).
+  install_log_auto_prune_runs(id, ran_at_unix, rows_removed,
+  retain_days, cutoff_unix, overrides_applied,
+  overrides_rows_removed) with a ran_at_unix DESC index for the
+  newest-first reader. Four primitives: record_auto_prune_run
+  (6-arg insert returning the assigned id); auto_prune_runs(limit)
+  -> Vec<AutoPruneRun> DESC by ran_at_unix with id DESC tie-break
+  for deterministic order under timestamp collision, zero/negative
+  limit returns empty Vec; auto_prune_runs_total -> i64 cheap
+  COUNT(*); clear_auto_prune_runs -> usize idempotent DELETE.
+  AutoPruneRun struct re-exported from marketplace::mod for the
+  wire layer + any future cross-module consumer.
+
+- Slice 119: auto_prune_if_due records each run to history
+  (82a056e). The Pruned outcome appends one row to
+  install_log_auto_prune_runs carrying the same fields returned
+  to the caller. A Skipped outcome does NOT touch the history
+  table — debounce-window invariant; without it the table fills
+  with no-op entries on every launch within 24h. Zero-row
+  Pruned IS recorded ("the auto-prune ran on this day and
+  found nothing to do" is real audit signal, not silence).
+  Conservation invariant test: sum of rows_removed across every
+  history row equals the actual events removed from the
+  install_events table.
+
+- Slice 120: auto-prune run history CSV export primitive
+  (6623281, plus doc-comment rewording in slice 122 to satisfy
+  clippy's doc_lazy_continuation lint that tripped on the
+  "X + Y" pattern in the column listing). Pure-data
+  auto_prune_runs_to_csv(rows, include_header) -> String RFC-
+  4180 8-column serialiser. Two timestamp columns (ran_at_unix
+  + ran_at_iso) match the shape every other audit export in
+  this module uses. cutoff_unix is written raw (no ISO
+  companion) because it's a derived audit-only value the
+  consumer can reproduce. AUTO_PRUNE_RUNS_CSV_HEADER pub const
+  for tests + future reorder safety. include_header opt-in
+  matches the five sibling exporters.
+
+- Slice 121: auto-prune run history JSON envelope primitive
+  (68a2e96). Pure-data auto_prune_runs_to_json(rows) ->
+  AutoPruneRunsExportEnvelope. Six fields: schema_version +
+  generated_at_iso + row_count + total_rows_removed +
+  total_overrides_rows_removed + rows. The two envelope-level
+  totals are pre-summed across the input runs — answer "across
+  these N prunes how many events were removed, and how many
+  came from per-plugin overrides?" in one read. Both belong on
+  the envelope NOT each row (corpus-scoped invariants of the
+  export). AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION = 1, pub const
+  PARALLEL-versioned with the five sibling envelopes (install-
+  log + histogram + activity-timeline + bucket-drilldown +
+  plugin-retention).
+
+- Slice 122: auto-prune run history UI with attribution toast
+  (614fc5d). The demo-able payoff. Four Tauri commands wired
+  into invoke handler (read + clear + CSV export + JSON
+  export — exports cover ALL rows, NOT the capped 25, because
+  exports should be comprehensive even when the view is
+  bounded). AutoPruneRunsResult wire payload denormalises
+  total_count + total_rows_removed + total_overrides_rows_
+  removed onto the read so UI doesn't have to pair with a
+  separate count query.
+
+  TS surface: AutoPruneRun + AutoPruneRunsResult interfaces +
+  five async wrappers (browser-mode safe fallbacks) +
+  suggestAutoPruneRunsExportFilename producing marketplace-
+  auto-prune-runs_<YYYYMMDD>.<ext> with UTC date slug.
+  InstallLogAutoPruneOutcome extended with overrides_applied +
+  overrides_rows_removed — slice 114 plumbed them through the
+  Rust enum but the TS shape didn't carry them until now.
+  formatAutoPruneAttributionToast pure helper renders the
+  discriminated copy: "Auto-pruned 23 events older than 365d"
+  (no overrides), "(5 from 2 per-plugin overrides)" (mixed),
+  "(all from per-plugin overrides)" (every row came from
+  overrides), "Auto-prune ran — nothing to remove." (zero-row).
+
+  UI: nested auto-prune history sub-block inside the Retention
+  section (NOT a sibling section — the history is a
+  SPECIALISATION of the retention policy surface). Five new
+  state cells. load()'s Promise.all extended with the auto-
+  prune-runs read so the section paints with the initial
+  drawer open. History head: label + count meta ("N prunes ·
+  cleared M events (Y from per-plugin overrides)" / "Showing
+  N of M") + Export… popover (hidden when no rows) + danger-
+  tinted "Clear history" button gated behind an inline confirm
+  dialog. Confirm cancel + Escape both dismiss cleanly.
+
+  History row layout: 4-column grid with relative "ran X ago"
+  timestamp (reuses formatLastAutoPrune vocabulary minus the
+  "Last auto-prune:" prefix) + "N events" + attribution badge
+  + "Xd window" snapshot. The attribution badge uses three-
+  state visual treatment (neutral "global" when no overrides
+  contributed, accent tint "N override" when overrides
+  contributed, deeper accent "all override" when every removed
+  row came from overrides, muted "no-op" on zero-row runs) so
+  a user scanning the list can spot policy drift instantly.
+
+  runAutoPruneNow toast upgraded: the existing handler now
+  calls formatAutoPruneAttributionToast(outcome) instead of
+  the round-14 plain "Auto-pruned N events older than Xd"
+  copy, and refreshAutoPruneRuns() runs after each prune so
+  the new history entry appears in the sub-block immediately.
+
+  Empty state: "No auto-prunes recorded yet. The history
+  table fills once the debounce window elapses and the next
+  auto-prune runs — useful for confirming retention policy
+  changes took effect and tracking how often per-plugin
+  overrides contributed to the deletions." — explains the
+  empty UI's own value.
+
+  Escape chain updated with autoPruneRunsExportMenuOpen first
+  (most recently opened) then confirmingClearAutoPruneRuns
+  before the existing chain. onWindowClick gains the
+  data-prune-history-export-anchor dismiss path (same pattern
+  as the four other export-menu anchors).
+
+  14 inline test scenarios in marketplace.test.ts (round-24
+  baseline 124 + 14 from slice 122 = 138): 7 filename helper
+  scenarios + 7 attribution toast formatter scenarios (zero-
+  row, no-overrides, single-event grammar, mixed attribution,
+  single-override grammar, all-from-overrides, overrides-
+  applied-but-none-matched fallback).
+
+Gates result: cargo fmt clean (no changes needed), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 11.22s (after one doc-
+comment reword in slice 120 to satisfy doc_lazy_continuation
+on the "X + Y" column pattern; restructured to prose without
+list-bullet tripwires), cargo test --lib 2522 passed / 0
+failed (round-24 baseline 2486 + slices 118-122 = 2522: 8
+storage tests for slice 118, 6 driver tests for slice 119, 11
+CSV tests for slice 120, 11 JSON tests for slice 121),
+pnpm check 0 errors / 104 warnings (round-24 baseline preserved
+EXACTLY — zero new warnings from the auto-prune-runs TS surface,
+helpers, popover markup, scoped CSS, History sub-block layout,
+confirm dialog), tsx src/lib/marketplace.test.ts 138 inline
+expects pass (round-24 baseline 124 + 14 from slice 122 = 138).
+
+PROCESS NOTES:
+- Round 24's closing notes listed "install-log auto-prune
+  toast that breaks out the per-plugin vs global attribution
+  from AutoPruneOutcome::Pruned (slice 114 already plumbs the
+  fields, the UI just doesn't render the split yet — short
+  follow-up)" as a candidate; round 25 shipped it as the FULL
+  5-layer arc rather than the minimum follow-up. The history
+  table (slice 118 + 119) is the load-bearing piece — without
+  it the attribution split would still be a transient toast
+  value lost the next time the user looks.
+- Five slices, five commits, ONE logical subsystem (the auto-
+  prune run history). Mirrors the canonical five-layer cadence
+  of round-19 (drilldown CSV arc 88-91 + composite 92), round-
+  20 (drilldown JSON arc 93-96 + histogram sort 97), round-21
+  (histogram audit-export arc 98-102), round-22 (activity
+  timeline arc 103-107), round-23 (bucket drilldown arc 108-
+  112), and round-24 (per-plugin overrides arc 113-117):
+  backend storage -> backend driver-rewrite -> CSV primitive
+  -> JSON primitive -> Tauri commands + TS client + filename
+  helper + attribution toast helper + demo-able UI.
+- The AutoPruneRunsExportEnvelope schema_version=1 matches all
+  five sibling envelopes' constants by value today but they
+  are PARALLEL-versioned (a future shape change in one bumps
+  that one only) — pinned by the parallel-versioning equality
+  test across all six constants.
+- The clippy doc_lazy_continuation lint catch on slice 120's
+  CSV header doc-comment surfaced during the gate. The "X + Y"
+  pattern in a hand-formatted column listing was being parsed
+  as a markdown list bullet because "+ " starts a list. Fixed
+  by restructuring to prose sentences ("The first two identify
+  the run: id (rowid for cross-export joins) and ran_at_unix
+  (machine-friendly timestamp). The next column ran_at_iso
+  is…") instead of "id + ran_at_iso (a + b notation)". No
+  functional change; the rewording landed in the slice 122
+  commit since it surfaced after slice 120 had been committed.
+
+DESIGN NOTES:
+- The history sub-block is a NESTED block inside the Retention
+  section (NOT a sibling section). The history is a
+  SPECIALISATION of the retention policy surface — "what did
+  the policy actually do?" lives adjacent to "what is the
+  policy?". Same nesting philosophy as slice 117's per-plugin
+  overrides sub-block.
+- The attribution badge's three-state visual treatment
+  (neutral global / accent has-overrides / deeper accent
+  all-overrides / muted no-op) mirrors slice 117's overrides-
+  row-badge longer/shorter treatment — same visual language
+  for "the override is the story here". A user scanning the
+  history list can spot the prunes where the overrides did
+  meaningful work without reading the numbers.
+- The grid layout for history rows (relative-when + count +
+  attribution + window) uses fixed-width tabular numerics on
+  the numeric cells (font-variant-numeric: tabular-nums) so
+  the column edges align across rows without explicit width
+  declarations. Same pattern as the activity-timeline grid.
+- The Clear history affordance lives behind an inline confirm
+  dialog (NOT a modal — the dialog renders inside the
+  history-block so the user sees the count being cleared
+  immediately above the dialog). The confirm copy spells out
+  that install_events is NOT touched — only the audit trail
+  is removed — so a worried user doesn't think they're about
+  to lose their plugin install history.
+- The exports cover ALL rows (auto_prune_runs(i64::MAX)) NOT
+  the capped 25 visible in the UI. Exports should be
+  comprehensive even when the view is bounded for readability.
+  The toast surfaces the underlying total_count so the user
+  sees how many rows landed on disk.
+- formatAutoPruneAttributionToast lives in marketplace.ts
+  (NOT in the Svelte component) so the same helper drives the
+  runAutoPruneNow toast AND any future surface that surfaces
+  AutoPruneOutcome::Pruned. Same shape philosophy as
+  formatLastAutoPrune / formatNextAutoPrune — pure helpers
+  belong in the TS module.
+
+## Roadmap — round 25 (Auto-prune run history) — ALL DONE
+
+Round 25 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the auto-prune run history (slices 118-122).
+One backend storage slice, one backend driver-rewrite slice, one
+CSV primitive, one JSON envelope primitive, and one composite
+UI slice (Tauri commands + TS client + filename helper +
+attribution toast helper + demo-able history sub-block). Same
+canonical five-layer pattern as round 19 (drilldown CSV arc) +
+round 20 (drilldown JSON + histogram sort) + round 21 (histogram
+export arc) + round 22 (activity timeline arc) + round 23
+(bucket drilldown arc) + round 24 (per-plugin overrides arc).
+
+118. ~~**auto-prune run history storage**~~ —
+     DONE (2026-06-22 17:55 PT, 0b5fbea). Schema v3->v4 with
+     install_log_auto_prune_runs(id, ran_at_unix, rows_removed,
+     retain_days, cutoff_unix, overrides_applied,
+     overrides_rows_removed) + ran_at_unix DESC index. Four
+     primitives: record_auto_prune_run(6 args) -> i64 /
+     auto_prune_runs(limit) -> Vec DESC ran_at_unix /
+     auto_prune_runs_total -> i64 / clear_auto_prune_runs ->
+     usize idempotent DELETE. Zero/negative limit returns
+     empty Vec (matches conservative posture of every other
+     reader on this side).
+119. ~~**auto_prune_if_due records each run to history**~~ —
+     DONE (2026-06-22 18:00 PT, 82a056e). Pruned outcome
+     appends one row to history; Skipped does NOT (debounce-
+     window invariant). Zero-row Pruned IS recorded — audit
+     signal not silence. Conservation invariant test: sum of
+     rows_removed across history rows equals events removed
+     from install_events.
+120. ~~**auto-prune run history CSV export primitive**~~ —
+     DONE (2026-06-22 18:10 PT, 6623281 + doc-comment reword
+     in slice 122's commit to satisfy clippy). Pure-data
+     auto_prune_runs_to_csv(rows, include_header) -> String.
+     8 columns: id + ran_at_unix + ran_at_iso + rows_removed +
+     retain_days + cutoff_unix + overrides_applied +
+     overrides_rows_removed. ran_at_iso byte-equal to install-
+     log CSV. AUTO_PRUNE_RUNS_CSV_HEADER pub const.
+121. ~~**auto-prune run history JSON envelope primitive**~~ —
+     DONE (2026-06-22 18:20 PT, 68a2e96). Pure-data
+     auto_prune_runs_to_json(rows) ->
+     AutoPruneRunsExportEnvelope. 6 fields with pre-summed
+     envelope-level totals (total_rows_removed +
+     total_overrides_rows_removed) so consumers don't re-sum.
+     AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION = 1, PARALLEL-
+     versioned with all five sibling envelopes.
+122. ~~**auto-prune run history UI with attribution toast**~~ —
+     DONE (2026-06-22 18:35 PT, 614fc5d). 4 Tauri commands
+     wired into invoke handler (read + clear + CSV export +
+     JSON export — exports cover ALL rows). AutoPruneRunsResult
+     wire payload denormalises total_count + attribution
+     totals. TS surface with 5 async wrappers +
+     suggestAutoPruneRunsExportFilename helper +
+     formatAutoPruneAttributionToast pure helper +
+     InstallLogAutoPruneOutcome extended with attribution
+     fields. UI: nested history sub-block inside Retention
+     section with count meta + Export… popover + Clear
+     history (gated behind confirm) + per-row 4-column grid
+     with 3-state attribution badge + runAutoPruneNow toast
+     upgraded to attribution-aware copy. load()'s Promise.all
+     extended with auto-prune-runs read so section paints on
+     initial drawer open. 14 inline test assertions for the
+     filename helper + attribution toast formatter.
+
+     With round 25 done, the install log's policy + execution +
+     audit-trail story is now complete: the global window
+     (round 12-16) + the per-plugin overrides (round 24) set
+     policy; the auto-prune driver (round 14 + 24) executes
+     it; the run history (round 25) records every execution
+     with attribution. Next subsystem candidates: Hopper rule
+     reorder-by-drag in the coverage panel (drag a dead row
+     up to fix shadowing in one motion), drilldown row ->
+     cross-surface filter (clicking a fall-through filename
+     in the popover carries the search query into the
+     document inspector), Loom-grade tagging explorer, doc-
+     detail metadata editor read/write surface, Beacon cache
+     inspector polish (column sort by basename / model
+     facet), Quill multi-document field-detect queueing,
+     histogram hover-tooltip on bar segments (could still
+     ship as a smaller arc), per-plugin "Run prune now" 
+     affordance (forces the per-plugin pass to run
+     immediately without waiting for the global debounce).
 
 ### What round-24 (2026-06-22 14:57 PT) just shipped
 
