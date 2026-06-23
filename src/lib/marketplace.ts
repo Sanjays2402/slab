@@ -1540,6 +1540,15 @@ export type InstallLogAutoPruneOutcome =
       rows_removed: number;
       retain_days: number;
       cutoff_unix: number;
+      /** Per-plugin retention overrides considered during this run
+       *  (== `len()` of overrides at prune time). Zero on a
+       *  workstation with no overrides. Added Slice 114. */
+      overrides_applied: number;
+      /** Subset of `rows_removed` attributable to the per-plugin
+       *  override passes; the rest are the global pass. Always
+       *  `<= rows_removed`. Added Slice 114; the toast (Slice 122)
+       *  uses this to render the attribution split. */
+      overrides_rows_removed: number;
     }
   | { outcome: "skipped"; next_due_unix: number };
 
@@ -2022,4 +2031,185 @@ export function formatUpdateSummary(report: BatchUpdateReport): string {
   const word = total === 1 ? "plugin" : "plugins";
   return `Updated ${succeeded} of ${total} ${word}${sizePart} · ${failed} failed`;
 }
+
+// ─── Auto-prune run history surface (v3.39 round-25 — slice 122) ────
+
+/**
+ * One persisted row in the auto-prune run history table. Mirrors
+ * the Rust `AutoPruneRun` struct (Slice 118). The
+ * `overrides_applied` + `overrides_rows_removed` fields carry the
+ * per-plugin-vs-global attribution split returned by
+ * `AutoPruneOutcome::Pruned` (Slice 114) — preserved per-row so a
+ * UI viewing a 6-month-old prune still answers "did the override
+ * or the global window remove these events".
+ */
+export interface AutoPruneRun {
+  id: number;
+  ran_at_unix: number;
+  rows_removed: number;
+  /** Global retention window in force when this prune ran (NOT
+   *  the current setting — captured per-row so the audit trail
+   *  shows what window applied at the time). */
+  retain_days: number;
+  /** Unix-seconds cutoff the global pass applied
+   *  (ran_at_unix - retain_days * 86_400). */
+  cutoff_unix: number;
+  /** Per-plugin retention overrides considered during this run.
+   *  Zero on a workstation with no overrides. */
+  overrides_applied: number;
+  /** Subset of `rows_removed` attributable to the per-plugin
+   *  override passes; the rest are the global pass. */
+  overrides_rows_removed: number;
+}
+
+/**
+ * Wire payload returned by `getAutoPruneRuns`. Mirrors the Rust
+ * `AutoPruneRunsResult` struct (Slice 122). Carries the most-
+ * recent N history rows plus the underlying total plus the
+ * envelope-level attribution totals (pre-summed across the
+ * returned rows) so the UI renders "Showing N of M · cleared X
+ * events (Y from per-plugin overrides)" without re-summing on
+ * every render.
+ */
+export interface AutoPruneRunsResult {
+  rows: AutoPruneRun[];
+  /** Total rows in the underlying table — always `>= rows.length`.
+   *  UI compares against `rows.length` to render "Showing N of M"
+   *  vs "Showing all". */
+  total_count: number;
+  /** Sum of `rows[i].rows_removed`. Pairs with
+   *  `total_overrides_rows_removed` for the attribution split. */
+  total_rows_removed: number;
+  /** Sum of `rows[i].overrides_rows_removed`. */
+  total_overrides_rows_removed: number;
+}
+
+const BROWSER_FALLBACK_AUTO_PRUNE_RUNS: AutoPruneRunsResult = {
+  rows: [],
+  total_count: 0,
+  total_rows_removed: 0,
+  total_overrides_rows_removed: 0,
+};
+
+/**
+ * Read the auto-prune run history, newest first, capped at
+ * `limit` (default 25). Cheap O(N) on a small indexed table. In
+ * browser mode returns an empty result so the UI renders the
+ * empty state cleanly in dev / preview builds.
+ */
+export async function getAutoPruneRuns(
+  limit = 25,
+): Promise<AutoPruneRunsResult> {
+  if (!isInTauri()) return { ...BROWSER_FALLBACK_AUTO_PRUNE_RUNS };
+  return invoke<AutoPruneRunsResult>(
+    "slab_marketplace_install_log_auto_prune_runs",
+    { limit },
+  );
+}
+
+/**
+ * Remove every row from the auto-prune run history. Idempotent —
+ * returns the number of rows actually deleted (zero on an
+ * already-empty table). The corresponding `install_events` table
+ * is NOT touched; only the audit trail is cleared. In browser
+ * mode no-ops and returns 0.
+ */
+export async function clearAutoPruneRuns(): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_clear_auto_prune_runs",
+  );
+}
+
+/**
+ * Write the auto-prune run history to disk as RFC-4180 CSV.
+ * Returns the byte count written. In browser mode no-ops and
+ * returns 0 — the file picker is desktop-only.
+ */
+export async function exportAutoPruneRunsCsv(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_auto_prune_runs_csv",
+    { path },
+  );
+}
+
+/**
+ * Write the auto-prune run history to disk as a pretty-printed
+ * JSON envelope (schema_version + generated_at_iso + row_count +
+ * total_rows_removed + total_overrides_rows_removed + rows).
+ * Returns the byte count written. In browser mode no-ops and
+ * returns 0.
+ */
+export async function exportAutoPruneRunsJson(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_auto_prune_runs_json",
+    { path },
+  );
+}
+
+/**
+ * Suggest a filename for the auto-prune run history export.
+ * Produces `marketplace-auto-prune-runs_<YYYYMMDD>.<ext>` matching
+ * the five sibling export-filename helpers' shape. UTC date slug
+ * so the same export from two machines in different timezones
+ * carries the same name.
+ *
+ * Pure helper — no I/O, no Tauri. Accepts an injectable `now` for
+ * deterministic unit tests.
+ */
+export function suggestAutoPruneRunsExportFilename(
+  kind: "csv" | "json",
+  now?: number,
+): string {
+  const d = new Date(now ?? Date.now());
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `marketplace-auto-prune-runs_${y}${m}${day}.${kind}`;
+}
+
+/**
+ * Compact attribution toast for the auto-prune outcome. Surfaces
+ * the per-plugin-vs-global split that Slice 114 plumbed through
+ * `AutoPruneOutcome::Pruned` but the round-24 toast didn't render.
+ *
+ * Returns one of:
+ *   - "Auto-prune ran — nothing to remove."          (rows_removed === 0)
+ *   - "Auto-pruned 23 events older than 365d."       (no overrides applied)
+ *   - "Auto-pruned 23 events older than 365d (5 from 2 per-plugin overrides)."
+ *                                                     (overrides applied)
+ *   - "Auto-pruned 23 events older than 365d (all from per-plugin overrides)."
+ *                                                     (every row came from overrides)
+ *
+ * Pure helper — no I/O. Accepts the full Pruned-branch payload so
+ * the caller can hand it the discriminated-union variant directly.
+ */
+export function formatAutoPruneAttributionToast(outcome: {
+  rows_removed: number;
+  retain_days: number;
+  overrides_applied: number;
+  overrides_rows_removed: number;
+}): string {
+  const { rows_removed, retain_days, overrides_applied, overrides_rows_removed } =
+    outcome;
+  if (rows_removed === 0) return "Auto-prune ran — nothing to remove.";
+  const word = rows_removed === 1 ? "event" : "events";
+  const base = `Auto-pruned ${rows_removed} ${word} older than ${retain_days}d`;
+  if (overrides_applied === 0 || overrides_rows_removed === 0) {
+    return `${base}.`;
+  }
+  if (overrides_rows_removed === rows_removed) {
+    return `${base} (all from per-plugin overrides).`;
+  }
+  const overridesWord =
+    overrides_applied === 1 ? "per-plugin override" : "per-plugin overrides";
+  return `${base} (${overrides_rows_removed} from ${overrides_applied} ${overridesWord}).`;
+}
+
 

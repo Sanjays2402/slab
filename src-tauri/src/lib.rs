@@ -6200,6 +6200,148 @@ fn slab_marketplace_install_log_export_plugin_retention_json(path: String) -> Re
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Auto-prune run history surface (v3.39 round-25 — slice 122).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Wire payload returned by
+/// [`slab_marketplace_install_log_auto_prune_runs`]. Carries the
+/// most-recent N history rows plus the total count plus the
+/// envelope-level attribution totals so the UI can render
+/// "Showing N of M total prunes · Cleared X events (Y from
+/// per-plugin overrides)" without re-querying or re-summing.
+///
+/// `total_count` is the underlying row count in the
+/// `install_log_auto_prune_runs` table; `rows` is capped at the
+/// `limit` the command was called with. When `total_count >
+/// rows.len()` the UI surfaces "Showing N of M" copy; otherwise
+/// "Showing all N".
+///
+/// `total_rows_removed` + `total_overrides_rows_removed` are summed
+/// across the RETURNED rows (NOT the underlying table) — the
+/// attribution split for what the user is currently looking at. A
+/// future "Show all" affordance would re-fetch with limit = -1 …
+/// in practice 25 is enough for the standard view; the
+/// envelope-level totals on the JSON export answer the corpus-wide
+/// version of the question.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AutoPruneRunsResult {
+    pub rows: Vec<marketplace::AutoPruneRun>,
+    /// Total number of rows in the underlying history table —
+    /// always `>= rows.len()`. The UI compares against `rows.len()`
+    /// to render "Showing N of M" vs "Showing all".
+    pub total_count: i64,
+    /// Sum of `rows[i].rows_removed` pre-computed across the
+    /// returned rows. Saves a UI re-sum on every render.
+    pub total_rows_removed: i64,
+    /// Sum of `rows[i].overrides_rows_removed` pre-computed across
+    /// the returned rows. Pairs with `total_rows_removed` for the
+    /// attribution split surfaced in the section header.
+    pub total_overrides_rows_removed: i64,
+}
+
+/// Read the auto-prune run history, newest first, capped at `limit`
+/// (default 25). The UI calls this on mount of the Retention
+/// section and after every prune (so the new entry appears
+/// immediately on the next render).
+///
+/// Cheap O(N) on a small indexed table; the default cap keeps the
+/// table view bounded for a workstation that has been running for
+/// years. A future "Show all" affordance can call with limit = -1
+/// to surface a synthetic "no cap" view (the storage layer treats
+/// negative limits as zero so the caller chooses; today the
+/// command floors negatives at 25 to keep the UI's expectations
+/// stable).
+#[tauri::command]
+fn slab_marketplace_install_log_auto_prune_runs(
+    limit: Option<i64>,
+) -> Result<AutoPruneRunsResult, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let effective_limit = limit.unwrap_or(25).max(1);
+    let rows = log
+        .auto_prune_runs(effective_limit)
+        .map_err(|e| e.to_string())?;
+    let total_count = log.auto_prune_runs_total().map_err(|e| e.to_string())?;
+    let total_rows_removed: i64 = rows.iter().map(|r| r.rows_removed).sum();
+    let total_overrides_rows_removed: i64 = rows.iter().map(|r| r.overrides_rows_removed).sum();
+    Ok(AutoPruneRunsResult {
+        rows,
+        total_count,
+        total_rows_removed,
+        total_overrides_rows_removed,
+    })
+}
+
+/// Remove every row from the auto-prune run history. Idempotent —
+/// returns the number of rows actually deleted (zero on an
+/// already-empty table). The corresponding `install_events` table
+/// is NOT touched; this command clears the audit trail only, not
+/// the events themselves. The UI's "Clear history" affordance
+/// behind a confirm dialog calls this.
+#[tauri::command]
+fn slab_marketplace_install_log_clear_auto_prune_runs() -> Result<u64, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.clear_auto_prune_runs()
+        .map(|n| n as u64)
+        .map_err(|e| e.to_string())
+}
+
+/// Write the auto-prune run history to disk as RFC-4180 CSV.
+/// Mirrors the five sibling export commands (install-log,
+/// histogram, activity-timeline, bucket-drilldown, plugin-
+/// retention). Returns the byte count actually written; idempotent
+/// — overwrites if the target file exists; creates parent dirs if
+/// missing.
+///
+/// Reads ALL rows (no limit) — the UI's table view is capped at
+/// 25 for readability but an export should be comprehensive. The
+/// `auto_prune_runs(i64::MAX)` call costs one indexed scan on a
+/// table that grows by one row per day at most.
+#[tauri::command]
+fn slab_marketplace_install_log_export_auto_prune_runs_csv(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log.auto_prune_runs(i64::MAX).map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::auto_prune_runs_to_csv(&rows, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the auto-prune run history to disk as a pretty-printed
+/// JSON envelope. Ships the
+/// [`marketplace::install_log::AutoPruneRunsExportEnvelope`] shape
+/// (schema_version + generated_at_iso + row_count +
+/// total_rows_removed + total_overrides_rows_removed + rows).
+/// Returns the byte count actually written; idempotent.
+///
+/// Like the CSV companion, exports ALL rows — no limit applied at
+/// the export boundary.
+#[tauri::command]
+fn slab_marketplace_install_log_export_auto_prune_runs_json(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log.auto_prune_runs(i64::MAX).map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::auto_prune_runs_to_json(&rows);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Bulk updates (v3.39 round-15 — slices 69-70).
 // ─────────────────────────────────────────────────────────────────────
 
@@ -7757,6 +7899,10 @@ pub fn run() {
             slab_marketplace_install_log_clear_plugin_retention,
             slab_marketplace_install_log_export_plugin_retention_csv,
             slab_marketplace_install_log_export_plugin_retention_json,
+            slab_marketplace_install_log_auto_prune_runs,
+            slab_marketplace_install_log_clear_auto_prune_runs,
+            slab_marketplace_install_log_export_auto_prune_runs_csv,
+            slab_marketplace_install_log_export_auto_prune_runs_json,
             slab_marketplace_list_update_targets,
             slab_marketplace_update_all,
             slab_beacon_voice_capabilities,

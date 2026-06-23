@@ -24,6 +24,9 @@ import {
   type BucketDrilldownExportFilter,
   // Slice 117 — per-plugin retention overrides TS surface
   suggestPluginRetentionExportFilename,
+  // Slice 122 — auto-prune run history TS surface
+  suggestAutoPruneRunsExportFilename,
+  formatAutoPruneAttributionToast,
 } from "./marketplace";
 
 function expect(cond: boolean, label: string): void {
@@ -955,3 +958,187 @@ function actBucket(
   );
 }
 
+
+// ─── Slice 122: auto-prune run history filename + attribution toast ──
+
+{
+  // Default csv form for the known fixture timestamp. Same shape
+  // contract as the five sibling export-filename helpers.
+  const name = suggestAutoPruneRunsExportFilename("csv", NOW);
+  expect(
+    /^marketplace-auto-prune-runs_\d{8}\.csv$/.test(name),
+    `default csv form (${name})`,
+  );
+}
+
+{
+  // Default json form.
+  const name = suggestAutoPruneRunsExportFilename("json", NOW);
+  expect(
+    /^marketplace-auto-prune-runs_\d{8}\.json$/.test(name),
+    `default json form (${name})`,
+  );
+}
+
+{
+  // csv vs json differ ONLY in suffix — the slug prefix is identical
+  // byte-for-byte. Defends against accidental kind-specific drift.
+  const csv = suggestAutoPruneRunsExportFilename("csv", NOW);
+  const json = suggestAutoPruneRunsExportFilename("json", NOW);
+  expect(
+    csv.replace(/\.csv$/, "") === json.replace(/\.json$/, ""),
+    `csv/json slug equality (csv=${csv} json=${json})`,
+  );
+}
+
+{
+  // Same `now` -> same filename. Pure helper, no Date.now() leak.
+  const a = suggestAutoPruneRunsExportFilename("csv", 1_710_000_000_000);
+  const b = suggestAutoPruneRunsExportFilename("csv", 1_710_000_000_000);
+  expect(a === b, `same epoch -> same filename (a=${a} b=${b})`);
+}
+
+{
+  // Epoch lower-bound test — 1970-01-01.
+  const name = suggestAutoPruneRunsExportFilename("csv", 0);
+  expect(
+    name === "marketplace-auto-prune-runs_19700101.csv",
+    `epoch slug (${name})`,
+  );
+}
+
+{
+  // Date-slug parity with the per-plugin retention helper for the
+  // same `now`. A future drift between the slug formats surfaces here.
+  const prune = suggestAutoPruneRunsExportFilename("csv", NOW);
+  const retention = suggestPluginRetentionExportFilename("csv", NOW);
+  const pruneMatch = prune.match(/_(\d{8})\.[a-z]+$/);
+  const retMatch = retention.match(/_(\d{8})\.[a-z]+$/);
+  expect(
+    pruneMatch !== null &&
+      retMatch !== null &&
+      pruneMatch[1] === retMatch[1],
+    `date slug shared with retention helper (prune=${prune} ret=${retention})`,
+  );
+}
+
+{
+  // Future-date helper invocation — proves the helper honours the
+  // `now` arg vs falling back to Date.now().
+  const name = suggestAutoPruneRunsExportFilename(
+    "json",
+    Date.UTC(2026, 5, 22),
+  );
+  expect(
+    name === "marketplace-auto-prune-runs_20260622.json",
+    `future-date helper invocation (${name})`,
+  );
+}
+
+// Attribution toast format helper.
+
+{
+  // Zero-row prune renders the "nothing to remove" copy regardless
+  // of override values — the user wants to see "the auto-prune ran"
+  // not "0 events removed".
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 0,
+    retain_days: 365,
+    overrides_applied: 0,
+    overrides_rows_removed: 0,
+  });
+  expect(
+    msg === "Auto-prune ran — nothing to remove.",
+    `zero-row prune (${msg})`,
+  );
+}
+
+{
+  // No overrides applied -> no attribution suffix, base copy only.
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 23,
+    retain_days: 365,
+    overrides_applied: 0,
+    overrides_rows_removed: 0,
+  });
+  expect(
+    msg === "Auto-pruned 23 events older than 365d.",
+    `no overrides (${msg})`,
+  );
+}
+
+{
+  // Single-event grammar — "1 event" not "1 events".
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 1,
+    retain_days: 30,
+    overrides_applied: 0,
+    overrides_rows_removed: 0,
+  });
+  expect(
+    msg === "Auto-pruned 1 event older than 30d.",
+    `single-event grammar (${msg})`,
+  );
+}
+
+{
+  // Mixed attribution: 5 of 23 came from 2 per-plugin overrides.
+  // The standard surface for the "split" case.
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 23,
+    retain_days: 365,
+    overrides_applied: 2,
+    overrides_rows_removed: 5,
+  });
+  expect(
+    msg === "Auto-pruned 23 events older than 365d (5 from 2 per-plugin overrides).",
+    `mixed attribution (${msg})`,
+  );
+}
+
+{
+  // Single-override grammar — "1 per-plugin override" not
+  // "1 per-plugin overrides".
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 7,
+    retain_days: 30,
+    overrides_applied: 1,
+    overrides_rows_removed: 3,
+  });
+  expect(
+    msg === "Auto-pruned 7 events older than 30d (3 from 1 per-plugin override).",
+    `single-override grammar (${msg})`,
+  );
+}
+
+{
+  // Every removed row came from per-plugin overrides — surfaces as
+  // "all from per-plugin overrides" to make it instantly legible
+  // that the global window removed nothing.
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 8,
+    retain_days: 365,
+    overrides_applied: 3,
+    overrides_rows_removed: 8,
+  });
+  expect(
+    msg === "Auto-pruned 8 events older than 365d (all from per-plugin overrides).",
+    `all-from-overrides (${msg})`,
+  );
+}
+
+{
+  // Overrides applied but zero rows removed via them — falls back to
+  // the no-attribution copy (don't show "0 from N overrides" — that
+  // creates clutter when the overrides happened to match nothing).
+  const msg = formatAutoPruneAttributionToast({
+    rows_removed: 12,
+    retain_days: 180,
+    overrides_applied: 4,
+    overrides_rows_removed: 0,
+  });
+  expect(
+    msg === "Auto-pruned 12 events older than 180d.",
+    `overrides-applied-but-none-matched (${msg})`,
+  );
+}

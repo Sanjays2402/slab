@@ -2131,15 +2131,18 @@ pub fn plugin_retention_overrides_to_csv(
 // ─── Auto-prune run history export (Slice 120) ───────────────────────
 
 /// Documented column header for the auto-prune run history CSV export.
-/// Eight columns: id (the rowid for cross-export joins), ran_at_unix
-/// + ran_at_iso (machine + human timestamps of when the prune ran),
-/// rows_removed (total deletions for this run), retain_days +
-/// cutoff_unix (global window snapshot — captured per-row so a later
-/// view sees what window was in force when this prune ran, even if
-/// the user has since tuned it), overrides_applied
-/// (per-plugin overrides considered) + overrides_rows_removed
-/// (subset of rows_removed attributable to those overrides; the rest
-/// are the global pass — the attribution split).
+///
+/// Eight columns total. The first two identify the run: `id` (rowid
+/// for cross-export joins) and `ran_at_unix` (machine-friendly
+/// timestamp). The next column `ran_at_iso` is the human-friendly
+/// ISO-8601 UTC sibling for direct review in Excel. `rows_removed`
+/// is the total deletion count for this run. `retain_days` and
+/// `cutoff_unix` are the global window snapshot captured per-row so
+/// a later view sees what window was in force when this prune ran,
+/// even if the user has since tuned it. `overrides_applied` counts
+/// the per-plugin overrides considered; `overrides_rows_removed` is
+/// the subset of `rows_removed` attributable to those overrides
+/// (the rest are the global pass — the attribution split).
 ///
 /// `pub const` so tests + future column reorders share one source of
 /// truth, matching the four sibling CSV header constants.
@@ -2155,11 +2158,12 @@ pub const AUTO_PRUNE_RUNS_CSV_HEADER: &str =
 /// from the same `ran_at_unix` field so they cannot drift.
 ///
 /// `cutoff_unix` is written raw (no ISO sibling). The ISO companion
-/// is omitted because the cutoff is a derived value — `ran_at_unix
-/// - retain_days * 86_400` — and a consumer that needs an ISO can
-/// reproduce it. The two ISO columns we DO emit (ran_at_iso) cover
-/// the human-readable "when" question; the cutoff is an audit-only
-/// figure for verifying the prune's effective window.
+/// is omitted because the cutoff is a derived value
+/// (`ran_at_unix - retain_days * 86_400`); a consumer that needs an
+/// ISO can reproduce it. The two ISO columns we DO emit
+/// (`ran_at_iso`) cover the human-readable "when" question; the
+/// cutoff is an audit-only figure for verifying the prune's
+/// effective window.
 ///
 /// `include_header` opt-in (matches the install-log + histogram +
 /// activity-timeline + bucket-drilldown + plugin-retention CSV API).

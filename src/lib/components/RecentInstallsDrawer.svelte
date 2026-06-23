@@ -41,6 +41,9 @@
     exportInstallLogBucketDrilldownJson,
     exportPluginRetentionOverridesCsv,
     exportPluginRetentionOverridesJson,
+    exportAutoPruneRunsCsv,
+    exportAutoPruneRunsJson,
+    formatAutoPruneAttributionToast,
     formatBytes,
     formatInstallEventTime,
     formatLastAutoPrune,
@@ -51,6 +54,8 @@
     getActivityTimeline,
     getBucketDrilldown,
     getPluginRetentionOverrides,
+    getAutoPruneRuns,
+    clearAutoPruneRuns,
     setPluginRetentionDays,
     clearPluginRetention,
     densifyActivityTimeline,
@@ -68,6 +73,7 @@
     suggestBucketDrilldownExportFilename,
     suggestInstallLogExportFilename,
     suggestPluginRetentionExportFilename,
+    suggestAutoPruneRunsExportFilename,
     summarizeHistogram,
     type HistogramExportFilter,
     type ActivityTimelineExportFilter,
@@ -89,6 +95,8 @@
     histogramSortLabel,
     type PluginRetentionOverridesResult,
     type PluginRetentionOverride,
+    type AutoPruneRunsResult,
+    type AutoPruneRun,
   } from "$lib/marketplace";
 
   type Props = {
@@ -205,6 +213,26 @@
   let overridesExportMenuOpen = $state(false);
   /** True while a save-as dialog or backend write is in flight. */
   let overridesExporting = $state(false);
+
+  // ─── Auto-prune run history (Slice 122) ───────────────────────────
+  //
+  // Nested sub-block inside the Retention section showing the most-
+  // recent N auto-prune runs with per-plugin-vs-global attribution.
+  // Slice 114 plumbed the attribution fields through AutoPruneOutcome
+  // but the values vanished after each run; Slice 118 + 119 persisted
+  // them to the install_log_auto_prune_runs table; Slice 122 surfaces
+  // them in the drawer plus CSV + JSON export.
+
+  /** Loaded auto-prune history. Null until the first fetch resolves. */
+  let autoPruneRuns = $state<AutoPruneRunsResult | null>(null);
+  /** True while a getAutoPruneRuns / clear call is in flight. */
+  let autoPruneRunsBusy = $state(false);
+  /** Confirm dialog open for the destructive "Clear history" action. */
+  let confirmingClearAutoPruneRuns = $state(false);
+  /** Open state for the auto-prune-runs export popover. */
+  let autoPruneRunsExportMenuOpen = $state(false);
+  /** True while a save-as dialog or backend write is in flight. */
+  let autoPruneRunsExporting = $state(false);
 
   // ─── Top plugins histogram (Slice 87) ─────────────────────────────
   //
@@ -400,7 +428,7 @@
           actionFilter.size > 0 ? [...actionFilter] : null,
         plugin_id_substr: pluginQueryActive || null,
       };
-      const [eventsResp, sm, pol, ids, ovr] = await Promise.all([
+      const [eventsResp, sm, pol, ids, ovr, runs] = await Promise.all([
         useFiltered
           ? listInstallEventsFiltered(filterQuery).then((r) => r.events)
           : listRecentInstallEvents(100),
@@ -412,6 +440,11 @@
           ? recentInstallPluginIds(25)
           : Promise.resolve(pluginSuggestions),
         getPluginRetentionOverrides(),
+        // Slice 122: load the auto-prune history alongside the other
+        // policy reads so the History sub-block paints with the
+        // initial drawer open (no flash-of-empty when the panel
+        // expands).
+        getAutoPruneRuns(25),
       ]);
       events = eventsResp;
       summary = sm;
@@ -419,6 +452,7 @@
       retainDaysDraft = pol.retain_days;
       pluginSuggestions = ids;
       overrides = ovr;
+      autoPruneRuns = runs;
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
     } finally {
@@ -632,6 +666,10 @@
       e.preventDefault();
       if (suggestOpen) {
         suggestOpen = false;
+      } else if (autoPruneRunsExportMenuOpen) {
+        autoPruneRunsExportMenuOpen = false;
+      } else if (confirmingClearAutoPruneRuns) {
+        confirmingClearAutoPruneRuns = false;
       } else if (drilldownExportMenuOpen) {
         drilldownExportMenuOpen = false;
       } else if (drilldown !== null) {
@@ -712,23 +750,23 @@
   }
 
   /** Trigger the auto-prune. `force = true` skips the 24h debounce.
-   *  The outcome discriminator drives the toast copy: "pruned N
-   *  events" vs. "next due in X". After a prune we refresh the
-   *  event list + policy + summary so the drawer reflects the
-   *  changed log. */
+   *  The outcome discriminator drives the toast copy: the attribution-
+   *  aware formatter (Slice 122) renders "Auto-pruned N events older
+   *  than Xd (Y from Z per-plugin overrides)" when overrides
+   *  contributed to the deletion, falling back to the base copy when
+   *  they didn't. After a prune we refresh the event list + policy +
+   *  summary so the drawer reflects the changed log AND reload the
+   *  auto-prune history (Slice 118) so the new entry appears in the
+   *  history sub-block immediately. */
   async function runAutoPruneNow(force = false): Promise<void> {
     retentionBusy = true;
     try {
       const outcome = await runInstallLogAutoPrune(force);
       if (outcome.outcome === "pruned") {
-        const word = outcome.rows_removed === 1 ? "event" : "events";
-        flashRetentionToast(
-          outcome.rows_removed === 0
-            ? "Auto-prune ran — nothing to remove."
-            : `Auto-pruned ${outcome.rows_removed} ${word} older than ${outcome.retain_days}d.`,
-        );
+        flashRetentionToast(formatAutoPruneAttributionToast(outcome));
         // The prune changed the log → refresh everything that depends on it.
         await load();
+        await refreshAutoPruneRuns();
         onPruned?.(outcome.rows_removed);
       } else {
         // skipped: debounce window not elapsed.
@@ -875,6 +913,98 @@
     } finally {
       overridesExporting = false;
     }
+  }
+
+  // ─── Auto-prune run history (Slice 122) ────────────────────────────
+
+  /** Reload just the auto-prune history — cheap after a single
+   *  mutation, avoids the full drawer refresh that load() would
+   *  trigger. Called after runAutoPruneNow (so the new entry
+   *  appears) and after clearAutoPruneRuns. */
+  async function refreshAutoPruneRuns(): Promise<void> {
+    autoPruneRuns = await getAutoPruneRuns(25);
+  }
+
+  function openConfirmClearAutoPruneRuns(): void {
+    confirmingClearAutoPruneRuns = true;
+  }
+
+  function cancelConfirmClearAutoPruneRuns(): void {
+    confirmingClearAutoPruneRuns = false;
+  }
+
+  async function commitClearAutoPruneRuns(): Promise<void> {
+    confirmingClearAutoPruneRuns = false;
+    autoPruneRunsBusy = true;
+    try {
+      const removed = await clearAutoPruneRuns();
+      await refreshAutoPruneRuns();
+      const word = removed === 1 ? "entry" : "entries";
+      flashRetentionToast(
+        `Cleared ${removed} history ${word} from the auto-prune log.`,
+      );
+    } catch (e) {
+      flashRetentionToast(
+        `Could not clear history: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      autoPruneRunsBusy = false;
+    }
+  }
+
+  async function runAutoPruneRunsExport(kind: "csv" | "json"): Promise<void> {
+    autoPruneRunsExportMenuOpen = false;
+    autoPruneRunsExporting = true;
+    try {
+      const defaultPath = suggestAutoPruneRunsExportFilename(kind);
+      const target = await saveDialog({
+        defaultPath,
+        filters: [
+          kind === "csv"
+            ? { name: "CSV", extensions: ["csv"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
+      });
+      if (!target) return; // user cancelled
+      const bytes =
+        kind === "csv"
+          ? await exportAutoPruneRunsCsv(target)
+          : await exportAutoPruneRunsJson(target);
+      // The export covers ALL rows (no limit) — surface the
+      // underlying total, not the capped count visible in the table.
+      const count = autoPruneRuns?.total_count ?? 0;
+      const word = count === 1 ? "prune" : "prunes";
+      const kindLabel = kind === "csv" ? "CSV" : "JSON";
+      flashRetentionToast(
+        `Exported ${count} ${word} as ${kindLabel} (${formatBytes(bytes)})`,
+      );
+    } catch (e) {
+      flashRetentionToast(
+        `Could not export history: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      autoPruneRunsExporting = false;
+    }
+  }
+
+  /** Format the per-row "ran X ago" cell. Uses the same vocabulary
+   *  as formatLastAutoPrune for visual consistency across the
+   *  Retention section but trims the "Last auto-prune:" prefix. */
+  function formatAutoPruneRunRelative(ranAtUnix: number): string {
+    return formatLastAutoPrune(ranAtUnix).replace(/^Last auto-prune:\s*/, "");
+  }
+
+  /** Format a per-row attribution badge — the same logic as the
+   *  toast helper but condensed for a tight table cell. Returns
+   *  either "global" (no override contribution) or "N override"/
+   *  "all override" depending on the split. */
+  function autoPruneRunAttributionBadge(run: AutoPruneRun): string {
+    if (run.rows_removed === 0) return "no-op";
+    if (run.overrides_rows_removed === 0) return "global";
+    if (run.overrides_rows_removed === run.rows_removed) {
+      return "all override";
+    }
+    return `${run.overrides_rows_removed} override`;
   }
 
   async function runExport(kind: "csv" | "json"): Promise<void> {
@@ -1145,6 +1275,14 @@
     if (drilldownExportMenuOpen) {
       if (!target?.closest(".drilldown-export-anchor")) {
         drilldownExportMenuOpen = false;
+      }
+    }
+    // Slice 122: dismiss the auto-prune-history export popover when
+    // the click lands OUTSIDE its anchor. Same pattern as the four
+    // other export-menu anchors above.
+    if (autoPruneRunsExportMenuOpen) {
+      if (!target?.closest("[data-prune-history-export-anchor]")) {
+        autoPruneRunsExportMenuOpen = false;
       }
     }
     // Dismiss the drilldown popover entirely when the click lands
@@ -1579,6 +1717,150 @@
                             Clear
                           </button>
                         {/if}
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Auto-prune run history sub-block (Slice 122) -->
+            {#if autoPruneRuns}
+              <div class="prune-history-block">
+                <div class="prune-history-head">
+                  <span class="prune-history-label">Auto-prune history</span>
+                  <span class="prune-history-meta">
+                    {#if autoPruneRuns.total_count === 0}
+                      No auto-prunes recorded yet.
+                    {:else if autoPruneRuns.total_count > autoPruneRuns.rows.length}
+                      Showing {autoPruneRuns.rows.length} of {autoPruneRuns.total_count} ·
+                      cleared {autoPruneRuns.total_rows_removed} event{autoPruneRuns.total_rows_removed === 1 ? "" : "s"}{#if autoPruneRuns.total_overrides_rows_removed > 0}
+                        &nbsp;({autoPruneRuns.total_overrides_rows_removed} from per-plugin overrides)
+                      {/if}
+                    {:else}
+                      {autoPruneRuns.total_count} prune{autoPruneRuns.total_count === 1 ? "" : "s"} ·
+                      cleared {autoPruneRuns.total_rows_removed} event{autoPruneRuns.total_rows_removed === 1 ? "" : "s"}{#if autoPruneRuns.total_overrides_rows_removed > 0}
+                        &nbsp;({autoPruneRuns.total_overrides_rows_removed} from per-plugin overrides)
+                      {/if}
+                    {/if}
+                  </span>
+                  {#if autoPruneRuns.total_count > 0}
+                    <div class="prune-history-actions">
+                      <div
+                        class="prune-history-export-anchor"
+                        data-prune-history-export-anchor
+                      >
+                        <button
+                          type="button"
+                          class="ghost mini"
+                          onclick={() =>
+                            (autoPruneRunsExportMenuOpen = !autoPruneRunsExportMenuOpen)}
+                          disabled={autoPruneRunsExporting}
+                          aria-haspopup="menu"
+                          aria-expanded={autoPruneRunsExportMenuOpen}
+                          title="Export the full auto-prune history (CSV or JSON)."
+                        >
+                          Export…
+                        </button>
+                        {#if autoPruneRunsExportMenuOpen}
+                          <div class="export-menu" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              class="export-menu-item"
+                              onclick={() => void runAutoPruneRunsExport("csv")}
+                              disabled={autoPruneRunsExporting}
+                            >
+                              CSV (.csv)
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              class="export-menu-item"
+                              onclick={() => void runAutoPruneRunsExport("json")}
+                              disabled={autoPruneRunsExporting}
+                            >
+                              JSON (.json)
+                            </button>
+                          </div>
+                        {/if}
+                      </div>
+                      <button
+                        type="button"
+                        class="ghost mini danger"
+                        onclick={openConfirmClearAutoPruneRuns}
+                        disabled={autoPruneRunsBusy}
+                        title="Remove every history entry. The install_events table is NOT touched."
+                      >
+                        Clear history
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+
+                {#if confirmingClearAutoPruneRuns}
+                  <div class="prune-history-confirm" role="alertdialog">
+                    <p class="prune-history-confirm-text">
+                      Clear {autoPruneRuns.total_count} history entry{autoPruneRuns.total_count === 1 ? "" : "ies"}?
+                      The install_events table is not touched — only the
+                      audit trail of past prunes is removed.
+                    </p>
+                    <div class="prune-history-confirm-actions">
+                      <button
+                        type="button"
+                        class="ghost mini"
+                        onclick={cancelConfirmClearAutoPruneRuns}
+                        disabled={autoPruneRunsBusy}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        class="primary mini danger"
+                        onclick={() => void commitClearAutoPruneRuns()}
+                        disabled={autoPruneRunsBusy}
+                      >
+                        Clear history
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+
+                {#if autoPruneRuns.rows.length === 0 && !confirmingClearAutoPruneRuns}
+                  <p class="prune-history-empty">
+                    No auto-prunes recorded yet. The history table fills
+                    once the debounce window elapses and the next
+                    auto-prune runs — useful for confirming retention
+                    policy changes took effect and tracking how often
+                    per-plugin overrides contributed to the deletions.
+                  </p>
+                {:else if autoPruneRuns.rows.length > 0}
+                  <ul class="prune-history-list">
+                    {#each autoPruneRuns.rows as run (run.id)}
+                      <li class="prune-history-row">
+                        <span class="prune-history-when" title={`Ran at unix ${run.ran_at_unix}`}>
+                          {formatAutoPruneRunRelative(run.ran_at_unix)}
+                        </span>
+                        <span class="prune-history-removed">
+                          {run.rows_removed} event{run.rows_removed === 1 ? "" : "s"}
+                        </span>
+                        <span
+                          class="prune-history-attribution"
+                          class:has-overrides={run.overrides_rows_removed > 0}
+                          class:all-overrides={run.rows_removed > 0 &&
+                            run.overrides_rows_removed === run.rows_removed}
+                          class:no-op={run.rows_removed === 0}
+                          title={run.rows_removed === 0
+                            ? "Auto-prune ran; corpus was already clean."
+                            : run.overrides_rows_removed === 0
+                              ? `Global window (${run.retain_days}d) removed every event.`
+                              : `${run.overrides_rows_removed} of ${run.rows_removed} events came from ${run.overrides_applied} per-plugin override${run.overrides_applied === 1 ? "" : "s"}.`}
+                        >
+                          {autoPruneRunAttributionBadge(run)}
+                        </span>
+                        <span class="prune-history-window">
+                          {run.retain_days}d window
+                        </span>
                       </li>
                     {/each}
                   </ul>
@@ -2966,6 +3248,131 @@
   }
   .overrides-row-edit {
     flex: 0 0 110px;
+  }
+
+  /* ─── Auto-prune run history (Slice 122) ─────────────────────── */
+  .prune-history-block {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .prune-history-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .prune-history-label {
+    font-size: 11.5px;
+    color: var(--text-1);
+    font-weight: 500;
+  }
+  .prune-history-meta {
+    flex: 1;
+    color: var(--text-3);
+    font-size: 11px;
+  }
+  .prune-history-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .prune-history-export-anchor {
+    position: relative;
+  }
+  .prune-history-empty {
+    margin: 0;
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.5;
+    padding: 6px 4px;
+  }
+  .prune-history-confirm {
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--warn, #d99) 32%, var(--border) 68%);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--warn, #d99) 6%, var(--bg-1) 94%);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .prune-history-confirm-text {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+  .prune-history-confirm-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .prune-history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .prune-history-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, auto) minmax(0, auto);
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-1);
+    font-size: 11.5px;
+  }
+  .prune-history-when {
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .prune-history-removed {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .prune-history-attribution {
+    font-size: 10.5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg-2);
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    text-align: center;
+    min-width: 64px;
+  }
+  /* Per-plugin overrides contributed -> accent tint so the
+     attribution is instantly legible at a glance (matches the
+     overrides-row-badge.longer visual language for "overrides
+     are the story here"). */
+  .prune-history-attribution.has-overrides {
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-2) 86%);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 32%, var(--border) 68%);
+  }
+  .prune-history-attribution.all-overrides {
+    background: color-mix(in srgb, var(--accent) 22%, var(--bg-2) 78%);
+  }
+  .prune-history-attribution.no-op {
+    background: color-mix(in srgb, var(--text-3) 10%, var(--bg-2) 90%);
+    color: var(--text-3);
+  }
+  .prune-history-window {
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
   }
 
   /* ─── Top plugins histogram (Slice 87) ────────────────────────── */
