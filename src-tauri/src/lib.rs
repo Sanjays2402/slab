@@ -7948,6 +7948,7 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_export_drilldown_json,
             crate::pdf::hopper::cmds::slab_hopper_export_coverage_csv,
             crate::pdf::hopper::cmds::slab_hopper_export_coverage_json,
+            crate::pdf::hopper::cmds::slab_hopper_filter_coverage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

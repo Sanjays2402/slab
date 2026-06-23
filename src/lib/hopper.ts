@@ -921,17 +921,53 @@ export async function slabHopperExportCoverageJson(
   return invoke<number>("slab_hopper_export_coverage_json", { report, path });
 }
 
+/** Slice 130 — narrow a coverage report to one diagnostic kind via
+ *  the backend `slab_hopper_filter_coverage` command. Returns a NEW
+ *  [`RuleCoverageReport`] with `rules` filtered per the priority
+ *  chain (dead > zero > shadowed > healthy) and `fallthrough` /
+ *  `total_samples` preserved verbatim.
+ *
+ *  Mirrors the TS-only `filterCoverageByDiagnostic` (slice 129)
+ *  exactly; the wire version exists so the EXPORT path can compose
+ *  the filter + export commands without round-tripping the report
+ *  through a TS pre-filter step, and so a future scripted-export
+ *  consumer (CLI driver, cron job) gets the filter as a first-class
+ *  command. The in-panel render path uses the TS helper directly.
+ *
+ *  Wraps to the local TS helper in browser-mode so component-level
+ *  testing doesn't need a Tauri stub. */
+export async function slabHopperFilterCoverage(
+  report: RuleCoverageReport,
+  filter: CoverageDiagnosticFilter,
+): Promise<RuleCoverageReport> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return filterCoverageByDiagnostic(report, filter);
+  return invoke<RuleCoverageReport>("slab_hopper_filter_coverage", {
+    report,
+    filter: { kind: filter },
+  });
+}
+
 /** Suggest a default filename for a coverage CSV/JSON export.
  *  Mirrors the drilldown filename helper conventions so paralegals
  *  see one consistent naming pattern across the audit-export
  *  surfaces.
  *
- *  Format: `hopper-coverage_<watch>_<YYYY-MM-DD>.<ext>`.
+ *  Format: `hopper-coverage_<watch>_<filter?>_<YYYY-MM-DD>.<ext>`.
  *
  *  - `<watch>` slot is the watch id (`watch-7`) when supplied or
  *    `watch` when the caller doesn't have one handy. The coverage
  *    panel always has one; the optional slot mirrors
  *    `suggestDrilldownExportFilename` for symmetry.
+ *  - `<filter>` slot is the diagnostic filter slug
+ *    (`dead`, `zero`, `shadowed`, `healthy`). Omitted entirely
+ *    (no slot, no extra underscore) when the filter is `"all"` or
+ *    unset — preserving back-compat with the round-26 export
+ *    filenames so an unfiltered export still produces
+ *    `hopper-coverage_watch-7_2026-06-23.csv` exactly. A filtered
+ *    export of the same chain produces
+ *    `hopper-coverage_watch-7_dead_2026-06-23.csv` so the filename
+ *    itself advertises what's in the file.
  *  - `<ext>` defaults to `"csv"`; pass `"json"` for the envelope
  *    export.
  *  - The trailing date uses the caller's local time (same as the
@@ -941,10 +977,18 @@ export async function slabHopperExportCoverageJson(
  *  Note the coverage export has NO per-bucket slot (unlike the
  *  drilldown filename which carries `fallthrough` or `rule-N`) —
  *  a coverage export covers the WHOLE chain, not a single bucket.
+ *  The diagnostic-filter slot is a related but distinct concept:
+ *  it tells the consumer what KIND of rules are in the file, not
+ *  which bucket of files.
  *
  *  Pure helper — no I/O, no Tauri. */
 export function suggestCoverageExportFilename(
-  opts: { watchId?: number | null; now?: number; ext?: "csv" | "json" } = {},
+  opts: {
+    watchId?: number | null;
+    now?: number;
+    ext?: "csv" | "json";
+    filter?: CoverageDiagnosticFilter;
+  } = {},
 ): string {
   const watchSlot =
     opts.watchId != null && Number.isFinite(opts.watchId) && opts.watchId >= 0
@@ -956,7 +1000,14 @@ export function suggestCoverageExportFilename(
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   const ext = opts.ext ?? "csv";
-  return `hopper-coverage_${watchSlot}_${y}-${m}-${day}.${ext}`;
+
+  // Filter slot is OMITTED on "all" / undefined so round-26 filenames
+  // round-trip byte-for-byte. A narrowing filter inserts the slug
+  // between the watch and the date.
+  const filterSlot =
+    opts.filter && opts.filter !== "all" ? `_${opts.filter}` : "";
+
+  return `hopper-coverage_${watchSlot}${filterSlot}_${y}-${m}-${day}.${ext}`;
 }
 
 // ---------------------------------------------------------------------

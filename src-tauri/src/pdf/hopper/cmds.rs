@@ -850,6 +850,56 @@ pub fn slab_hopper_export_coverage_json(
     Ok(bytes.len() as u64)
 }
 
+// ─── Slice 130 — server-side coverage diagnostic filter command ──────
+//
+// The TS client computes the filter locally via
+// `filterCoverageByDiagnostic` (slice 129) for the in-panel rendering
+// path — chip clicks need to react instantly without round-trips. But
+// the EXPORT path benefits from a server-side filter for two reasons:
+//
+// 1. The wire shape stays self-consistent. A filtered export's CSV /
+//    JSON envelope is produced by the SAME `rule_coverage_to_csv` /
+//    `rule_coverage_to_json` primitives the unfiltered path uses,
+//    fed a filtered report — exactly one code path renders the
+//    envelope shape, no parallel "filter at the renderer" branch to
+//    drift out of sync.
+//
+// 2. A future scripted-export consumer (e.g. a CLI driver, a
+//    cron-scheduled audit dump) gets the filter as a first-class
+//    command rather than having to ship a TS pre-filter step.
+//
+// The command accepts the source `report` directly (matches the
+// `slab_hopper_export_coverage_*` shape — "export what's visible"
+// semantics) and a `filter` discriminator, and returns the NEW
+// filtered report. The caller then pipes that into the existing
+// export commands or renders it client-side.
+//
+// We deliberately do NOT bundle "filter + export" into one command;
+// the filter returns the same `RuleCoverageReport` shape so a TS
+// caller can reuse it for any rendering / export path without
+// expanding the command surface.
+
+/// `slab_hopper_filter_coverage` — narrow a coverage report to one
+/// diagnostic kind on the server. Returns a NEW report with `rules`
+/// filtered per [`super::coverage::filter_coverage_by_diagnostic`]
+/// (slice 128) and `fallthrough` + `total_samples` preserved
+/// verbatim. The filter discriminator is the
+/// [`super::coverage::CoverageFilter`] enum
+/// (`"all"` / `"dead"` / `"zero"` / `"shadowed"` / `"healthy"`).
+///
+/// Pure-data command — no DB, no I/O. Mirrors the TS-side
+/// `filterCoverageByDiagnostic` (slice 129) 1:1 for the export-path
+/// callers; the in-panel render path uses the TS mirror directly.
+#[tauri::command]
+pub fn slab_hopper_filter_coverage(
+    report: super::coverage::RuleCoverageReport,
+    filter: super::coverage::CoverageFilter,
+) -> CmdResult<super::coverage::RuleCoverageReport> {
+    Ok(super::coverage::filter_coverage_by_diagnostic(
+        &report, filter,
+    ))
+}
+
 // ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------

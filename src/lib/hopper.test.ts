@@ -1252,3 +1252,92 @@ function mixedDiagnosticReport(): RuleCoverageReport {
     "filter summary singular total",
   );
 }
+
+// ── Slice 130 — suggestCoverageExportFilename filter slot ──────────────
+//
+// The filename helper gains an optional `filter` parameter carrying
+// the diagnostic slug. Back-compat: `"all"` or unset omits the slot
+// so the round-26 export filenames round-trip byte-for-byte.
+
+{
+  // No filter / "all" filter — original round-26 shape preserved.
+  const noFilter = suggestCoverageExportFilename({
+    watchId: 7,
+    now: FIXED_COVERAGE_NOW,
+  });
+  const allFilter = suggestCoverageExportFilename({
+    watchId: 7,
+    now: FIXED_COVERAGE_NOW,
+    filter: "all",
+  });
+  expect(
+    noFilter === allFilter,
+    `coverage filename: unset filter == 'all' filter (${noFilter} vs ${allFilter})`,
+  );
+  expect(
+    /^hopper-coverage_watch-7_\d{4}-\d{2}-\d{2}\.csv$/.test(noFilter),
+    `coverage filename: 'all'/unset matches round-26 shape (${noFilter})`,
+  );
+  expect(
+    !noFilter.includes("_all_"),
+    `coverage filename: 'all' is omitted (not '_all_' literal) (${noFilter})`,
+  );
+}
+
+{
+  // Narrowing filter inserts the slug between watch + date.
+  const name = suggestCoverageExportFilename({
+    watchId: 7,
+    now: FIXED_COVERAGE_NOW,
+    filter: "dead",
+  });
+  expect(
+    /^hopper-coverage_watch-7_dead_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `coverage filename: 'dead' filter slot (${name})`,
+  );
+}
+
+{
+  // Every narrowing filter slug appears verbatim in the filename so
+  // a consumer grepping for `_dead_` / `_shadowed_` / etc finds the
+  // right files. Pin every slug so a future rename surfaces here.
+  for (const slug of ["dead", "shadowed", "zero", "healthy"] as const) {
+    const name = suggestCoverageExportFilename({
+      watchId: 7,
+      now: FIXED_COVERAGE_NOW,
+      filter: slug,
+    });
+    expect(
+      name.includes(`_${slug}_`),
+      `coverage filename: '${slug}' slug present (${name})`,
+    );
+  }
+}
+
+{
+  // Filter slot composes with the json ext switch.
+  const name = suggestCoverageExportFilename({
+    watchId: 3,
+    now: FIXED_COVERAGE_NOW,
+    filter: "shadowed",
+    ext: "json",
+  });
+  expect(
+    /^hopper-coverage_watch-3_shadowed_\d{4}-\d{2}-\d{2}\.json$/.test(name),
+    `coverage filename: filter + json ext (${name})`,
+  );
+}
+
+{
+  // Filter slot composes with the watch-fallback path — a paralegal
+  // exporting from a context without a watch id and a narrowing
+  // filter still gets the slug in the filename.
+  const name = suggestCoverageExportFilename({
+    now: FIXED_COVERAGE_NOW,
+    filter: "zero",
+  });
+  expect(
+    /^hopper-coverage_watch_zero_\d{4}-\d{2}-\d{2}\.csv$/.test(name),
+    `coverage filename: filter + watch-fallback (${name})`,
+  );
+}
