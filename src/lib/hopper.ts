@@ -325,6 +325,199 @@ export const summarizeCoverage = (report: RuleCoverageReport): string => {
   return `${routed} of ${n} samples routed (${pct}%)`;
 };
 
+// ─── v3.40 Slice 126 — chain-health summary helper ───────────────────
+//
+// `summarizeCoverage` (above) answers "how many samples did the
+// chain route?". The structurally important follow-up — "is the
+// chain HEALTHY, or are rules silently shadowed?" — has no helper
+// yet. A 6-rule chain that routes 100% of samples through Rule 1
+// looks fine on the routed-percentage summary line but is hiding
+// 5 dead-by-shadow rules from the user. The coverage panel
+// surfaces per-row "dead" chips today (via `ruleCoverageDiagnostic`),
+// but the chain-level health story is buried in those chips.
+//
+// This helper composes one. Counts dead / shadowed / zero-coverage
+// rules in ONE pass (same priority chain as
+// `ruleCoverageDiagnostic`: dead > zero > shadowed > healthy —
+// mutually exclusive so a rule contributes to AT MOST one count),
+// then emits a discriminated copy line + a kind tag the UI can
+// gate styling on:
+//
+//   "healthy"   — every rule fires + low fall-through
+//   "warn"      — at least one diagnostic OR fall-through > 25%
+//   "critical"  — at least one dead rule
+//   "empty"     — no samples scanned yet
+//
+// The `kind` tag is the load-bearing field. The text is the
+// human-facing copy the UI renders next to the routed-percentage
+// summary; the kind drives the chip's color (neutral / warn /
+// critical / muted) without re-deriving the classification in
+// Svelte.
+//
+// Why the 25% fall-through threshold for "warn": a chain where one
+// in four files falls through to defaults is materially under-
+// specified — the user almost certainly meant to catch more. Below
+// 25% the fall-through is normal-noise (a workstation with a long
+// tail of misc files; a watch with an "everything-else" default
+// recipe). Tuneable by the caller (`opts.fallthroughWarnPct`) for
+// future surfaces with different defaults.
+
+/** Discriminator for the chain-health classification. Drives the
+ *  chip's color + icon in the UI. Mutually exclusive — one chain
+ *  has exactly one kind. */
+export type CoverageHealthKind = "healthy" | "warn" | "critical" | "empty";
+
+/** Chain-health summary derived from a coverage report. The `text`
+ *  field is the human copy the UI renders; `kind` drives styling. */
+export interface CoverageHealth {
+  /** Discriminator the UI gates styling on. */
+  kind: CoverageHealthKind;
+  /** Display copy ("Chain healthy" / "3 dead rules — reorder or
+   *  tighten" / etc). One sentence, no trailing period (the panel
+   *  chrome wraps it). */
+  text: string;
+  /** Count of rules with `dead_at_position == true`. The chain-
+   *  critical insight: these rules never fire at their position
+   *  but WOULD fire earlier. */
+  dead: number;
+  /** Count of rules where `would_match > first_match` and NOT dead.
+   *  Partial-shadow only — the rule fires sometimes but is losing
+   *  matches to earlier rules. */
+  shadowed: number;
+  /** Count of rules whose predicate matched zero samples
+   *  (`would_match == 0`) and NOT dead. The predicate is too
+   *  narrow — refine it or drop the rule. */
+  zero: number;
+  /** Fall-through count carried verbatim from the report so the
+   *  caller can render a secondary "X% fall-through" sub-chip
+   *  without re-walking the report. */
+  fallthrough: number;
+  /** Pre-divided fall-through percentage rounded to one decimal so
+   *  the consumer doesn't re-compute the ratio. Zero when
+   *  `total_samples == 0`. */
+  fallthroughPct: number;
+}
+
+/** Classify a coverage report's chain-health story. Pure helper —
+ *  no I/O, no Tauri.
+ *
+ *  Priority chain for the `kind` field:
+ *  1. `empty`     — `total_samples == 0`. Distinct from healthy
+ *                   because an empty corpus has no data to assess.
+ *  2. `critical`  — at least one dead rule. The chain is silently
+ *                   misrouting; reorder or tighten the shadowing
+ *                   rule above.
+ *  3. `warn`      — at least one diagnostic (shadowed / zero) OR
+ *                   fall-through above the warn threshold.
+ *  4. `healthy`   — every rule fires + low fall-through. */
+export function summarizeCoverageHealth(
+  report: RuleCoverageReport,
+  opts: { fallthroughWarnPct?: number } = {},
+): CoverageHealth {
+  const warnPct = opts.fallthroughWarnPct ?? 25;
+  let dead = 0;
+  let shadowed = 0;
+  let zero = 0;
+  for (const r of report.rules) {
+    if (r.dead_at_position) {
+      dead++;
+    } else if (r.would_match === 0) {
+      zero++;
+    } else if (r.would_match > r.first_match) {
+      shadowed++;
+    }
+  }
+  const fallthrough = report.fallthrough;
+  const total = report.total_samples;
+  const rawPct = total === 0 ? 0 : (fallthrough / total) * 100;
+  // Round to one decimal — finer than the chip needs but cheap and
+  // useful for a future tooltip.
+  const fallthroughPct = Math.round(rawPct * 10) / 10;
+
+  if (total === 0) {
+    return {
+      kind: "empty",
+      text: "No recent runs to assess",
+      dead,
+      shadowed,
+      zero,
+      fallthrough,
+      fallthroughPct,
+    };
+  }
+
+  if (dead > 0) {
+    const noun = dead === 1 ? "dead rule" : "dead rules";
+    // "dead rule — reorder or tighten the shadowing rule above" is
+    // the actionable single-noun summary. Multiple dead reads "3
+    // dead rules — reorder or tighten the shadowing rules above"
+    // so the verb stays imperative either way.
+    return {
+      kind: "critical",
+      text: `${dead} ${noun} — reorder or tighten the shadowing rules`,
+      dead,
+      shadowed,
+      zero,
+      fallthrough,
+      fallthroughPct,
+    };
+  }
+
+  // Warn cases — order matters for the copy: shadowed > zero >
+  // high fall-through, because shadowed is the more interesting
+  // signal (the rule fires sometimes; tightening it brings the
+  // routing decisions into the user's intent). Zero-coverage is
+  // less urgent — the rule never fires, so it's not actively
+  // misrouting anything.
+  if (shadowed > 0) {
+    const noun = shadowed === 1 ? "rule is partially shadowed" : "rules are partially shadowed";
+    return {
+      kind: "warn",
+      text: `${shadowed} ${noun} — reorder to recover matches`,
+      dead,
+      shadowed,
+      zero,
+      fallthrough,
+      fallthroughPct,
+    };
+  }
+
+  if (zero > 0) {
+    const noun = zero === 1 ? "rule matches nothing" : "rules match nothing";
+    return {
+      kind: "warn",
+      text: `${zero} ${noun} — refine the predicates or drop them`,
+      dead,
+      shadowed,
+      zero,
+      fallthrough,
+      fallthroughPct,
+    };
+  }
+
+  if (fallthroughPct > warnPct) {
+    return {
+      kind: "warn",
+      text: `${fallthroughPct.toFixed(1)}% of files fall through to defaults`,
+      dead,
+      shadowed,
+      zero,
+      fallthrough,
+      fallthroughPct,
+    };
+  }
+
+  return {
+    kind: "healthy",
+    text: "Chain routing healthy",
+    dead,
+    shadowed,
+    zero,
+    fallthrough,
+    fallthroughPct,
+  };
+}
+
 // ---------------------------------------------------------------------
 // v3.40 Slice 85 — sample drilldown TS client
 // ---------------------------------------------------------------------

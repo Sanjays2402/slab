@@ -14,6 +14,7 @@ import {
   ruleMatchPercent,
   ruleCoverageDiagnostic,
   summarizeCoverage,
+  summarizeCoverageHealth,
   ruleBucket,
   FALLTHROUGH_BUCKET,
   sampleBucketEquals,
@@ -21,6 +22,7 @@ import {
   describeBucket,
   suggestDrilldownExportFilename,
   suggestCoverageExportFilename,
+  type CoverageHealth,
   type RuleCoverageReport,
   type RuleCoverage,
   type RuleSample,
@@ -698,4 +700,239 @@ const FIXED_COVERAGE_NOW = new Date("2026-06-22T10:30:00").getTime();
     !name.includes("fallthrough") && !name.includes("rule-"),
     `suggestCoverageExportFilename: no bucket slot in chain-wide export (${name})`,
   );
+}
+
+// ── summarizeCoverageHealth (Slice 126) ──────────────────────────────
+// Chain-health classifier composing per-row diagnostics into a
+// single chain-level summary kind + copy line. Mutually exclusive
+// kinds: empty | critical | warn | healthy. Pin the priority chain
+// (dead > shadowed > zero > high-fall-through) and the
+// pluralisation contract.
+
+function cov(
+  index: number,
+  name: string,
+  first_match: number,
+  would_match: number,
+  dead_at_position: boolean,
+): RuleCoverage {
+  return { index, name, first_match, would_match, dead_at_position };
+}
+
+function healthReport(
+  rules: RuleCoverage[],
+  fallthrough: number,
+  total_samples: number,
+): RuleCoverageReport {
+  return { rules, fallthrough, total_samples };
+}
+
+{
+  // Empty corpus — no samples at all reads as `empty` (distinct
+  // from healthy so the UI can render a muted state, not a green
+  // chip that suggests the chain is doing well).
+  const h: CoverageHealth = summarizeCoverageHealth(healthReport([], 0, 0));
+  expect(h.kind === "empty", `health: empty corpus -> 'empty' (got ${h.kind})`);
+  expect(
+    h.text === "No recent runs to assess",
+    `health: empty text (${h.text})`,
+  );
+  expect(h.dead === 0 && h.shadowed === 0 && h.zero === 0, "health: empty counters");
+  expect(h.fallthroughPct === 0, "health: empty fallthroughPct is 0 not NaN");
+}
+
+{
+  // Healthy chain — every rule fires, low fall-through.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "Tax", 5, 5, false), cov(1, "Inv", 3, 3, false)], 2, 10),
+  );
+  expect(h.kind === "healthy", `health: healthy chain -> 'healthy' (got ${h.kind})`);
+  expect(h.text === "Chain routing healthy", `health: healthy text (${h.text})`);
+  expect(h.dead === 0 && h.shadowed === 0 && h.zero === 0, "health: healthy counters");
+}
+
+{
+  // Critical — at least one dead rule wins priority over every
+  // other classification.
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 10, 10, false),
+        cov(1, "Dead Tax", 0, 5, true),
+      ],
+      0,
+      10,
+    ),
+  );
+  expect(h.kind === "critical", `health: dead -> 'critical' (got ${h.kind})`);
+  expect(h.dead === 1, `health: dead count (${h.dead})`);
+  expect(
+    h.text === "1 dead rule — reorder or tighten the shadowing rules",
+    `health: critical singular text (${h.text})`,
+  );
+}
+
+{
+  // Critical pluralisation — multiple dead rules pluralises the noun
+  // ("3 dead rules") but the trailing imperative stays "rules"
+  // either way (singular/plural verb already plural in the imperative).
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 10, 10, false),
+        cov(1, "Dead A", 0, 5, true),
+        cov(2, "Dead B", 0, 4, true),
+        cov(3, "Dead C", 0, 3, true),
+      ],
+      0,
+      10,
+    ),
+  );
+  expect(h.dead === 3, `health: dead pluralisation count (${h.dead})`);
+  expect(
+    h.text === "3 dead rules — reorder or tighten the shadowing rules",
+    `health: critical plural text (${h.text})`,
+  );
+}
+
+{
+  // Warn — partially-shadowed rule (would_match > first_match,
+  // NOT dead). Singular noun phrase: "rule is partially shadowed".
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 7, 7, false),
+        cov(1, "Sometimes Tax", 3, 6, false),
+      ],
+      0,
+      10,
+    ),
+  );
+  expect(h.kind === "warn", `health: shadowed -> 'warn' (got ${h.kind})`);
+  expect(h.shadowed === 1, `health: shadowed count (${h.shadowed})`);
+  expect(
+    h.text === "1 rule is partially shadowed — reorder to recover matches",
+    `health: shadowed singular text (${h.text})`,
+  );
+}
+
+{
+  // Warn pluralisation — multiple shadowed rules pluralises both
+  // noun and verb: "2 rules are partially shadowed".
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "First", 5, 5, false),
+        cov(1, "Shadow A", 2, 4, false),
+        cov(2, "Shadow B", 1, 3, false),
+      ],
+      0,
+      10,
+    ),
+  );
+  expect(h.shadowed === 2, `health: shadowed plural count (${h.shadowed})`);
+  expect(
+    h.text === "2 rules are partially shadowed — reorder to recover matches",
+    `health: shadowed plural text (${h.text})`,
+  );
+}
+
+{
+  // Warn — zero-coverage rule (would_match == 0). Lower priority
+  // than shadowed; only surfaces when there are no shadowed rules.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "TooNarrow", 0, 0, false)], 0, 5),
+  );
+  expect(h.kind === "warn", `health: zero -> 'warn' (got ${h.kind})`);
+  expect(h.zero === 1, `health: zero count (${h.zero})`);
+  expect(
+    h.text === "1 rule matches nothing — refine the predicates or drop them",
+    `health: zero singular text (${h.text})`,
+  );
+}
+
+{
+  // Shadowed beats zero in the priority chain — pin the precedence.
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 5, 5, false),
+        cov(1, "Shadow", 1, 3, false),
+        cov(2, "Zero", 0, 0, false),
+      ],
+      0,
+      10,
+    ),
+  );
+  expect(h.kind === "warn", `health: mixed shadow+zero -> 'warn' (got ${h.kind})`);
+  expect(h.shadowed === 1 && h.zero === 1, `health: both counters set (${h.shadowed}/${h.zero})`);
+  expect(
+    h.text.includes("partially shadowed"),
+    `health: shadowed wins over zero in text (${h.text})`,
+  );
+}
+
+{
+  // High fall-through warn — no rule diagnostics, but more than
+  // 25% of samples fell through to defaults.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "Tax", 5, 5, false)], 5, 10),
+  );
+  expect(h.kind === "warn", `health: high fallthrough -> 'warn' (got ${h.kind})`);
+  expect(
+    /\d+\.\d% of files fall through/.test(h.text),
+    `health: high fallthrough text (${h.text})`,
+  );
+  expect(h.fallthroughPct === 50, `health: fallthroughPct one decimal (${h.fallthroughPct})`);
+}
+
+{
+  // 25% fall-through is the threshold — STRICTLY greater than
+  // triggers warn, so exactly 25% (4/16) stays healthy.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "Most", 12, 12, false)], 4, 16),
+  );
+  expect(h.kind === "healthy", `health: exactly 25% fallthrough stays healthy (got ${h.kind})`);
+  expect(h.fallthroughPct === 25, `health: 25% pct (${h.fallthroughPct})`);
+}
+
+{
+  // Override the warn threshold — a caller targeting stricter
+  // chains (e.g. a compliance audit surface) bumps the threshold
+  // down to 10% to flag earlier.
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "Most", 4, 4, false)], 1, 5),
+    { fallthroughWarnPct: 10 },
+  );
+  expect(h.kind === "warn", `health: tuneable threshold -> 'warn' at 20% (got ${h.kind})`);
+}
+
+{
+  // Dead rule with high fall-through is STILL critical, NOT warn —
+  // dead is higher priority than the fall-through threshold.
+  const h = summarizeCoverageHealth(
+    healthReport(
+      [
+        cov(0, "Always", 6, 6, false),
+        cov(1, "Dead", 0, 2, true),
+      ],
+      4,
+      10,
+    ),
+  );
+  expect(
+    h.kind === "critical",
+    `health: dead beats high-fallthrough (got ${h.kind})`,
+  );
+}
+
+{
+  // Fall-through counter is carried verbatim from the report
+  // (the UI can render a secondary "X% fall-through" sub-chip
+  // without re-walking the report).
+  const h = summarizeCoverageHealth(
+    healthReport([cov(0, "Tax", 7, 7, false)], 3, 10),
+  );
+  expect(h.fallthrough === 3, `health: fallthrough verbatim (${h.fallthrough})`);
+  expect(h.fallthroughPct === 30, `health: fallthroughPct (${h.fallthroughPct})`);
 }
