@@ -2696,6 +2696,105 @@ pub fn plugin_retention_overrides_to_json_with_now(
     }
 }
 
+// ─── Auto-prune run history JSON envelope (Slice 121) ────────────────
+
+/// JSON envelope for the auto-prune run history export. Sibling to
+/// [`PluginHistogramExportEnvelope`] / [`ActivityTimelineExportEnvelope`]
+/// / [`BucketDrilldownExportEnvelope`] / [`PluginRetentionExportEnvelope`]
+/// — same `schema_version` + `generated_at_iso` header convention so a
+/// downstream pipeline can dispatch on `schema_version` without
+/// learning a sixth envelope shape.
+///
+/// Body shape:
+///
+/// `schema_version` + `generated_at_iso` + `row_count` +
+/// `total_rows_removed` + `total_overrides_rows_removed` +
+/// `rows` (Vec<AutoPruneRun>)
+///
+/// `row_count` mirrors `rows.len()` (redundant but cheap; saves a
+/// parse step). `total_rows_removed` + `total_overrides_rows_removed`
+/// are corpus-wide attribution totals pre-summed across the included
+/// runs — answer "across these N prunes how many events were removed
+/// in total, and how many of those came from per-plugin overrides?"
+/// without re-summing client-side.
+///
+/// Both totals are envelope-level (one per export) NOT per-run
+/// properties (the `rows` carry their own per-run counts). Same
+/// shape philosophy as the histogram envelope's `grand_total` and
+/// the bucket-drilldown envelope's bucket coords — corpus-scoped
+/// invariants live on the envelope; per-row figures live on the
+/// rows.
+///
+/// No window-bounds fields — the auto-prune-runs export is
+/// inherently a chronological snapshot (the LIMIT'd most-recent
+/// runs), not a window-scoped query. Each row carries its own
+/// `ran_at_unix`; a consumer wanting to bound the export by date
+/// range can filter the rows after parsing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoPruneRunsExportEnvelope {
+    /// Schema version of the envelope (NOT of the [`AutoPruneRun`]
+    /// body itself). Bumped on a non-additive shape change.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced.
+    pub generated_at_iso: String,
+    /// Number of runs in `rows`. Redundant with `rows.len()` but
+    /// cheap and saves consumers a parse step.
+    pub row_count: usize,
+    /// Sum of `rows[i].rows_removed` pre-computed. Saves a consumer
+    /// from re-summing client-side; ships verbatim from the caller
+    /// (the wire layer sums before calling) so the exporter doesn't
+    /// silently re-derive.
+    pub total_rows_removed: i64,
+    /// Sum of `rows[i].overrides_rows_removed` pre-computed. The
+    /// attribution-split companion to `total_rows_removed`: a
+    /// consumer answers "of the N events removed across these
+    /// prunes, M came from per-plugin overrides; the other N-M
+    /// came from the global window" in one read.
+    pub total_overrides_rows_removed: i64,
+    /// The auto-prune runs themselves. Order is the caller's order
+    /// verbatim — `auto_prune_runs()` emits DESC by `ran_at_unix`
+    /// with `id` DESC tie-break; the envelope ships whatever it
+    /// gets.
+    pub rows: Vec<AutoPruneRun>,
+}
+
+/// Schema version of the JSON auto-prune-runs export envelope.
+/// Starts at v1; bumped independently of the five sibling envelope
+/// constants because their bodies are unrelated. Same parallel-
+/// versioning reasoning as the histogram + activity-timeline +
+/// bucket-drilldown + plugin-retention envelopes (slices 99 + 105
+/// + 111 + 116).
+pub const AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Build the envelope from a slice of auto-prune runs. Sums
+/// `rows_removed` and `overrides_rows_removed` across the input
+/// rows for the envelope-level totals (the exporter trusts the
+/// caller's row values; the sums are derived once here for
+/// consumer convenience). The envelope's `generated_at_iso`
+/// stamp uses the wall clock at call time; tests pass a fixed
+/// timestamp via [`auto_prune_runs_to_json_with_now`].
+pub fn auto_prune_runs_to_json(rows: &[AutoPruneRun]) -> AutoPruneRunsExportEnvelope {
+    auto_prune_runs_to_json_with_now(rows, unix_now())
+}
+
+/// Same as [`auto_prune_runs_to_json`] but takes an explicit
+/// unix-seconds "now" so unit tests don't race the wall clock.
+pub fn auto_prune_runs_to_json_with_now(
+    rows: &[AutoPruneRun],
+    now_unix: i64,
+) -> AutoPruneRunsExportEnvelope {
+    let total_rows_removed: i64 = rows.iter().map(|r| r.rows_removed).sum();
+    let total_overrides_rows_removed: i64 = rows.iter().map(|r| r.overrides_rows_removed).sum();
+    AutoPruneRunsExportEnvelope {
+        schema_version: AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: iso8601_utc(now_unix),
+        row_count: rows.len(),
+        total_rows_removed,
+        total_overrides_rows_removed,
+        rows: rows.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7181,6 +7280,227 @@ mod tests {
         let ret_env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, now);
         let inst_env = install_log_to_json_with_now(&[], None, None, now);
         assert_eq!(ret_env.generated_at_iso, inst_env.generated_at_iso);
+    }
+
+    // ─── Slice 121: auto-prune run history JSON envelope ─────────────
+
+    #[test]
+    fn auto_prune_runs_json_envelope_schema_version_pinned() {
+        let env = auto_prune_runs_to_json_with_now(&[], 1_700_086_400);
+        assert_eq!(env.schema_version, AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION);
+        assert_eq!(AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_row_count_matches_len() {
+        // row_count must equal rows.len() across several sizes —
+        // catches a future divergence where the count is computed
+        // from a different source than the rows themselves.
+        for n in [0usize, 1, 5, 30] {
+            let rows: Vec<AutoPruneRun> = (0..n)
+                .map(|i| AutoPruneRun {
+                    id: i as i64 + 1,
+                    ran_at_unix: 1_700_000_000 + i as i64,
+                    rows_removed: 0,
+                    retain_days: 1,
+                    cutoff_unix: 0,
+                    overrides_applied: 0,
+                    overrides_rows_removed: 0,
+                })
+                .collect();
+            let env = auto_prune_runs_to_json_with_now(&rows, 1_700_086_400);
+            assert_eq!(env.row_count, n);
+            assert_eq!(env.rows.len(), n);
+        }
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_totals_are_summed_across_rows() {
+        // total_rows_removed + total_overrides_rows_removed are
+        // computed by summing the input rows. The exporter is the
+        // ONE place those sums are derived; consumers trust the
+        // envelope without re-summing.
+        let rows = vec![
+            AutoPruneRun {
+                id: 1,
+                ran_at_unix: 1_700_000_100,
+                rows_removed: 10,
+                retain_days: 365,
+                cutoff_unix: 0,
+                overrides_applied: 2,
+                overrides_rows_removed: 3,
+            },
+            AutoPruneRun {
+                id: 2,
+                ran_at_unix: 1_700_000_200,
+                rows_removed: 20,
+                retain_days: 365,
+                cutoff_unix: 0,
+                overrides_applied: 2,
+                overrides_rows_removed: 7,
+            },
+            AutoPruneRun {
+                id: 3,
+                ran_at_unix: 1_700_000_300,
+                rows_removed: 5,
+                retain_days: 365,
+                cutoff_unix: 0,
+                overrides_applied: 0,
+                overrides_rows_removed: 0,
+            },
+        ];
+        let env = auto_prune_runs_to_json_with_now(&rows, 1_700_086_400);
+        assert_eq!(env.total_rows_removed, 35);
+        assert_eq!(env.total_overrides_rows_removed, 10);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_totals_empty_input_is_zero() {
+        // Empty input → both totals are zero; the envelope still
+        // renders cleanly with rows:[] (used by the UI when the
+        // user clears the history and then exports — they get a
+        // valid file documenting "nothing here").
+        let env = auto_prune_runs_to_json_with_now(&[], 1_700_086_400);
+        assert_eq!(env.total_rows_removed, 0);
+        assert_eq!(env.total_overrides_rows_removed, 0);
+        assert_eq!(env.row_count, 0);
+        assert!(env.rows.is_empty());
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_preserves_input_row_order() {
+        // Caller's order ships verbatim — auto_prune_runs() emits
+        // DESC by ran_at_unix; the envelope ships whatever it gets.
+        let rows = vec![
+            AutoPruneRun {
+                id: 3,
+                ran_at_unix: 1_700_000_300,
+                rows_removed: 1,
+                retain_days: 365,
+                cutoff_unix: 0,
+                overrides_applied: 0,
+                overrides_rows_removed: 0,
+            },
+            AutoPruneRun {
+                id: 1,
+                ran_at_unix: 1_700_000_100,
+                rows_removed: 2,
+                retain_days: 365,
+                cutoff_unix: 0,
+                overrides_applied: 0,
+                overrides_rows_removed: 0,
+            },
+            AutoPruneRun {
+                id: 2,
+                ran_at_unix: 1_700_000_200,
+                rows_removed: 3,
+                retain_days: 365,
+                cutoff_unix: 0,
+                overrides_applied: 0,
+                overrides_rows_removed: 0,
+            },
+        ];
+        let env = auto_prune_runs_to_json_with_now(&rows, 1_700_086_400);
+        let ids: Vec<i64> = env.rows.iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_rows_are_owned_clones() {
+        // Caller mutation isolation: mutating the input slice
+        // after envelope construction must NOT affect the
+        // envelope's rows. Catches a future shift to Cow<_> /
+        // borrowed references that would leak external state.
+        let mut input = vec![AutoPruneRun {
+            id: 1,
+            ran_at_unix: 1_700_000_000,
+            rows_removed: 10,
+            retain_days: 365,
+            cutoff_unix: 0,
+            overrides_applied: 0,
+            overrides_rows_removed: 0,
+        }];
+        let env = auto_prune_runs_to_json_with_now(&input, 1_700_086_400);
+        input[0].rows_removed = 999;
+        assert_eq!(env.rows[0].rows_removed, 10);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_serde_round_trip_full_field_set() {
+        let rows = vec![AutoPruneRun {
+            id: 7,
+            ran_at_unix: 1_700_000_000,
+            rows_removed: 23,
+            retain_days: 365,
+            cutoff_unix: 1_668_464_000,
+            overrides_applied: 3,
+            overrides_rows_removed: 5,
+        }];
+        let env = auto_prune_runs_to_json_with_now(&rows, 1_700_086_400);
+        let s = serde_json::to_string(&env).unwrap();
+        let back: AutoPruneRunsExportEnvelope = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, env);
+        // The split-attribution fields are part of the wire shape.
+        assert!(s.contains("\"total_rows_removed\":23"));
+        assert!(s.contains("\"total_overrides_rows_removed\":5"));
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_pretty_print_round_trips() {
+        // Tauri command layer (slice 122) uses to_string_pretty for
+        // on-disk readability. Pin that the pretty form still
+        // round-trips through serde — catches a future field rename
+        // that breaks Deserialize.
+        let rows = vec![AutoPruneRun {
+            id: 1,
+            ran_at_unix: 1_700_000_000,
+            rows_removed: 0,
+            retain_days: 365,
+            cutoff_unix: 0,
+            overrides_applied: 0,
+            overrides_rows_removed: 0,
+        }];
+        let env = auto_prune_runs_to_json_with_now(&rows, 1_700_086_400);
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        let back: AutoPruneRunsExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_parallel_versioned_with_siblings() {
+        // The five sibling envelope constants share VALUE 1 today
+        // but are PARALLEL versioned — a future shape change in one
+        // bumps that one only. Pin all six are equal at v1 here so
+        // a future divergence is caught.
+        assert_eq!(AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION, 1);
+        assert_eq!(PLUGIN_RETENTION_EXPORT_SCHEMA_VERSION, 1);
+        assert_eq!(BUCKET_DRILLDOWN_EXPORT_SCHEMA_VERSION, 1);
+        assert_eq!(ACTIVITY_TIMELINE_EXPORT_SCHEMA_VERSION, 1);
+        assert_eq!(PLUGIN_HISTOGRAM_EXPORT_SCHEMA_VERSION, 1);
+        assert_eq!(INSTALL_LOG_EXPORT_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_iso_matches_install_log_byte_for_byte() {
+        // The generated_at_iso must produce the SAME string as the
+        // install-log envelope helper for the same now_unix — a
+        // downstream pipeline joining exports on the timestamp
+        // finds identical strings. Same defence-in-depth as the
+        // four sibling envelope tests.
+        let now = 1_700_086_400;
+        let prune_env = auto_prune_runs_to_json_with_now(&[], now);
+        let inst_env = install_log_to_json_with_now(&[], None, None, now);
+        assert_eq!(prune_env.generated_at_iso, inst_env.generated_at_iso);
+    }
+
+    #[test]
+    fn auto_prune_runs_json_envelope_empty_rows_array() {
+        // serde renders the empty rows as a JSON `[]` (not omitted
+        // or null) so a consumer always sees a Vec, never has to
+        // handle "key missing" vs "empty list" as distinct cases.
+        let env = auto_prune_runs_to_json_with_now(&[], 1_700_086_400);
+        let s = serde_json::to_string(&env).unwrap();
+        assert!(s.contains("\"rows\":[]"));
     }
 
     // ─── Slice 118: auto-prune run history storage ───────────────────
