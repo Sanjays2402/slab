@@ -704,6 +704,156 @@ fn coverage_diagnostic_str(rule: &RuleCoverage) -> &'static str {
     ""
 }
 
+// ─── Slice 124 — rule coverage JSON export envelope ──────────────────
+//
+// Pure-data envelope wrapping a [`RuleCoverageReport`] for the JSON
+// export path. CSV (slice 123) carries the per-rule rows in
+// spreadsheet-friendly form; JSON carries them in a self-describing
+// envelope a downstream pipeline / archived audit record can read
+// without consulting the export filename.
+//
+// Mirrors the canonical envelope shape from the install-log family
+// (slices 60, 99, 105, 111, 116, 121): `schema_version` +
+// `generated_at_iso` + corpus-scoped invariant totals on the
+// envelope + body Vec carrying the per-row data verbatim. The
+// envelope-level totals answer the chain-health questions in ONE
+// read without re-walking the rows:
+//
+//   total_samples           — sample-count denominator
+//   fallthrough_count       — bucket size for the fall-through
+//   fallthrough_pct         — pre-divided percentage (two decimals
+//                             rounded, matches the CSV serialiser)
+//   rule_count              — N (== `rules.len()`)
+//   dead_rule_count         — rules with dead_at_position == true
+//   shadowed_rule_count     — rules with `would_match > first_match`
+//                             and NOT dead (partial shadow only)
+//   zero_coverage_rule_count — rules whose predicate matched zero
+//                             samples (would_match == 0); not dead.
+//
+// The four count fields are envelope-level (one per export) NOT
+// per-row properties — they're corpus-scoped invariants of the
+// chain run, matching the histogram envelope's `grand_total` and
+// the auto-prune-runs envelope's `total_rows_removed` shape
+// philosophy.
+//
+// `rules` carries the per-rule [`RuleCoverage`] rows verbatim in
+// input order. A consumer can re-render the panel from the envelope
+// alone without a second source.
+//
+// `fallthrough_pct` is included because the panel header surfaces
+// it (round-19 summarizeCoverage) — denormalising it onto the
+// envelope keeps the JSON consumer from re-computing a number the
+// CSV already pre-computed.
+
+/// Schema version of the rule-coverage JSON export envelope. Starts
+/// at v1; bumped independently of the six sibling envelopes
+/// (install-log + histogram + activity-timeline + bucket-drilldown +
+/// plugin-retention + auto-prune-runs) because the bodies are
+/// unrelated. PARALLEL-versioned: a future shape change in one
+/// envelope bumps that one only.
+pub const RULE_COVERAGE_EXPORT_SCHEMA_VERSION: u32 = 1;
+
+/// Wire shape for the JSON rule-coverage export. Self-describing
+/// envelope mirroring the install-log family's shape: schema-version
+/// + generated-at + corpus-scoped invariant totals + per-row Vec.
+///
+/// The four `*_rule_count` totals are derived in ONE pass over the
+/// input rows during envelope construction so a consumer reading
+/// "this chain has 2 dead rules, 1 shadowed, 0 zero-coverage" doesn't
+/// have to re-walk and classify the rows itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RuleCoverageExportEnvelope {
+    /// Schema version of the envelope itself (NOT of the
+    /// [`RuleCoverageReport`] body). Bumped on a non-additive shape
+    /// change.
+    pub schema_version: u32,
+    /// ISO-8601 UTC timestamp of when the export was produced
+    /// (`"2026-06-21T22:14:07Z"`).
+    pub generated_at_iso: String,
+    /// Total samples scanned (matches
+    /// [`RuleCoverageReport::total_samples`]).
+    pub total_samples: u64,
+    /// Samples that matched no rule (matches
+    /// [`RuleCoverageReport::fallthrough`]).
+    pub fallthrough_count: u64,
+    /// `fallthrough_count / total_samples * 100`, two decimals.
+    /// Pre-divided so the consumer doesn't re-compute the ratio.
+    /// Zero when `total_samples == 0` (divide-by-zero guard matches
+    /// the CSV serialiser).
+    pub fallthrough_pct: f64,
+    /// Number of rules in the chain (matches `rules.len()`).
+    pub rule_count: usize,
+    /// Number of rules with `dead_at_position == true`. A high count
+    /// is the chain-health smoke signal: reorder the dead rows or
+    /// tighten the rules shadowing them.
+    pub dead_rule_count: usize,
+    /// Number of rules partially shadowed: `would_match > first_match`
+    /// but NOT dead (some samples still route to this rule, but
+    /// strictly fewer than the predicate would match in isolation).
+    pub shadowed_rule_count: usize,
+    /// Number of rules whose predicate matched zero samples
+    /// (`would_match == 0`) and that are NOT dead. The predicate is
+    /// too narrow — refine it or drop the rule.
+    pub zero_coverage_rule_count: usize,
+    /// Per-rule rows verbatim in input order. Length ==
+    /// `rule_count`.
+    pub rules: Vec<RuleCoverage>,
+}
+
+/// Build the envelope from a [`RuleCoverageReport`]. Wall-clock
+/// `generated_at_iso` stamp; tests pass a fixed timestamp via
+/// [`rule_coverage_to_json_with_now`].
+pub fn rule_coverage_to_json(report: &RuleCoverageReport) -> RuleCoverageExportEnvelope {
+    rule_coverage_to_json_with_now(report, drilldown_unix_now())
+}
+
+/// Same as [`rule_coverage_to_json`] but takes an explicit unix-
+/// seconds "now" so unit tests don't race the wall clock.
+pub fn rule_coverage_to_json_with_now(
+    report: &RuleCoverageReport,
+    now_unix: i64,
+) -> RuleCoverageExportEnvelope {
+    let mut dead = 0usize;
+    let mut shadowed = 0usize;
+    let mut zero = 0usize;
+    for r in &report.rules {
+        if r.dead_at_position {
+            dead += 1;
+        } else if r.would_match == 0 {
+            // Zero-coverage and dead-at-position are MUTUALLY EXCLUSIVE
+            // here because dead_at_position implies would_match > 0
+            // (the predicate matched something — just not at this
+            // position). Classification matches the CSV diagnostic
+            // priority chain.
+            zero += 1;
+        } else if r.would_match > r.first_match {
+            shadowed += 1;
+        }
+    }
+    let fallthrough_pct = if report.total_samples == 0 {
+        0.0
+    } else {
+        // Round to two decimals to match the CSV serialiser exactly —
+        // a consumer cross-referencing CSV + JSON exports of the same
+        // report sees identical percentages, not (e.g.) 42.86 vs
+        // 42.857142857142854.
+        let raw = (report.fallthrough as f64) * 100.0 / (report.total_samples as f64);
+        (raw * 100.0).round() / 100.0
+    };
+    RuleCoverageExportEnvelope {
+        schema_version: RULE_COVERAGE_EXPORT_SCHEMA_VERSION,
+        generated_at_iso: drilldown_iso8601_utc(now_unix),
+        total_samples: report.total_samples,
+        fallthrough_count: report.fallthrough,
+        fallthrough_pct,
+        rule_count: report.rules.len(),
+        dead_rule_count: dead,
+        shadowed_rule_count: shadowed,
+        zero_coverage_rule_count: zero,
+        rules: report.rules.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1984,5 +2134,167 @@ mod tests {
             .map(|l| l.split(',').next_back().unwrap())
             .collect();
         assert_eq!(diagnostics[0], "dead");
+    }
+
+    // ── Slice 124 — rule_coverage_to_json ─────────────────────────────
+
+    #[test]
+    fn coverage_json_envelope_schema_version_pinned() {
+        let report = coverage(vec![], 0, 0);
+        let env = rule_coverage_to_json_with_now(&report, 1_710_000_000);
+        assert_eq!(env.schema_version, RULE_COVERAGE_EXPORT_SCHEMA_VERSION);
+        assert_eq!(env.schema_version, 1);
+    }
+
+    #[test]
+    fn coverage_json_envelope_generated_at_iso_is_canonical_utc() {
+        let report = coverage(vec![], 0, 0);
+        let env = rule_coverage_to_json_with_now(&report, 1_710_000_000);
+        assert_eq!(env.generated_at_iso, "2024-03-09T16:00:00Z");
+    }
+
+    #[test]
+    fn coverage_json_envelope_carries_rows_verbatim_in_order() {
+        let rows = vec![
+            cov_row(0, "Tax", 3, 3, false),
+            cov_row(1, "Invoice", 4, 4, false),
+            cov_row(2, "Misc", 1, 2, false),
+        ];
+        let report = coverage(rows.clone(), 2, 10);
+        let env = rule_coverage_to_json_with_now(&report, 1_710_000_000);
+        assert_eq!(env.rules, rows);
+        assert_eq!(env.rule_count, 3);
+    }
+
+    #[test]
+    fn coverage_json_envelope_totals_match_report() {
+        let report = coverage(vec![cov_row(0, "Tax", 3, 5, false)], 7, 10);
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        assert_eq!(env.total_samples, 10);
+        assert_eq!(env.fallthrough_count, 7);
+    }
+
+    #[test]
+    fn coverage_json_envelope_diagnostic_counts_classify_chain() {
+        // Mirror the CSV diagnostic priority chain so the JSON
+        // envelope's chain-health totals tell the same story.
+        let report = coverage(
+            vec![
+                cov_row(0, "Healthy", 5, 5, false),
+                cov_row(1, "Shadowed", 2, 4, false),
+                cov_row(2, "Zero", 0, 0, false),
+                cov_row(3, "Dead", 0, 3, true),
+                cov_row(4, "Healthy2", 1, 1, false),
+            ],
+            2,
+            15,
+        );
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        assert_eq!(env.dead_rule_count, 1);
+        assert_eq!(env.shadowed_rule_count, 1);
+        assert_eq!(env.zero_coverage_rule_count, 1);
+        // 5 rules total: 2 healthy + 1 shadowed + 1 zero + 1 dead.
+        assert_eq!(env.rule_count, 5);
+    }
+
+    #[test]
+    fn coverage_json_envelope_fallthrough_pct_two_decimals_matches_csv() {
+        // 4/7 = 57.14285714...; envelope and CSV must agree exactly.
+        let report = coverage(vec![cov_row(0, "Tax", 3, 3, false)], 4, 7);
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        assert_eq!(env.fallthrough_pct, 57.14);
+        // Cross-check against the CSV fall-through row.
+        let csv = rule_coverage_to_csv(&report, false);
+        let ft_line = csv.lines().nth(1).unwrap();
+        let ft_cols: Vec<&str> = ft_line.split(',').collect();
+        assert_eq!(ft_cols[4], "57.14");
+    }
+
+    #[test]
+    fn coverage_json_envelope_zero_total_samples_no_nan() {
+        // Empty report — fallthrough_pct should be exactly 0.0 (NOT
+        // NaN, NOT inf), matching the CSV serialiser.
+        let report = coverage(vec![], 0, 0);
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        assert_eq!(env.fallthrough_pct, 0.0);
+        assert!(env.fallthrough_pct.is_finite());
+    }
+
+    #[test]
+    fn coverage_json_envelope_round_trips_through_serde() {
+        let report = coverage(
+            vec![
+                cov_row(0, "Tax", 3, 3, false),
+                cov_row(1, "Shadowed", 2, 4, false),
+            ],
+            1,
+            6,
+        );
+        let env = rule_coverage_to_json_with_now(&report, 1_710_000_000);
+        let json = serde_json::to_string(&env).unwrap();
+        let back: RuleCoverageExportEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, env);
+        // Spot-check a few field names so a careless rename breaks here.
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains("\"generated_at_iso\":\"2024-03-09T16:00:00Z\""));
+        assert!(json.contains("\"shadowed_rule_count\":1"));
+        assert!(json.contains("\"dead_rule_count\":0"));
+    }
+
+    #[test]
+    fn coverage_json_envelope_pretty_print_is_valid_json() {
+        // The Tauri command writes pretty-printed JSON to disk for
+        // human readability; pin that the serialiser doesn't emit
+        // anything that breaks JSON.parse on the consumer side.
+        let report = coverage(vec![cov_row(0, "weird \"name\"", 1, 1, false)], 0, 1);
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        let pretty = serde_json::to_string_pretty(&env).unwrap();
+        let back: RuleCoverageExportEnvelope = serde_json::from_str(&pretty).unwrap();
+        assert_eq!(back, env);
+        assert!(pretty.contains('\n'));
+    }
+
+    #[test]
+    fn coverage_json_envelope_parallel_versioned_with_drilldown() {
+        // Both envelopes are pinned at v1 today but they are
+        // PARALLEL-versioned (a future shape change in one bumps
+        // that one only). This test pins the current equality so a
+        // careless cross-bump surfaces here.
+        assert_eq!(
+            RULE_COVERAGE_EXPORT_SCHEMA_VERSION, DRILLDOWN_EXPORT_SCHEMA_VERSION,
+            "rule-coverage and drilldown envelopes both start at v1; \
+             a future shape change in ONE bumps that one only (not both)."
+        );
+    }
+
+    #[test]
+    fn coverage_json_envelope_dead_rule_excluded_from_shadowed_count() {
+        // A dead rule satisfies the shadowed condition
+        // (would_match > first_match) too; the envelope must NOT
+        // double-count it. Pin the precedence.
+        let report = coverage(vec![cov_row(0, "Dead", 0, 3, true)], 0, 10);
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        assert_eq!(env.dead_rule_count, 1);
+        assert_eq!(env.shadowed_rule_count, 0);
+        assert_eq!(env.zero_coverage_rule_count, 0);
+    }
+
+    #[test]
+    fn coverage_json_envelope_rule_count_matches_rows_len() {
+        // rule_count must mirror rows.len() in every shape — a
+        // future change to the envelope's derivation can't silently
+        // break this invariant.
+        let report = coverage(
+            vec![
+                cov_row(0, "A", 1, 1, false),
+                cov_row(1, "B", 2, 2, false),
+                cov_row(2, "C", 3, 3, false),
+            ],
+            0,
+            6,
+        );
+        let env = rule_coverage_to_json_with_now(&report, 0);
+        assert_eq!(env.rule_count, env.rules.len());
+        assert_eq!(env.rule_count, 3);
     }
 }
