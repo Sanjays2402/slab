@@ -2128,6 +2128,71 @@ pub fn plugin_retention_overrides_to_csv(
     out
 }
 
+// ─── Auto-prune run history export (Slice 120) ───────────────────────
+
+/// Documented column header for the auto-prune run history CSV export.
+/// Eight columns: id (the rowid for cross-export joins), ran_at_unix
+/// + ran_at_iso (machine + human timestamps of when the prune ran),
+/// rows_removed (total deletions for this run), retain_days +
+/// cutoff_unix (global window snapshot — captured per-row so a later
+/// view sees what window was in force when this prune ran, even if
+/// the user has since tuned it), overrides_applied
+/// (per-plugin overrides considered) + overrides_rows_removed
+/// (subset of rows_removed attributable to those overrides; the rest
+/// are the global pass — the attribution split).
+///
+/// `pub const` so tests + future column reorders share one source of
+/// truth, matching the four sibling CSV header constants.
+pub const AUTO_PRUNE_RUNS_CSV_HEADER: &str =
+    "id,ran_at_unix,ran_at_iso,rows_removed,retain_days,cutoff_unix,overrides_applied,overrides_rows_removed";
+
+/// Serialise auto-prune run history as RFC-4180 CSV. Eight columns
+/// (see [`AUTO_PRUNE_RUNS_CSV_HEADER`]). Two timestamp columns are
+/// the same shape the install-log + histogram + activity-timeline +
+/// bucket-drilldown CSVs use — the raw unix-seconds value (machine-
+/// friendly for joining with other audit logs) and the ISO-8601 UTC
+/// string (human-friendly for direct review in Excel). Both come
+/// from the same `ran_at_unix` field so they cannot drift.
+///
+/// `cutoff_unix` is written raw (no ISO sibling). The ISO companion
+/// is omitted because the cutoff is a derived value — `ran_at_unix
+/// - retain_days * 86_400` — and a consumer that needs an ISO can
+/// reproduce it. The two ISO columns we DO emit (ran_at_iso) cover
+/// the human-readable "when" question; the cutoff is an audit-only
+/// figure for verifying the prune's effective window.
+///
+/// `include_header` opt-in (matches the install-log + histogram +
+/// activity-timeline + bucket-drilldown + plugin-retention CSV API).
+/// `rows` ships in caller order verbatim — `auto_prune_runs()` emits
+/// DESC by `ran_at_unix` with `id` DESC tie-break; the exporter
+/// ships whatever it's handed so the on-disk CSV matches the in-app
+/// table ordering exactly.
+///
+/// Pure function — never touches the filesystem. The Tauri command
+/// layer (Slice 122) owns disk I/O.
+pub fn auto_prune_runs_to_csv(rows: &[AutoPruneRun], include_header: bool) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(AUTO_PRUNE_RUNS_CSV_HEADER);
+        out.push('\n');
+    }
+    for r in rows {
+        let row = [
+            r.id.to_string(),
+            r.ran_at_unix.to_string(),
+            csv_escape(&iso8601_utc(r.ran_at_unix)),
+            r.rows_removed.to_string(),
+            r.retain_days.to_string(),
+            r.cutoff_unix.to_string(),
+            r.overrides_applied.to_string(),
+            r.overrides_rows_removed.to_string(),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
 // ─── JSON export envelope (Slice 60) ─────────────────────────────────
 
 /// Wire shape for the JSON install-log export. Lifts the raw
@@ -6036,6 +6101,183 @@ mod tests {
         assert_eq!(
             PLUGIN_RETENTION_CSV_HEADER,
             "plugin_id,retain_days,default_retain_days"
+        );
+    }
+
+    // ─── Slice 120: auto-prune run history CSV export ────────────────
+
+    fn run(
+        id: i64,
+        ran_at_unix: i64,
+        rows_removed: i64,
+        retain_days: i64,
+        cutoff_unix: i64,
+        overrides_applied: i64,
+        overrides_rows_removed: i64,
+    ) -> AutoPruneRun {
+        AutoPruneRun {
+            id,
+            ran_at_unix,
+            rows_removed,
+            retain_days,
+            cutoff_unix,
+            overrides_applied,
+            overrides_rows_removed,
+        }
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_header_inclusion_is_caller_controlled() {
+        let rows = vec![run(1, 1_700_000_000, 5, 365, 1_668_464_000, 0, 0)];
+        let with_header = auto_prune_runs_to_csv(&rows, true);
+        let bare = auto_prune_runs_to_csv(&rows, false);
+        assert!(with_header.starts_with(AUTO_PRUNE_RUNS_CSV_HEADER));
+        assert!(!bare.starts_with(AUTO_PRUNE_RUNS_CSV_HEADER));
+        assert_eq!(with_header.lines().count(), 2);
+        assert_eq!(bare.lines().count(), 1);
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_empty_with_header_is_header_only() {
+        let csv = auto_prune_runs_to_csv(&[], true);
+        assert_eq!(csv.trim_end(), AUTO_PRUNE_RUNS_CSV_HEADER);
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_column_count_parity_between_header_and_rows() {
+        // header columns == row cells; catches a future column add
+        // that updates one side and forgets the other.
+        let header_cols = AUTO_PRUNE_RUNS_CSV_HEADER.split(',').count();
+        let csv =
+            auto_prune_runs_to_csv(&[run(1, 1_700_000_000, 5, 365, 1_668_464_000, 2, 3)], false);
+        let row_cells = csv.lines().next().unwrap().split(',').count();
+        assert_eq!(header_cols, row_cells);
+        assert_eq!(header_cols, 8);
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_documented_column_order_with_values() {
+        // Hand-built fixture pins every column position by value.
+        // Nov 14 2023 19:33:20 UTC = 1_700_000_000; cutoff =
+        // 1_668_464_000 (Nov 14 2022 19:33:20 UTC).
+        let csv =
+            auto_prune_runs_to_csv(&[run(7, 1_700_000_000, 23, 365, 1_668_464_000, 3, 5)], true);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], AUTO_PRUNE_RUNS_CSV_HEADER);
+        assert_eq!(
+            lines[1],
+            "7,1700000000,2023-11-14T22:13:20Z,23,365,1668464000,3,5"
+        );
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_iso_matches_install_log_byte_for_byte() {
+        // The ran_at_iso column must produce the SAME string as the
+        // install-log + histogram + activity-timeline + bucket-
+        // drilldown CSVs for the same unix-seconds value. A downstream
+        // pipeline joining auto-prune-run-history exports with event
+        // exports on the timestamp finds identical strings.
+        let unix = 1_700_086_400;
+        let prune_csv = auto_prune_runs_to_csv(&[run(1, unix, 0, 365, 0, 0, 0)], false);
+        let prune_iso = prune_csv.lines().next().unwrap().split(',').nth(2).unwrap();
+        let inst_csv = install_log_to_csv(
+            &[InstallEvent {
+                id: 1,
+                plugin_id: "com.x".into(),
+                version: "1".into(),
+                action: InstallAction::Install,
+                occurred_at: unix,
+                source: Some("marketplace".into()),
+                bytes_written: Some(0),
+                files_extracted: Some(0),
+                replaced_existing: Some(false),
+                prior_version: None,
+                error_msg: None,
+            }],
+            false,
+        );
+        let inst_iso = inst_csv.lines().next().unwrap().split(',').nth(5).unwrap();
+        assert_eq!(prune_iso, inst_iso);
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_preserves_input_order() {
+        // Exporter ships rows verbatim — callers may pre-sort
+        // (auto_prune_runs() returns DESC by ran_at_unix); the on-
+        // disk file matches the in-app table ordering exactly.
+        let rows = vec![
+            run(3, 1_700_000_300, 1, 365, 0, 0, 0),
+            run(1, 1_700_000_100, 2, 365, 0, 0, 0),
+            run(2, 1_700_000_200, 3, 365, 0, 0, 0),
+        ];
+        let csv = auto_prune_runs_to_csv(&rows, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert!(lines[0].starts_with("3,"));
+        assert!(lines[1].starts_with("1,"));
+        assert!(lines[2].starts_with("2,"));
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_zero_timestamp_renders_0_not_empty() {
+        // Defence-in-depth — the unix-seconds columns are NOT NULL
+        // by schema, so they must render as "0" if a row somehow
+        // surfaces with a zero timestamp. Catches a future shift to
+        // Option<i64> on either timestamp slot.
+        let rows = vec![run(1, 0, 0, 1, 0, 0, 0)];
+        let csv = auto_prune_runs_to_csv(&rows, false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[1], "0"); // ran_at_unix
+        assert_eq!(cells[5], "0"); // cutoff_unix
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_attribution_split_round_trips_as_two_columns() {
+        // The attribution split is the WHOLE point of the export —
+        // pin that overrides_applied + overrides_rows_removed land
+        // as separate columns and their values pass through
+        // unchanged. The exporter does NOT re-derive either field
+        // from a sum or difference; both are caller-supplied.
+        let rows = vec![run(1, 1_700_000_000, 23, 365, 0, 3, 5)];
+        let csv = auto_prune_runs_to_csv(&rows, false);
+        let cells: Vec<&str> = csv.lines().next().unwrap().split(',').collect();
+        assert_eq!(cells[3], "23"); // rows_removed
+        assert_eq!(cells[6], "3"); // overrides_applied
+        assert_eq!(cells[7], "5"); // overrides_rows_removed
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_one_row_per_input_invariant() {
+        // line_count == rows.len() (header omitted) across several
+        // sizes — catches a future regression that emits a multi-
+        // line expansion per row.
+        for n in [0usize, 1, 5, 30] {
+            let rows: Vec<AutoPruneRun> = (0..n)
+                .map(|i| run(i as i64 + 1, 1_700_000_000 + i as i64, 0, 1, 0, 0, 0))
+                .collect();
+            let csv = auto_prune_runs_to_csv(&rows, false);
+            assert_eq!(csv.lines().count(), n);
+        }
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_no_none_or_null_leaks() {
+        // No Option<_> columns today, but the contract pin defends
+        // against a future schema addition that introduces one.
+        let rows = vec![run(1, 1_700_000_000, 5, 365, 1_668_464_000, 0, 0)];
+        let csv = auto_prune_runs_to_csv(&rows, true);
+        assert!(!csv.contains("None"));
+        assert!(!csv.contains("null"));
+    }
+
+    #[test]
+    fn auto_prune_runs_csv_header_constant_value_pinned() {
+        // Anyone changing the header column order or names must
+        // update the constant + this test together — surfaces a
+        // careless rename. Same defence as the four sibling header
+        // constants.
+        assert_eq!(
+            AUTO_PRUNE_RUNS_CSV_HEADER,
+            "id,ran_at_unix,ran_at_iso,rows_removed,retain_days,cutoff_unix,overrides_applied,overrides_rows_removed"
         );
     }
 
