@@ -7949,6 +7949,7 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_export_coverage_csv,
             crate::pdf::hopper::cmds::slab_hopper_export_coverage_json,
             crate::pdf::hopper::cmds::slab_hopper_filter_coverage,
+            crate::pdf::hopper::cmds::slab_hopper_plan_dead_rule_reorder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

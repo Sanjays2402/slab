@@ -29,6 +29,7 @@ import {
   planDeadRuleReorder,
   applyReorderProposal,
   formatReorderProposal,
+  slabHopperPlanDeadRuleReorder,
   COVERAGE_FILTER_KINDS,
   type CoverageDiagnosticFilter,
   type CoverageHealth,
@@ -1559,13 +1560,18 @@ function ruleFor(
   kind: "always" | "filename-glob" = "filename-glob",
   pattern = "*.pdf",
 ): Rule {
+  const action = {
+    recipe_id: null,
+    output_dir: null,
+    rename_pattern: null,
+  };
   if (kind === "always") {
-    return { name, predicate: { kind: "always" }, action: {} };
+    return { name, predicate: { kind: "always" }, action };
   }
   return {
     name,
     predicate: { kind: "filename-glob", pattern },
-    action: {},
+    action,
   };
 }
 
@@ -1914,4 +1920,64 @@ function ruleFor(
     formatReorderProposal(proposals[0]).includes("Move 'Tax'"),
     "round-trip: copy mentions Tax",
   );
+}
+
+// ─── Slice 135 — slabHopperPlanDeadRuleReorder browser-mode wrapper ──
+//
+// The wrapper delegates to the TS planner when isInTauri() is false.
+// The test process runs outside Tauri (no @tauri-apps/api/core ctx),
+// so the wrapper MUST take the local-helper branch.
+
+{
+  // Browser-mode wrapper returns the SAME shape as the TS planner.
+  const rules = [
+    ruleFor("Catch-all", "always"),
+    ruleFor("Tax", "filename-glob", "tax_*"),
+  ];
+  const r = healthReport(
+    [cov(0, "Catch-all", 10, 10, false), cov(1, "Tax", 0, 3, true)],
+    0,
+    10,
+  );
+  // Wrapper is async; await + compare to the synchronous TS planner.
+  slabHopperPlanDeadRuleReorder(rules, r).then((wrapperOut) => {
+    const directOut = planDeadRuleReorder(rules, r);
+    expect(
+      wrapperOut.length === directOut.length,
+      `slabHopperPlanDeadRuleReorder: same length as direct planner`,
+    );
+    expect(
+      wrapperOut[0].rule_index === directOut[0].rule_index,
+      `slabHopperPlanDeadRuleReorder: same rule_index as direct`,
+    );
+    expect(
+      wrapperOut[0].target_index === directOut[0].target_index,
+      `slabHopperPlanDeadRuleReorder: same target_index as direct`,
+    );
+    expect(
+      wrapperOut[0].shadowing_rule_name === directOut[0].shadowing_rule_name,
+      `slabHopperPlanDeadRuleReorder: same shadowing_rule_name as direct`,
+    );
+    expect(
+      wrapperOut[0].samples_recovered === directOut[0].samples_recovered,
+      `slabHopperPlanDeadRuleReorder: same samples_recovered as direct`,
+    );
+  });
+}
+
+{
+  // Browser-mode wrapper: empty proposals on a healthy chain (the
+  // wrapper takes the local-helper branch and returns []).
+  const rules = [ruleFor("Tax"), ruleFor("All", "always")];
+  const r = healthReport(
+    [cov(0, "Tax", 3, 3, false), cov(1, "All", 7, 7, false)],
+    0,
+    10,
+  );
+  slabHopperPlanDeadRuleReorder(rules, r).then((wrapperOut) => {
+    expect(
+      wrapperOut.length === 0,
+      `slabHopperPlanDeadRuleReorder: healthy chain -> empty`,
+    );
+  });
 }

@@ -1134,6 +1134,32 @@ export async function slabHopperFilterCoverage(
   });
 }
 
+/** Slice 135 — plan minimal-reorder fixes for every dead rule in
+ *  `report` via the backend `slab_hopper_plan_dead_rule_reorder`
+ *  command. Returns one [`ReorderProposal`] per dead row in input
+ *  order; empty when the chain has no dead rules.
+ *
+ *  Mirrors `planDeadRuleReorder` (slice 134) exactly; the wire
+ *  command exists so a future scripted-audit consumer (CLI driver,
+ *  cron health-check) gets the planner as a first-class command,
+ *  and so the server-side `RulePredicate` variant set is the
+ *  authoritative source — a Rust-side predicate kind not yet
+ *  mirrored in TS won't silently misclassify the chain.
+ *
+ *  Wraps to the local TS helper in browser-mode so component-level
+ *  testing doesn't need a Tauri stub. */
+export async function slabHopperPlanDeadRuleReorder(
+  rules: Rule[],
+  report: RuleCoverageReport,
+): Promise<ReorderProposal[]> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return planDeadRuleReorder(rules, report);
+  return invoke<ReorderProposal[]>("slab_hopper_plan_dead_rule_reorder", {
+    rules,
+    report,
+  });
+}
+
 /** Suggest a default filename for a coverage CSV/JSON export.
  *  Mirrors the drilldown filename helper conventions so paralegals
  *  see one consistent naming pattern across the audit-export

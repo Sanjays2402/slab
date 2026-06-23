@@ -901,6 +901,47 @@ pub fn slab_hopper_filter_coverage(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 135 — dead-rule reorder planner Tauri command
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::plan_dead_rule_reorder`]
+// primitive (slice 133) 1:1. Reasons for a server-side command at
+// all (the TS mirror in slice 134 already handles the in-panel
+// fix-it chip rendering):
+//
+// 1. A future scripted-audit consumer (CLI / cron health-check / a
+//    "what would my chain look like fixed?" subcommand) gets the
+//    planner as a first-class command rather than having to mirror
+//    the heuristic in TS itself.
+//
+// 2. Server-side guarantees the planner output is computed against
+//    the SAME RulePredicate variant set the runtime evaluator uses.
+//    A future predicate kind added on Rust but not yet mirrored in
+//    the TS `RulePredicate.kind` union would silently fall through
+//    to the no-Always fallback in the TS planner; the server-side
+//    command would catch the same case authoritatively.
+//
+// The wire shape is RuleCoverageReport + Rule[] in (matching the
+// other coverage commands' pattern of accepting the in-state
+// snapshot rather than re-running the underlying analyzer — same
+// race-free posture as `slab_hopper_export_coverage_csv`); the
+// return is Vec<ReorderProposal>. Pure-data: no DB, no I/O.
+
+/// `slab_hopper_plan_dead_rule_reorder` — produce one reorder
+/// suggestion per dead rule in the given coverage report. See
+/// [`super::coverage::plan_dead_rule_reorder`] for the heuristic.
+///
+/// Returns `Vec<ReorderProposal>` in input order (the order of
+/// `report.rules`). Empty when the chain has no dead rules.
+#[tauri::command]
+pub fn slab_hopper_plan_dead_rule_reorder(
+    rules: Vec<Rule>,
+    report: super::coverage::RuleCoverageReport,
+) -> CmdResult<Vec<super::coverage::ReorderProposal>> {
+    Ok(super::coverage::plan_dead_rule_reorder(&rules, &report))
+}
+
+// ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
 
