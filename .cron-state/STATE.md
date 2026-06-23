@@ -1,13 +1,338 @@
 # Slab Cron State
 
-Last updated: 2026-06-23 09:35 PT by Cake (cron) — round-29 BATCH shipped: 5 slices closing one cohesive arc. Hopper batch fix-all action (slices 138-142): pure-data apply_reorder_proposals_batch(rules, proposals) -> BatchReorderOutcome with by-name source resolution (index drift from prior moves means we MUST resolve by name) + by-name shadower target resolution with target=0 fallback + RuleNotFound/AlreadyEarlier skip discriminator + conservation invariant applied+skipped==input + saturating_add on u64 + 14 tests (slice 138); TS mirror applyReorderProposalsBatch 1:1 + summarizeBatchReorderOutcome discriminated copy (empty/all-applied with/without recovered/partial with/without recovered/nothing) + describeSkipReason + RULE_NOT_FOUND/ALREADY_EARLIER stable singletons + 58 inline tests (slice 139); slab_hopper_batch_reorder_dead_rules Tauri command wired into invoke handler + slabHopperBatchReorderDeadRules async wrapper with browser-mode delegation + 13 wrapper-delegation tests pinning every BatchReorderOutcome field (slice 140); worstReorderConfidence(proposals) -> "high"|"medium"|"low"|null with worst-tier-wins short-circuit + summarizeProposalTierBreakdown {high,medium,low,total} with total-invariant + describeProposalBatch discriminated copy ("3 fixes — 1 high, 2 medium" / "1 fix — high" single-tier shortcut / "No fixes" empty / order-independent enumeration) + 32 inline tests (slice 141); demo-able UI "Fix all · N" button as SIBLING of the chain-health chip + worst-tier-color treatment via three class:directives + 380px confirm popover with breakdown header + describeReorderConfidence tone subline + per-proposal preview list with tier-colored dots + scrollable max-height 180px + Cancel/Apply actions + optimistic apply via applyReorderProposalsBatch then persist via slabHopperSetRules with rollback on failure + applied=0 surfaces toast without persist + outcome toast shares cov-export-toast surface + skipped proposals log to console.info for audit + Escape chain extended (Fix-all > per-row fix-it > Export menu > drilldown > filter clear) + ~160 lines scoped CSS (slice 142). Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings PASSED in 11.52s, cargo test --lib 2581 passed / 0 failed (round-28 baseline 2567 + 14 batch primitive tests), pnpm check 0 errors / 104 warnings (round-28 baseline preserved EXACTLY), tsx hopper.test.ts 359 inline expects pass (256 + 58 + 13 + 32 = 359), tsx marketplace.test.ts 138 unchanged.
+Last updated: 2026-06-23 13:25 PT by Cake (cron) — round-30 BATCH shipped: 5 slices closing the fix-it / fix-all UNDO arc. Reorder-effect summary primitive summarize_reorder_effect(before, after) -> ReorderEffect with {moved, added, removed, is_permutation} + first-occurrence by-name resolution + AFTER-order moved enumeration + length-aware permutation gate + 15 tests (slice 143); TS mirror summarizeReorderEffect 1:1 + describeReorderEffect discriminated copy from UNDO perspective ("Move N rules back" / "Drop N added rules" / "Restore N removed rules" / mixed branches) + isReorderEffectNoop predicate + 52 inline tests (slice 144); slab_hopper_summarize_reorder_effect Tauri command wired into invoke handler + slabHopperSummarizeReorderEffect async wrapper with browser-mode delegation + 20 wrapper-delegation tests pinning every ReorderEffect field (slice 145); captureUndoEntry(before, after, label, now?) bridge primitive composing snapshot defensive-copy + label + capturedAt + pre-computed appliedEffect + computeUndoStatus(entry, current) discriminating noop/stale/ready via REVERT-direction diff + short dominant-bucket reason ("1 rule added since fix-all" / "renamed" framing on tie) + describeUndoStatus composing kind + describeReorderEffect + 29 inline tests including end-to-end capture -> compute -> undo round trip (slice 146); demo-able UI Undo button INLINE on cov-export-toast row + green-tint pill matching toast palette + worst-tier amber stale badge with reason tooltip + reactive $derived undoStatus over (undoEntry, rules) + label discriminating "fix-it: Tax" vs "fix-all" + optimistic apply via slabHopperSetRules with rollback on failure + "Reverted N rules" confirmation toast on success + lifecycle tied to toast dwell (entry clears with toast fade) + export-path explicit clear (no phantom undo on unrelated toast) + applied=0 fast path skipping snapshot (no useless button) + ~80 lines scoped CSS (slice 147). Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings PASSED CLEAN in 10.45s, cargo test --lib 2596 passed / 0 failed (round-29 baseline 2581 + 15 slice-143 tests = 2596), pnpm check 0 errors / 104 warnings (round-29 baseline preserved EXACTLY), tsx src/lib/hopper.test.ts 460 inline expects pass (round-29 baseline 359 + 52 slice-144 + 20 slice-145 + 29 slice-146 = 460; slice 147 is a UI slice with no new TS-helper assertions).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `dab4715` — "feat(hopper): batch fix-all button with confirm popover and preview list".
+Latest commit: `88129fa` — "feat(hopper): Undo for fix-it / fix-all on the coverage toast".
+
+### What round-30 (2026-06-23 13:25 PT) just shipped
+
+Five slices closing one cohesive arc. Round 29 closed the "fix
+one / fix all" loop with per-row pills + a batch button, but a
+paralegal who clicked "Fix all · 5" and immediately realised
+the prior order was better had to manually re-drag every moved
+rule back — exactly the friction the round 29 batch path was
+supposed to eliminate. Tonight the regret loop closes end-to-
+end: pure-data reorder-effect summariser on the backend (the
+diff primitive answering "which rules moved by name, and is
+the AFTER chain still a permutation of BEFORE?"), TS mirror +
+discriminated copy, server-side wire command for the audit /
+script path, an undo-entry bridge primitive composing snapshot
++ live staleness gate + revert-direction copy, and a demo-able
+UI Undo button INLINE on the cov-export-toast surface with the
+4s dwell shared.
+
+Round 29's closing notes listed undo-the-fix-it/fix-all as the
+top deferred candidate ("particularly useful for the batch path
+where reverting a five-rule reorder by hand is tedious"); round
+30 picked it over Hopper rule reorder-by-drag (the deferred
+candidate from rounds 26-29) because it's the structurally-
+cleanest 5-layer arc that EXTENDS the existing toast surface
+(the cov-export-toast going from one-shot success notice to a
+two-affordance success-plus-undo row closes the "fix / undo"
+two-mode loop) without inventing a new gesture vocabulary.
+Reorder-by-drag stays on the candidates list — the undo button
+arguably reduces its urgency further (a paralegal who made the
+wrong fix-all choice now reverts in ONE click rather than
+either dragging or undoing each manual move).
+
+- Slice 143: reorder-effect summary primitive (e9c52ea).
+  summarize_reorder_effect(before, after) -> ReorderEffect with
+  {moved, added, removed, is_permutation}. By-name first-
+  occurrence resolution matches the rest of the reorder pipeline
+  (apply_reorder_proposals_batch uses the same by-name model).
+  moved entries in AFTER-chain order (ascending to_index — pinned
+  by strictly-ascending invariant test); added in AFTER order;
+  removed in BEFORE order. The is_permutation flag is the load-
+  bearing signal for undo's staleness check — undo can only
+  safely revert when the chain hasn't drifted in the rule set
+  (no add / remove / rename between apply and undo). Length-
+  aware: a chain with one duplicate rule could have empty
+  added/removed but a different length; treat as not-a-permutation
+  so the gate stays conservative. Duplicate-name first-occurrence
+  canonical handling (UI enforces unique names; defensive path).
+  Snake-case serde field names pinned by round-trip test for the
+  TS mirror to read. 15 tests including empty inputs, identical
+  chains (no-moves + trivial permutation), single swap, lift-
+  one-rule, pure add (not-a-permutation), pure remove (not-a-
+  permutation), rename (add + remove appearing simultaneously),
+  unmoved-rule omission, serde round-trip, no-input-mutation,
+  end-to-end composition with apply_reorder_proposals_batch,
+  strictly-ascending to_index invariant, duplicate-name canonical,
+  and undo round-trip (snapshot -> reorder -> snapshot recovers
+  inverse permutation).
+
+- Slice 144: TS mirror + describe + noop (18234cb).
+  summarizeReorderEffect 1:1 mirror with same first-occurrence
+  by-name resolution, AFTER-order moved enumeration, length-
+  aware permutation gate. describeReorderEffect discriminated
+  copy from the UNDO PERSPECTIVE (the effect describes what
+  happened, the copy describes what undo would DO): "No changes
+  to undo" (empty) / "Move N rules back" (pure moves, plural-
+  aware) / "Drop N added rules" (pure added) / "Restore N
+  removed rules" (pure removed) / mixed variants enumerating
+  only present buckets ("Move 1, restore 1 removed, drop 1
+  added"; "restore 1 removed, drop 1 added" when no moves).
+  isReorderEffectNoop convenience predicate composed from the
+  three bucket lengths — lets the undo gate hide the button
+  when the snapshot matches the current chain exactly. 52
+  inline tests including every describeReorderEffect branch
+  + cross-helper composition with applyReorderProposalsBatch
+  + undo round-trip inverse permutation.
+
+- Slice 145: server-side command + TS wrapper (07a60ba).
+  slab_hopper_summarize_reorder_effect Tauri command wraps
+  slice 143 1:1 registered in lib.rs invoke handler.
+  slabHopperSummarizeReorderEffect async wrapper with browser-
+  mode delegation. Reasons for a server-side command (the TS
+  mirror already handles in-toast undo): (1) future scripted-
+  audit consumer (CLI diff subcommand / cron health-check /
+  "what did my last fix-it round actually change?") gets the
+  structural summariser as a first-class command rather than
+  mirroring the by-name resolution in TS; (2) server-side
+  keeps the by-name equality contract authoritative — a future
+  Rust Rule field not yet mirrored in TS won't silently widen /
+  narrow the diff; (3) symmetry with the rest of the round-
+  29/30 reorder pipeline — every pure-data primitive has a
+  wire wrapper. 20 wrapper-delegation tests pinning every
+  ReorderEffect field through the browser-mode path.
+
+- Slice 146: undo-entry bridge primitive (9603f16).
+  ReorderUndoEntry carries {snapshot, label, capturedAt,
+  appliedEffect}. captureUndoEntry defensively-copies the
+  snapshot (mutating the source after capture doesn't affect
+  the entry — pinned by test), records label + timestamp
+  (Date.now() default with injectable now for tests), pre-
+  computes appliedEffect so a scripted-audit consumer reads
+  the breadcrumb without re-running the diff. ReorderUndoStatus
+  discriminates noop / stale / ready. computeUndoStatus runs
+  the diff in the REVERT direction (current -> snapshot) so
+  the count / copy reads naturally as "Move N rules back"
+  rather than "Move N rules forward". The noop branch fires
+  when the live chain already matches the snapshot. The stale
+  branch fires when the user manually added / removed /
+  renamed rules — undo would silently drop / duplicate /
+  rename and we refuse. The ready branch carries the full
+  inverse-direction ReorderEffect for the button copy. Stale
+  reason is a SHORT dominant-bucket breadcrumb (added-only /
+  removed-only / mixed with larger bucket / equal-mixed ->
+  "renamed" framing). Plural-aware on "rule"/"rules". Reason
+  includes the entry's label so the user sees "1 rule added
+  since fix-all" rather than a label-less drift message.
+  describeUndoStatus composes kind + describeReorderEffect
+  into the three branch copies. 29 inline tests including
+  end-to-end capture -> compute -> undo -> noop round trip.
+
+- Slice 147: demo-able UI (88129fa). Undo button INLINE on
+  the cov-export-toast row. While the toast is visible (4s
+  dwell), an "Undo · Move N rules back" button anchors to
+  the toast's right edge — the count comes from the LIVE
+  staleness check so a user who manually moved one rule
+  between apply and undo sees the right number. Button
+  shares the green-tint palette of the toast itself, matching
+  the success vocabulary. Staleness gate: if the user added /
+  removed / renamed a rule between apply and undo, the button
+  renders as a disabled amber "Undo unavailable — N rules
+  added since fix-all" badge with the reason as tooltip.
+  Pure-permutation drift (manual move) is FINE — undo composes
+  through it via by-name resolution. Label discriminates fix-
+  it from fix-all: single-row stashes "fix-it: Tax" (so the
+  tooltip reads "1 rule added since fix-it: Tax"); batch
+  stashes "fix-all". Apply path: optimistic. Chain updates
+  locally first, then slabHopperSetRules persists; on failure
+  chain rolls back AND undoEntry stays so the user can retry.
+  On success the toast copy updates to "Reverted N rules"
+  (shared 4s dwell) and undoEntry clears so the button
+  disappears (snapshot is now stale against the just-undone
+  chain). Toast lifecycle: undoEntry dwells with the toast.
+  The setTimeout that fades the toast ALSO nulls undoEntry
+  so an expired toast doesn't surface a phantom button on
+  the next unrelated toast. Export-toast path explicitly
+  clears undoEntry on entry (no phantom undo against an
+  unrelated toast). undoStatus + undoLabel $derived state
+  composed from computeUndoStatus over (undoEntry, rules) —
+  reactive over every chain mutation so count / reason
+  refresh in real time. applied=0 fast path never stashes
+  a snapshot (no useless button on a no-op toast). ~80 lines
+  scoped CSS: .cov-toast-row (flex row), .cov-undo-btn
+  (green pill with hover lift / focus ring / disabled
+  progress cursor), .cov-undo-stale (amber badge with help
+  cursor + reason tooltip). Reuses cov-export-toast-fade-in
+  keyframes for entrance.
+
+Gates result: cargo fmt clean (no changes needed), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 10.45s, cargo test --lib
+2596 passed / 0 failed (round-29 baseline 2581 + 15 slice-143
+tests = 2596), pnpm check 0 errors / 104 warnings (round-29
+baseline preserved EXACTLY — zero new warnings from the Undo
+button markup, the stale badge span, the new toast row wrapper,
+the four new $state/$derived blocks, or the ~80 lines of new
+CSS), tsx src/lib/hopper.test.ts 460 inline expects pass
+(round-29 baseline 359 + 52 slice-144 + 20 slice-145 + 29
+slice-146 = 460; slice 147 is a UI slice with no new TS-helper
+assertions), tsx src/lib/marketplace.test.ts 138 inline expects
+pass unchanged (no marketplace changes this tick).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-29: backend
+  primitive -> TS mirror primitive -> Tauri command + TS client
+  wrapper -> pure-helper bridge (slice 146 — the undo-entry
+  bridge composing snapshot + live staleness gate + revert-
+  direction copy into a UI-ready discriminated status) ->
+  demo-able UI slice. Round 30 differs from rounds 28-29 in
+  that the bridge layer (slice 146) is a STATEFUL primitive
+  (carries a snapshot + label + timestamp) rather than a pure
+  derivation from the wire types alone — but the staleness gate
+  + describe helper compose purely with no Svelte runes, keeping
+  the bridge testable at the same level as the prior round's
+  worstReorderConfidence helper.
+- Round 30 picked the undo path over rule reorder-by-drag
+  because (a) it's the structurally-cleanest 5-layer arc
+  extending the existing toast surface (one-shot success ->
+  success+undo two-affordance row) without a new gesture
+  vocabulary, and (b) it CLOSES the regret loop opened by
+  round 29's batch button — a user who can't undo a 5-rule
+  reorder is worse off than before the batch path landed.
+  Reorder-by-drag stays a candidate but its priority drops
+  further (a user who clicked wrong now reverts in ONE click).
+- The REVERT-direction diff in computeUndoStatus is the load-
+  bearing piece. A naive computeUndoStatus that diffed (snapshot
+  vs current) would produce moved entries pointing FORWARD
+  ("Tax moved from 1 to 0") which the UI would then have to
+  invert for the "back" copy. By diffing (current vs snapshot)
+  the moved entries already point in the revert direction; the
+  copy "Move N rules back" reads naturally without inversion.
+  Same primitive, different argument order — the discipline is
+  the bridge layer's job.
+
+DESIGN NOTES:
+- The Undo button INLINE on the toast row (rather than a separate
+  surface, a modal, or a notification cell) was the design call
+  that made this slice land cleanly. The toast already says
+  "Fixed 3 rules" — the user is already looking at it. Anchoring
+  the undo affordance to the toast's right edge means the user's
+  eye doesn't have to travel; clicking the toast's neighbour is
+  cheap. A separate notification cell would have required a new
+  z-index layer + dismissal logic; a modal would have demanded a
+  confirm step ("Are you sure you want to undo?") that defeats
+  the one-click promise of the affordance.
+- Green-tint pill matching the toast palette (rather than a
+  contrasting destructive color like red or amber) is the right
+  default for an undo button anchored to a SUCCESS toast. Red
+  would imply "danger" and make the user hesitate; the action
+  is reverting a successful action, not deleting data. The
+  amber stale badge contrasts deliberately because that's the
+  one branch where the user SHOULD hesitate (the gate is
+  refusing for a reason).
+- Toast-dwell lifecycle (undoEntry dwells with the toast, both
+  clear together) keeps the affordance "live for as long as
+  the user can see the toast." A persistent undo would invite
+  stale clicks ("wait, what was I undoing?"); a shorter dwell
+  would feel rushed. The 4s window matches every other in-
+  panel async confirmation in the Hopper panel.
+- Label discrimination ("fix-it: Tax" vs "fix-all") in the
+  staleness tooltip means a paralegal mid-batch sees WHICH
+  fix the snapshot belongs to. A user who clicked Fix it on
+  Tax, then manually added a rule, then clicked Fix all,
+  then realised — sees the most recent label ("fix-all") in
+  the tooltip and knows the undo button targets the LATEST
+  action. The snapshot is bound to the most recent apply, not
+  a stack of pending undos (a stack would invite confusion
+  about which click reverts which action).
+- Optimistic apply with rollback on failure matches the same
+  pattern the fix-it / fix-all paths use. The chain updates
+  locally first so the visual feedback is instant; the
+  slabHopperSetRules persist runs in the background. On
+  failure the chain rolls back AND undoEntry stays (so the
+  user can retry) — the only difference from the fix-it
+  rollback pattern is that undoEntry persists across failure
+  rather than clearing on success.
+- The applied=0 fast path NOT stashing a snapshot is a small
+  but load-bearing detail: a fix-all where every proposal is
+  skipped by drift shouldn't surface an "Undo · Move 0 rules
+  back" button. The fast path returns early WITHOUT calling
+  stashUndoSnapshot, so the toast appears alone with the
+  "No rules fixed (N skipped)" copy. Same hygiene as the
+  applied=0 no-persist branch (no useless round-trip, no
+  useless button).
+- Export-path explicit undoEntry clear is the symmetric move:
+  a user who clicks Export mid-fix shouldn't see a phantom
+  undo button against an unrelated export toast. The export
+  function explicitly nulls undoEntry on entry; the export
+  toast surfaces alone.
+
+## Roadmap — round 30 (Hopper Undo for fix-it / fix-all) — ALL DONE
+
+Round 30 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the fix-it / fix-all UNDO path (slices 143-147).
+One backend pure-data reorder-effect summariser primitive, one TS
+mirror + discriminated copy + noop helper, one server-side wire
+command + TS client wrapper, one undo-entry bridge primitive
+composing snapshot + live staleness gate, and one demo-able
+inline-on-toast Undo button slice. Same canonical five-layer
+pattern as rounds 19-29.
+
+143. ~~**reorder-effect summary primitive**~~ —
+     DONE (2026-06-23 13:11 PT, e9c52ea). summarize_reorder_effect(
+     before, after) -> ReorderEffect with {moved, added, removed,
+     is_permutation} + first-occurrence by-name resolution +
+     AFTER-order moved enumeration + length-aware permutation gate +
+     duplicate-name canonical first-occurrence + snake-case serde
+     round-trip. 15 tests.
+144. ~~**reorder-effect TS mirror + describe + noop**~~ —
+     DONE (2026-06-23 13:14 PT, 18234cb). summarizeReorderEffect
+     1:1 mirror + describeReorderEffect discriminated copy from
+     UNDO perspective ("Move N rules back" / "Drop N added rules" /
+     "Restore N removed rules" / mixed branches) + isReorderEffectNoop
+     predicate. 52 inline tests.
+145. ~~**reorder-effect Tauri command + TS wrapper**~~ —
+     DONE (2026-06-23 13:18 PT, 07a60ba). slab_hopper_summarize_reorder_effect
+     Tauri command wired into invoke handler +
+     slabHopperSummarizeReorderEffect async wrapper with browser-
+     mode delegation. 20 wrapper-delegation tests pinning every
+     ReorderEffect field.
+146. ~~**undo-entry bridge primitive**~~ —
+     DONE (2026-06-23 13:21 PT, 9603f16). captureUndoEntry with
+     defensive snapshot copy + label + timestamp + pre-computed
+     appliedEffect + computeUndoStatus discriminating noop /
+     stale / ready via REVERT-direction diff + short dominant-
+     bucket reason ("1 rule added since fix-all" / "renamed"
+     framing on tie) + describeUndoStatus composing kind +
+     describeReorderEffect. 29 inline tests.
+147. ~~**Undo button on coverage toast**~~ —
+     DONE (2026-06-23 13:25 PT, 88129fa). Undo button INLINE on
+     cov-export-toast row + green-tint pill matching toast palette +
+     amber stale badge with reason tooltip + reactive $derived
+     undoStatus over (undoEntry, rules) + label discriminating
+     "fix-it: Tax" vs "fix-all" + optimistic apply with rollback +
+     "Reverted N rules" confirmation toast on success + toast-
+     dwell lifecycle (entry clears with toast fade) + export-path
+     explicit clear + applied=0 fast path skipping snapshot +
+     ~80 lines scoped CSS.
+
+     With round 30 done, the dead-rule "diagnose -> drill -> fix
+     one / fix all -> undo" five-step loop closes end-to-end —
+     a paralegal seeing "3 dead rules" can drill into them in one
+     click (round 27), FIX one in one more click (round 28), or
+     FIX ALL in one click (round 29), or UNDO the most recent fix
+     in one click (round 30). Next subsystem candidates: Hopper
+     rule reorder-by-drag (rounds 26-30's deferred candidate, now
+     even less critical with both batch fix-all AND undo
+     available), drilldown row -> cross-surface filter (clicking
+     a fall-through filename in the popover carries the search
+     query into the document inspector), Loom-grade tagging
+     explorer, doc-detail metadata editor read/write surface,
+     Beacon cache inspector polish (column sort by basename /
+     model facet), Quill multi-document field-detect queueing,
+     histogram hover-tooltip on bar segments, per-plugin "Run
+     prune now" affordance (round 25's deferred candidate), undo
+     STACK (round 30 shipped single-entry undo; a future round
+     could promote it to a bounded ring so the user can undo
+     several reorders in sequence).
 
 ### What round-29 (2026-06-23 09:35 PT) just shipped
 
