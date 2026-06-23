@@ -1418,8 +1418,11 @@ impl InstallLog {
     /// - If `last_auto_prune_at` is missing or older than
     ///   `now_unix - AUTO_PRUNE_INTERVAL_SECS`, prune rows older
     ///   than each plugin's effective `retain_days` (per-plugin
-    ///   overrides take precedence over the global) and stamp
-    ///   `last_auto_prune_at = now_unix`.
+    ///   overrides take precedence over the global), stamp
+    ///   `last_auto_prune_at = now_unix`, AND append one row to
+    ///   the `install_log_auto_prune_runs` history table (Slice
+    ///   118) so a later view can render the per-plugin-vs-global
+    ///   attribution split for prunes that already happened.
     /// - Otherwise, no-op (returns
     ///   [`AutoPruneOutcome::Skipped { next_due_unix }`]).
     ///
@@ -1439,6 +1442,15 @@ impl InstallLog {
     /// auto-prune satisfies its plugin's effective window; (2) two
     /// consecutive `auto_prune_if_due` calls with no new events
     /// between them remove zero rows on the second call.
+    ///
+    /// History recording (Slice 119): a Pruned outcome appends one
+    /// row to `install_log_auto_prune_runs` carrying the same
+    /// `rows_removed` / `retain_days` / `cutoff_unix` /
+    /// `overrides_applied` / `overrides_rows_removed` returned to
+    /// the caller. Even zero-row prunes are recorded — "the prune
+    /// debounce elapsed but the corpus was already clean" is still
+    /// meaningful audit data. A Skipped outcome does NOT touch the
+    /// history table (no work happened; nothing to record).
     pub fn auto_prune_if_due(
         &mut self,
         now_unix: i64,
@@ -1501,6 +1513,19 @@ impl InstallLog {
         let rows_removed = overrides_rows_removed + global_rows_removed;
         let overrides_applied = overrides.len();
         self.set_last_auto_prune_at(now_unix)?;
+        // Slice 119: persist this run to the history table so the
+        // UI can render the per-plugin-vs-global attribution split
+        // for prunes that already happened. Record even when
+        // rows_removed == 0 — a clean-corpus prune is still an
+        // event worth logging in the audit trail.
+        self.record_auto_prune_run(
+            now_unix,
+            rows_removed as i64,
+            retain_days,
+            cutoff,
+            overrides_applied as i64,
+            overrides_rows_removed as i64,
+        )?;
         Ok(AutoPruneOutcome::Pruned {
             rows_removed,
             retain_days,
@@ -4223,6 +4248,160 @@ mod tests {
         // Round-trip preserves the new fields.
         let back: AutoPruneOutcome = serde_json::from_str(&s).unwrap();
         assert_eq!(back, pruned);
+    }
+
+    // ─── Slice 119: auto_prune_if_due records to history ─────────────
+
+    #[test]
+    fn auto_prune_pruned_appends_to_history() {
+        // A Pruned outcome must append exactly one row to the
+        // auto-prune run history table, carrying the same fields
+        // returned to the caller.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        insert_at(&mut log, "com.a", "1", now - 100 * 86_400);
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        let history = log.auto_prune_runs(25).unwrap();
+        assert_eq!(history.len(), 1);
+        match outcome {
+            AutoPruneOutcome::Pruned {
+                rows_removed,
+                retain_days,
+                cutoff_unix,
+                overrides_applied,
+                overrides_rows_removed,
+            } => {
+                assert_eq!(history[0].ran_at_unix, now);
+                assert_eq!(history[0].rows_removed, rows_removed as i64);
+                assert_eq!(history[0].retain_days, retain_days);
+                assert_eq!(history[0].cutoff_unix, cutoff_unix);
+                assert_eq!(history[0].overrides_applied, overrides_applied as i64);
+                assert_eq!(
+                    history[0].overrides_rows_removed,
+                    overrides_rows_removed as i64
+                );
+            }
+            AutoPruneOutcome::Skipped { .. } => panic!("first call must prune"),
+        }
+    }
+
+    #[test]
+    fn auto_prune_zero_row_run_still_recorded() {
+        // A Pruned outcome with rows_removed == 0 (the debounce
+        // elapsed but the corpus was already clean) is still an
+        // event worth logging — the audit trail "the auto-prune
+        // ran on this day and found nothing to do" is real signal,
+        // not silence.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        // Empty log → zero-row prune.
+        let outcome = log.auto_prune_if_due(now).unwrap();
+        let history = log.auto_prune_runs(25).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].rows_removed, 0);
+        assert_eq!(history[0].ran_at_unix, now);
+        assert!(matches!(
+            outcome,
+            AutoPruneOutcome::Pruned {
+                rows_removed: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn auto_prune_skipped_does_not_record() {
+        // A Skipped outcome (debounce window not elapsed) does NOT
+        // append to the history. No work happened; nothing to log.
+        // Without this contract the table would fill with no-op
+        // entries on every launch within a 24h window.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        // First call → records one row.
+        log.auto_prune_if_due(now).unwrap();
+        assert_eq!(log.auto_prune_runs(25).unwrap().len(), 1);
+        // Second call within the debounce → Skipped → no new row.
+        let outcome = log.auto_prune_if_due(now + 100).unwrap();
+        assert!(matches!(outcome, AutoPruneOutcome::Skipped { .. }));
+        assert_eq!(log.auto_prune_runs(25).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn auto_prune_history_grows_one_row_per_run() {
+        // Three runs across three debounce windows → exactly three
+        // history rows, newest first, with monotonically decreasing
+        // ran_at_unix.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let base = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        log.auto_prune_if_due(base).unwrap();
+        log.auto_prune_if_due(base + AUTO_PRUNE_INTERVAL_SECS)
+            .unwrap();
+        log.auto_prune_if_due(base + 2 * AUTO_PRUNE_INTERVAL_SECS)
+            .unwrap();
+        let history = log.auto_prune_runs(25).unwrap();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0].ran_at_unix, base + 2 * AUTO_PRUNE_INTERVAL_SECS);
+        assert_eq!(history[1].ran_at_unix, base + AUTO_PRUNE_INTERVAL_SECS);
+        assert_eq!(history[2].ran_at_unix, base);
+    }
+
+    #[test]
+    fn auto_prune_history_conservation_sum_equals_events_removed() {
+        // Conservation invariant: the sum of rows_removed across
+        // every history row must equal the total events removed from
+        // the install_events table by all those prunes. Pin by
+        // counting pre-prune events vs post-prune events and
+        // comparing to the history sum.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(30).unwrap();
+        // Seed: 5 ancient + 2 recent. Total = 7.
+        for i in 0..5 {
+            insert_at(&mut log, "com.a", "1", now - (100 + i) * 86_400);
+        }
+        insert_at(&mut log, "com.a", "2", now);
+        insert_at(&mut log, "com.a", "3", now);
+        assert_eq!(log.total_event_count().unwrap(), 7);
+
+        log.auto_prune_if_due(now).unwrap();
+        // Second run past debounce, no new events → records zero.
+        log.auto_prune_if_due(now + AUTO_PRUNE_INTERVAL_SECS)
+            .unwrap();
+
+        let remaining = log.total_event_count().unwrap();
+        let removed_actual = 7 - remaining;
+        let history = log.auto_prune_runs(25).unwrap();
+        let removed_via_history: i64 = history.iter().map(|r| r.rows_removed).sum();
+        assert_eq!(removed_via_history, removed_actual);
+    }
+
+    #[test]
+    fn auto_prune_history_attribution_split_preserved() {
+        // The per-plugin-vs-global split returned by the Pruned
+        // outcome must be persisted faithfully — without it the
+        // history table cannot answer "did the override or the
+        // global window remove these events" weeks later.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        log.set_retain_days(365).unwrap();
+        log.set_plugin_retention_days("com.noisy", 7).unwrap();
+        insert_at(&mut log, "com.noisy", "1", now - 30 * 86_400); // override prunes
+        insert_at(&mut log, "com.global", "2", now - 400 * 86_400); // global prunes
+        log.auto_prune_if_due(now).unwrap();
+        let history = log.auto_prune_runs(25).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].rows_removed, 2);
+        assert_eq!(history[0].overrides_applied, 1);
+        assert_eq!(history[0].overrides_rows_removed, 1);
+        // The global pass removed exactly the other row.
+        assert_eq!(
+            history[0].rows_removed - history[0].overrides_rows_removed,
+            1
+        );
     }
 
     // ─── Per-plugin histogram aggregate (Slice 87) ────────────────────
