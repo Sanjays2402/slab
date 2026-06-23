@@ -47,6 +47,11 @@
     filterCoverageByDiagnostic,
     coverageHealthClickTarget,
     formatCoverageFilterSummary,
+    planDeadRuleReorder,
+    applyReorderProposal,
+    formatReorderProposal,
+    reorderProposalConfidence,
+    describeReorderConfidence,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -59,6 +64,8 @@
     type RuleTestResult,
     type RuleCoverageReport,
     type CoverageDiagnosticFilter,
+    type ReorderProposal,
+    type ReorderProposalConfidence,
     type SampleBucket,
     type SampleDrilldown,
   } from "$lib/hopper";
@@ -375,6 +382,130 @@
   }
 
   // -------------------------------------------------------------------
+  // v3.40 Slice 137 — dead-rule fix-it action
+  // -------------------------------------------------------------------
+  //
+  // Round 28's demo-able payoff. The chain-health chip + diagnostic
+  // filter row (slice 132) lets a user see "2 dead rules" and drill
+  // into which 2; this slice closes the loop with "OK, fix it for
+  // me" — one click reorders the dead rule to the position that
+  // would let it fire.
+  //
+  // Two surfaces:
+  //   1. "Fix it" pill INLINE on each dead rule's chip (cov-row.dead)
+  //      — primary affordance, opens the confirm popover anchored to
+  //      the dead row itself.
+  //   2. Confirm popover with the formatted proposal copy + the
+  //      confidence-tier subline + an explicit Apply button. Esc
+  //      / outside click / Apply / Cancel all dismiss.
+  //
+  // Apply is OPTIMISTIC: the chain is reordered locally via
+  // applyReorderProposal, then persisted through the existing
+  // slabHopperSetRules path (the same path manual moveUp/moveDown
+  // uses). On failure we roll the chain back + surface the error in
+  // the errorMsg cell. The coverage panel auto-refreshes via the
+  // existing scheduleSave -> scheduleCoverage chain, so the dead
+  // row's chip will recompute (and likely disappear) on the next
+  // 600ms-debounced refresh.
+  //
+  // Toasts share the cov-export-toast surface — one fade-in cell for
+  // any in-panel async confirmation — and follow the same 4-second
+  // dwell as the export toasts.
+
+  /** $derived list of reorder proposals for the current chain +
+   *  coverage. Reactive — when the user manually reorders a rule
+   *  (moveUp/moveDown) the planner re-runs against the new chain
+   *  + the in-flight coverage report. Empty when no coverage loaded
+   *  or no dead rules. */
+  let reorderProposals = $derived.by(() => {
+    if (coverage === null) return [] as ReorderProposal[];
+    return planDeadRuleReorder(rules, coverage);
+  });
+
+  /** Quick-lookup map: dead row index -> proposal. Lets the per-row
+   *  chip render the fix-it pill without a per-iteration find(). */
+  let proposalByRuleIndex = $derived.by(() => {
+    const map = new Map<number, ReorderProposal>();
+    for (const p of reorderProposals) {
+      map.set(p.rule_index, p);
+    }
+    return map;
+  });
+
+  /** Index of the dead rule whose fix-it confirm popover is currently
+   *  open. Null when no popover is showing. Mutually exclusive — at
+   *  most one fix-it popover at a time (clicking a second pill closes
+   *  the first). */
+  let openFixIt = $state<number | null>(null);
+
+  /** Toast string + busy gate shared across the fix-it path. The
+   *  toast surface piggybacks on the existing cov-export-toast cell
+   *  so the panel has ONE in-panel async confirmation surface. */
+  let fixItBusy = $state(false);
+
+  /** Open the fix-it confirm popover for a given dead rule index.
+   *  Auto-closes the drilldown popover + coverage Export menu (the
+   *  fix-it popover is a SECOND most-recently-opened overlay; the
+   *  Escape chain unwinds it FIRST). Re-opening on the same row
+   *  toggles the popover off. */
+  function openFixItPopover(ruleIndex: number) {
+    if (openFixIt === ruleIndex) {
+      openFixIt = null;
+      return;
+    }
+    coverageExportMenuOpen = false;
+    closeDrilldown();
+    openFixIt = ruleIndex;
+  }
+
+  /** Close the fix-it popover. Idempotent. */
+  function closeFixItPopover() {
+    openFixIt = null;
+  }
+
+  /** Apply a reorder proposal optimistically. Persists via the
+   *  same slabHopperSetRules path manual moves use; on failure the
+   *  chain rolls back + the error lands in errorMsg.
+   *
+   *  The toast renders the formatted proposal copy (e.g. "Move 'Tax'
+   *  before 'Catch-all' to recover 3 matches") so the user has an
+   *  audit trail of what just landed; it dwells 4s then fades out. */
+  async function applyFixIt(proposal: ReorderProposal) {
+    if (fixItBusy) return;
+    const prev = rules;
+    const next = applyReorderProposal(rules, proposal);
+    if (next === rules) {
+      // No-op (out-of-range / target>=rule_index) — close the popover
+      // silently rather than show a useless toast.
+      openFixIt = null;
+      return;
+    }
+    fixItBusy = true;
+    openFixIt = null;
+    rules = next;
+    try {
+      await slabHopperSetRules(watchId, next);
+      savedAt = Date.now();
+      // Trigger the same coverage refresh that scheduleSave would —
+      // the dead row should disappear on the next 600ms tick.
+      schedulePreview();
+      scheduleCoverage();
+      // Share the cov-export-toast surface — one in-panel async
+      // confirmation cell.
+      coverageExportToast = `Fix applied — ${formatReorderProposal(proposal)}`;
+      if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
+      coverageExportToastTimer = setTimeout(() => {
+        coverageExportToast = null;
+      }, 4_000);
+    } catch (e) {
+      rules = prev;
+      errorMsg = `Fix-it failed: ${String(e)}`;
+    } finally {
+      fixItBusy = false;
+    }
+  }
+
+  // -------------------------------------------------------------------
   // v3.40 Slice 86 — sample drilldown
   // -------------------------------------------------------------------
   //
@@ -609,9 +740,20 @@
    *  filter active + an Export menu open hits Escape -> menu closes
    *  first; second Escape -> filter clears. The filter is the
    *  least-modal of the three states (it persists across rule
-   *  edits), so it's the deepest stack entry. */
+   *  edits), so it's the deepest stack entry.
+   *
+   *  Slice 137: the fix-it confirm popover dismisses BEFORE the
+   *  coverage Export menu — it's a per-row anchored overlay that
+   *  opened MORE recently than any chain-wide menu. Order:
+   *  fix-it > coverage Export > drilldown popover > coverage
+   *  filter clear. */
   function onWindowKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
+    if (openFixIt !== null) {
+      e.stopPropagation();
+      closeFixItPopover();
+      return;
+    }
     if (coverageExportMenuOpen) {
       e.stopPropagation();
       coverageExportMenuOpen = false;
@@ -1151,6 +1293,11 @@
                 : 0}
               {@const bucket = ruleBucket(row.index)}
               {@const isOpen = openBucket !== null && sampleBucketEquals(openBucket, bucket)}
+              {@const fixItProposal = proposalByRuleIndex.get(row.index) ?? null}
+              {@const fixItConfidence = fixItProposal
+                ? reorderProposalConfidence(fixItProposal)
+                : null}
+              {@const fixItOpen = openFixIt === row.index}
               <li class="cov-row-wrap">
                 <button
                   type="button"
@@ -1197,6 +1344,61 @@
                     <span class="cov-chev" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>
                   </div>
                 </button>
+                <!-- Slice 137 — fix-it pill anchored to the dead row.
+                     Renders OUTSIDE the cov-row <button> so it can be
+                     a nested <button> without nesting HTML buttons.
+                     Confidence tier drives the color treatment
+                     (high=green / medium=orange / low=muted). -->
+                {#if diagnostic === "dead" && fixItProposal && fixItConfidence}
+                  <div class="cov-fixit-anchor">
+                    <button
+                      type="button"
+                      class="cov-fixit-pill"
+                      class:conf-high={fixItConfidence === "high"}
+                      class:conf-medium={fixItConfidence === "medium"}
+                      class:conf-low={fixItConfidence === "low"}
+                      class:open={fixItOpen}
+                      disabled={fixItBusy}
+                      onclick={() => openFixItPopover(row.index)}
+                      aria-expanded={fixItOpen}
+                      aria-controls="hopper-fixit-{row.index}"
+                      title={formatReorderProposal(fixItProposal)}
+                    >Fix it{fixItProposal.samples_recovered > 0
+                      ? ` · +${fixItProposal.samples_recovered}`
+                      : ""}</button>
+                    {#if fixItOpen}
+                      <div
+                        id="hopper-fixit-{row.index}"
+                        class="cov-fixit-popover"
+                        class:conf-high={fixItConfidence === "high"}
+                        class:conf-medium={fixItConfidence === "medium"}
+                        class:conf-low={fixItConfidence === "low"}
+                        role="dialog"
+                        aria-label="Apply fix-it reorder for {fixItProposal.rule_name || `Rule #${row.index + 1}`}"
+                      >
+                        <p class="cov-fixit-copy">
+                          {formatReorderProposal(fixItProposal)}
+                        </p>
+                        <p class="cov-fixit-tone">
+                          {describeReorderConfidence(fixItConfidence)}
+                        </p>
+                        <div class="cov-fixit-actions">
+                          <button
+                            type="button"
+                            class="cov-fixit-cancel"
+                            onclick={closeFixItPopover}
+                          >Cancel</button>
+                          <button
+                            type="button"
+                            class="cov-fixit-apply"
+                            disabled={fixItBusy}
+                            onclick={() => applyFixIt(fixItProposal)}
+                          >{fixItBusy ? "Applying…" : "Apply"}</button>
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
                 {#if isOpen}
                   <div
                     id="hopper-drilldown-rule-{row.index}"
@@ -2115,6 +2317,138 @@
   .cov-row.dead.open {
     border-color: color-mix(in srgb, #ff7b56 70%, transparent);
     background: color-mix(in srgb, #ff7b56 12%, transparent);
+  }
+
+  /* ── Slice 137 — dead-rule fix-it pill + confirm popover ───────── */
+  /* The anchor wraps the pill + popover so the popover stays
+     positioned relative to the pill (right-anchored against the
+     cov-row's top-right corner). The pill sits as a SIBLING of the
+     cov-row <button> (HTML doesn't allow nested buttons) at the
+     end of the row-wrap, floated above the row's lower-right edge
+     via negative margin so it visually overlays without disturbing
+     the row's grid columns. */
+  .cov-fixit-anchor {
+    position: relative;
+    align-self: flex-end;
+    margin: -28px 10px 4px 0;
+    z-index: 11;
+  }
+  .cov-fixit-pill {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-variant-numeric: tabular-nums;
+    transition: transform 80ms, background 120ms, border-color 120ms;
+  }
+  .cov-fixit-pill:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .cov-fixit-pill:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(124, 140, 255, 0.32);
+  }
+  .cov-fixit-pill:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  /* Confidence-tier color tints. The pill is the user's primary
+     trust signal — green reads "yes, click this", orange reads
+     "structurally right but think first", muted reads "aggressive
+     fallback, double-check". */
+  .cov-fixit-pill.conf-high {
+    background: color-mix(in srgb, #6edc9a 22%, transparent);
+    color: rgb(178, 240, 200);
+    border-color: color-mix(in srgb, #6edc9a 55%, transparent);
+  }
+  .cov-fixit-pill.conf-medium {
+    background: color-mix(in srgb, #d9b04c 22%, transparent);
+    color: rgb(240, 218, 158);
+    border-color: color-mix(in srgb, #d9b04c 55%, transparent);
+  }
+  .cov-fixit-pill.conf-low {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.62);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+  .cov-fixit-pill.open {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  }
+  /* Popover anchored beneath the pill. Uses absolute positioning
+     against the .cov-fixit-anchor so the popover floats over the
+     coverage list without disturbing the row layout. */
+  .cov-fixit-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 280px;
+    padding: 10px 12px;
+    background: rgba(20, 22, 30, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42);
+    z-index: 14;
+    animation: cov-export-toast-fade-in 0.14s ease-out;
+  }
+  .cov-fixit-popover.conf-high {
+    border-color: color-mix(in srgb, #6edc9a 38%, transparent);
+  }
+  .cov-fixit-popover.conf-medium {
+    border-color: color-mix(in srgb, #d9b04c 38%, transparent);
+  }
+  .cov-fixit-popover.conf-low {
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+  .cov-fixit-copy {
+    margin: 0 0 4px;
+    font-size: 12px;
+    color: rgb(232, 234, 240);
+    line-height: 1.35;
+  }
+  .cov-fixit-tone {
+    margin: 0 0 10px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.5);
+    line-height: 1.3;
+  }
+  .cov-fixit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .cov-fixit-cancel,
+  .cov-fixit-apply {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 100ms, border-color 100ms;
+  }
+  .cov-fixit-cancel {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .cov-fixit-cancel:hover {
+    color: rgba(255, 255, 255, 0.92);
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+  .cov-fixit-apply {
+    background: rgba(124, 140, 255, 0.22);
+    color: rgb(208, 216, 255);
+    border: 1px solid rgba(124, 140, 255, 0.5);
+  }
+  .cov-fixit-apply:hover:not(:disabled) {
+    background: rgba(124, 140, 255, 0.34);
+  }
+  .cov-fixit-apply:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
   .cov-row.fallthrough {
     margin-top: 6px;
