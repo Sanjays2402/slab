@@ -37,6 +37,10 @@ import {
   summarizeBatchReorderOutcome,
   describeSkipReason,
   slabHopperBatchReorderDeadRules,
+  worstReorderConfidence,
+  summarizeProposalTierBreakdown,
+  describeProposalBatch,
+  type ProposalTierBreakdown,
   RULE_NOT_FOUND,
   ALREADY_EARLIER,
   type ReorderProposalConfidence,
@@ -2712,3 +2716,238 @@ await (async () => {
   expect(outcome.skipped.length === 0, "slabHopperBatchReorderDeadRules: empty skipped");
   expect(outcome.total_recovered === 0, "slabHopperBatchReorderDeadRules: empty recovered");
 })();
+
+// ─── Slice 141 — worst / breakdown / describeProposalBatch ──────────
+
+{
+  // worstReorderConfidence: empty -> null.
+  expect(
+    worstReorderConfidence([]) === null,
+    "worstReorderConfidence: empty -> null",
+  );
+}
+
+{
+  // worstReorderConfidence: single high.
+  const p = proposalFor(1, "Tax", 0, "All", 3);
+  expect(
+    worstReorderConfidence([p]) === "high",
+    "worstReorderConfidence: single high",
+  );
+}
+
+{
+  // worstReorderConfidence: single medium (named shadower, 0 recovered).
+  const p = proposalFor(1, "Tax", 0, "All", 0);
+  expect(
+    worstReorderConfidence([p]) === "medium",
+    "worstReorderConfidence: single medium",
+  );
+}
+
+{
+  // worstReorderConfidence: single low (no shadower).
+  const p = proposalFor(1, "Tax", 0, "", 5);
+  expect(
+    worstReorderConfidence([p]) === "low",
+    "worstReorderConfidence: single low",
+  );
+}
+
+{
+  // worstReorderConfidence: high + high -> high.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(2, "Receipts", 0, "All", 5),
+  ];
+  expect(
+    worstReorderConfidence(ps) === "high",
+    "worstReorderConfidence: all high -> high",
+  );
+}
+
+{
+  // worstReorderConfidence: high + medium -> medium.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(2, "Receipts", 0, "All", 0),
+  ];
+  expect(
+    worstReorderConfidence(ps) === "medium",
+    "worstReorderConfidence: high + medium -> medium (worst wins)",
+  );
+}
+
+{
+  // worstReorderConfidence: high + medium + low -> low.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(2, "Receipts", 0, "All", 0),
+    proposalFor(3, "Dead", 0, "", 5),
+  ];
+  expect(
+    worstReorderConfidence(ps) === "low",
+    "worstReorderConfidence: any low present -> low",
+  );
+}
+
+{
+  // worstReorderConfidence: medium + low -> low.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 0),
+    proposalFor(2, "Dead", 0, "", 5),
+  ];
+  expect(
+    worstReorderConfidence(ps) === "low",
+    "worstReorderConfidence: medium + low -> low",
+  );
+}
+
+{
+  // worstReorderConfidence: input order independent — same answer
+  // regardless of position of the worst proposal.
+  const high = proposalFor(1, "Tax", 0, "All", 3);
+  const low = proposalFor(2, "Dead", 0, "", 5);
+  expect(
+    worstReorderConfidence([high, low]) === "low",
+    "worstReorderConfidence: low after high -> low",
+  );
+  expect(
+    worstReorderConfidence([low, high]) === "low",
+    "worstReorderConfidence: low before high -> low (order-independent)",
+  );
+}
+
+{
+  // summarizeProposalTierBreakdown: empty.
+  const b = summarizeProposalTierBreakdown([]);
+  expect(b.high === 0 && b.medium === 0 && b.low === 0 && b.total === 0, "tier breakdown: empty -> all zeros");
+}
+
+{
+  // summarizeProposalTierBreakdown: counts per tier.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3), // high
+    proposalFor(2, "Tax2", 0, "All", 3), // high
+    proposalFor(3, "Recz", 0, "All", 0), // medium
+    proposalFor(4, "Dead1", 0, "", 5), // low
+    proposalFor(5, "Dead2", 0, "", 5), // low
+  ];
+  const b = summarizeProposalTierBreakdown(ps);
+  expect(b.high === 2, "tier breakdown: 2 high");
+  expect(b.medium === 1, "tier breakdown: 1 medium");
+  expect(b.low === 2, "tier breakdown: 2 low");
+  expect(b.total === 5, "tier breakdown: total = 5");
+  expect(b.total === b.high + b.medium + b.low, "tier breakdown: total invariant");
+}
+
+{
+  // describeProposalBatch: empty.
+  expect(
+    describeProposalBatch([]) === "No fixes",
+    "describeProposalBatch: empty -> No fixes",
+  );
+}
+
+{
+  // describeProposalBatch: 1 fix, single tier (high).
+  expect(
+    describeProposalBatch([proposalFor(1, "Tax", 0, "All", 3)]) === "1 fix — high",
+    `describeProposalBatch: 1 fix high (got ${describeProposalBatch([proposalFor(1, "Tax", 0, "All", 3)])})`,
+  );
+}
+
+{
+  // describeProposalBatch: 1 fix, single tier (low).
+  expect(
+    describeProposalBatch([proposalFor(1, "Dead", 0, "", 5)]) === "1 fix — low",
+    "describeProposalBatch: 1 fix low",
+  );
+}
+
+{
+  // describeProposalBatch: 2 fixes, one tier -> no enumeration.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(2, "Receipts", 0, "All", 5),
+  ];
+  expect(
+    describeProposalBatch(ps) === "2 fixes — high",
+    `describeProposalBatch: 2 fixes one tier (got ${describeProposalBatch(ps)})`,
+  );
+}
+
+{
+  // describeProposalBatch: 2 fixes, two tiers -> enumeration.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(2, "Receipts", 0, "All", 0),
+  ];
+  expect(
+    describeProposalBatch(ps) === "2 fixes — 1 high, 1 medium",
+    `describeProposalBatch: 2 fixes two tiers (got ${describeProposalBatch(ps)})`,
+  );
+}
+
+{
+  // describeProposalBatch: 3 fixes, three tiers -> full enumeration.
+  const ps = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(2, "Receipts", 0, "All", 0),
+    proposalFor(3, "Dead", 0, "", 5),
+  ];
+  expect(
+    describeProposalBatch(ps) === "3 fixes — 1 high, 1 medium, 1 low",
+    `describeProposalBatch: 3 fixes three tiers (got ${describeProposalBatch(ps)})`,
+  );
+}
+
+{
+  // describeProposalBatch: order in the comma list is high > medium > low
+  // regardless of input order.
+  const ps = [
+    proposalFor(1, "Dead", 0, "", 5), // low
+    proposalFor(2, "Tax", 0, "All", 3), // high
+    proposalFor(3, "Receipts", 0, "All", 0), // medium
+  ];
+  expect(
+    describeProposalBatch(ps) === "3 fixes — 1 high, 1 medium, 1 low",
+    `describeProposalBatch: order-independent enumeration (got ${describeProposalBatch(ps)})`,
+  );
+}
+
+{
+  // describeProposalBatch: plural-aware "fix"/"fixes". Already
+  // exercised above; pin "1 fix" + "2 fixes" explicitly.
+  expect(
+    describeProposalBatch([proposalFor(1, "x", 0, "All", 3)]).startsWith("1 fix "),
+    "describeProposalBatch: singular -> '1 fix '",
+  );
+  expect(
+    describeProposalBatch([
+      proposalFor(1, "x", 0, "All", 3),
+      proposalFor(2, "y", 0, "All", 3),
+    ]).startsWith("2 fixes "),
+    "describeProposalBatch: plural -> '2 fixes '",
+  );
+}
+
+{
+  // Cross-helper: worstReorderConfidence agrees with the
+  // per-proposal reorderProposalConfidence under every priority
+  // ordering. Build five different combinations and assert the
+  // worst-priority element is the worst result.
+  const high = proposalFor(1, "Tax", 0, "All", 3);
+  const medium = proposalFor(2, "Receipts", 0, "All", 0);
+  const low = proposalFor(3, "Dead", 0, "", 5);
+  expect(worstReorderConfidence([high]) === "high", "cross-helper worst: only high");
+  expect(worstReorderConfidence([medium]) === "medium", "cross-helper worst: only medium");
+  expect(worstReorderConfidence([low]) === "low", "cross-helper worst: only low");
+  expect(worstReorderConfidence([high, medium]) === "medium", "cross-helper worst: high+medium");
+  expect(worstReorderConfidence([medium, low]) === "low", "cross-helper worst: medium+low");
+  expect(worstReorderConfidence([high, low]) === "low", "cross-helper worst: high+low");
+  expect(
+    worstReorderConfidence([high, medium, low]) === "low",
+    "cross-helper worst: high+medium+low",
+  );
+}

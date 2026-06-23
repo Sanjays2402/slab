@@ -1083,6 +1083,110 @@ export function describeSkipReason(reason: BatchReorderSkipReason): string {
   }
 }
 
+// ─── Slice 141 — batch-confidence bridge helper ─────────────────────
+//
+// Round 28 shipped per-row fix-it pills that color-code on the
+// individual proposal's confidence. The "Fix all" path applies
+// EVERY proposal in one click; the button needs ONE color tone
+// summarising the batch's mixed evidence.
+//
+// The user is implicitly accepting ALL proposals when they click
+// "Fix all", so the button's color must reflect the WORST tier
+// present (worst-case posture — if any low-confidence proposal is
+// in the batch, the user must be informed before clicking). A
+// batch of one high + one low is NOT a green batch.
+//
+// The popover also needs a per-tier BREAKDOWN copy ("3 fixes — 1
+// high, 2 medium") so a user can decide whether to click "Fix all"
+// or open each row individually for finer control. This bridge
+// also returns a discriminated copy renderer.
+//
+// All helpers are pure — composed from the proposal list alone;
+// the UI gates the button's color tint + the popover's per-tier
+// list on these.
+
+/** Worst (lowest) confidence tier across `proposals`. Returns null
+ *  for an empty list (no proposals -> no color). Used to color the
+ *  "Fix all" button: even ONE low-confidence proposal demotes the
+ *  whole button to the muted tier.
+ *
+ *  Priority order (worst to best): low > medium > high. */
+export function worstReorderConfidence(
+  proposals: ReorderProposal[],
+): ReorderProposalConfidence | null {
+  if (proposals.length === 0) return null;
+  // Walk once: short-circuit on "low" since it's the worst.
+  let worst: ReorderProposalConfidence = "high";
+  const rank: Record<ReorderProposalConfidence, number> = {
+    high: 3,
+    medium: 2,
+    low: 1,
+  };
+  for (const p of proposals) {
+    const tier = reorderProposalConfidence(p);
+    if (rank[tier] < rank[worst]) worst = tier;
+    if (worst === "low") break;
+  }
+  return worst;
+}
+
+/** Per-tier count breakdown of a proposal list. The `total` field
+ *  is pre-summed so the consumer doesn't have to add the three
+ *  buckets back together. Empty input returns all-zero counts +
+ *  total = 0. */
+export interface ProposalTierBreakdown {
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+}
+
+/** Count proposals by confidence tier. Pure helper. */
+export function summarizeProposalTierBreakdown(
+  proposals: ReorderProposal[],
+): ProposalTierBreakdown {
+  let high = 0;
+  let medium = 0;
+  let low = 0;
+  for (const p of proposals) {
+    const tier = reorderProposalConfidence(p);
+    if (tier === "high") high++;
+    else if (tier === "medium") medium++;
+    else low++;
+  }
+  return { high, medium, low, total: high + medium + low };
+}
+
+/** Human-facing breakdown copy. Discriminated on which tiers are
+ *  represented so the copy reads naturally:
+ *
+ *    1 fix:                  "1 fix — high"
+ *    2 fixes, one tier:      "2 fixes — high"
+ *    2 fixes, two tiers:     "2 fixes — 1 high, 1 medium"
+ *    3 fixes, three tiers:   "3 fixes — 1 high, 1 medium, 1 low"
+ *    Empty:                  "No fixes"
+ *
+ *  Order in the comma list mirrors the priority chain: high first,
+ *  then medium, then low. Empty tiers are SKIPPED from the
+ *  enumeration. Plural-aware on "fix"/"fixes". */
+export function describeProposalBatch(proposals: ReorderProposal[]): string {
+  const b = summarizeProposalTierBreakdown(proposals);
+  if (b.total === 0) return "No fixes";
+  const fixNoun = b.total === 1 ? "fix" : "fixes";
+  // Single-tier shortcut: avoid "1 fix — 1 high" redundancy when
+  // there's only one tier represented.
+  const tiersPresent = (b.high > 0 ? 1 : 0) + (b.medium > 0 ? 1 : 0) + (b.low > 0 ? 1 : 0);
+  if (tiersPresent === 1) {
+    const tier: ReorderProposalConfidence = b.high > 0 ? "high" : b.medium > 0 ? "medium" : "low";
+    return `${b.total} ${fixNoun} — ${tier}`;
+  }
+  const parts: string[] = [];
+  if (b.high > 0) parts.push(`${b.high} high`);
+  if (b.medium > 0) parts.push(`${b.medium} medium`);
+  if (b.low > 0) parts.push(`${b.low} low`);
+  return `${b.total} ${fixNoun} — ${parts.join(", ")}`;
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors
