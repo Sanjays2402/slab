@@ -52,6 +52,11 @@
     formatReorderProposal,
     reorderProposalConfidence,
     describeReorderConfidence,
+    applyReorderProposalsBatch,
+    summarizeBatchReorderOutcome,
+    describeSkipReason,
+    worstReorderConfidence,
+    describeProposalBatch,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -443,6 +448,133 @@
    *  so the panel has ONE in-panel async confirmation surface. */
   let fixItBusy = $state(false);
 
+  // -------------------------------------------------------------------
+  // v3.40 Slice 142 — batch fix-it (Fix all dead rules)
+  // -------------------------------------------------------------------
+  //
+  // Round 29's demo-able payoff. Round 28 shipped per-row "Fix it"
+  // pills that fix ONE dead rule per click; this slice surfaces the
+  // batch path — one click applies every planner proposal in
+  // sequence via the slice-138 applier. A user with three dead
+  // rules sees a "Fix all (3)" button next to the chain-health
+  // chip and lands all three fixes in one motion.
+  //
+  // Color treatment: the button paints with the WORST-tier color
+  // (slice 141 worstReorderConfidence) — a mixed batch with even
+  // one low-confidence proposal renders muted, so the user is
+  // informed before clicking.
+  //
+  // Confirm popover: anchored to the button, shows the batch
+  // summary (describeProposalBatch — "3 fixes — 1 high, 2 medium"),
+  // a per-row preview list (each proposal's formatReorderProposal
+  // copy + confidence-tier subline), and Apply/Cancel buttons.
+  // Optimistic apply: applyReorderProposalsBatch reorders the
+  // chain locally, then slabHopperSetRules persists through the
+  // same path manual moves use. On failure the chain rolls back
+  // + the error lands in errorMsg. Outcome toast uses the shared
+  // cov-export-toast surface; copy is summarizeBatchReorderOutcome
+  // ("Fixed 3 rules — recovered 12 matches" / partial / nothing).
+  //
+  // Skipped proposals (RuleNotFound / AlreadyEarlier — possible
+  // only if the chain drifted between planner and applier) are
+  // surfaced in the toast count + a console.info breakdown for
+  // the user to audit.
+
+  /** Whether the Fix-all confirm popover is open. */
+  let openFixAll = $state(false);
+
+  /** Open the Fix-all confirm popover. Auto-closes the per-row
+   *  fix-it popover + drilldown + Export menu (Fix-all is a NEW
+   *  most-recently-opened overlay; the Escape chain unwinds it
+   *  FIRST). Re-opening toggles off. */
+  function openFixAllPopover() {
+    if (openFixAll) {
+      openFixAll = false;
+      return;
+    }
+    openFixIt = null;
+    coverageExportMenuOpen = false;
+    closeDrilldown();
+    openFixAll = true;
+  }
+
+  /** Close the Fix-all popover. Idempotent. */
+  function closeFixAllPopover() {
+    openFixAll = false;
+  }
+
+  /** Apply every reorder proposal in the current batch
+   *  optimistically. Persists via the same slabHopperSetRules
+   *  path manual moves use; on failure the chain rolls back + the
+   *  error lands in errorMsg.
+   *
+   *  The toast renders summarizeBatchReorderOutcome
+   *  ("Fixed 3 rules — recovered 12 matches" / partial / nothing).
+   *  Skipped proposals (RuleNotFound / AlreadyEarlier from a
+   *  drifted chain) are surfaced in the toast count; the per-row
+   *  reason breakdown logs to console.info for audit. */
+  async function applyFixAll() {
+    if (fixItBusy) return;
+    if (reorderProposals.length === 0) return;
+    const prev = rules;
+    const outcome = applyReorderProposalsBatch(rules, reorderProposals);
+    if (outcome.applied.length === 0) {
+      // Nothing landed — surface the skipped count in a toast
+      // rather than persist a no-op.
+      openFixAll = false;
+      coverageExportToast = summarizeBatchReorderOutcome(outcome);
+      if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
+      coverageExportToastTimer = setTimeout(() => {
+        coverageExportToast = null;
+      }, 4_000);
+      return;
+    }
+    fixItBusy = true;
+    openFixAll = false;
+    rules = outcome.rules;
+    try {
+      await slabHopperSetRules(watchId, outcome.rules);
+      savedAt = Date.now();
+      // Trigger the same coverage refresh that scheduleSave would —
+      // the dead rows should disappear on the next 600ms tick.
+      schedulePreview();
+      scheduleCoverage();
+      // Share the cov-export-toast surface — one in-panel async
+      // confirmation cell.
+      coverageExportToast = summarizeBatchReorderOutcome(outcome);
+      if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
+      coverageExportToastTimer = setTimeout(() => {
+        coverageExportToast = null;
+      }, 4_000);
+      // Surface per-skipped-proposal reasons via console.info so a
+      // power user with the devtools open can audit a partial batch.
+      if (outcome.skipped.length > 0) {
+        for (const s of outcome.skipped) {
+          // eslint-disable-next-line no-console
+          console.info(
+            `[hopper fix-all] skipped #${s.input_index + 1} (${s.proposal.rule_name || "unnamed"}): ${describeSkipReason(s.reason)}`,
+          );
+        }
+      }
+    } catch (e) {
+      rules = prev;
+      errorMsg = `Fix-all failed: ${String(e)}`;
+    } finally {
+      fixItBusy = false;
+    }
+  }
+
+  /** $derived worst-tier color for the Fix-all button — paints with
+   *  the most conservative tier present in the batch. Null when
+   *  there are no proposals (button hidden). */
+  let fixAllConfidence = $derived.by(() => worstReorderConfidence(reorderProposals));
+
+  /** $derived breakdown copy for the Fix-all popover header — e.g.
+   *  "3 fixes — 1 high, 2 medium". Empty string when no proposals
+   *  (the button is hidden in that case so this is unused, but
+   *  defined as empty for type stability). */
+  let fixAllBreakdown = $derived.by(() => describeProposalBatch(reorderProposals));
+
   /** Open the fix-it confirm popover for a given dead rule index.
    *  Auto-closes the drilldown popover + coverage Export menu (the
    *  fix-it popover is a SECOND most-recently-opened overlay; the
@@ -749,6 +881,11 @@
    *  filter clear. */
   function onWindowKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
+    if (openFixAll) {
+      e.stopPropagation();
+      closeFixAllPopover();
+      return;
+    }
     if (openFixIt !== null) {
       e.stopPropagation();
       closeFixItPopover();
@@ -1156,6 +1293,73 @@
                 title={coverageHealth.text}
                 aria-label="Chain health: {coverageHealth.text}"
               >{coverageHealth.text}</span>
+            {/if}
+            <!-- Slice 142 — Fix all (N) batch fix-it button anchored
+                 next to the chain-health chip. Renders only when
+                 the planner produced ≥1 proposals; color is the
+                 worst-tier present (worstReorderConfidence). -->
+            {#if reorderProposals.length > 0 && fixAllConfidence !== null}
+              <div class="cov-fixall-anchor">
+                <button
+                  type="button"
+                  class="cov-fixall-btn"
+                  class:conf-high={fixAllConfidence === "high"}
+                  class:conf-medium={fixAllConfidence === "medium"}
+                  class:conf-low={fixAllConfidence === "low"}
+                  class:open={openFixAll}
+                  disabled={fixItBusy}
+                  onclick={openFixAllPopover}
+                  aria-expanded={openFixAll}
+                  aria-controls="hopper-fixall-popover"
+                  title={`${fixAllBreakdown} — click to apply every reorder`}
+                >Fix all · {reorderProposals.length}</button>
+                {#if openFixAll}
+                  <div
+                    id="hopper-fixall-popover"
+                    class="cov-fixall-popover"
+                    class:conf-high={fixAllConfidence === "high"}
+                    class:conf-medium={fixAllConfidence === "medium"}
+                    class:conf-low={fixAllConfidence === "low"}
+                    role="dialog"
+                    aria-label="Apply every reorder fix"
+                  >
+                    <p class="cov-fixall-header">
+                      <span class="cov-fixall-breakdown">{fixAllBreakdown}</span>
+                      <span class="cov-fixall-tone">
+                        {describeReorderConfidence(fixAllConfidence)}
+                      </span>
+                    </p>
+                    <ul class="cov-fixall-list">
+                      {#each reorderProposals as proposal (proposal.rule_index)}
+                        {@const tier = reorderProposalConfidence(proposal)}
+                        <li class="cov-fixall-item">
+                          <span
+                            class="cov-fixall-dot"
+                            class:conf-high={tier === "high"}
+                            class:conf-medium={tier === "medium"}
+                            class:conf-low={tier === "low"}
+                            aria-hidden="true"
+                          ></span>
+                          <span class="cov-fixall-copy">{formatReorderProposal(proposal)}</span>
+                        </li>
+                      {/each}
+                    </ul>
+                    <div class="cov-fixall-actions">
+                      <button
+                        type="button"
+                        class="cov-fixall-cancel"
+                        onclick={closeFixAllPopover}
+                      >Cancel</button>
+                      <button
+                        type="button"
+                        class="cov-fixall-apply"
+                        disabled={fixItBusy}
+                        onclick={() => void applyFixAll()}
+                      >{fixItBusy ? "Applying…" : `Apply ${reorderProposals.length}`}</button>
+                    </div>
+                  </div>
+                {/if}
+              </div>
             {/if}
           {/if}
           {#if coverageLoading}
@@ -2447,6 +2651,169 @@
     background: rgba(124, 140, 255, 0.34);
   }
   .cov-fixit-apply:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  /* Slice 142 — Fix-all batch button + popover. Anchored next to
+     the chain-health chip; the popover uses the same dark-panel
+     treatment as the per-row fix-it popover but is wider (380px)
+     to hold the per-proposal preview list. */
+  .cov-fixall-anchor {
+    position: relative;
+    display: inline-flex;
+  }
+  .cov-fixall-btn {
+    appearance: none;
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, transform 0.12s;
+    margin-left: 4px;
+  }
+  .cov-fixall-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .cov-fixall-btn:focus-visible {
+    outline: 2px solid rgba(124, 140, 255, 0.7);
+    outline-offset: 2px;
+  }
+  .cov-fixall-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .cov-fixall-btn.conf-high {
+    background: rgba(100, 200, 130, 0.16);
+    border-color: rgba(100, 200, 130, 0.45);
+    color: rgb(180, 230, 195);
+  }
+  .cov-fixall-btn.conf-medium {
+    background: rgba(255, 175, 95, 0.16);
+    border-color: rgba(255, 175, 95, 0.45);
+    color: rgb(255, 215, 175);
+  }
+  .cov-fixall-btn.conf-low {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: rgba(255, 255, 255, 0.7);
+  }
+  .cov-fixall-btn.open {
+    box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.35);
+  }
+  .cov-fixall-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 25;
+    width: 380px;
+    background: rgb(22, 24, 32);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 12px 14px 10px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+    animation: cov-export-toast-fade-in 0.14s ease-out;
+  }
+  .cov-fixall-popover.conf-high {
+    border-color: rgba(100, 200, 130, 0.4);
+  }
+  .cov-fixall-popover.conf-medium {
+    border-color: rgba(255, 175, 95, 0.4);
+  }
+  .cov-fixall-popover.conf-low {
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  .cov-fixall-header {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0 0 8px 0;
+  }
+  .cov-fixall-breakdown {
+    font-size: 12.5px;
+    color: rgba(255, 255, 255, 0.92);
+    font-weight: 500;
+  }
+  .cov-fixall-tone {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .cov-fixall-list {
+    list-style: none;
+    margin: 0 0 10px 0;
+    padding: 6px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .cov-fixall-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.78);
+  }
+  .cov-fixall-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+  }
+  .cov-fixall-dot.conf-high {
+    background: rgb(120, 220, 150);
+  }
+  .cov-fixall-dot.conf-medium {
+    background: rgb(255, 185, 105);
+  }
+  .cov-fixall-dot.conf-low {
+    background: rgba(255, 255, 255, 0.35);
+  }
+  .cov-fixall-copy {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cov-fixall-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .cov-fixall-cancel,
+  .cov-fixall-apply {
+    appearance: none;
+    border-radius: 6px;
+    padding: 4px 11px;
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+  .cov-fixall-cancel {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+  .cov-fixall-cancel:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .cov-fixall-apply {
+    background: rgba(124, 140, 255, 0.22);
+    color: rgb(208, 216, 255);
+    border: 1px solid rgba(124, 140, 255, 0.5);
+  }
+  .cov-fixall-apply:hover:not(:disabled) {
+    background: rgba(124, 140, 255, 0.34);
+  }
+  .cov-fixall-apply:disabled {
     opacity: 0.55;
     cursor: not-allowed;
   }
