@@ -36,6 +36,7 @@ import {
   applyReorderProposalsBatch,
   summarizeBatchReorderOutcome,
   describeSkipReason,
+  slabHopperBatchReorderDeadRules,
   RULE_NOT_FOUND,
   ALREADY_EARLIER,
   type ReorderProposalConfidence,
@@ -2637,3 +2638,77 @@ function proposalFor(
     "cross-helper: summary copy matches",
   );
 }
+
+// ─── Slice 140 — slabHopperBatchReorderDeadRules browser-mode wrapper ──
+//
+// Browser-mode (no Tauri) the wrapper should delegate to the local
+// applier verbatim. Pin every BatchReorderOutcome field
+// (rules, applied, skipped, total_recovered) on a representative
+// mixed batch so a future drift between the wrapper's wire shape
+// and the local TS shape surfaces here.
+
+await (async () => {
+  const rules = [
+    ruleFor("All", "always"),
+    ruleFor("Tax", "filename-glob", "t_*"),
+    ruleFor("Receipts", "filename-glob", "r_*"),
+  ];
+  const proposals = [
+    proposalFor(1, "Tax", 0, "All", 3),
+    proposalFor(99, "ghost", 0, "All", 7),
+    proposalFor(2, "Receipts", 0, "All", 5),
+  ];
+  const fromWrapper = await slabHopperBatchReorderDeadRules(rules, proposals);
+  const fromLocal = applyReorderProposalsBatch(rules, proposals);
+  expect(
+    fromWrapper.rules.length === fromLocal.rules.length,
+    "slabHopperBatchReorderDeadRules: same rules length",
+  );
+  expect(
+    fromWrapper.rules.map((r) => r.name).join(",") ===
+      fromLocal.rules.map((r) => r.name).join(","),
+    "slabHopperBatchReorderDeadRules: same rules order by name",
+  );
+  expect(
+    fromWrapper.applied.length === fromLocal.applied.length,
+    "slabHopperBatchReorderDeadRules: same applied length",
+  );
+  expect(
+    fromWrapper.applied.every((v, i) => v === fromLocal.applied[i]),
+    "slabHopperBatchReorderDeadRules: same applied indices",
+  );
+  expect(
+    fromWrapper.skipped.length === fromLocal.skipped.length,
+    "slabHopperBatchReorderDeadRules: same skipped length",
+  );
+  expect(
+    fromWrapper.skipped[0].input_index === fromLocal.skipped[0].input_index,
+    "slabHopperBatchReorderDeadRules: same skipped input_index",
+  );
+  expect(
+    fromWrapper.skipped[0].reason.kind === fromLocal.skipped[0].reason.kind,
+    "slabHopperBatchReorderDeadRules: same skipped reason.kind",
+  );
+  expect(
+    fromWrapper.skipped[0].proposal.rule_name === fromLocal.skipped[0].proposal.rule_name,
+    "slabHopperBatchReorderDeadRules: same skipped proposal.rule_name",
+  );
+  expect(
+    fromWrapper.total_recovered === fromLocal.total_recovered,
+    "slabHopperBatchReorderDeadRules: same total_recovered",
+  );
+})();
+
+await (async () => {
+  // Empty proposals path — wrapper still returns a healthy
+  // BatchReorderOutcome with the source chain echoed back.
+  const rules = [ruleFor("All", "always"), ruleFor("Tax")];
+  const outcome = await slabHopperBatchReorderDeadRules(rules, []);
+  expect(
+    outcome.rules.length === 2 && outcome.rules[0].name === "All",
+    "slabHopperBatchReorderDeadRules: empty proposals -> source echoed",
+  );
+  expect(outcome.applied.length === 0, "slabHopperBatchReorderDeadRules: empty applied");
+  expect(outcome.skipped.length === 0, "slabHopperBatchReorderDeadRules: empty skipped");
+  expect(outcome.total_recovered === 0, "slabHopperBatchReorderDeadRules: empty recovered");
+})();

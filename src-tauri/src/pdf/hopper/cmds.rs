@@ -942,6 +942,48 @@ pub fn slab_hopper_plan_dead_rule_reorder(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 140 — batch reorder applier Tauri command
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::apply_reorder_proposals_batch`]
+// primitive (slice 138) 1:1. The same reasons that justify a
+// server-side command for slice 135 (the planner) apply here:
+//
+// 1. A future scripted-audit consumer (CLI driver / cron health
+//    check / a "fix my chain non-interactively" subcommand) gets
+//    the batch applier as a first-class command rather than having
+//    to mirror the by-name resolution heuristic in TS itself.
+//
+// 2. Server-side guarantees the applier compares rule names against
+//    the SAME Rule type the runtime evaluator uses. A future
+//    Rule field added on Rust but not yet mirrored in TS would
+//    silently widen / narrow the equality contract on the TS side;
+//    the server-side command keeps the by-name resolution
+//    authoritative.
+//
+// The wire shape is Rule[] + ReorderProposal[] in, BatchReorderOutcome
+// out (matching the planner command's pattern of accepting the
+// in-state snapshot). Pure-data: no DB, no I/O.
+
+/// `slab_hopper_batch_reorder_dead_rules` — apply every proposal in
+/// `proposals` to `rules` in input order, resolving the source rule
+/// by NAME at each step. See
+/// [`super::coverage::apply_reorder_proposals_batch`] for the
+/// algorithm.
+///
+/// Returns a [`BatchReorderOutcome`] carrying the new chain plus
+/// per-proposal applied/skipped accounting. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_batch_reorder_dead_rules(
+    rules: Vec<Rule>,
+    proposals: Vec<super::coverage::ReorderProposal>,
+) -> CmdResult<super::coverage::BatchReorderOutcome> {
+    Ok(super::coverage::apply_reorder_proposals_batch(
+        &rules, &proposals,
+    ))
+}
+
+// ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
 

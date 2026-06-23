@@ -1414,6 +1414,32 @@ export async function slabHopperPlanDeadRuleReorder(
   });
 }
 
+/** Slice 140 — apply every proposal in `proposals` to `rules` in
+ *  input order via the backend `slab_hopper_batch_reorder_dead_rules`
+ *  command. Returns a [`BatchReorderOutcome`] carrying the new chain
+ *  plus per-proposal applied/skipped accounting.
+ *
+ *  Mirrors `applyReorderProposalsBatch` (slice 139) exactly; the
+ *  wire command exists so a future scripted-audit consumer (CLI
+ *  driver, cron health-check) gets the batch applier as a
+ *  first-class command, and so the server-side Rule type is the
+ *  authoritative source — a Rust-side Rule field not yet mirrored
+ *  in TS won't silently change the by-name equality contract.
+ *
+ *  Wraps to the local TS helper in browser-mode so component-level
+ *  testing doesn't need a Tauri stub. */
+export async function slabHopperBatchReorderDeadRules(
+  rules: Rule[],
+  proposals: ReorderProposal[],
+): Promise<BatchReorderOutcome> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return applyReorderProposalsBatch(rules, proposals);
+  return invoke<BatchReorderOutcome>("slab_hopper_batch_reorder_dead_rules", {
+    rules,
+    proposals,
+  });
+}
+
 /** Suggest a default filename for a coverage CSV/JSON export.
  *  Mirrors the drilldown filename helper conventions so paralegals
  *  see one consistent naming pattern across the audit-export
