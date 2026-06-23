@@ -51,7 +51,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::rules::{Rule, RuleContext};
+use super::rules::{Rule, RuleContext, RulePredicate};
 
 /// A single file the coverage analyzer evaluates against the rule
 /// chain. Mirrors [`RuleContext`] but owned (the sample list lives
@@ -984,6 +984,159 @@ pub fn filter_coverage_by_diagnostic(
         fallthrough: report.fallthrough,
         total_samples: report.total_samples,
     }
+}
+
+// ─── Slice 133 — dead-rule reorder planner ───────────────────────────
+//
+// Round 27 (slices 128-132) shipped the "diagnose + drill in" half of
+// the dead-rule story: the chain-health chip surfaces "2 dead rules",
+// the filter chip narrows the panel to those 2 rules, the drilldown
+// shows the empty bucket. The natural follow-up — "OK, FIX it for
+// me" — has no answer; the user has to read the rule chain, identify
+// which earlier rule is shadowing the dead one, and manually drag
+// the dead row earlier. In a 20-rule chain with three dead rules
+// that's tedious; in a 6-rule chain with one shadowing `Always`
+// catch-all the fix is mechanical and a one-click action would close
+// the loop end-to-end.
+//
+// This slice ships the pure-data primitive. Given a chain + its
+// coverage report, it produces a list of [`ReorderProposal`]s — one
+// per dead rule, each carrying the current index, the proposed
+// target index, the name of the shadowing rule (if any), and the
+// sample count the move would recover.
+//
+// ## Why a planner, not a single "fix everything" call
+//
+// Multiple dead rules can interact — fixing one rearranges the
+// chain and may re-classify a previously-dead rule (or, more rarely,
+// create a NEW dead rule). The planner produces independent
+// proposals against the ORIGINAL chain; the UI applies them one at
+// a time, refreshes coverage, and the next planner run reflects
+// the new chain state. This keeps each fix-it action atomic and
+// revertible (the user can apply one proposal, see the result, and
+// undo before applying the next).
+//
+// ## Heuristic for target_index
+//
+// Without sample data, the planner can't know WHICH earlier rule
+// catches the dead rule's samples (the coverage report carries
+// counts, not per-sample winners). Two cases:
+//
+// 1. Some rule in `[0..rule_index)` has predicate [`RulePredicate::Always`].
+//    `Always` is the only predicate that PROVABLY shadows ANY other
+//    rule's matches — by definition it catches every sample,
+//    including everything the dead rule would catch. Target_index =
+//    index of the EARLIEST `Always` in `[0..rule_index)`. Moving the
+//    dead rule there preserves any specific-predicate rules above
+//    the `Always` while letting the dead rule fire just before the
+//    catch-all swallows everything.
+//
+// 2. No `Always` predicate in `[0..rule_index)`. The shadower is a
+//    non-`Always` rule whose predicate overlaps the dead rule's by
+//    sample; we can't identify which one without samples. The
+//    conservative fix is `target_index = 0` — move the dead rule
+//    to the chain's front, guaranteeing it fires before any
+//    potential shadower. This is more aggressive than necessary in
+//    some cases but is always correct (the dead rule will fire on
+//    every sample it would catch, period).
+//
+// `target_index < rule_index` is an INVARIANT — the planner never
+// proposes moving a dead rule LATER, because that strictly cannot
+// help (the rule was already dead at its current position).
+//
+// ## Pure data
+//
+// No I/O, no DB, no Tauri. The Tauri command surface in
+// [`crate::pdf::hopper::cmds`] wraps this primitive 1:1.
+
+/// One reorder suggestion produced by [`plan_dead_rule_reorder`] —
+/// "move rule X from index `rule_index` to index `target_index` to
+/// recover `samples_recovered` matches it currently loses".
+///
+/// All counts are taken verbatim from the coverage report; the
+/// planner does not re-derive them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReorderProposal {
+    /// 0-based index of the dead rule in the input chain
+    /// (== [`RuleCoverage::index`] for the row).
+    pub rule_index: usize,
+    /// User-visible name of the dead rule. Echoed so the UI can
+    /// render the proposal without re-resolving the rule by index.
+    pub rule_name: String,
+    /// 0-based index to move the rule TO. Always strictly less than
+    /// `rule_index` — the planner never suggests a move that can't
+    /// help. See module docs above for the heuristic.
+    pub target_index: usize,
+    /// User-visible name of the rule currently at `target_index` —
+    /// the rule the dead one will leapfrog. Empty string when
+    /// `target_index == 0` AND the front rule has no name OR when
+    /// the planner picked target_index = 0 as the conservative
+    /// fallback (no `Always` shadower identified); the UI uses an
+    /// empty value to fall back to a generic copy ("Move to the
+    /// front of the chain") rather than naming a specific rule.
+    pub shadowing_rule_name: String,
+    /// Number of samples the dead rule would route AFTER the move.
+    /// Equal to [`RuleCoverage::would_match`] — the predicate is
+    /// unchanged, so once the rule fires earlier than any shadower
+    /// it routes every sample its predicate matches. The UI uses
+    /// this for the "Recovers 3 matches" suffix on the fix-it chip.
+    pub samples_recovered: u64,
+}
+
+/// Plan minimal-reorder fixes for every dead rule in `report`.
+///
+/// Returns one [`ReorderProposal`] per `dead_at_position == true`
+/// rule, in INPUT ORDER (the order of `report.rules`). Empty result
+/// when no dead rules exist.
+///
+/// Per-proposal heuristic for `target_index`:
+/// - If any rule in `rules[0..rule_index]` has predicate
+///   [`RulePredicate::Always`], `target_index` = index of the
+///   EARLIEST such rule (insert the dead rule just before the
+///   catch-all). `shadowing_rule_name` is that rule's name.
+/// - Otherwise `target_index = 0` and `shadowing_rule_name` is empty
+///   (the UI renders a generic "Move to the front of the chain"
+///   copy when this happens).
+///
+/// `samples_recovered` is `RuleCoverage::would_match` verbatim.
+///
+/// Defensive: rules whose `rule_index >= rules.len()` are SKIPPED
+/// (a stale `report` against a shrunken chain shouldn't crash the
+/// planner). A `rules.len() == 0` input always returns an empty
+/// proposal list (there are no rules to be dead).
+///
+/// Pure function — no I/O, no Tauri.
+pub fn plan_dead_rule_reorder(rules: &[Rule], report: &RuleCoverageReport) -> Vec<ReorderProposal> {
+    if rules.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<ReorderProposal> = Vec::new();
+    for cov in &report.rules {
+        if !cov.dead_at_position {
+            continue;
+        }
+        if cov.index >= rules.len() {
+            // Stale report shape; skip silently rather than panic.
+            continue;
+        }
+        // Find the EARLIEST Always in [0..rule_index). That's the
+        // shadower we can name with confidence.
+        let earliest_always = rules[..cov.index]
+            .iter()
+            .position(|r| matches!(r.predicate, RulePredicate::Always));
+        let (target_index, shadowing_rule_name) = match earliest_always {
+            Some(j) => (j, rules[j].name.clone()),
+            None => (0, String::new()),
+        };
+        out.push(ReorderProposal {
+            rule_index: cov.index,
+            rule_name: cov.name.clone(),
+            target_index,
+            shadowing_rule_name,
+            samples_recovered: cov.would_match,
+        });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -2608,5 +2761,403 @@ mod tests {
         let snapshot = src.clone();
         let _ = filter_coverage_by_diagnostic(&src, CoverageFilter::Dead);
         assert_eq!(src, snapshot);
+    }
+
+    // ── Slice 133 — plan_dead_rule_reorder ─────────────────────────────
+
+    /// Helper: build a Rule with the given name + predicate, default
+    /// action. The planner cares about the predicate (Always vs
+    /// not) and the name (echoed onto the proposal); the action is
+    /// irrelevant to reorder planning.
+    fn rule_with_predicate(name: &str, predicate: RulePredicate) -> Rule {
+        Rule {
+            name: name.into(),
+            predicate,
+            action: RuleAction::default(),
+        }
+    }
+
+    #[test]
+    fn planner_empty_rules_returns_empty_proposals() {
+        // No rules -> no dead rules -> no proposals. Pin the early
+        // exit so a refactor doesn't try to index into rules[..0].
+        let report = coverage(vec![], 0, 0);
+        let proposals = plan_dead_rule_reorder(&[], &report);
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn planner_no_dead_rules_returns_empty_proposals() {
+        // Healthy chain — every rule fires. No proposals.
+        let rules = vec![
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+            rule_with_predicate("All", RulePredicate::Always),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "Tax", 3, 3, false),
+                cov_row(1, "All", 7, 7, false),
+            ],
+            0,
+            10,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn planner_one_dead_rule_after_always_targets_the_always_index() {
+        // The classic case: catch-all `Always` at index 0 shadows a
+        // specific predicate at index 1. The planner moves the
+        // specific rule to index 0 (where the Always sits) so it
+        // fires before the catch-all swallows everything.
+        let rules = vec![
+            rule_with_predicate("Catch-all", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "Catch-all", 10, 10, false),
+                cov_row(1, "Tax", 0, 3, true),
+            ],
+            0,
+            10,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert_eq!(proposals.len(), 1);
+        let p = &proposals[0];
+        assert_eq!(p.rule_index, 1);
+        assert_eq!(p.rule_name, "Tax");
+        assert_eq!(p.target_index, 0);
+        assert_eq!(p.shadowing_rule_name, "Catch-all");
+        assert_eq!(p.samples_recovered, 3);
+    }
+
+    #[test]
+    fn planner_picks_earliest_always_when_multiple_alwayss_exist() {
+        // Two `Always` rules; the planner must pick the EARLIEST
+        // one. Inserting just before the later one would still be
+        // shadowed by the earlier one.
+        let rules = vec![
+            rule_with_predicate("Early all", RulePredicate::Always),
+            rule_with_predicate(
+                "Specific",
+                RulePredicate::FilenameGlob {
+                    pattern: "spec_*.pdf".into(),
+                },
+            ),
+            rule_with_predicate("Late all", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "Early all", 10, 10, false),
+                cov_row(1, "Specific", 0, 2, true),
+                cov_row(2, "Late all", 0, 0, false),
+                cov_row(3, "Tax", 0, 3, true),
+            ],
+            0,
+            10,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert_eq!(proposals.len(), 2);
+        // Both dead rules target the EARLIEST Always (index 0).
+        for p in &proposals {
+            assert_eq!(p.target_index, 0);
+            assert_eq!(p.shadowing_rule_name, "Early all");
+        }
+    }
+
+    #[test]
+    fn planner_falls_back_to_index_zero_with_empty_shadower_when_no_always() {
+        // No `Always` predicate in `[0..rule_index)` — the planner
+        // can't identify the shadower by name (some overlapping
+        // specific predicate is winning) so it falls back to
+        // target_index = 0 with an EMPTY shadowing_rule_name. The
+        // UI gates on the empty name to render a generic copy
+        // ("Move to the front of the chain") rather than naming
+        // a wrong rule.
+        let rules = vec![
+            rule_with_predicate(
+                "Wide glob",
+                RulePredicate::FilenameGlob {
+                    pattern: "*.pdf".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+        ];
+        // Wide glob is winning every sample even though it isn't
+        // `Always` — `*.pdf` matches every PDF in the run log.
+        let report = coverage(
+            vec![
+                cov_row(0, "Wide glob", 5, 5, false),
+                cov_row(1, "Tax", 0, 2, true),
+            ],
+            0,
+            5,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert_eq!(proposals.len(), 1);
+        let p = &proposals[0];
+        assert_eq!(p.rule_index, 1);
+        assert_eq!(p.target_index, 0);
+        assert!(
+            p.shadowing_rule_name.is_empty(),
+            "No `Always` shadower => empty shadowing_rule_name (UI fallback path)"
+        );
+        assert_eq!(p.samples_recovered, 2);
+    }
+
+    #[test]
+    fn planner_returns_proposals_in_input_order_not_severity_order() {
+        // Two dead rules at indices 1 and 3. Proposals come out
+        // in the report's row order (1 then 3), NOT sorted by
+        // samples_recovered or any other heuristic. The UI may
+        // re-sort if it wants; the planner stays predictable.
+        let rules = vec![
+            rule_with_predicate("Catch-all", RulePredicate::Always),
+            rule_with_predicate(
+                "Low value",
+                RulePredicate::FilenameGlob {
+                    pattern: "*.pdf".into(),
+                },
+            ),
+            rule_with_predicate("Healthy", RulePredicate::Always),
+            rule_with_predicate(
+                "High value",
+                RulePredicate::FilenameGlob {
+                    pattern: "*.pdf".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "Catch-all", 5, 5, false),
+                cov_row(1, "Low value", 0, 1, true),
+                cov_row(2, "Healthy", 0, 0, false),
+                cov_row(3, "High value", 0, 99, true),
+            ],
+            0,
+            5,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert_eq!(proposals.len(), 2);
+        assert_eq!(proposals[0].rule_index, 1);
+        assert_eq!(proposals[0].samples_recovered, 1);
+        assert_eq!(proposals[1].rule_index, 3);
+        assert_eq!(proposals[1].samples_recovered, 99);
+    }
+
+    #[test]
+    fn planner_target_index_strictly_less_than_rule_index_invariant() {
+        // Pin the invariant: the planner never proposes a move
+        // that can't help (target_index < rule_index always). A
+        // regression that proposed an equal or later target would
+        // produce a no-op or actively-worse chain.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "A",
+                RulePredicate::FilenameGlob {
+                    pattern: "a_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "B",
+                RulePredicate::FilenameGlob {
+                    pattern: "b_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "C",
+                RulePredicate::FilenameGlob {
+                    pattern: "c_*".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "All", 5, 5, false),
+                cov_row(1, "A", 0, 1, true),
+                cov_row(2, "B", 0, 2, true),
+                cov_row(3, "C", 0, 3, true),
+            ],
+            0,
+            5,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        for p in &proposals {
+            assert!(
+                p.target_index < p.rule_index,
+                "target_index must be strictly less than rule_index (got target {} >= rule_index {})",
+                p.target_index,
+                p.rule_index
+            );
+        }
+    }
+
+    #[test]
+    fn planner_skips_dead_rows_whose_index_overflows_rules_len() {
+        // A stale `report` against a shrunken chain should not
+        // crash the planner. Dead row at index 5 against a 2-rule
+        // chain: skipped silently.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "A",
+                RulePredicate::FilenameGlob {
+                    pattern: "a_*".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "All", 5, 5, false),
+                cov_row(1, "A", 0, 1, true),
+                cov_row(5, "Stale Z", 0, 99, true),
+            ],
+            0,
+            5,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        // Only one proposal (the in-range dead row); the stale one
+        // is silently skipped.
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].rule_index, 1);
+    }
+
+    #[test]
+    fn planner_skips_non_dead_diagnostics_zero_and_shadowed() {
+        // Zero-coverage + partially-shadowed rules are NOT dead and
+        // must not appear in the proposals list. The planner's
+        // contract is dead rules only.
+        let rules = vec![
+            rule_with_predicate(
+                "Healthy",
+                RulePredicate::FilenameGlob {
+                    pattern: "*.pdf".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Shadowed",
+                RulePredicate::FilenameGlob {
+                    pattern: "*.pdf".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Zero",
+                RulePredicate::FilenameGlob {
+                    pattern: "never_*.pdf".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "Healthy", 3, 3, false),
+                cov_row(1, "Shadowed", 1, 5, false),
+                cov_row(2, "Zero", 0, 0, false),
+            ],
+            0,
+            4,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert!(proposals.is_empty());
+    }
+
+    #[test]
+    fn planner_samples_recovered_equals_would_match() {
+        // samples_recovered is would_match VERBATIM. Pin this so
+        // a future "recovered estimate = would_match - some_loss"
+        // refactor surfaces here.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Dead",
+                RulePredicate::FilenameGlob {
+                    pattern: "x_*".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "All", 10, 10, false),
+                cov_row(1, "Dead", 0, 42, true),
+            ],
+            0,
+            10,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].samples_recovered, 42);
+    }
+
+    #[test]
+    fn planner_serde_round_trips_proposal_field_names() {
+        // The wire shape is what the TS mirror reads. Pin every
+        // field name (snake_case via serde default) so a careless
+        // rename surfaces here, not in the renderer.
+        let p = ReorderProposal {
+            rule_index: 3,
+            rule_name: "Tax".into(),
+            target_index: 0,
+            shadowing_rule_name: "Catch-all".into(),
+            samples_recovered: 7,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"rule_index\":3"));
+        assert!(json.contains("\"rule_name\":\"Tax\""));
+        assert!(json.contains("\"target_index\":0"));
+        assert!(json.contains("\"shadowing_rule_name\":\"Catch-all\""));
+        assert!(json.contains("\"samples_recovered\":7"));
+        let back: ReorderProposal = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn planner_proposal_echoes_dead_rule_name_exactly() {
+        // rule_name is echoed from the coverage report's row, NOT
+        // re-resolved from the rules array. Pin that.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "real-name",
+                RulePredicate::FilenameGlob {
+                    pattern: "a_*".into(),
+                },
+            ),
+        ];
+        let report = coverage(
+            vec![
+                cov_row(0, "All", 5, 5, false),
+                // Coverage report's name field is the authoritative
+                // copy (it was snapshotted at compute time).
+                cov_row(1, "Tax — renamed since", 0, 2, true),
+            ],
+            0,
+            5,
+        );
+        let proposals = plan_dead_rule_reorder(&rules, &report);
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].rule_name, "Tax — renamed since");
     }
 }
