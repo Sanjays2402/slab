@@ -1213,6 +1213,171 @@ pub fn apply_reorder_proposals_batch(
     }
 }
 
+// ─── Slice 143 — reorder-effect summary primitive (round-30) ──────────
+//
+// Round 29 closed the "fix one / fix all" loop with the per-row
+// fix-it pill and the batch fix-all button. Round 30's payoff is the
+// natural completion: undo. A user who clicked "Fix all · 5" and
+// regrets it (or who clicked "Fix it" on the wrong row) needs ONE
+// button to revert — manually re-dragging 5 rules back to their
+// prior order is exactly the kind of friction the round 29 batch
+// path was supposed to eliminate, and it would be cruel to leave
+// the undo path missing.
+//
+// This slice is the load-bearing pure-data primitive: given a
+// chain BEFORE the reorder and a chain AFTER, produce a structural
+// summary of what changed. The undo UI uses this to (a) generate
+// the human-facing "Undo · move 3 rules back" copy, (b) detect
+// when the current chain has DRIFTED away from the post-reorder
+// state (the user manually edited rules between fix-it and undo —
+// the undo target is now ambiguous), and (c) feed an audit-friendly
+// breakdown to scripted-consumers via the slice-145 Tauri command.
+//
+// The primitive answers three questions:
+//   1. Which rules moved (by name, with from/to positions)?
+//   2. Were any rules added or removed (a fix-it / fix-all path
+//      doesn't add or remove, but a future caller composing this
+//      against a manual edit might)?
+//   3. Is the AFTER chain a PERMUTATION of BEFORE (same rule names,
+//      same multiset), or has the rule set itself shifted?
+//
+// The permutation flag is the load-bearing signal for undo's
+// staleness check: undo can only safely revert when the AFTER
+// state is still a permutation of BEFORE (no rules were added /
+// removed / renamed in between). If a rule was added since the
+// reorder, the snapshot's chain has stale length and reverting
+// would silently drop the new rule.
+
+/// One rule that moved positions between two chains. Both indices
+/// are 0-based into their respective chains. `from == to` is NOT
+/// represented — only genuinely-moved rules appear.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReorderMove {
+    /// Display name of the rule. By-name resolution is the
+    /// canonical identity throughout the reorder pipeline
+    /// (apply_reorder_proposals_batch resolves the same way).
+    pub rule_name: String,
+    /// Position in the BEFORE chain.
+    pub from_index: usize,
+    /// Position in the AFTER chain.
+    pub to_index: usize,
+}
+
+/// Structural summary of how an AFTER chain differs from a BEFORE
+/// chain. The fields together let the UI render an undo affordance
+/// without re-walking either chain itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReorderEffect {
+    /// Rules whose index changed between BEFORE and AFTER. In
+    /// AFTER-chain order (ascending `to_index`) so the consumer
+    /// can iterate top-to-bottom of the visible chain. Empty when
+    /// no rule moved (the chains are pointwise-equal modulo
+    /// add/remove). A rule that's purely added or removed does NOT
+    /// appear here — it's accounted for in `added` / `removed`.
+    pub moved: Vec<ReorderMove>,
+    /// Rules present in AFTER but absent from BEFORE — by name.
+    /// In AFTER-chain order.
+    pub added: Vec<String>,
+    /// Rules present in BEFORE but absent from AFTER — by name.
+    /// In BEFORE-chain order.
+    pub removed: Vec<String>,
+    /// True iff AFTER is a permutation of BEFORE: the two chains
+    /// have the same length AND the same multiset of rule names
+    /// (`added.is_empty() && removed.is_empty()`). This is the
+    /// load-bearing signal for undo's staleness check — undo can
+    /// only safely revert when this is true.
+    pub is_permutation: bool,
+}
+
+/// Summarise the structural difference between two chains by NAME.
+///
+/// Algorithm:
+///   1. Build a map of name -> index for each chain (length-aware).
+///   2. Rules in BOTH whose indices differ -> `moved` entries (in
+///      AFTER-chain order).
+///   3. Rules in AFTER but not BEFORE -> `added` (AFTER order).
+///   4. Rules in BEFORE but not AFTER -> `removed` (BEFORE order).
+///   5. `is_permutation` = `added.is_empty() && removed.is_empty()`.
+///
+/// Duplicate rule names are handled gracefully: the FIRST occurrence
+/// in each chain is the canonical position (matches the by-name
+/// resolution in `apply_reorder_proposals_batch`), and a name that
+/// appears with different multiplicity is treated as added/removed
+/// rather than as a partial move. In practice, the Hopper UI
+/// enforces unique rule names so the duplicate path is defensive
+/// only.
+///
+/// Pure function — no I/O, no Tauri. Mirrored 1:1 in TS as
+/// `summarizeReorderEffect` (slice 144).
+pub fn summarize_reorder_effect(before: &[Rule], after: &[Rule]) -> ReorderEffect {
+    // First-occurrence index map for each chain. By-name resolution
+    // matches the rest of the reorder pipeline.
+    let mut before_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (i, r) in before.iter().enumerate() {
+        before_idx.entry(r.name.as_str()).or_insert(i);
+    }
+    let mut after_idx: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (i, r) in after.iter().enumerate() {
+        after_idx.entry(r.name.as_str()).or_insert(i);
+    }
+
+    // Moved: rules present in BOTH whose first-occurrence indices
+    // differ. Walk the AFTER chain so the output is in AFTER order.
+    let mut moved: Vec<ReorderMove> = Vec::new();
+    for (to_index, r) in after.iter().enumerate() {
+        // Only consider the FIRST occurrence in AFTER — a second
+        // occurrence of the same name is not a "move" of the same
+        // rule (the by-name model can't distinguish duplicates).
+        if after_idx.get(r.name.as_str()) != Some(&to_index) {
+            continue;
+        }
+        if let Some(&from_index) = before_idx.get(r.name.as_str()) {
+            if from_index != to_index {
+                moved.push(ReorderMove {
+                    rule_name: r.name.clone(),
+                    from_index,
+                    to_index,
+                });
+            }
+        }
+    }
+
+    // Added: in AFTER (first occurrence) but not in BEFORE.
+    let mut added: Vec<String> = Vec::new();
+    for (i, r) in after.iter().enumerate() {
+        if after_idx.get(r.name.as_str()) != Some(&i) {
+            continue;
+        }
+        if !before_idx.contains_key(r.name.as_str()) {
+            added.push(r.name.clone());
+        }
+    }
+
+    // Removed: in BEFORE (first occurrence) but not in AFTER.
+    let mut removed: Vec<String> = Vec::new();
+    for (i, r) in before.iter().enumerate() {
+        if before_idx.get(r.name.as_str()) != Some(&i) {
+            continue;
+        }
+        if !after_idx.contains_key(r.name.as_str()) {
+            removed.push(r.name.clone());
+        }
+    }
+
+    // Permutation iff both buckets empty AND lengths match
+    // (defensive: a chain with one duplicate rule could have empty
+    // added/removed but a different length; treat that as not-a-
+    // permutation so undo's staleness check stays conservative).
+    let is_permutation = added.is_empty() && removed.is_empty() && before.len() == after.len();
+
+    ReorderEffect {
+        moved,
+        added,
+        removed,
+        is_permutation,
+    }
+}
+
 /// Plan minimal-reorder fixes for every dead rule in `report`.
 ///
 /// Returns one [`ReorderProposal`] per `dead_at_position == true`
@@ -3732,5 +3897,374 @@ mod tests {
         let mut outcome = apply_reorder_proposals_batch(&rules, &proposals);
         outcome.rules[0].name = "Tax-touched".into();
         assert_eq!(rules[1].name, "Tax", "source rule must be unchanged");
+    }
+
+    // ── Slice 143 — summarize_reorder_effect (round-30) ──────────────
+
+    #[test]
+    fn effect_two_empty_chains_is_empty_permutation() {
+        // Edge case: both chains empty. is_permutation = true (a
+        // 0-length chain is trivially a permutation of itself).
+        let effect = summarize_reorder_effect(&[], &[]);
+        assert!(effect.moved.is_empty());
+        assert!(effect.added.is_empty());
+        assert!(effect.removed.is_empty());
+        assert!(effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_identical_chains_has_no_moves_but_is_permutation() {
+        // Identity case: BEFORE == AFTER. No moves, no add/remove,
+        // is_permutation = true. The UI's undo gate uses this to
+        // recognise "nothing actually changed" and hide the undo
+        // affordance gracefully.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate("Tax", RulePredicate::Always),
+            rule_with_predicate("Receipts", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&rules, &rules);
+        assert!(effect.moved.is_empty(), "identical chains have no moves");
+        assert!(effect.added.is_empty());
+        assert!(effect.removed.is_empty());
+        assert!(effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_single_swap_records_two_moves_in_after_order() {
+        // [A, B] -> [B, A]: both rules moved. Output is in
+        // AFTER-chain order so a top-down UI walker reads
+        // [B (1->0), A (0->1)].
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("A", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        assert_eq!(effect.moved.len(), 2);
+        assert_eq!(effect.moved[0].rule_name, "B");
+        assert_eq!(effect.moved[0].from_index, 1);
+        assert_eq!(effect.moved[0].to_index, 0);
+        assert_eq!(effect.moved[1].rule_name, "A");
+        assert_eq!(effect.moved[1].from_index, 0);
+        assert_eq!(effect.moved[1].to_index, 1);
+        assert!(effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_lift_one_rule_records_only_displaced_rules() {
+        // [A, B, C, Dead] -> [Dead, A, B, C]: every rule moved.
+        // Pin that ALL displaced rules appear (not just Dead).
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+            rule_with_predicate("Dead", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("Dead", RulePredicate::Always),
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        // All four rules moved.
+        assert_eq!(effect.moved.len(), 4);
+        let names: Vec<&str> = effect.moved.iter().map(|m| m.rule_name.as_str()).collect();
+        assert_eq!(names, vec!["Dead", "A", "B", "C"]);
+        // After-order: ascending to_index.
+        for (i, m) in effect.moved.iter().enumerate() {
+            assert_eq!(m.to_index, i);
+        }
+        assert!(effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_added_rule_recorded_and_not_a_permutation() {
+        // [A, B] -> [A, B, C]: C was added. Not a permutation; undo
+        // gate uses this to refuse a stale revert.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        assert!(effect.moved.is_empty());
+        assert_eq!(effect.added, vec!["C".to_string()]);
+        assert!(effect.removed.is_empty());
+        assert!(
+            !effect.is_permutation,
+            "added rule means not-a-permutation; undo must refuse"
+        );
+    }
+
+    #[test]
+    fn effect_removed_rule_recorded_and_not_a_permutation() {
+        // [A, B, C] -> [A, B]: C was removed. Not a permutation.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        assert!(effect.moved.is_empty());
+        assert!(effect.added.is_empty());
+        assert_eq!(effect.removed, vec!["C".to_string()]);
+        assert!(!effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_renamed_rule_appears_as_added_plus_removed() {
+        // [A, B] -> [A, B-renamed]: the rename looks like B
+        // removed + B-renamed added (the by-name resolution can't
+        // know it's a rename). Not a permutation; undo must refuse.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B-renamed", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        assert!(effect.moved.is_empty());
+        assert_eq!(effect.added, vec!["B-renamed".to_string()]);
+        assert_eq!(effect.removed, vec!["B".to_string()]);
+        assert!(!effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_added_and_removed_at_once_carries_both() {
+        // [A, B, C] -> [A, D, C]: B removed, D added, C moved (or
+        // not — both indices match). Pin that the buckets carry
+        // both, in their respective chain orders.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("D", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        assert_eq!(effect.added, vec!["D".to_string()]);
+        assert_eq!(effect.removed, vec!["B".to_string()]);
+        // A and C both at the same index in both chains => no moves.
+        assert!(effect.moved.is_empty());
+        assert!(!effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_unmoved_rules_are_omitted_from_moved() {
+        // [A, B, C, D] -> [A, C, B, D]: only B and C moved; A and D
+        // unchanged. Pin that the unchanged rules do NOT appear in
+        // `moved`.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+            rule_with_predicate("D", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("D", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        let names: Vec<&str> = effect.moved.iter().map(|m| m.rule_name.as_str()).collect();
+        assert_eq!(names, vec!["C", "B"]);
+        assert!(effect.is_permutation);
+    }
+
+    #[test]
+    fn effect_serde_round_trips_field_names_for_ts_mirror() {
+        // The wire shape is what the TS mirror reads. Pin every
+        // top-level field name + the ReorderMove field names.
+        let effect = ReorderEffect {
+            moved: vec![ReorderMove {
+                rule_name: "Tax".into(),
+                from_index: 3,
+                to_index: 0,
+            }],
+            added: vec!["NewRule".into()],
+            removed: vec!["OldRule".into()],
+            is_permutation: false,
+        };
+        let json = serde_json::to_string(&effect).unwrap();
+        assert!(json.contains("\"moved\":"));
+        assert!(json.contains("\"rule_name\":\"Tax\""));
+        assert!(json.contains("\"from_index\":3"));
+        assert!(json.contains("\"to_index\":0"));
+        assert!(json.contains("\"added\":[\"NewRule\"]"));
+        assert!(json.contains("\"removed\":[\"OldRule\"]"));
+        assert!(json.contains("\"is_permutation\":false"));
+        let back: ReorderEffect = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, effect);
+    }
+
+    #[test]
+    fn effect_does_not_mutate_either_input_chain() {
+        // Both slices are borrowed; the helper builds a fresh
+        // ReorderEffect. Pin that nothing leaks back to the caller.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("A", RulePredicate::Always),
+        ];
+        let before_snap = before.clone();
+        let after_snap = after.clone();
+        let _ = summarize_reorder_effect(&before, &after);
+        assert_eq!(before, before_snap);
+        assert_eq!(after, after_snap);
+    }
+
+    #[test]
+    fn effect_composes_with_apply_reorder_proposals_batch() {
+        // End-to-end: a batch reorder's outcome.rules summarised
+        // against the original chain should match the batch's own
+        // move semantics. This pins that slice 143 is the right
+        // language for describing slice 138's output.
+        let before = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "t_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Receipts",
+                RulePredicate::FilenameGlob {
+                    pattern: "r_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![
+            proposal(1, "Tax", 0, "All", 2),
+            proposal(2, "Receipts", 0, "All", 4),
+        ];
+        let outcome = apply_reorder_proposals_batch(&before, &proposals);
+        let effect = summarize_reorder_effect(&before, &outcome.rules);
+        // Result is [Tax, Receipts, All] — Tax landed at 0, then
+        // Receipts landed before the displaced All (which is now at
+        // index 1). Every rule shifted.
+        assert_eq!(effect.moved.len(), 3);
+        let to_names: Vec<&str> = effect.moved.iter().map(|m| m.rule_name.as_str()).collect();
+        assert_eq!(to_names, vec!["Tax", "Receipts", "All"]);
+        assert!(effect.is_permutation);
+        assert!(effect.added.is_empty());
+        assert!(effect.removed.is_empty());
+    }
+
+    #[test]
+    fn effect_after_order_strictly_ascending_to_index() {
+        // Pin the after-order invariant in a busy case: the
+        // moved entries must be sorted by to_index ascending.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+            rule_with_predicate("D", RulePredicate::Always),
+            rule_with_predicate("E", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("E", RulePredicate::Always),
+            rule_with_predicate("D", RulePredicate::Always),
+            rule_with_predicate("C", RulePredicate::Always),
+            rule_with_predicate("B", RulePredicate::Always),
+            rule_with_predicate("A", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        let mut prev: Option<usize> = None;
+        for m in &effect.moved {
+            if let Some(p) = prev {
+                assert!(m.to_index > p, "to_index must be strictly ascending");
+            }
+            prev = Some(m.to_index);
+        }
+    }
+
+    #[test]
+    fn effect_duplicate_name_uses_first_occurrence_as_canonical() {
+        // Defensive — Hopper UI enforces unique names but a hand-
+        // rolled chain could carry duplicates. The first occurrence
+        // in each chain is canonical; a second occurrence neither
+        // counts as a move nor as added.
+        let before = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("Dup", RulePredicate::Always),
+            rule_with_predicate("Dup", RulePredicate::Always),
+        ];
+        let after = vec![
+            rule_with_predicate("Dup", RulePredicate::Always),
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate("Dup", RulePredicate::Always),
+        ];
+        let effect = summarize_reorder_effect(&before, &after);
+        // A moved (0 -> 1). First Dup moved (1 -> 0). Second Dup
+        // is ignored on both sides.
+        let names: Vec<&str> = effect.moved.iter().map(|m| m.rule_name.as_str()).collect();
+        assert_eq!(names, vec!["Dup", "A"]);
+    }
+
+    #[test]
+    fn effect_undo_round_trip_recovers_original_chain_shape() {
+        // The motivating use case: a batch reorder followed by
+        // summarising the effect, then "undoing" by handing the
+        // BEFORE chain back through set-rules — summarizing the
+        // post-undo chain against the post-reorder chain should
+        // produce the INVERSE permutation.
+        let original = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "t_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Receipts",
+                RulePredicate::FilenameGlob {
+                    pattern: "r_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![
+            proposal(1, "Tax", 0, "All", 2),
+            proposal(2, "Receipts", 0, "All", 4),
+        ];
+        let reordered = apply_reorder_proposals_batch(&original, &proposals).rules;
+        // "Undo" = put the original chain back. Summarise the
+        // round-trip against the reordered chain.
+        let undo_effect = summarize_reorder_effect(&reordered, &original);
+        assert!(undo_effect.is_permutation);
+        // Every moved entry should now point from its reordered
+        // position back to its original position.
+        for m in &undo_effect.moved {
+            let orig_pos = original.iter().position(|r| r.name == m.rule_name).unwrap();
+            let reord_pos = reordered
+                .iter()
+                .position(|r| r.name == m.rule_name)
+                .unwrap();
+            assert_eq!(m.from_index, reord_pos);
+            assert_eq!(m.to_index, orig_pos);
+        }
     }
 }
