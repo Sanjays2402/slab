@@ -32,8 +32,8 @@ pub use install::{
     MAX_UNCOMPRESSED_BYTES,
 };
 pub use install_log::{
-    default_log_path, ActivityBucket, AutoPruneOutcome, InstallAction, InstallEvent, InstallLog,
-    InstallLogError, InstallStats, PluginHistogramRow, PluginRetentionOverride,
+    default_log_path, ActivityBucket, AutoPruneOutcome, AutoPruneRun, InstallAction, InstallEvent,
+    InstallLog, InstallLogError, InstallStats, PluginHistogramRow, PluginRetentionOverride,
     TimeBucketGranularity, AUTO_PRUNE_INTERVAL_SECS, DEFAULT_RETAIN_DAYS, MIN_RETAIN_DAYS,
 };
 pub use update_plan::{plan_updates, InstalledPlugin, UpdatePlan, UpdateTarget};

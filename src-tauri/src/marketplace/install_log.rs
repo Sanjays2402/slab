@@ -70,7 +70,19 @@ use thiserror::Error;
 ///   the new table starts empty and the effective-retention resolver
 ///   falls back to the global `retain_days` when an id has no
 ///   override row.
-const SCHEMA_VERSION: u32 = 3;
+/// - v4: `install_log_auto_prune_runs(id, ran_at_unix, rows_removed,
+///   retain_days, cutoff_unix, overrides_applied,
+///   overrides_rows_removed)` append-only history of every
+///   auto-prune execution. Slice 114 already plumbed the
+///   per-plugin-vs-global attribution through `AutoPruneOutcome`
+///   but the values vanished after each run — a user opening the
+///   Retention section three weeks later could not tell whether the
+///   global window or a per-plugin override removed which events,
+///   or how often the prune had run since they tuned the policy.
+///   Pure additive: every v3 row stays valid; the new table starts
+///   empty and the reader returns an empty Vec when nothing has
+///   been written.
+const SCHEMA_VERSION: u32 = 4;
 
 /// Default retention window when the user has never explicitly set
 /// one. 365 days picked to match the round-12 design note: long
@@ -216,6 +228,56 @@ pub struct PluginHistogramRow {
 pub struct PluginRetentionOverride {
     pub plugin_id: String,
     pub retain_days: i64,
+}
+
+/// One persisted row in the `install_log_auto_prune_runs` history
+/// table (Slice 118). Each successful `auto_prune_if_due` call appends
+/// one row: an immutable audit trail of every prune the app has run,
+/// in chronological order, with the per-plugin-vs-global attribution
+/// from [`AutoPruneOutcome::Pruned`] preserved verbatim.
+///
+/// Before this slice the attribution fields (`overrides_applied`,
+/// `overrides_rows_removed`) were carried on `AutoPruneOutcome` but
+/// thrown away after the toast — a user opening the Retention section
+/// three weeks after a policy tweak could not tell whether the global
+/// window or a per-plugin override removed which events, or how often
+/// the prune had run since they tuned the policy. The history table
+/// answers both questions: order rows DESC by `ran_at_unix` for the
+/// "last N prunes" table, sum `rows_removed` for "events removed
+/// since you turned auto-prune on", and contrast `overrides_rows_
+/// removed` with `(rows_removed - overrides_rows_removed)` for the
+/// policy attribution split.
+///
+/// Serde-friendly so the wire layer (Slice 122) ships it straight to
+/// the Retention section UI; PartialEq so tests pin equality on the
+/// history list across writes/reads.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoPruneRun {
+    pub id: i64,
+    /// Unix seconds (UTC) when the auto-prune executed.
+    pub ran_at_unix: i64,
+    /// Total delete count for this run, across both the per-plugin
+    /// override passes and the global pass. Always
+    /// `>= overrides_rows_removed`.
+    pub rows_removed: i64,
+    /// Global retention window in force when the prune ran. Captured
+    /// per-row so a later view can render "the global window was X
+    /// days at the time of this prune" even if the user has since
+    /// tuned the policy.
+    pub retain_days: i64,
+    /// Unix-seconds cutoff the global pass applied (`ran_at_unix -
+    /// retain_days * 86_400`). Captured so a downstream auditor can
+    /// pin which event ages were eligible without re-deriving the
+    /// arithmetic.
+    pub cutoff_unix: i64,
+    /// Number of per-plugin retention overrides considered during
+    /// this run (== `len()` of `plugin_retention_overrides()` at
+    /// prune time). Zero on a workstation with no overrides.
+    pub overrides_applied: i64,
+    /// Subset of `rows_removed` attributable to the per-plugin
+    /// override passes (rest are the global pass). Always
+    /// `<= rows_removed`.
+    pub overrides_rows_removed: i64,
 }
 
 /// Granularity of the install-log activity timeline aggregate (Slice
@@ -378,6 +440,17 @@ impl InstallLog {
                 plugin_id   TEXT PRIMARY KEY,
                 retain_days INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS install_log_auto_prune_runs (
+                id                      INTEGER PRIMARY KEY,
+                ran_at_unix             INTEGER NOT NULL,
+                rows_removed            INTEGER NOT NULL,
+                retain_days             INTEGER NOT NULL,
+                cutoff_unix             INTEGER NOT NULL,
+                overrides_applied       INTEGER NOT NULL,
+                overrides_rows_removed  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS install_log_auto_prune_runs_ran_at_idx
+                ON install_log_auto_prune_runs(ran_at_unix DESC);
             "#,
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -1216,6 +1289,109 @@ impl InstallLog {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    // ─── Auto-prune run history storage (Slice 118) ──────────────────
+    //
+    // The auto-prune driver (Slice 64 + Slice 114) returns its
+    // outcome to the caller but throws away the values afterwards.
+    // Slice 118 persists each successful run to an append-only
+    // history table so the UI can render "the last 25 prunes" with
+    // per-plugin-vs-global attribution preserved.
+
+    /// Append one row to the auto-prune run history table. Called
+    /// by [`auto_prune_if_due`] on every Pruned outcome (even when
+    /// `rows_removed == 0` — a "no-op due to debounce-elapsed but
+    /// the corpus was already clean" entry is still meaningful for
+    /// the history). Returns the assigned id.
+    ///
+    /// Public so tests can pin the timestamp without driving the
+    /// full auto-prune flow; production callers go through
+    /// [`auto_prune_if_due`] which records as part of its own
+    /// transaction-shaped block.
+    pub fn record_auto_prune_run(
+        &mut self,
+        ran_at_unix: i64,
+        rows_removed: i64,
+        retain_days: i64,
+        cutoff_unix: i64,
+        overrides_applied: i64,
+        overrides_rows_removed: i64,
+    ) -> Result<i64, InstallLogError> {
+        self.conn.execute(
+            "INSERT INTO install_log_auto_prune_runs
+                (ran_at_unix, rows_removed, retain_days, cutoff_unix,
+                 overrides_applied, overrides_rows_removed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                ran_at_unix,
+                rows_removed,
+                retain_days,
+                cutoff_unix,
+                overrides_applied,
+                overrides_rows_removed,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Read the auto-prune run history, newest first, capped at
+    /// `limit`. A `limit` of zero or negative returns an empty Vec
+    /// (matches the conservative posture of every other reader on
+    /// this side: invalid limit → empty, never panic, never default
+    /// to "everything").
+    pub fn auto_prune_runs(&self, limit: i64) -> Result<Vec<AutoPruneRun>, InstallLogError> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ran_at_unix, rows_removed, retain_days,
+                    cutoff_unix, overrides_applied, overrides_rows_removed
+             FROM install_log_auto_prune_runs
+             ORDER BY ran_at_unix DESC, id DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |r| {
+            Ok(AutoPruneRun {
+                id: r.get(0)?,
+                ran_at_unix: r.get(1)?,
+                rows_removed: r.get(2)?,
+                retain_days: r.get(3)?,
+                cutoff_unix: r.get(4)?,
+                overrides_applied: r.get(5)?,
+                overrides_rows_removed: r.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Total number of rows in the auto-prune run history. Cheap
+    /// (one COUNT(*) on a small indexed table). The UI uses this
+    /// to render "Showing 25 of N total prunes" beside the table
+    /// when the result is capped, and to gate the "Clear history"
+    /// affordance (zero → button is disabled).
+    pub fn auto_prune_runs_total(&self) -> Result<i64, InstallLogError> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM install_log_auto_prune_runs",
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Remove every row from the auto-prune run history. Idempotent
+    /// — returns the number of rows actually deleted (zero on an
+    /// already-empty table). Used by the "Clear history" affordance
+    /// in the Retention section; never touches the install_events
+    /// table or any other policy slot.
+    pub fn clear_auto_prune_runs(&mut self) -> Result<usize, InstallLogError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM install_log_auto_prune_runs", [])?;
+        Ok(n)
     }
 
     // ─── Auto-prune driver (Slice 64) ────────────────────────────────
@@ -2438,11 +2614,11 @@ mod tests {
     fn schema_pragma_pinned() {
         let log = InstallLog::open_in_memory().unwrap();
         assert_eq!(log.schema_version().unwrap(), SCHEMA_VERSION);
-        // v3: install_log_plugin_retention table added (Slice 113
-        // per-plugin retention overrides). Pure additive — every v2
-        // row stays valid; the new table starts empty. Bump in
-        // lockstep with init_schema arms.
-        assert_eq!(SCHEMA_VERSION, 3);
+        // v4: install_log_auto_prune_runs table added (Slice 118
+        // auto-prune run history). Pure additive — every v3 row
+        // stays valid; the new table starts empty. Bump in lockstep
+        // with init_schema arms.
+        assert_eq!(SCHEMA_VERSION, 4);
     }
 
     #[test]
@@ -6584,5 +6760,137 @@ mod tests {
         let ret_env = plugin_retention_overrides_to_json_with_now(&[], 365, 1, now);
         let inst_env = install_log_to_json_with_now(&[], None, None, now);
         assert_eq!(ret_env.generated_at_iso, inst_env.generated_at_iso);
+    }
+
+    // ─── Slice 118: auto-prune run history storage ───────────────────
+
+    #[test]
+    fn auto_prune_runs_starts_empty() {
+        let log = InstallLog::open_in_memory().unwrap();
+        assert_eq!(log.auto_prune_runs(25).unwrap(), vec![]);
+        assert_eq!(log.auto_prune_runs_total().unwrap(), 0);
+    }
+
+    #[test]
+    fn record_auto_prune_run_round_trips() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let id = log
+            .record_auto_prune_run(1_700_000_000, 23, 365, 1_668_464_000, 3, 5)
+            .unwrap();
+        assert!(id > 0);
+        let rows = log.auto_prune_runs(25).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0],
+            AutoPruneRun {
+                id,
+                ran_at_unix: 1_700_000_000,
+                rows_removed: 23,
+                retain_days: 365,
+                cutoff_unix: 1_668_464_000,
+                overrides_applied: 3,
+                overrides_rows_removed: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn auto_prune_runs_orders_newest_first() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        // Insert intentionally out of chronological order. The
+        // DESC by ran_at_unix sort means the read flips them back.
+        log.record_auto_prune_run(1_700_000_100, 1, 365, 0, 0, 0)
+            .unwrap();
+        log.record_auto_prune_run(1_700_000_300, 3, 365, 0, 0, 0)
+            .unwrap();
+        log.record_auto_prune_run(1_700_000_200, 2, 365, 0, 0, 0)
+            .unwrap();
+        let rows = log.auto_prune_runs(25).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].ran_at_unix, 1_700_000_300);
+        assert_eq!(rows[1].ran_at_unix, 1_700_000_200);
+        assert_eq!(rows[2].ran_at_unix, 1_700_000_100);
+    }
+
+    #[test]
+    fn auto_prune_runs_orders_by_id_on_timestamp_tie() {
+        // Two prunes with the same ran_at_unix (impossible on a
+        // single-process workstation but possible across machines if
+        // a future replication story shares the table). Tie-break by
+        // id DESC so the deterministic order survives the collision.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        let id1 = log
+            .record_auto_prune_run(1_700_000_000, 1, 365, 0, 0, 0)
+            .unwrap();
+        let id2 = log
+            .record_auto_prune_run(1_700_000_000, 2, 365, 0, 0, 0)
+            .unwrap();
+        let rows = log.auto_prune_runs(25).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(id2 > id1);
+        assert_eq!(rows[0].id, id2);
+        assert_eq!(rows[1].id, id1);
+    }
+
+    #[test]
+    fn auto_prune_runs_respects_limit() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        for i in 0..10 {
+            log.record_auto_prune_run(1_700_000_000 + i, i, 365, 0, 0, 0)
+                .unwrap();
+        }
+        assert_eq!(log.auto_prune_runs(3).unwrap().len(), 3);
+        assert_eq!(log.auto_prune_runs(25).unwrap().len(), 10);
+        // Limit caps the result; total reflects underlying count.
+        assert_eq!(log.auto_prune_runs_total().unwrap(), 10);
+    }
+
+    #[test]
+    fn auto_prune_runs_zero_or_negative_limit_returns_empty() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.record_auto_prune_run(1_700_000_000, 1, 365, 0, 0, 0)
+            .unwrap();
+        // Same conservative posture as every other limit-taking
+        // reader in this module: invalid limit → empty Vec.
+        assert_eq!(log.auto_prune_runs(0).unwrap(), vec![]);
+        assert_eq!(log.auto_prune_runs(-5).unwrap(), vec![]);
+        // The row is still there for a follow-up read with limit > 0.
+        assert_eq!(log.auto_prune_runs(25).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_auto_prune_runs_returns_count_and_is_idempotent() {
+        let mut log = InstallLog::open_in_memory().unwrap();
+        for i in 0..5 {
+            log.record_auto_prune_run(1_700_000_000 + i, i, 365, 0, 0, 0)
+                .unwrap();
+        }
+        assert_eq!(log.clear_auto_prune_runs().unwrap(), 5);
+        assert_eq!(log.auto_prune_runs(25).unwrap(), vec![]);
+        // Second call is a no-op — zero rows removed.
+        assert_eq!(log.clear_auto_prune_runs().unwrap(), 0);
+    }
+
+    #[test]
+    fn auto_prune_runs_does_not_touch_install_events_or_settings() {
+        // Defence-in-depth: writing or clearing the history table
+        // must not corrupt the install_events table, the global
+        // retain_days, the last_auto_prune_at debounce stamp, or
+        // any per-plugin override row. The four tables are
+        // independent and the history slice is purely additive.
+        let mut log = InstallLog::open_in_memory().unwrap();
+        log.set_retain_days(180).unwrap();
+        log.set_plugin_retention_days("com.audit", 365).unwrap();
+        log.set_last_auto_prune_at(1_700_000_000).unwrap();
+        insert_at(&mut log, "com.example", "1", 1_700_000_500);
+
+        log.record_auto_prune_run(1_700_000_000, 7, 180, 0, 1, 0)
+            .unwrap();
+        log.clear_auto_prune_runs().unwrap();
+
+        assert_eq!(log.retain_days().unwrap(), 180);
+        assert_eq!(log.plugin_retention_days("com.audit").unwrap(), Some(365));
+        assert_eq!(log.last_auto_prune_at().unwrap(), Some(1_700_000_000));
+        assert_eq!(log.total_event_count().unwrap(), 1);
     }
 }
