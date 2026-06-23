@@ -854,6 +854,138 @@ pub fn rule_coverage_to_json_with_now(
     }
 }
 
+// ─── Slice 128 — rule coverage diagnostic filter primitive ───────────
+//
+// Round 26 surfaced a chain-health chip ("2 dead rules — reorder or
+// tighten the shadowing rules"). The natural follow-up question — "OK,
+// which 2 rules?" — has no answer without the user manually scanning
+// the per-row list for matching chips. In a 20-rule chain that's
+// tedious; in a chain with mixed diagnostics (1 dead + 3 shadowed) the
+// chain-level chip's count doesn't even tell you where to start
+// looking.
+//
+// This module gives the UI a pure-data primitive for narrowing the
+// coverage report to one diagnostic kind. The return type is a NEW
+// [`RuleCoverageReport`] (not a `Vec<&RuleCoverage>`) so the existing
+// export / render path treats the filtered view exactly like the
+// unfiltered one. Totals are preserved verbatim from the source —
+// `fallthrough` + `total_samples` are corpus-scoped invariants of the
+// underlying chain RUN, not properties of the filtered slice; we
+// surface a separate [`rule_count_in`] / [`rule_count_out`] split via
+// the wire envelope (slice 130) when the caller wants the
+// "Showing 2 of 6 rules" copy.
+//
+// ## Why preserve totals
+//
+// A filtered export's CSV envelope's `fallthrough_count` still names
+// the SAME number of samples that fell through to the watch
+// defaults — the filter narrows which RULES the export carries, not
+// which SAMPLES the chain saw. A consumer reading a filtered
+// `hopper-coverage_watch-7_dead_2026-06-23.csv` and unfiltered
+// `hopper-coverage_watch-7_2026-06-23.csv` of the same run sees
+// identical fall-through accounting; only the per-rule rows differ.
+//
+// ## Filter semantics
+//
+// Mutually-exclusive diagnostic kinds matching the established
+// priority chain ([`coverage_diagnostic_str`] and the TS
+// `ruleCoverageDiagnostic`): `dead > zero > shadowed > healthy`.
+// `All` is the identity filter and exists so the UI can wire one
+// helper for both filtered and unfiltered code paths.
+//
+// A rule classified as `dead` does NOT also pass the `shadowed`
+// filter — the priority chain is preserved end-to-end so the
+// envelope's `*_rule_count` totals and the filter both agree on
+// "what kind of trouble is this rule in". A user clicking the
+// chain-health chip's "1 dead rule" and seeing exactly 1 rule, then
+// clicking through to "2 shadowed rules" and seeing 2 disjoint
+// rules, can sum the diagnostic counts and never double-count.
+
+/// Discriminator for the coverage filter. Matches the TS-side
+/// `CoverageDiagnosticFilter` 1:1 so the wire payload round-trips
+/// without re-mapping.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum CoverageFilter {
+    /// Identity filter — preserves every rule. Exists so the UI
+    /// pipeline can switch between filtered and unfiltered code paths
+    /// with one helper.
+    All,
+    /// Keep only rules with `dead_at_position == true`.
+    Dead,
+    /// Keep only rules with `would_match == 0` (and NOT dead — the
+    /// priority chain dead > zero is preserved).
+    Zero,
+    /// Keep only rules with `would_match > first_match` AND
+    /// `would_match > 0` AND NOT dead (partial shadow only).
+    Shadowed,
+    /// Keep only rules where `coverage_diagnostic_str` returns the
+    /// empty string — predicate fires AND is not shadowed.
+    Healthy,
+}
+
+impl CoverageFilter {
+    /// Discriminator slug used by [`super::super::super::pdf::hopper::cmds`]'s
+    /// filename-helper extension and the JSON envelope tag. Kept
+    /// here so a single source of truth maps between the enum
+    /// variant and the wire string.
+    pub fn slug(self) -> &'static str {
+        match self {
+            CoverageFilter::All => "all",
+            CoverageFilter::Dead => "dead",
+            CoverageFilter::Zero => "zero",
+            CoverageFilter::Shadowed => "shadowed",
+            CoverageFilter::Healthy => "healthy",
+        }
+    }
+}
+
+/// True iff `rule` matches `filter`. Internal predicate composed from
+/// [`coverage_diagnostic_str`] so the filter and the CSV diagnostic
+/// column never drift apart. Keeping this private lets the public API
+/// stay `RuleCoverageReport -> RuleCoverageReport`; callers don't need
+/// to know the per-row matching rule, only that the result is
+/// self-consistent.
+fn rule_matches_filter(rule: &RuleCoverage, filter: CoverageFilter) -> bool {
+    match filter {
+        CoverageFilter::All => true,
+        CoverageFilter::Dead => coverage_diagnostic_str(rule) == "dead",
+        CoverageFilter::Zero => coverage_diagnostic_str(rule) == "zero",
+        CoverageFilter::Shadowed => coverage_diagnostic_str(rule) == "shadowed",
+        CoverageFilter::Healthy => coverage_diagnostic_str(rule).is_empty(),
+    }
+}
+
+/// Apply a [`CoverageFilter`] to a [`RuleCoverageReport`], returning a
+/// new report with `rules` narrowed to those passing the filter.
+///
+/// `fallthrough` + `total_samples` are PRESERVED verbatim — the
+/// filter narrows the rule rows the consumer renders / exports, not
+/// the chain-run sample accounting. See module docs above for the
+/// rationale.
+///
+/// `CoverageFilter::All` is the identity transform (clones the
+/// input). Filtering an empty rule list returns an empty rule list.
+/// Filtering preserves the input order of the rules — no resort.
+///
+/// Pure function — no I/O, no Tauri.
+pub fn filter_coverage_by_diagnostic(
+    report: &RuleCoverageReport,
+    filter: CoverageFilter,
+) -> RuleCoverageReport {
+    let rules: Vec<RuleCoverage> = report
+        .rules
+        .iter()
+        .filter(|r| rule_matches_filter(r, filter))
+        .cloned()
+        .collect();
+    RuleCoverageReport {
+        rules,
+        fallthrough: report.fallthrough,
+        total_samples: report.total_samples,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2296,5 +2428,185 @@ mod tests {
         let env = rule_coverage_to_json_with_now(&report, 0);
         assert_eq!(env.rule_count, env.rules.len());
         assert_eq!(env.rule_count, 3);
+    }
+
+    // ── Slice 128 — filter_coverage_by_diagnostic ──────────────────────
+
+    /// Build a mixed report with all four diagnostic kinds represented.
+    /// Used by every filter test so the priority chain is exercised in
+    /// each case without re-writing the inputs.
+    fn mixed_diagnostic_report() -> RuleCoverageReport {
+        coverage(
+            vec![
+                // Healthy: predicate matches some samples + no shadow.
+                cov_row(0, "Healthy A", 4, 4, false),
+                // Dead at position: never wins here but would win
+                // earlier. Priority dead > shadowed > zero applies.
+                cov_row(1, "Dead B", 0, 3, true),
+                // Partially shadowed: would_match > first_match,
+                // first_match > 0 (so not dead).
+                cov_row(2, "Shadowed C", 1, 5, false),
+                // Zero coverage: predicate matches nothing at all.
+                cov_row(3, "Zero D", 0, 0, false),
+                // Another healthy row so the All / Healthy filter
+                // counts are non-trivial.
+                cov_row(4, "Healthy E", 2, 2, false),
+            ],
+            7,
+            17,
+        )
+    }
+
+    #[test]
+    fn filter_all_preserves_every_rule_and_totals() {
+        let src = mixed_diagnostic_report();
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::All);
+        assert_eq!(got, src, "All filter must be the identity transform");
+    }
+
+    #[test]
+    fn filter_dead_keeps_only_dead_rule() {
+        let src = mixed_diagnostic_report();
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::Dead);
+        assert_eq!(got.rules.len(), 1);
+        assert_eq!(got.rules[0].name, "Dead B");
+        assert!(got.rules[0].dead_at_position);
+        // Totals preserved verbatim — filter narrows rules, not
+        // the chain-run sample accounting.
+        assert_eq!(got.fallthrough, 7);
+        assert_eq!(got.total_samples, 17);
+    }
+
+    #[test]
+    fn filter_shadowed_excludes_dead_even_though_dead_is_also_shadowed() {
+        // A dead rule has would_match > first_match, which is the
+        // shadowed predicate. The priority chain dead > shadowed
+        // forces it OUT of the shadowed bucket. Pin that here so a
+        // refactor can't silently double-count.
+        let src = mixed_diagnostic_report();
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::Shadowed);
+        assert_eq!(got.rules.len(), 1);
+        assert_eq!(got.rules[0].name, "Shadowed C");
+        for r in &got.rules {
+            assert!(
+                !r.dead_at_position,
+                "Shadowed filter must NOT include dead rules"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_zero_keeps_only_zero_coverage_rule() {
+        let src = mixed_diagnostic_report();
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::Zero);
+        assert_eq!(got.rules.len(), 1);
+        assert_eq!(got.rules[0].name, "Zero D");
+        assert_eq!(got.rules[0].first_match, 0);
+        assert_eq!(got.rules[0].would_match, 0);
+    }
+
+    #[test]
+    fn filter_healthy_keeps_only_healthy_rules() {
+        let src = mixed_diagnostic_report();
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::Healthy);
+        assert_eq!(got.rules.len(), 2);
+        assert_eq!(got.rules[0].name, "Healthy A");
+        assert_eq!(got.rules[1].name, "Healthy E");
+    }
+
+    #[test]
+    fn filter_preserves_input_order() {
+        // The healthy rule at index 4 comes AFTER the healthy rule at
+        // index 0 in the source, and the filter must preserve that.
+        // A future refactor to (e.g.) re-sort by name would break the
+        // user's mental model — pin it here.
+        let src = mixed_diagnostic_report();
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::Healthy);
+        assert_eq!(got.rules[0].index, 0);
+        assert_eq!(got.rules[1].index, 4);
+    }
+
+    #[test]
+    fn filter_empty_rules_returns_empty_rules() {
+        // Empty input -> empty output. Totals still preserved.
+        let src = coverage(vec![], 5, 5);
+        for filter in [
+            CoverageFilter::All,
+            CoverageFilter::Dead,
+            CoverageFilter::Zero,
+            CoverageFilter::Shadowed,
+            CoverageFilter::Healthy,
+        ] {
+            let got = filter_coverage_by_diagnostic(&src, filter);
+            assert!(got.rules.is_empty());
+            assert_eq!(got.fallthrough, 5);
+            assert_eq!(got.total_samples, 5);
+        }
+    }
+
+    #[test]
+    fn filter_no_matching_rules_returns_empty_rules_with_totals() {
+        // A report with only healthy rules filtered by `Dead` yields
+        // zero rule rows but keeps the corpus totals.
+        let src = coverage(
+            vec![cov_row(0, "A", 5, 5, false), cov_row(1, "B", 3, 3, false)],
+            0,
+            8,
+        );
+        let got = filter_coverage_by_diagnostic(&src, CoverageFilter::Dead);
+        assert!(got.rules.is_empty());
+        assert_eq!(got.fallthrough, 0);
+        assert_eq!(got.total_samples, 8);
+    }
+
+    #[test]
+    fn filter_envelope_counts_agree_with_filter_results() {
+        // Conservation invariant: summing the filtered rule counts
+        // for the three trouble kinds (Dead + Zero + Shadowed) +
+        // Healthy must equal the total rule count. A regression in
+        // either the envelope's classification or the filter's
+        // matching rule would surface here.
+        let src = mixed_diagnostic_report();
+        let env = rule_coverage_to_json_with_now(&src, 0);
+        let dead = filter_coverage_by_diagnostic(&src, CoverageFilter::Dead)
+            .rules
+            .len();
+        let zero = filter_coverage_by_diagnostic(&src, CoverageFilter::Zero)
+            .rules
+            .len();
+        let shadowed = filter_coverage_by_diagnostic(&src, CoverageFilter::Shadowed)
+            .rules
+            .len();
+        let healthy = filter_coverage_by_diagnostic(&src, CoverageFilter::Healthy)
+            .rules
+            .len();
+        assert_eq!(dead, env.dead_rule_count);
+        assert_eq!(zero, env.zero_coverage_rule_count);
+        assert_eq!(shadowed, env.shadowed_rule_count);
+        assert_eq!(dead + zero + shadowed + healthy, env.rule_count);
+    }
+
+    #[test]
+    fn filter_slug_round_trips_for_all_variants() {
+        // The slug is the wire-level discriminator the filename
+        // helper (TS) and the JSON tag rely on; pin every variant so
+        // a careless rename breaks the test, not paralegal exports.
+        assert_eq!(CoverageFilter::All.slug(), "all");
+        assert_eq!(CoverageFilter::Dead.slug(), "dead");
+        assert_eq!(CoverageFilter::Zero.slug(), "zero");
+        assert_eq!(CoverageFilter::Shadowed.slug(), "shadowed");
+        assert_eq!(CoverageFilter::Healthy.slug(), "healthy");
+    }
+
+    #[test]
+    fn filter_does_not_mutate_input_report() {
+        // Pure function — the filter must not edit the source report
+        // even though both share the same `Vec` backing in many call
+        // sites. A clone-on-filter regression that mutated in place
+        // would break the UI's "switch back to All" path.
+        let src = mixed_diagnostic_report();
+        let snapshot = src.clone();
+        let _ = filter_coverage_by_diagnostic(&src, CoverageFilter::Dead);
+        assert_eq!(src, snapshot);
     }
 }
