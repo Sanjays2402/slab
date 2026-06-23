@@ -57,6 +57,10 @@
     describeSkipReason,
     worstReorderConfidence,
     describeProposalBatch,
+    captureUndoEntry,
+    computeUndoStatus,
+    describeUndoStatus,
+    summarizeReorderEffect,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -71,6 +75,7 @@
     type CoverageDiagnosticFilter,
     type ReorderProposal,
     type ReorderProposalConfidence,
+    type ReorderUndoEntry,
     type SampleBucket,
     type SampleDrilldown,
   } from "$lib/hopper";
@@ -532,6 +537,10 @@
     fixItBusy = true;
     openFixAll = false;
     rules = outcome.rules;
+    // Slice 147 — stash the pre-apply snapshot for the undo button.
+    // The label discriminates fix-all vs fix-it in the staleness
+    // tooltip ("3 rules added since fix-all").
+    stashUndoSnapshot(prev, outcome.rules, "fix-all");
     try {
       await slabHopperSetRules(watchId, outcome.rules);
       savedAt = Date.now();
@@ -545,6 +554,8 @@
       if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
       coverageExportToastTimer = setTimeout(() => {
         coverageExportToast = null;
+        // Slice 147 — undo affordance dwells with the toast.
+        undoEntry = null;
       }, 4_000);
       // Surface per-skipped-proposal reasons via console.info so a
       // power user with the devtools open can audit a partial batch.
@@ -574,6 +585,104 @@
    *  (the button is hidden in that case so this is unused, but
    *  defined as empty for type stability). */
   let fixAllBreakdown = $derived.by(() => describeProposalBatch(reorderProposals));
+
+  // -------------------------------------------------------------------
+  // v3.40 Slice 147 — Undo for fix-it / fix-all (round-30)
+  // -------------------------------------------------------------------
+  //
+  // Round 29 closed the "fix one / fix all" loop but left users
+  // without a graceful retreat. A paralegal who clicked "Fix all"
+  // and immediately realised the chain was better in its prior
+  // order had to manually re-drag every moved rule back — exactly
+  // the friction the batch button was supposed to eliminate.
+  //
+  // Slice 147 surfaces an Undo button INLINE on the cov-export-toast
+  // surface that piggybacks on the existing 4s toast dwell. While
+  // the toast is visible, an "Undo · Move N rules back" button
+  // appears alongside the success copy; clicking it captures the
+  // current chain, reverts to the snapshot stashed by the apply,
+  // and persists via the same slabHopperSetRules path.
+  //
+  // Staleness gate (slice 146): if the user manually added/removed/
+  // renamed a rule between apply and undo, the button renders as a
+  // disabled "Undo unavailable — N rules added since fix-all" badge
+  // with a tooltip explaining why. Pure-permutation drift is fine
+  // (manual moves are reversed alongside the fix); add/remove/rename
+  // would silently drop the new rule and we refuse.
+
+  /** The most recent undo entry — snapshot of the chain BEFORE a
+   *  fix-it / fix-all apply, plus label + breadcrumb. Set at
+   *  capture time (inside applyFixIt / applyFixAll), cleared when
+   *  the toast fades or the user clicks Undo successfully.
+   *  Pinned to one most-recent entry (no undo stack) because the
+   *  toast surface only carries one affordance at a time. */
+  let undoEntry = $state<ReorderUndoEntry | null>(null);
+
+  /** $derived live undo status against the current rules array.
+   *  Recomputes reactively on every rules mutation so the button
+   *  copy / staleness reason refresh in real time. */
+  let undoStatus = $derived.by(() => {
+    if (undoEntry === null) return null;
+    return computeUndoStatus(undoEntry, rules);
+  });
+
+  /** $derived button copy from the live status. Empty string when
+   *  there's no entry. */
+  let undoLabel = $derived.by(() => {
+    if (undoStatus === null) return "";
+    return describeUndoStatus(undoStatus);
+  });
+
+  /** Busy gate for the undo apply — prevents a second click while
+   *  the persist round-trip is in flight. */
+  let undoBusy = $state(false);
+
+  /** Apply the undo: revert the chain to the snapshot stashed by
+   *  the most-recent fix-it / fix-all apply. Optimistic: the chain
+   *  updates locally first, then slabHopperSetRules persists. On
+   *  failure the chain rolls back AND the entry stays so the user
+   *  can retry. On success the entry clears + the toast updates
+   *  to "Reverted N rules" (sharing the cov-export-toast surface). */
+  async function applyUndo() {
+    if (undoBusy) return;
+    if (undoEntry === null) return;
+    if (undoStatus === null || undoStatus.kind !== "ready") return;
+    const prev = rules;
+    const snapshot = undoEntry.snapshot;
+    undoBusy = true;
+    rules = snapshot.slice();
+    try {
+      await slabHopperSetRules(watchId, snapshot);
+      savedAt = Date.now();
+      schedulePreview();
+      scheduleCoverage();
+      // Replace the toast copy with a confirmation; the entry
+      // clears so the button disappears (snapshot is now stale
+      // against the just-undone chain).
+      const movedCount = undoStatus.effect.moved.length;
+      const ruleNoun = movedCount === 1 ? "rule" : "rules";
+      coverageExportToast = `Reverted ${movedCount} ${ruleNoun}`;
+      if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
+      coverageExportToastTimer = setTimeout(() => {
+        coverageExportToast = null;
+        undoEntry = null;
+      }, 4_000);
+      undoEntry = null;
+    } catch (e) {
+      rules = prev;
+      errorMsg = `Undo failed: ${String(e)}`;
+    } finally {
+      undoBusy = false;
+    }
+  }
+
+  /** Snapshot helper called from applyFixIt / applyFixAll right
+   *  before the optimistic chain update. Pre-computes the entry's
+   *  appliedEffect so a scripted-audit consumer reading undoEntry
+   *  gets a fully-formed breadcrumb. */
+  function stashUndoSnapshot(before: Rule[], after: Rule[], label: string) {
+    undoEntry = captureUndoEntry(before, after, label);
+  }
 
   /** Open the fix-it confirm popover for a given dead rule index.
    *  Auto-closes the drilldown popover + coverage Export menu (the
@@ -615,6 +724,10 @@
     fixItBusy = true;
     openFixIt = null;
     rules = next;
+    // Slice 147 — stash the pre-apply snapshot for the undo button.
+    // Label is "fix-it: <rule name>" so the staleness tooltip says
+    // "1 rule added since fix-it: Tax".
+    stashUndoSnapshot(prev, next, `fix-it: ${proposal.rule_name || `#${proposal.rule_index + 1}`}`);
     try {
       await slabHopperSetRules(watchId, next);
       savedAt = Date.now();
@@ -628,6 +741,8 @@
       if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
       coverageExportToastTimer = setTimeout(() => {
         coverageExportToast = null;
+        // Slice 147 — undo affordance dwells with the toast.
+        undoEntry = null;
       }, 4_000);
     } catch (e) {
       rules = prev;
@@ -798,6 +913,9 @@
     if (coverageExporting) return;
     coverageExporting = true;
     coverageExportToast = null;
+    // Slice 147 — clear any pending undo affordance; export
+    // toasts shouldn't carry a fix-it / fix-all undo button.
+    undoEntry = null;
     try {
       const defaultPath = suggestCoverageExportFilename({
         watchId,
@@ -1423,7 +1541,32 @@
         </div>
       </header>
       {#if coverageExportToast}
-        <p class="cov-export-toast" role="status">{coverageExportToast}</p>
+        <div class="cov-toast-row">
+          <p class="cov-export-toast" role="status">{coverageExportToast}</p>
+          {#if undoStatus !== null}
+            {#if undoStatus.kind === "ready"}
+              <button
+                type="button"
+                class="cov-undo-btn"
+                onclick={applyUndo}
+                disabled={undoBusy}
+                title={undoLabel}
+                aria-label={undoLabel}
+              >
+                {undoLabel}
+              </button>
+            {:else if undoStatus.kind === "stale"}
+              <span
+                class="cov-undo-stale"
+                role="status"
+                title={undoLabel}
+                aria-label={undoLabel}
+              >
+                {undoLabel}
+              </span>
+            {/if}
+          {/if}
+        </div>
       {/if}
 
       {#if coverageError}
@@ -2450,6 +2593,68 @@
   @keyframes cov-export-toast-fade-in {
     from { opacity: 0; transform: translateY(-2px); }
     to   { opacity: 1; transform: translateY(0); }
+  }
+  /* Slice 147 — Undo affordance row.
+   * Wraps the cov-export-toast + the Undo button (or stale badge)
+   * in a single flex row so the button anchors to the toast's
+   * right edge with consistent spacing. The toast still carries
+   * its own margin-bottom (the row inherits it via the toast's
+   * own box). */
+  .cov-toast-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .cov-toast-row .cov-export-toast {
+    flex: 1 1 auto;
+    margin: 0;
+  }
+  .cov-undo-btn {
+    flex: 0 0 auto;
+    padding: 0 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgb(180, 235, 200);
+    background: rgba(110, 220, 154, 0.14);
+    border: 1px solid rgba(110, 220, 154, 0.32);
+    border-radius: 6px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+    animation: cov-export-toast-fade-in 0.18s ease-out;
+  }
+  .cov-undo-btn:hover {
+    background: rgba(110, 220, 154, 0.22);
+    border-color: rgba(110, 220, 154, 0.48);
+    transform: translateY(-1px);
+  }
+  .cov-undo-btn:active {
+    transform: translateY(0);
+    background: rgba(110, 220, 154, 0.3);
+  }
+  .cov-undo-btn:focus-visible {
+    outline: 2px solid rgba(110, 220, 154, 0.6);
+    outline-offset: 1px;
+  }
+  .cov-undo-btn:disabled {
+    opacity: 0.55;
+    cursor: progress;
+    transform: none;
+  }
+  .cov-undo-stale {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 11px;
+    color: rgba(255, 220, 160, 0.85);
+    background: rgba(255, 200, 120, 0.08);
+    border: 1px solid rgba(255, 200, 120, 0.24);
+    border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+    animation: cov-export-toast-fade-in 0.18s ease-out;
   }
 
   .cov-error {
