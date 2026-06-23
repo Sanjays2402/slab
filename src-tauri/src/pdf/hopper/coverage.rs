@@ -570,6 +570,140 @@ fn drilldown_iso8601_utc(unix_seconds: i64) -> String {
         .unwrap_or_default()
 }
 
+// ─── Slice 123 — rule coverage CSV export primitive ──────────────────
+//
+// The drilldown popover has shipped CSV + JSON export since round 19
+// (slices 88-94), but the parent coverage panel — the surface that
+// holds the per-rule first_match / would_match counts plus the
+// fall-through count — has no export of its own. A paralegal building
+// a 6-rule chain who wants to email "here's the coverage report for
+// last 100 runs" to a partner still has to screenshot the panel; the
+// drilldown CSV only carries the files in ONE bucket, not the per-
+// rule routing decision summary.
+//
+// This primitive fills the gap with a pure-data RFC-4180 serialiser
+// that turns a [`RuleCoverageReport`] into a per-row CSV table. One
+// row per rule + one trailing "fall-through" row so the export is a
+// complete picture of where every sample went. Same RFC-4180 escape
+// policy as [`sample_drilldown_to_csv`] (slice 88) and
+// [`crate::pdf::hopper::backfill::backfill_report_to_csv`] (slice 13)
+// — paralegals see one consistent CSV idiom across the audit surfaces.
+//
+// Columns:
+//   index          — 0-based rule index, blank on the fall-through row
+//   name           — rule display name, "Fall-through" on the synth row
+//   first_match    — actual routing volume at this rule's position
+//   would_match    — predicate matches in isolation (blank on fall-through)
+//   first_match_pct — first_match / total_samples * 100, two decimals
+//   diagnostic     — "" / "dead" / "shadowed" / "zero" / "fallthrough"
+//
+// `first_match_pct` is denormalised onto every row so the consumer
+// reads "this rule routed 23.45% of runs" without re-computing the
+// ratio against the report's `total_samples`. We render to two
+// decimal places so a chain of small percentages (5.12%, 3.84%)
+// stays legible without losing precision the panel's rounded
+// summary line throws away.
+//
+// `diagnostic` mirrors the TS [`ruleCoverageDiagnostic`] helper plus
+// a synthetic `"fallthrough"` value for the trailing row. A consumer
+// loading the CSV into a notebook gets the same chain-health story
+// the in-app panel renders, without having to re-derive it from
+// raw counts.
+
+/// Header row for [`rule_coverage_to_csv`]. Pub so tests +
+/// downstream consumers (a future bulk-export composer) can lock
+/// onto a stable column order rather than re-parse the first line.
+pub const RULE_COVERAGE_CSV_HEADER: &str =
+    "index,name,first_match,would_match,first_match_pct,diagnostic";
+
+/// Render a [`RuleCoverageReport`] as RFC-4180-compliant CSV.
+///
+/// Emits one row per rule in the report's input order, plus one
+/// trailing synthetic row for the fall-through bucket so the export
+/// accounts for every sample. Total rows == `report.rules.len() + 1`
+/// (the fall-through row is emitted even when its count is zero —
+/// "no fall-through" is a real audit signal worth recording).
+///
+/// `include_header` opt-in matches the sibling exporters
+/// ([`sample_drilldown_to_csv`], [`super::backfill::backfill_report_to_csv`])
+/// — append-to-existing-audit-log workflows suppress the header so
+/// the second export doesn't insert a stray header mid-file.
+///
+/// Pure function — never touches the filesystem; the Tauri command
+/// layer owns disk I/O.
+pub fn rule_coverage_to_csv(report: &RuleCoverageReport, include_header: bool) -> String {
+    let mut out = String::new();
+    if include_header {
+        out.push_str(RULE_COVERAGE_CSV_HEADER);
+        out.push('\n');
+    }
+    let total = report.total_samples;
+    for r in &report.rules {
+        let pct = pct_two_decimal(r.first_match, total);
+        let diag = coverage_diagnostic_str(r);
+        let row = [
+            r.index.to_string(),
+            csv_escape(&r.name),
+            r.first_match.to_string(),
+            r.would_match.to_string(),
+            pct,
+            diag.to_string(),
+        ];
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    // Synthetic fall-through row. The index column is blank (the
+    // fall-through is not a numbered rule), `would_match` is blank
+    // (there's no predicate to evaluate in isolation), and the
+    // diagnostic is the literal "fallthrough" so a consumer can
+    // grep for the bucket without parsing the empty index column.
+    let ft_pct = pct_two_decimal(report.fallthrough, total);
+    let ft_row = [
+        String::new(),
+        csv_escape("Fall-through"),
+        report.fallthrough.to_string(),
+        String::new(),
+        ft_pct,
+        "fallthrough".to_string(),
+    ];
+    out.push_str(&ft_row.join(","));
+    out.push('\n');
+    out
+}
+
+/// Render a percentage as a two-decimal string (`"23.45"`).
+/// Denominator zero returns `"0.00"` so a report with no samples
+/// emits a self-consistent zero column rather than `"NaN"`.
+fn pct_two_decimal(numerator: u64, denominator: u64) -> String {
+    if denominator == 0 {
+        return "0.00".to_string();
+    }
+    let pct = (numerator as f64) * 100.0 / (denominator as f64);
+    format!("{pct:.2}")
+}
+
+/// Diagnostic discriminator for one rule's coverage row. Returns
+/// `""` when the rule is "healthy" (some samples routed via this
+/// rule, no shadowing). Mirrors the TS [`ruleCoverageDiagnostic`]
+/// helper's priority chain:
+///
+/// 1. `dead`     — never wins at this position but would win earlier
+/// 2. `zero`     — predicate matches no sample at all
+/// 3. `shadowed` — partially shadowed (would_match > first_match)
+/// 4. `""`       — healthy
+fn coverage_diagnostic_str(rule: &RuleCoverage) -> &'static str {
+    if rule.dead_at_position {
+        return "dead";
+    }
+    if rule.would_match == 0 {
+        return "zero";
+    }
+    if rule.would_match > rule.first_match {
+        return "shadowed";
+    }
+    ""
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1671,5 +1805,184 @@ mod tests {
             let kind_from_serde = json.get("kind").and_then(|v| v.as_str()).unwrap_or("");
             assert_eq!(kind_from_serde, expected_kind);
         }
+    }
+
+    // ── Slice 123 — rule_coverage_to_csv ──────────────────────────────
+
+    fn coverage(
+        rules: Vec<RuleCoverage>,
+        fallthrough: u64,
+        total_samples: u64,
+    ) -> RuleCoverageReport {
+        RuleCoverageReport {
+            rules,
+            fallthrough,
+            total_samples,
+        }
+    }
+
+    fn cov_row(
+        index: usize,
+        name: &str,
+        first_match: u64,
+        would_match: u64,
+        dead_at_position: bool,
+    ) -> RuleCoverage {
+        RuleCoverage {
+            index,
+            name: name.into(),
+            first_match,
+            would_match,
+            dead_at_position,
+        }
+    }
+
+    #[test]
+    fn coverage_csv_header_opt_in_round_trips() {
+        let report = coverage(vec![cov_row(0, "Tax", 3, 5, false)], 2, 10);
+        let with_header = rule_coverage_to_csv(&report, true);
+        let bare = rule_coverage_to_csv(&report, false);
+        assert!(with_header.starts_with(RULE_COVERAGE_CSV_HEADER));
+        assert!(!bare.starts_with(RULE_COVERAGE_CSV_HEADER));
+        // Same body when header is suppressed.
+        let header_with_newline = format!("{}\n", RULE_COVERAGE_CSV_HEADER);
+        let suffix = with_header.strip_prefix(&header_with_newline).unwrap();
+        assert_eq!(suffix, bare);
+    }
+
+    #[test]
+    fn coverage_csv_emits_one_row_per_rule_plus_fallthrough() {
+        let report = coverage(
+            vec![
+                cov_row(0, "Tax", 3, 3, false),
+                cov_row(1, "Invoice", 4, 4, false),
+            ],
+            3,
+            10,
+        );
+        let csv = rule_coverage_to_csv(&report, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        // 2 rules + 1 fall-through row.
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].starts_with("0,Tax,"));
+        assert!(lines[1].starts_with("1,Invoice,"));
+        // Fall-through row has empty index + 'Fall-through' label.
+        assert!(lines[2].starts_with(",Fall-through,3,"));
+    }
+
+    #[test]
+    fn coverage_csv_fallthrough_row_emitted_even_when_zero() {
+        // An export with no fall-through is STILL more useful than
+        // an export that silently drops the row — the explicit zero
+        // row tells a downstream reader "no fall-through" rather than
+        // "the export forgot the fall-through bucket".
+        let report = coverage(vec![cov_row(0, "Always", 10, 10, false)], 0, 10);
+        let csv = rule_coverage_to_csv(&report, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].starts_with(",Fall-through,0,"));
+        assert!(lines[1].ends_with(",fallthrough"));
+    }
+
+    #[test]
+    fn coverage_csv_first_match_pct_is_two_decimals() {
+        // 3/7 = 42.857142...; expect "42.86" (rounded, two decimals).
+        let report = coverage(vec![cov_row(0, "Tax", 3, 3, false)], 4, 7);
+        let csv = rule_coverage_to_csv(&report, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        // index,name,first_match,would_match,first_match_pct,diagnostic
+        let tax_cols: Vec<&str> = lines[0].split(',').collect();
+        assert_eq!(tax_cols[4], "42.86");
+        // Fall-through pct: 4/7 = 57.14...
+        let ft_cols: Vec<&str> = lines[1].split(',').collect();
+        assert_eq!(ft_cols[4], "57.14");
+    }
+
+    #[test]
+    fn coverage_csv_zero_total_samples_emits_zero_zero_pct() {
+        // Pinning the divide-by-zero guard: an empty report's pct
+        // column reads "0.00" (NOT "NaN").
+        let report = coverage(vec![cov_row(0, "Tax", 0, 0, false)], 0, 0);
+        let csv = rule_coverage_to_csv(&report, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        let tax_cols: Vec<&str> = lines[0].split(',').collect();
+        assert_eq!(tax_cols[4], "0.00");
+        let ft_cols: Vec<&str> = lines[1].split(',').collect();
+        assert_eq!(ft_cols[4], "0.00");
+    }
+
+    #[test]
+    fn coverage_csv_diagnostic_classifies_priority_chain() {
+        let report = coverage(
+            vec![
+                // healthy: would_match == first_match > 0
+                cov_row(0, "Healthy", 5, 5, false),
+                // shadowed: would_match > first_match, NOT dead
+                cov_row(1, "Shadowed", 2, 4, false),
+                // zero: would_match == 0
+                cov_row(2, "Zero", 0, 0, false),
+                // dead: dead_at_position takes priority
+                cov_row(3, "Dead", 0, 3, true),
+            ],
+            1,
+            10,
+        );
+        let csv = rule_coverage_to_csv(&report, false);
+        let diagnostics: Vec<&str> = csv
+            .lines()
+            .map(|l| l.split(',').next_back().unwrap())
+            .collect();
+        assert_eq!(
+            diagnostics,
+            vec!["", "shadowed", "zero", "dead", "fallthrough"]
+        );
+    }
+
+    #[test]
+    fn coverage_csv_rfc4180_escapes_name_with_comma_and_quote() {
+        let report = coverage(vec![cov_row(0, "Tax, 2026 \"draft\"", 1, 1, false)], 0, 1);
+        let csv = rule_coverage_to_csv(&report, false);
+        // Quoted with internal quotes doubled.
+        assert!(csv.contains("\"Tax, 2026 \"\"draft\"\"\""));
+    }
+
+    #[test]
+    fn coverage_csv_empty_report_still_emits_fallthrough_row() {
+        // An empty rule chain (no rules) should still produce a one-
+        // line CSV with the fall-through bucket so the export is
+        // shaped correctly for a downstream reader.
+        let report = coverage(vec![], 0, 0);
+        let csv = rule_coverage_to_csv(&report, false);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with(",Fall-through,0,"));
+    }
+
+    #[test]
+    fn coverage_csv_column_count_matches_header_length() {
+        // Lock onto a stable column count so a future header bump
+        // surfaces a missing column on every row in one test.
+        let report = coverage(vec![cov_row(0, "Tax", 3, 5, false)], 2, 10);
+        let csv = rule_coverage_to_csv(&report, true);
+        let header_cols = RULE_COVERAGE_CSV_HEADER.split(',').count();
+        for line in csv.lines() {
+            // Naive split is fine here — no escaped commas in this fixture.
+            let cols = line.split(',').count();
+            assert_eq!(cols, header_cols, "wrong col count on line: {line}");
+        }
+    }
+
+    #[test]
+    fn coverage_csv_diagnostic_dead_wins_over_zero_when_both_would_apply() {
+        // Edge case: dead_at_position=true with would_match=0 (the
+        // dead flag should NOT be set this way in practice, but the
+        // helper's priority chain says dead wins). Pin the contract.
+        let report = coverage(vec![cov_row(0, "DeadAndZero", 0, 0, true)], 0, 1);
+        let csv = rule_coverage_to_csv(&report, false);
+        let diagnostics: Vec<&str> = csv
+            .lines()
+            .map(|l| l.split(',').next_back().unwrap())
+            .collect();
+        assert_eq!(diagnostics[0], "dead");
     }
 }
