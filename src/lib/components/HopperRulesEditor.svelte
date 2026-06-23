@@ -44,6 +44,10 @@
     sampleBucketEquals,
     describeDrilldown,
     describeBucket,
+    filterCoverageByDiagnostic,
+    coverageHealthClickTarget,
+    formatCoverageFilterSummary,
+    COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
     emptyPredicate,
@@ -54,6 +58,7 @@
     type RulePredicate,
     type RuleTestResult,
     type RuleCoverageReport,
+    type CoverageDiagnosticFilter,
     type SampleBucket,
     type SampleDrilldown,
   } from "$lib/hopper";
@@ -297,6 +302,78 @@
     coverage ? summarizeCoverageHealth(coverage) : null,
   );
 
+  /** v3.40 Slice 132 — diagnostic filter state for the coverage
+   *  panel. The user clicks the chain-health chip (or a filter chip
+   *  in the cov-filters row) to narrow the rule list to one
+   *  diagnostic kind. State: `"all"` shows every rule (the default;
+   *  no filter active); `"dead"` / `"shadowed"` / `"zero"` /
+   *  `"healthy"` narrows to that bucket.
+   *
+   *  Driven through `setCoverageFilter` so all set-paths (chip
+   *  click, filter chip click, Escape clear) share validation +
+   *  exporter-menu dismissal. Cleared automatically when the chain
+   *  has no rules (filter would be meaningless on an empty chain). */
+  let coverageFilter = $state<CoverageDiagnosticFilter>("all");
+
+  /** v3.40 Slice 132 — click target for the chain-health chip.
+   *  Reactive over `coverageHealth` so a rule edit that flips the
+   *  chip's kind (e.g. a freshly-shadowed rule promotes warn -> warn-
+   *  shadowed) updates the click target without the chip's click
+   *  handler having to re-derive it. Null disables the click. */
+  let coverageHealthTarget = $derived.by(() =>
+    coverageHealthClickTarget(coverageHealth),
+  );
+
+  /** v3.40 Slice 132 — the report the per-rule list actually renders.
+   *  Identity transform when filter === "all" (the panel reads the
+   *  raw coverage); a narrowing filter swaps in a filtered report
+   *  with `fallthrough` + `total_samples` preserved so the bars
+   *  beneath the per-rule rows + the fall-through synthetic row
+   *  still reflect the underlying chain run. */
+  let displayedCoverage = $derived.by(() => {
+    if (coverage === null) return null;
+    if (coverageFilter === "all") return coverage;
+    return filterCoverageByDiagnostic(coverage, coverageFilter);
+  });
+
+  /** v3.40 Slice 132 — copy for the cov-filter sub-line.
+   *  Renders "Showing all 6 rules" / "Showing 2 of 6 rules — dead" /
+   *  "Showing 0 of 6 rules — dead" etc. via the slice-129 helper. */
+  let coverageFilterSummary = $derived.by(() => {
+    if (coverage === null) return "";
+    return formatCoverageFilterSummary(
+      coverageFilter,
+      displayedCoverage?.rules.length ?? 0,
+      coverage.rules.length,
+    );
+  });
+
+  /** v3.40 Slice 132 — set the active diagnostic filter. Validates
+   *  the input + auto-closes the export menu (the menu's text says
+   *  "Export N rules" — the count is about to change). Setting the
+   *  same filter twice is a no-op. */
+  function setCoverageFilter(next: CoverageDiagnosticFilter) {
+    if (next === coverageFilter) return;
+    coverageFilter = next;
+    coverageExportMenuOpen = false;
+  }
+
+  /** v3.40 Slice 132 — clear the active filter (reset to "all").
+   *  Used by the Clear button + the Escape chain. */
+  function clearCoverageFilter() {
+    setCoverageFilter("all");
+  }
+
+  /** v3.40 Slice 132 — handle a click on the chain-health chip.
+   *  Routes through coverageHealthClickTarget (slice 131) so the
+   *  Svelte component never knows the priority chain — the helper
+   *  owns the dead > shadowed > zero ordering. No-op when the
+   *  target is null (healthy / empty / warn-only-fall-through). */
+  function clickCoverageHealth() {
+    if (coverageHealthTarget === null) return;
+    setCoverageFilter(coverageHealthTarget);
+  }
+
   // -------------------------------------------------------------------
   // v3.40 Slice 86 — sample drilldown
   // -------------------------------------------------------------------
@@ -449,12 +526,23 @@
   async function exportCoverage(format: "csv" | "json") {
     if (coverage === null) return;
     if (coverageExporting) return;
+    // Slice 132: the filtered view IS what gets exported — "export
+    // what's visible" semantics match the existing
+    // exportDrilldown behaviour (slices 91/96), and the filename
+    // slug + the file's per-rule rows agree on what bucket of
+    // rules they contain.
+    const reportToExport = displayedCoverage ?? coverage;
+    if (coverageExporting) return;
     coverageExporting = true;
     coverageExportToast = null;
     try {
       const defaultPath = suggestCoverageExportFilename({
         watchId,
         ext: format,
+        // Slice 132: pin the filter slug into the filename when a
+        // narrowing filter is active. "all" omits the slot for
+        // back-compat with round-26 export filenames.
+        filter: coverageFilter,
       });
       const filterName = format === "csv" ? "CSV" : "JSON";
       const title =
@@ -469,17 +557,19 @@
       if (!target) return; // user cancelled
       const bytes =
         format === "csv"
-          ? await slabHopperExportCoverageCsv(coverage, target)
-          : await slabHopperExportCoverageJson(coverage, target);
+          ? await slabHopperExportCoverageCsv(reportToExport, target)
+          : await slabHopperExportCoverageJson(reportToExport, target);
       // Count rules in the body; the fall-through synthetic row is
       // implicit (the CSV adds it, the JSON envelope carries
       // fallthrough_count). Toast reads "rules" rather than "rows"
       // so the user knows what they exported without parsing the
       // file.
-      const ruleCount = coverage.rules.length;
+      const ruleCount = reportToExport.rules.length;
       const ruleNoun = ruleCount === 1 ? "rule" : "rules";
+      const filterSuffix =
+        coverageFilter === "all" ? "" : ` (filtered: ${coverageFilter})`;
       coverageExportToast =
-        `Exported ${ruleCount} ${ruleNoun} as ${filterName} (${formatBytes(bytes)})`;
+        `Exported ${ruleCount} ${ruleNoun} as ${filterName} (${formatBytes(bytes)})${filterSuffix}`;
       coverageExportMenuOpen = false;
       if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
       coverageExportToastTimer = setTimeout(() => {
@@ -512,7 +602,14 @@
    *  Slice 127: the coverage Export… popover is ALSO dismissed on
    *  Escape, taking priority over the drilldown popover so a user
    *  who opened both gets the most-recently-opened one closed first
-   *  (Notion-style stacked-overlay chain). */
+   *  (Notion-style stacked-overlay chain).
+   *
+   *  Slice 132: the coverage filter clears LAST on Escape — after
+   *  any open popover or drilldown is dismissed. A user with a
+   *  filter active + an Export menu open hits Escape -> menu closes
+   *  first; second Escape -> filter clears. The filter is the
+   *  least-modal of the three states (it persists across rule
+   *  edits), so it's the deepest stack entry. */
   function onWindowKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
     if (coverageExportMenuOpen) {
@@ -523,6 +620,11 @@
     if (openBucket !== null) {
       e.stopPropagation();
       closeDrilldown();
+      return;
+    }
+    if (coverageFilter !== "all") {
+      e.stopPropagation();
+      clearCoverageFilter();
     }
   }
 
@@ -889,14 +991,30 @@
             {coverage ? summarizeCoverage(coverage) : "Loading…"}
           </span>
           {#if coverageHealth && coverageHealth.kind !== "empty"}
-            <span
-              class="cov-health"
-              class:healthy={coverageHealth.kind === "healthy"}
-              class:warn={coverageHealth.kind === "warn"}
-              class:critical={coverageHealth.kind === "critical"}
-              title={coverageHealth.text}
-              aria-label="Chain health: {coverageHealth.text}"
-            >{coverageHealth.text}</span>
+            {#if coverageHealthTarget !== null}
+              <button
+                type="button"
+                class="cov-health cov-health-btn"
+                class:healthy={coverageHealth.kind === "healthy"}
+                class:warn={coverageHealth.kind === "warn"}
+                class:critical={coverageHealth.kind === "critical"}
+                class:active={coverageFilter === coverageHealthTarget}
+                title={coverageFilter === coverageHealthTarget
+                  ? `Clear ${coverageHealthTarget}-rule filter`
+                  : `Show only ${coverageHealthTarget} rules — ${coverageHealth.text}`}
+                aria-label="Chain health: {coverageHealth.text}. Click to filter to {coverageHealthTarget} rules."
+                onclick={clickCoverageHealth}
+              >{coverageHealth.text}</button>
+            {:else}
+              <span
+                class="cov-health"
+                class:healthy={coverageHealth.kind === "healthy"}
+                class:warn={coverageHealth.kind === "warn"}
+                class:critical={coverageHealth.kind === "critical"}
+                title={coverageHealth.text}
+                aria-label="Chain health: {coverageHealth.text}"
+              >{coverageHealth.text}</span>
+            {/if}
           {/if}
           {#if coverageLoading}
             <span class="dot"></span>
@@ -979,8 +1097,53 @@
             defaults. Add a rule above to start routing.
           </div>
         {:else}
-          <ul class="cov-list">
-            {#each coverage.rules as row (row.index)}
+          <!-- Slice 132 — diagnostic filter row. The chain-health
+               chip (above) is the one-click affordance; this row
+               surfaces the explicit "narrow to" controls + the
+               clear button. Always visible when the chain has any
+               rules so a user can audit by diagnostic kind even on
+               a "healthy" chain (e.g. before-and-after a rule edit). -->
+          <div class="cov-filters" role="group" aria-label="Filter rules by diagnostic">
+            {#each COVERAGE_FILTER_KINDS as kind (kind)}
+              {@const k = kind as CoverageDiagnosticFilter}
+              <button
+                type="button"
+                class="cov-filter-chip"
+                class:active={coverageFilter === k}
+                onclick={() => setCoverageFilter(k)}
+                title={k === "all"
+                  ? "Show every rule in the chain"
+                  : `Narrow to rules whose diagnostic is "${k}"`}
+                aria-pressed={coverageFilter === k}
+              >{k === "all" ? "All" : k.charAt(0).toUpperCase() + k.slice(1)}</button>
+            {/each}
+            <span class="cov-filter-summary" aria-live="polite">
+              {coverageFilterSummary}
+            </span>
+            {#if coverageFilter !== "all"}
+              <button
+                type="button"
+                class="cov-filter-clear"
+                onclick={clearCoverageFilter}
+                title="Reset to show every rule (Esc)"
+              >Clear filter</button>
+            {/if}
+          </div>
+          {#if displayedCoverage && displayedCoverage.rules.length === 0}
+            <div class="cov-empty cov-empty-filter">
+              No rules match the
+              <strong>{coverageFilter}</strong> filter — every rule
+              is in a different diagnostic bucket. Try another
+              filter, or
+              <button
+                type="button"
+                class="link"
+                onclick={clearCoverageFilter}
+              >clear the filter</button>.
+            </div>
+          {/if}
+          <ul class="cov-list" class:filtered={coverageFilter !== "all"}>
+            {#each displayedCoverage?.rules ?? [] as row (row.index)}
               {@const diagnostic = ruleCoverageDiagnostic(row)}
               {@const firstPct = ruleMatchPercent(row, coverage)}
               {@const wouldPct = coverage.total_samples
@@ -1046,7 +1209,16 @@
                 {/if}
               </li>
             {/each}
-            <li class="cov-row-wrap">
+            {#if coverageFilter === "all"}
+              <!-- Slice 132 — fall-through synthetic row only renders
+                   when the diagnostic filter is "all". A narrowing
+                   filter narrows to RULES, and the fall-through is
+                   not a rule bucket — hiding it while filtered
+                   keeps the panel's focus on the user's question
+                   ("which rules are dead?") and avoids confusing
+                   the per-rule export filename's "_dead_" slug
+                   with the unrelated fall-through count. -->
+              <li class="cov-row-wrap">
               <button
                 type="button"
                 class="cov-row fallthrough"
@@ -1083,6 +1255,7 @@
                 </div>
               {/if}
             </li>
+            {/if}
           </ul>
           <p class="cov-legend">
             Solid bar = samples this rule actually routes (first-match).
@@ -1687,6 +1860,131 @@
     background: color-mix(in srgb, #ff5d6c 16%, transparent);
     border-color: color-mix(in srgb, #ff5d6c 38%, transparent);
     color: #ffb8be;
+  }
+
+  /* Slice 132 — chain-health chip as a button when clickable. The
+     chip stays styled as a chip (same color treatment via class:);
+     adding `cov-health-btn` overrides browser button defaults and
+     gives it a pointer cursor + an `active` state when the chip's
+     filter is currently selected. */
+  .cov-health-btn {
+    background: rgba(255, 255, 255, 0);
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+    /* Reset default button border so the class:critical/warn/healthy
+       color treatments take effect. */
+    border-style: solid;
+    border-width: 1px;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      transform 60ms ease;
+  }
+  .cov-health-btn:hover {
+    transform: translateY(-1px);
+  }
+  .cov-health-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, #7c8cff 60%, transparent);
+    outline-offset: 2px;
+  }
+  /* Filter-active chip — same color as the kind but with the
+     active ring so the user knows the click landed somewhere. */
+  .cov-health-btn.active {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  }
+
+  /* Slice 132 — diagnostic filter row. Inline row of chip-style
+     toggle buttons + the live "Showing X of Y" summary + a Clear
+     button when a narrowing filter is active. Sits above the
+     cov-list and below the cov-actions row. */
+  .cov-filters {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .cov-filter-chip {
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    text-transform: lowercase;
+    letter-spacing: 0.01em;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+  .cov-filter-chip:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.92);
+  }
+  .cov-filter-chip:focus-visible {
+    outline: 2px solid color-mix(in srgb, #7c8cff 60%, transparent);
+    outline-offset: 2px;
+  }
+  .cov-filter-chip.active {
+    background: color-mix(in srgb, #7c8cff 18%, transparent);
+    border-color: color-mix(in srgb, #7c8cff 42%, transparent);
+    color: #d4dcff;
+  }
+  .cov-filter-summary {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    margin-left: 4px;
+    /* push to next visual cluster on flex-wrap */
+    flex: 0 0 auto;
+  }
+  .cov-filter-clear {
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    margin-left: auto;
+  }
+  .cov-filter-clear:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.92);
+  }
+  /* Filtered list gets a subtle accent rail on the left so a user
+     glancing at the panel knows the list isn't the full chain. */
+  .cov-list.filtered {
+    border-left: 2px solid color-mix(in srgb, #7c8cff 38%, transparent);
+    padding-left: 6px;
+  }
+  /* Empty state when the filter has no matching rules — explains
+     what's happening + gives the clear-filter affordance inline. */
+  .cov-empty-filter {
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 8px;
+  }
+  .cov-empty-filter .link {
+    background: none;
+    border: none;
+    color: #b6c4ff;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    text-decoration: underline;
+  }
+  .cov-empty-filter .link:hover {
+    color: #d4dcff;
   }
 
   /* Slice 127 — Export popover anchor + menu. Same shape as the
