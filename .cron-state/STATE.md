@@ -1,13 +1,353 @@
 # Slab Cron State
 
-Last updated: 2026-06-22 18:35 PT by Cake (cron) — round-25 BATCH shipped: 5 slices closing one cohesive arc. Auto-prune run history (slices 118-122): schema v3->v4 install_log_auto_prune_runs(id, ran_at_unix, rows_removed, retain_days, cutoff_unix, overrides_applied, overrides_rows_removed) + ran_at_unix DESC index + four storage primitives record_auto_prune_run / auto_prune_runs(limit) DESC ran_at_unix with id DESC tie-break / auto_prune_runs_total / clear_auto_prune_runs idempotent DELETE (slice 118); auto_prune_if_due rewritten to record each Pruned outcome to history (even zero-row prunes — audit signal not silence) while Skipped outcomes do NOT record (debounce-window invariant) (slice 119); pure-data auto_prune_runs_to_csv(rows, include_header) -> String RFC-4180 8-column with ran_at_iso byte-equal to install-log CSV + AUTO_PRUNE_RUNS_CSV_HEADER pub const (slice 120); pure-data auto_prune_runs_to_json(rows) -> AutoPruneRunsExportEnvelope 6-field with pre-summed total_rows_removed + total_overrides_rows_removed across input runs + AUTO_PRUNE_RUNS_EXPORT_SCHEMA_VERSION=1 PARALLEL-versioned with all five sibling envelopes (slice 121); 4 Tauri commands (slab_marketplace_install_log_auto_prune_runs + _clear_auto_prune_runs + _export_auto_prune_runs_csv + _export_auto_prune_runs_json) + InstallLogAutoPruneOutcome TS extended with overrides_applied + overrides_rows_removed + TS surface (getAutoPruneRuns + clearAutoPruneRuns + exportAutoPruneRuns Csv/Json + suggestAutoPruneRunsExportFilename + formatAutoPruneAttributionToast) + nested history sub-block inside Retention section with count meta + Export… popover + danger-tinted Clear history button gated behind confirm dialog + per-row 4-column grid (when + count + 3-state attribution badge + window snapshot) + runAutoPruneNow toast upgraded to attribution-aware copy (slice 122).
+Last updated: 2026-06-22 21:30 PT by Cake (cron) — round-26 BATCH shipped: 5 slices closing one cohesive arc. Hopper rule coverage export (slices 123-127): rule_coverage_to_csv(report, include_header) -> String 6-column RFC-4180 with one-row-per-rule + trailing synthetic Fall-through row (emitted even when zero — audit signal not silence) + RULE_COVERAGE_CSV_HEADER pub const + private pct_two_decimal divide-by-zero guard + coverage_diagnostic_str mirroring TS ruleCoverageDiagnostic priority chain dead>zero>shadowed>healthy (slice 123); pure-data rule_coverage_to_json(report) -> RuleCoverageExportEnvelope 10-field with envelope-level chain-health totals pre-derived in ONE pass (dead_rule_count + shadowed_rule_count + zero_coverage_rule_count) + fallthrough_pct rounded to two decimals matching the CSV serialiser EXACTLY + RULE_COVERAGE_EXPORT_SCHEMA_VERSION = 1 PARALLEL-versioned with all seven sibling envelopes (slice 124); 2 Tauri commands (slab_hopper_export_coverage_csv + _json) wired into invoke handler + TS surface (slabHopperExportCoverageCsv + slabHopperExportCoverageJson async wrappers + suggestCoverageExportFilename emitting hopper-coverage_<watch>_<YYYY-MM-DD>.<ext> with NO per-bucket slot — chain-wide export) (slice 125); pure helper summarizeCoverageHealth(report, opts) -> CoverageHealth { kind, text, dead, shadowed, zero, fallthrough, fallthroughPct } with four mutually-exclusive priority-ordered kinds empty>critical>warn>healthy + pluralisation contract (slice 126); coverage panel Export… popover + 3-state chain-health chip (neutral healthy / warm warn / danger critical) inline beside the routed-percentage summary + exportCoverage(format) handler mirroring exportDrilldown shape + Escape chain extended with coverageExportMenuOpen first (Notion-style stacked dismissal) + scoped CSS for .cov-health + .cov-export-anchor + .cov-export-menu + .cov-export-toast (slice 127).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `614fc5d` — "feat(install-log): auto-prune run history UI with attribution toast".
+Latest commit: `4765bdf` — "feat(hopper): coverage panel Export menu with chain-health chip".
+
+### What round-26 (2026-06-22 21:30 PT) just shipped
+
+Five slices closing one cohesive arc. Before this tick the
+drilldown popover (slices 88-94) had CSV + JSON export but the
+parent coverage panel — which holds the per-rule first_match /
+would_match counts plus the fall-through count — had no export of
+its own. A paralegal building a 6-rule chain who wanted to email
+"here's the coverage report for last 100 runs" to a partner still
+had to screenshot the panel; the drilldown CSV only carries the
+files in ONE bucket, not the per-rule routing decision summary.
+Tonight that symmetry gap closes end-to-end: the CSV serialiser +
+JSON envelope on the backend, two Tauri commands + the TS
+client + filename helper, a pure-helper chain-health classifier
+composing per-row diagnostics into a chain-level summary, and the
+demo-able UI gluing everything together with a 3-state health
+chip beside the existing routed-percentage summary line + the
+Export… popover in the cov-actions row.
+
+Round 25's closing notes listed several next-subsystem
+candidates including Hopper-related polish; round 26 picked the
+coverage export gap because it was the structurally-cleanest
+5-layer arc available and closes a long-standing symmetry
+inconsistency (drilldown has export, coverage doesn't). The
+chain-health summary chip (slice 127) is the surprise — what
+started as "wire the export buttons" turned into "actually, the
+chain-health classification deserves chip-level surfacing because
+the existing per-row diagnostic chips bury the chain-level story".
+
+- Slice 123: rule coverage CSV export primitive (0411c36).
+  Pure-data RFC-4180 serialiser rule_coverage_to_csv(report,
+  include_header) -> String. 6 columns: index (blank on
+  fall-through synth row) + name ("Fall-through" on synth row) +
+  first_match + would_match (blank on fall-through synth row —
+  no predicate to evaluate in isolation) + first_match_pct
+  (denormalised onto every row as two-decimal-rounded string so
+  consumers don't re-compute the ratio) + diagnostic ("" /
+  "dead" / "shadowed" / "zero" / "fallthrough" — the literal
+  "fallthrough" lets a consumer grep for the bucket without
+  parsing the empty index column). RULE_COVERAGE_CSV_HEADER pub
+  const for tests + future reorder safety. Same include_header
+  opt-in + RFC-4180 escape policy as the four sibling exporters.
+  Two private helpers: pct_two_decimal(numerator, denominator)
+  divide-by-zero-guarded percentage serialiser ("0.00" not
+  "NaN" on empty corpus); coverage_diagnostic_str mirrors the
+  TS ruleCoverageDiagnostic helper's priority chain (dead >
+  zero > shadowed > healthy). The fall-through synth row is
+  emitted even when its count is zero — "no fall-through" is a
+  real audit signal worth recording, NOT silence.
+
+- Slice 124: rule coverage JSON export envelope primitive
+  (4fc6599). Pure-data rule_coverage_to_json(report) ->
+  RuleCoverageExportEnvelope 10-field envelope.
+  schema_version + generated_at_iso + total_samples +
+  fallthrough_count + fallthrough_pct (rounded to two decimals
+  matching the CSV serialiser EXACTLY so a consumer cross-
+  referencing CSV + JSON exports of the same report sees
+  identical percentages, not 42.86 vs 42.857142857142854) +
+  rule_count + dead_rule_count + shadowed_rule_count +
+  zero_coverage_rule_count + rules. The three diagnostic count
+  fields are classified in ONE pass during envelope construction
+  matching the CSV priority chain (mutually exclusive — a rule
+  contributes to AT MOST one count). A consumer reading "this
+  chain has 2 dead rules, 1 shadowed, 0 zero-coverage" doesn't
+  have to re-walk and classify the rows itself.
+  RULE_COVERAGE_EXPORT_SCHEMA_VERSION = 1, pub const PARALLEL-
+  versioned with the six install-log family envelopes plus the
+  drilldown envelope (7 total now). A future shape change in
+  one bumps that one only. PartialEq only (no Eq) because the
+  envelope carries an f64 field.
+
+- Slice 125: rule coverage CSV+JSON export Tauri commands + TS
+  client (09f286f). 2 Tauri commands
+  (slab_hopper_export_coverage_csv + _json) wrapping slices
+  123/124. Same call shape as slab_hopper_export_drilldown_csv
+  + _json (slices 89 + 94): the frontend gathers the absolute
+  destination from a native save-as dialog and ships the path
+  here so the Tauri layer owns disk I/O. The commands accept
+  RuleCoverageReport DIRECTLY rather than re-running
+  slab_hopper_rule_coverage server-side — the panel already has
+  the report loaded at click time and re-running risks a brief
+  race window where the in-flight rule edit + 600ms-debounced
+  recompute would let a re-run return a slightly different
+  report than what the user sees. "Export what's visible"
+  matches the user's mental model. Both commands wired into
+  the invoke handler list in lib.rs.
+
+  TS surface: slabHopperExportCoverageCsv +
+  slabHopperExportCoverageJson async wrappers (browser-mode
+  safe fallbacks returning 0 bytes — same lazy-import posture
+  as slabHopperExportDrilldownCsv). suggestCoverageExportFilename
+  emitting hopper-coverage_<watch>_<YYYY-MM-DD>.<ext> with
+  watch-N or `watch` fallback + local date + csv/json ext.
+  NOTE: NO per-bucket slot (unlike suggestDrilldownExportFilename
+  which carries fallthrough or rule-N) because a coverage
+  export covers the WHOLE chain, not a single bucket. Pinned
+  by a dedicated regression test that asserts the resulting
+  filename never contains "fallthrough" or "rule-".
+
+- Slice 126: chain-health summary helper for coverage panel
+  (c2deb49). Pure helper summarizeCoverageHealth(report, opts)
+  -> CoverageHealth { kind, text, dead, shadowed, zero,
+  fallthrough, fallthroughPct }. Four mutually-exclusive kinds
+  with strict priority: empty (no samples — distinct from
+  healthy so the UI renders a muted no-data state) > critical
+  (any dead rule — the chain is silently misrouting) > warn (any
+  shadowed or zero diagnostic OR fall-through STRICTLY greater
+  than the warn threshold, default 25%) > healthy. The kind tag
+  drives the chip's color in the UI (neutral / warn / critical
+  / muted) without re-deriving classification in Svelte.
+  Pluralisation contract pinned by tests: "1 dead rule" / "3
+  dead rules", "1 rule is partially shadowed" / "2 rules are
+  partially shadowed" (the verb-agreement noun phrase swap on
+  the shadowed branch is the only English-grammar gotcha; the
+  dead + zero branches sidestep this with imperative copies
+  that read fine either way). Threshold tuneable via
+  opts.fallthroughWarnPct for future surfaces (compliance
+  audit chains want stricter; sandbox watches want looser).
+
+- Slice 127: coverage panel Export menu with chain-health chip
+  (4765bdf). The demo-able payoff. Coverage panel gains two
+  new affordances. (1) Chain-health chip beside the existing
+  routed-percentage summary line — three-state visual
+  treatment via color-mix accent tokens (green healthy / orange
+  warn / red critical) so a user scanning the section sees
+  "Chain routing healthy" / "2 rules are partially shadowed —
+  reorder to recover matches" / "1 dead rule — reorder or
+  tighten the shadowing rules" instantly. coverageHealth
+  $derived.by(summarizeCoverageHealth) reacts to coverage
+  changes so a rule edit + 400ms-debounced refresh repaints
+  the chip the moment the report lands. Empty kind filtered
+  upstream so the chip never renders for "no samples yet" —
+  the cov-summary's "Loading…" / "No recent runs" copy carries
+  that state alone (preventing two chrome elements from both
+  saying "no data" in slightly different words). (2) Export…
+  popover in the cov-actions row with two menu items (Export
+  as CSV / Export as JSON) wrapping slice 125's commands +
+  filename helper. Same shape as the drilldown popover
+  Export… affordance for cross-surface consistency. Trigger
+  disabled when no coverage report has loaded or when chain
+  has zero rules (the fall-through synth row alone isn't a
+  useful CSV). On a successful export the popover closes; on
+  cancellation it stays open so the user can retry with the
+  other format.
+
+  exportCoverage(format) handler mirrors exportDrilldown shape
+  exactly: resolves filename via the slice-125 helper, opens
+  native save-as dialog, ships the LOADED coverage report
+  verbatim (not a re-fetch — same in-state-snapshot semantics
+  so a background rule edit can't sneak a different report
+  past between "click Export" and "click Save"), flashes a 4s
+  toast ("Exported 5 rules as CSV (0.4 KB)") via the shared
+  formatBytes helper. coverageExporting in-flight gate shared
+  across CSV+JSON so back-to-back clicks don't pile up; errors
+  land in the existing cov-error cell rather than a third
+  toast surface.
+
+  Escape chain extended: coverage Export menu first (most-
+  recently-opened) then drilldown popover before the existing
+  handler. So a user with both the drilldown popover and the
+  Export menu open gets the menu dismissed first — Notion-
+  style stacked-overlay dismissal order.
+
+  Scoped CSS for .cov-health chip (3-state color treatment),
+  .cov-export-anchor + .cov-export-menu popover (160px wide,
+  dark panel, z-index 12 above the drilldown popover so the
+  user can layer them), .cov-export-toast (mirrors
+  .drill-export-toast visual + fade-in animation, scoped key
+  name `cov-export-toast-fade-in` for CSS collision-freedom).
+
+  41 inline test assertions across hopper.test.ts (round-25
+  baseline 60 + 9 from slice 125 + 32 from slice 126 = 101):
+  9 filename helper scenarios + 32 chain-health classifier
+  scenarios (empty / healthy / dead singular+plural /
+  shadowed singular+plural / zero / mixed shadow+zero
+  precedence / high fall-through warn / exactly-25%-stays-
+  healthy threshold pin / tuneable threshold / dead-beats-
+  high-fallthrough precedence / fallthrough verbatim).
+
+Gates result: cargo fmt clean (no changes needed), cargo
+clippy --lib -- -D warnings PASSED CLEAN in 10.70s, cargo test
+--lib 2544 passed / 0 failed (round-25 baseline 2522 + 10
+storage tests for slice 123 + 12 envelope tests for slice 124
+= 2544), pnpm check 0 errors / 104 warnings (round-25 baseline
+preserved EXACTLY — zero new warnings from the Hopper editor's
+chip markup, popover markup, scoped CSS, export handler), tsx
+src/lib/hopper.test.ts 101 inline expects pass (round-25
+baseline 60 + 9 from slice 125 + 32 from slice 126 = 101),
+tsx src/lib/marketplace.test.ts 138 inline expects pass
+unchanged (no marketplace changes this tick).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-25: backend CSV
+  primitive -> backend JSON envelope primitive -> Tauri
+  commands + TS client + filename helper -> pure-helper
+  composer (slice 126 — the "consume the envelope's
+  classification in chip form" piece) -> demo-able UI slice.
+  Round 26 differs from the install-log family arcs in that
+  the fourth slice is a pure TS helper rather than a backend
+  driver (the coverage report has no driver to rewrite — the
+  analyzer was already complete from rounds 14/15). The 5-layer
+  cadence remains the canonical batch shape.
+- Round 26 picked the Hopper coverage export gap rather than
+  any of round 25's closing-notes Hopper candidates because
+  the export gap was the structurally-cleanest 5-layer arc
+  available AND it closes a long-standing symmetry
+  inconsistency (drilldown has export, coverage doesn't —
+  a paralegal who learned to export drilldown buckets had no
+  way to export the parent panel that contains them).
+- The chain-health summary chip (slice 126 + 127) is the
+  surprise — what started as "wire the export buttons" turned
+  into "actually, the chain-health classification deserves
+  chip-level surfacing because the existing per-row diagnostic
+  chips bury the chain-level story". A 6-rule chain that
+  routes 100% of samples through Rule 1 looks fine on the
+  routed-percentage summary line but is hiding 5 dead-by-
+  shadow rules; the chip surfaces that in one glance.
+- Shadowed-beats-zero precedence in BOTH the CSV/JSON
+  serialisers AND the chain-health classifier — every consumer
+  of the diagnostic fields uses the SAME priority chain
+  (dead > zero > shadowed > healthy). A consumer reading the
+  CSV's "diagnostic" column and a consumer reading the
+  envelope's *_rule_count totals get the same classification.
+- 25% fall-through threshold for the warn kind is the "1 in
+  4 files = chain is under-specified" heuristic. STRICTLY
+  greater (not `>=`) so exactly 25% stays healthy — pinned by
+  a dedicated test. Tuneable via opts.fallthroughWarnPct for
+  future surfaces.
+
+DESIGN NOTES:
+- The RuleCoverageExportEnvelope is the seventh envelope in
+  the family (install-log + histogram + activity-timeline +
+  bucket-drilldown + plugin-retention + auto-prune-runs +
+  drilldown + this) with the canonical 4-field signature
+  (schema_version + generated_at_iso + body-scoped totals +
+  body-rows Vec). The parallel-versioning test pins each
+  envelope's constant separately so a future shape change in
+  one bumps that one only.
+- The chain-health chip's three-state visual treatment
+  (neutral healthy / accent warn / danger critical) mirrors
+  slice 117's overrides-row-badge and slice 122's auto-prune
+  attribution badge treatment — same visual language for "this
+  surface tells you the chain-level story at a glance, no
+  drilldown required".
+- The Export… popover follows the canonical popover-anchor
+  pattern from the drilldown popover Export… affordance and
+  the install-log + plugin-retention + auto-prune-runs export
+  popovers in the RecentInstallsDrawer. One trigger button,
+  two menu items (CSV / JSON) in a small dark panel anchored
+  to the trigger; on-success the menu closes, on-cancel it
+  stays open. Same z-index ordering rule as the rest of the
+  popover family (later-opened menus sit above earlier-opened
+  ones).
+- The fall-through synth row in the CSV is emitted even when
+  its count is zero — same audit-signal-not-silence policy as
+  the auto-prune zero-row Pruned recording (slice 119) and
+  the empty-state copy across the retention sub-blocks.
+- coverageHealth $derived.by reacts to the coverage cell
+  rather than being a manual recompute — the cheapest possible
+  reactivity for what's effectively a 4-field structural
+  classifier over a small array. Same shape as the
+  installLogSummary derivation in PluginsPanel.
+- The cov-summary copy retains its original responsibilities
+  (loading state, no-runs state) — the new chip is purely
+  additive. Removing the new chip via a future toggle would
+  leave the cov-summary state machine intact.
+
+## Roadmap — round 26 (Hopper coverage export) — ALL DONE
+
+Round 26 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: the Hopper rule coverage export path
+(slices 123-127). One backend CSV primitive, one backend JSON
+envelope primitive, one Tauri-commands + TS-client slice
+(slice 125), one pure-helper composer slice (slice 126), and one
+composite UI slice. Same canonical five-layer pattern as round
+19 (drilldown CSV arc) + round 20 (drilldown JSON + histogram
+sort) + round 21 (histogram export arc) + round 22 (activity
+timeline arc) + round 23 (bucket drilldown arc) + round 24
+(per-plugin overrides arc) + round 25 (auto-prune run history
+arc).
+
+123. ~~**rule coverage CSV export primitive**~~ —
+     DONE (2026-06-22 21:00 PT, 0411c36). Pure-data
+     rule_coverage_to_csv(report, include_header) -> String
+     6-column RFC-4180 with one-row-per-rule + trailing
+     synthetic Fall-through row (emitted even when zero) +
+     RULE_COVERAGE_CSV_HEADER pub const. Two private helpers:
+     pct_two_decimal (divide-by-zero guard) +
+     coverage_diagnostic_str (priority chain). 10 tests.
+124. ~~**rule coverage JSON envelope primitive**~~ —
+     DONE (2026-06-22 21:05 PT, 4fc6599). Pure-data
+     rule_coverage_to_json(report) ->
+     RuleCoverageExportEnvelope 10-field with envelope-level
+     chain-health totals pre-derived in ONE pass + fallthrough_pct
+     rounded to two decimals matching the CSV exactly.
+     RULE_COVERAGE_EXPORT_SCHEMA_VERSION = 1, PARALLEL-
+     versioned with all seven sibling envelopes. PartialEq
+     only (no Eq — f64 field). 12 tests.
+125. ~~**rule coverage CSV+JSON export commands + TS client**~~ —
+     DONE (2026-06-22 21:15 PT, 09f286f). 2 Tauri commands
+     wired into invoke handler. TS surface: 2 async wrappers
+     + suggestCoverageExportFilename with no per-bucket slot.
+     9 inline tests.
+126. ~~**chain-health summary helper for coverage panel**~~ —
+     DONE (2026-06-22 21:20 PT, c2deb49). Pure helper
+     summarizeCoverageHealth(report, opts) -> CoverageHealth
+     with four priority-ordered mutually-exclusive kinds
+     (empty > critical > warn > healthy) + pluralisation
+     contract pinned by tests. 32 inline tests.
+127. ~~**coverage panel Export menu with chain-health chip**~~ —
+     DONE (2026-06-22 21:30 PT, 4765bdf). 3-state chain-
+     health chip beside the routed-percentage summary +
+     Export… popover with CSV+JSON menu items in the
+     cov-actions row + exportCoverage(format) handler
+     mirroring exportDrilldown shape + Escape chain extended
+     + scoped CSS for .cov-health + .cov-export-anchor +
+     .cov-export-menu + .cov-export-toast.
+
+     With round 26 done, the Hopper coverage panel's export
+     symmetry gap closes — drilldown popover (slices 88-94)
+     and coverage panel now both have CSV + JSON export with
+     consistent filename conventions, in-state-snapshot
+     semantics, and Escape-dismiss chain ordering. Next
+     subsystem candidates: Hopper rule reorder-by-drag in
+     the coverage panel (drag a dead row up to fix shadowing
+     in one motion — natural follow-up to the chip surfacing
+     the problem), drilldown row -> cross-surface filter
+     (clicking a fall-through filename in the popover carries
+     the search query into the document inspector), Loom-
+     grade tagging explorer, doc-detail metadata editor read/
+     write surface, Beacon cache inspector polish (column
+     sort by basename / model facet), Quill multi-document
+     field-detect queueing, histogram hover-tooltip on bar
+     segments, per-plugin "Run prune now" affordance (forces
+     the per-plugin pass to run immediately without waiting
+     for the global debounce — round 25's deferred candidate),
+     coverage panel "Show only X" filter on the per-rule list
+     (show only dead / shadowed / zero / healthy rules — could
+     pair with the chain-health chip to drill into the
+     diagnostic count).
 
 ### What round-25 (2026-06-22 18:35 PT) just shipped
 
