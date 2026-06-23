@@ -1083,6 +1083,136 @@ pub struct ReorderProposal {
     pub samples_recovered: u64,
 }
 
+/// Reason a proposal was skipped by [`apply_reorder_proposals_batch`].
+///
+/// Discriminated as snake_case `kind` for the TS mirror.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BatchReorderSkipReason {
+    /// The rule named in `rule_name` was not present in the chain at
+    /// the time the proposal was about to be applied. Either an
+    /// earlier proposal in the batch removed/renamed it, or the
+    /// caller's proposal list is stale relative to the chain.
+    RuleNotFound,
+    /// The rule still exists, but the proposal's `target_index` is
+    /// no longer earlier than the rule's CURRENT position (an earlier
+    /// proposal in the batch already moved the rule earlier than this
+    /// proposal wanted to). Applying it would be a no-op or, worse,
+    /// a backwards move.
+    AlreadyEarlier,
+}
+
+/// One proposal that was not applied by [`apply_reorder_proposals_batch`],
+/// carried alongside the new chain so the UI can render an audit
+/// breakdown ("2 applied, 1 skipped — Tax already earlier").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkippedProposal {
+    /// 0-based index into the INPUT proposal list (NOT the chain).
+    /// Lets the UI render the skipped proposals in their original
+    /// order alongside the applied ones.
+    pub input_index: usize,
+    /// Echo of the proposal that was skipped — the UI doesn't have
+    /// to round-trip to the source list.
+    pub proposal: ReorderProposal,
+    /// Why the proposal was skipped.
+    pub reason: BatchReorderSkipReason,
+}
+
+/// Outcome of a batch reorder application. Carries the new chain
+/// plus per-proposal applied/skipped accounting.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BatchReorderOutcome {
+    /// The chain AFTER every applied proposal landed. Each rule
+    /// object is a clone of the corresponding source rule (the
+    /// planner's input ownership semantics are preserved). When
+    /// every proposal is skipped this equals the source chain
+    /// verbatim.
+    pub rules: Vec<Rule>,
+    /// Input-order indices of proposals that landed successfully.
+    /// `applied.len() + skipped.len() == input proposal count`
+    /// (pinned by invariant test).
+    pub applied: Vec<usize>,
+    /// Proposals that did not land, with reason. Carried in input
+    /// order — `skipped[i].input_index` is strictly monotonic.
+    pub skipped: Vec<SkippedProposal>,
+    /// Total recovered samples across applied proposals. Pre-summed
+    /// so the UI doesn't have to re-walk the slice for the toast.
+    pub total_recovered: u64,
+}
+
+/// Apply every proposal in `proposals` to `rules` in input order,
+/// resolving the source rule by NAME at each step so the index
+/// drift from earlier moves doesn't make later proposals point at
+/// the wrong rule.
+///
+/// Algorithm: for each proposal in INPUT order
+///   1. Find the current index of `proposal.rule_name` in the
+///      running chain. If absent -> skip (`RuleNotFound`).
+///   2. Find the current index of `proposal.shadowing_rule_name`
+///      in the running chain — if non-empty AND present, use THAT
+///      as the target index (so the proposal lands "before the
+///      shadower" even if the shadower has itself moved). When the
+///      shadower name is empty (the planner's fallback) OR the
+///      shadower is no longer present, fall back to `target_index = 0`
+///      (move to front).
+///   3. If the resolved target index is `>=` the current source
+///      index -> skip (`AlreadyEarlier`). Applying would be a no-op
+///      or a backwards move.
+///   4. Otherwise splice the rule from its current index to the
+///      target and continue.
+///
+/// Pure function — no I/O, no Tauri. Mirrored 1:1 in TS as
+/// `applyReorderProposalsBatch` (slice 139).
+pub fn apply_reorder_proposals_batch(
+    rules: &[Rule],
+    proposals: &[ReorderProposal],
+) -> BatchReorderOutcome {
+    let mut chain: Vec<Rule> = rules.to_vec();
+    let mut applied: Vec<usize> = Vec::new();
+    let mut skipped: Vec<SkippedProposal> = Vec::new();
+    let mut total_recovered: u64 = 0;
+    for (i, p) in proposals.iter().enumerate() {
+        // Resolve source by name in the CURRENT chain.
+        let src = chain.iter().position(|r| r.name == p.rule_name);
+        let Some(src_idx) = src else {
+            skipped.push(SkippedProposal {
+                input_index: i,
+                proposal: p.clone(),
+                reason: BatchReorderSkipReason::RuleNotFound,
+            });
+            continue;
+        };
+        // Resolve target by shadower name when possible; fall back
+        // to the proposal's recorded target_index otherwise.
+        let target = if !p.shadowing_rule_name.is_empty() {
+            chain
+                .iter()
+                .position(|r| r.name == p.shadowing_rule_name)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        if target >= src_idx {
+            skipped.push(SkippedProposal {
+                input_index: i,
+                proposal: p.clone(),
+                reason: BatchReorderSkipReason::AlreadyEarlier,
+            });
+            continue;
+        }
+        let moved = chain.remove(src_idx);
+        chain.insert(target, moved);
+        applied.push(i);
+        total_recovered = total_recovered.saturating_add(p.samples_recovered);
+    }
+    BatchReorderOutcome {
+        rules: chain,
+        applied,
+        skipped,
+        total_recovered,
+    }
+}
+
 /// Plan minimal-reorder fixes for every dead rule in `report`.
 ///
 /// Returns one [`ReorderProposal`] per `dead_at_position == true`
@@ -3159,5 +3289,448 @@ mod tests {
         let proposals = plan_dead_rule_reorder(&rules, &report);
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0].rule_name, "Tax — renamed since");
+    }
+
+    // ── Slice 138 — apply_reorder_proposals_batch ─────────────────────
+
+    /// Helper: build a one-shot ReorderProposal directly. The batch
+    /// applier doesn't care which planner produced the proposal; a
+    /// caller could in principle hand-roll one. These tests pin
+    /// what happens under both well-formed planner output AND
+    /// hand-rolled / drifted input.
+    fn proposal(
+        rule_index: usize,
+        rule_name: &str,
+        target_index: usize,
+        shadowing_rule_name: &str,
+        samples_recovered: u64,
+    ) -> ReorderProposal {
+        ReorderProposal {
+            rule_index,
+            rule_name: rule_name.into(),
+            target_index,
+            shadowing_rule_name: shadowing_rule_name.into(),
+            samples_recovered,
+        }
+    }
+
+    #[test]
+    fn batch_empty_proposals_returns_source_chain_verbatim() {
+        let rules = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate(
+                "B",
+                RulePredicate::FilenameGlob {
+                    pattern: "*.pdf".into(),
+                },
+            ),
+        ];
+        let outcome = apply_reorder_proposals_batch(&rules, &[]);
+        assert_eq!(outcome.rules, rules);
+        assert!(outcome.applied.is_empty());
+        assert!(outcome.skipped.is_empty());
+        assert_eq!(outcome.total_recovered, 0);
+    }
+
+    #[test]
+    fn batch_empty_rules_skips_every_proposal_as_not_found() {
+        let proposals = vec![proposal(1, "Tax", 0, "Catch-all", 3)];
+        let outcome = apply_reorder_proposals_batch(&[], &proposals);
+        assert!(outcome.rules.is_empty());
+        assert!(outcome.applied.is_empty());
+        assert_eq!(outcome.skipped.len(), 1);
+        assert!(matches!(
+            outcome.skipped[0].reason,
+            BatchReorderSkipReason::RuleNotFound
+        ));
+        assert_eq!(outcome.skipped[0].input_index, 0);
+        assert_eq!(outcome.total_recovered, 0);
+    }
+
+    #[test]
+    fn batch_single_proposal_moves_rule_before_named_shadower() {
+        // Classic case: Catch-all at index 0 shadows Tax at index 1.
+        // The proposal asks to move Tax to index 0 (where Catch-all
+        // sits) so Tax fires first.
+        let rules = vec![
+            rule_with_predicate("Catch-all", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*.pdf".into(),
+                },
+            ),
+        ];
+        let proposals = vec![proposal(1, "Tax", 0, "Catch-all", 3)];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0]);
+        assert!(outcome.skipped.is_empty());
+        assert_eq!(outcome.rules[0].name, "Tax");
+        assert_eq!(outcome.rules[1].name, "Catch-all");
+        assert_eq!(outcome.total_recovered, 3);
+    }
+
+    #[test]
+    fn batch_resolves_source_by_name_after_prior_move() {
+        // The KEY invariant: after move 1, index 2 in the original
+        // chain is no longer index 2 in the running chain. We must
+        // resolve "Receipts" by NAME to land it correctly.
+        //
+        // Original: [Catch-all, Tax, Receipts]
+        //   Move Tax before Catch-all -> [Tax, Catch-all, Receipts]
+        //   Move Receipts before Catch-all (now at idx 1) -> [Tax, Receipts, Catch-all]
+        let rules = vec![
+            rule_with_predicate("Catch-all", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Receipts",
+                RulePredicate::FilenameGlob {
+                    pattern: "r_*".into(),
+                },
+            ),
+        ];
+        // Both proposals were produced against the original chain
+        // (rule_index = 1 and 2 respectively, target_index = 0
+        // both — the planner's earliest-Always heuristic).
+        let proposals = vec![
+            proposal(1, "Tax", 0, "Catch-all", 3),
+            proposal(2, "Receipts", 0, "Catch-all", 5),
+        ];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0, 1]);
+        assert!(outcome.skipped.is_empty());
+        let names: Vec<&str> = outcome.rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["Tax", "Receipts", "Catch-all"]);
+        assert_eq!(outcome.total_recovered, 8);
+    }
+
+    #[test]
+    fn batch_skips_proposal_when_rule_was_renamed() {
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Renamed",
+                RulePredicate::FilenameGlob {
+                    pattern: "a_*".into(),
+                },
+            ),
+        ];
+        // Proposal still names the OLD label.
+        let proposals = vec![proposal(1, "Tax", 0, "All", 2)];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.rules, rules);
+        assert!(outcome.applied.is_empty());
+        assert_eq!(outcome.skipped.len(), 1);
+        assert!(matches!(
+            outcome.skipped[0].reason,
+            BatchReorderSkipReason::RuleNotFound
+        ));
+        assert_eq!(outcome.skipped[0].input_index, 0);
+    }
+
+    #[test]
+    fn batch_skips_proposal_when_rule_already_earlier_than_target() {
+        // Chain: [A, B, C]. First proposal moves C before A -> [C, A, B].
+        // Second proposal (from the ORIGINAL plan) asks to move B
+        // before A, but A is now at index 1 and B is at index 2 —
+        // target (1) < src (2), still movable. Try a tougher case:
+        // first move B to front -> [B, A, C]. Second proposal asks
+        // to move C before A — A is at index 1, C is at index 2.
+        // Target (1) < src (2) is still a valid move. We need a
+        // scenario where prior moves push a rule ALREADY earlier.
+        //
+        // Use: chain [A, B, C]; proposals [move B before A, move B
+        // before A again]. Second is a self-redundant proposal that
+        // should skip as AlreadyEarlier.
+        let rules = vec![
+            rule_with_predicate("A", RulePredicate::Always),
+            rule_with_predicate(
+                "B",
+                RulePredicate::FilenameGlob {
+                    pattern: "b_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "C",
+                RulePredicate::FilenameGlob {
+                    pattern: "c_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![proposal(1, "B", 0, "A", 2), proposal(1, "B", 0, "A", 2)];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0]);
+        assert_eq!(outcome.skipped.len(), 1);
+        assert!(matches!(
+            outcome.skipped[0].reason,
+            BatchReorderSkipReason::AlreadyEarlier
+        ));
+        assert_eq!(outcome.skipped[0].input_index, 1);
+        let names: Vec<&str> = outcome.rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["B", "A", "C"]);
+        assert_eq!(outcome.total_recovered, 2);
+    }
+
+    #[test]
+    fn batch_falls_back_to_index_zero_when_shadower_name_empty() {
+        // No-Always chain: planner produces a proposal with
+        // shadowing_rule_name = "" and target_index = 0. The batch
+        // applier honours the fallback.
+        let rules = vec![
+            rule_with_predicate(
+                "First",
+                RulePredicate::FilenameGlob {
+                    pattern: "f_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Second",
+                RulePredicate::FilenameGlob {
+                    pattern: "s_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Dead",
+                RulePredicate::FilenameGlob {
+                    // Shadowed but no Always to name.
+                    pattern: "f_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![proposal(2, "Dead", 0, "", 0)];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0]);
+        assert!(outcome.skipped.is_empty());
+        assert_eq!(outcome.rules[0].name, "Dead");
+        assert_eq!(outcome.rules[1].name, "First");
+        assert_eq!(outcome.rules[2].name, "Second");
+    }
+
+    #[test]
+    fn batch_shadower_drifted_falls_back_to_index_zero() {
+        // The proposal names "Catch-all" as shadower but that rule
+        // has been removed (a prior proposal in the batch wouldn't
+        // do that, but a hand-rolled proposal list might). The
+        // applier falls back to target = 0 rather than refusing.
+        let rules = vec![
+            rule_with_predicate(
+                "First",
+                RulePredicate::FilenameGlob {
+                    pattern: "f_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Dead",
+                RulePredicate::FilenameGlob {
+                    pattern: "f_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![proposal(1, "Dead", 0, "Catch-all-gone", 0)];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0]);
+        assert!(outcome.skipped.is_empty());
+        assert_eq!(outcome.rules[0].name, "Dead");
+        assert_eq!(outcome.rules[1].name, "First");
+    }
+
+    #[test]
+    fn batch_mixed_applied_and_skipped_preserves_input_order() {
+        // Three proposals: 0 and 2 applicable, 1 references a
+        // missing rule. Outcome.applied should be [0, 2] and
+        // outcome.skipped should be [{input_index: 1, ...}].
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "t_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Receipts",
+                RulePredicate::FilenameGlob {
+                    pattern: "r_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![
+            proposal(1, "Tax", 0, "All", 2),
+            proposal(99, "ghost", 0, "All", 7),
+            proposal(2, "Receipts", 0, "All", 4),
+        ];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0, 2]);
+        assert_eq!(outcome.skipped.len(), 1);
+        assert_eq!(outcome.skipped[0].input_index, 1);
+        assert!(matches!(
+            outcome.skipped[0].reason,
+            BatchReorderSkipReason::RuleNotFound
+        ));
+        let names: Vec<&str> = outcome.rules.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["Tax", "Receipts", "All"]);
+        // Recovered = 2 (Tax) + 4 (Receipts) — the skipped 7
+        // should NOT contribute.
+        assert_eq!(outcome.total_recovered, 6);
+    }
+
+    #[test]
+    fn batch_applied_plus_skipped_equals_input_count_invariant() {
+        // Conservation invariant — every input proposal lands in
+        // exactly one of `applied` or `skipped`. Pinned across a
+        // moderately busy mixed batch.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "t_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Receipts",
+                RulePredicate::FilenameGlob {
+                    pattern: "r_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Invoices",
+                RulePredicate::FilenameGlob {
+                    pattern: "i_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![
+            proposal(1, "Tax", 0, "All", 2),
+            proposal(2, "Receipts", 0, "All", 4),
+            // Stale rule -> skipped
+            proposal(99, "ghost", 0, "All", 7),
+            proposal(3, "Invoices", 0, "All", 1),
+        ];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(
+            outcome.applied.len() + outcome.skipped.len(),
+            proposals.len(),
+            "every input proposal must land in exactly one bucket"
+        );
+        // Applied indices are a STRICT SUBSET of [0..proposals.len())
+        // — no duplicates, no out-of-range entries.
+        for &a in &outcome.applied {
+            assert!(a < proposals.len());
+        }
+        // Skipped input_indices are strictly monotonic (carries
+        // input order).
+        let mut prev: Option<usize> = None;
+        for s in &outcome.skipped {
+            if let Some(p) = prev {
+                assert!(s.input_index > p);
+            }
+            prev = Some(s.input_index);
+        }
+    }
+
+    #[test]
+    fn batch_does_not_mutate_input_rules() {
+        // The source slice is borrowed; the running chain is a
+        // clone. Pin that a partial-success batch doesn't leave the
+        // source visibly mutated to any external observer.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "t_*".into(),
+                },
+            ),
+        ];
+        let snapshot = rules.clone();
+        let proposals = vec![proposal(1, "Tax", 0, "All", 3)];
+        let _ = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(rules, snapshot, "source slice must not be mutated");
+    }
+
+    #[test]
+    fn batch_serde_round_trips_outcome_field_names() {
+        // The wire shape is what the TS mirror reads. Pin every
+        // top-level field name + the discriminator on
+        // BatchReorderSkipReason.
+        let outcome = BatchReorderOutcome {
+            rules: vec![rule_with_predicate("Tax", RulePredicate::Always)],
+            applied: vec![0, 2],
+            skipped: vec![SkippedProposal {
+                input_index: 1,
+                proposal: proposal(99, "ghost", 0, "All", 7),
+                reason: BatchReorderSkipReason::RuleNotFound,
+            }],
+            total_recovered: 9,
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        assert!(json.contains("\"rules\":"));
+        assert!(json.contains("\"applied\":[0,2]"));
+        assert!(json.contains("\"skipped\":"));
+        assert!(json.contains("\"input_index\":1"));
+        assert!(json.contains("\"reason\":{\"kind\":\"rule_not_found\"}"));
+        assert!(json.contains("\"total_recovered\":9"));
+        // AlreadyEarlier branch.
+        let already = BatchReorderSkipReason::AlreadyEarlier;
+        let already_json = serde_json::to_string(&already).unwrap();
+        assert_eq!(already_json, "{\"kind\":\"already_earlier\"}");
+        // Round-trip wholeness.
+        let back: BatchReorderOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, outcome);
+    }
+
+    #[test]
+    fn batch_total_recovered_uses_saturating_add() {
+        // Defensive: a planner that produced enormous would_match
+        // counts won't wrap. We use saturating_add on u64.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "t_*".into(),
+                },
+            ),
+            rule_with_predicate(
+                "Receipts",
+                RulePredicate::FilenameGlob {
+                    pattern: "r_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![
+            proposal(1, "Tax", 0, "All", u64::MAX),
+            proposal(2, "Receipts", 0, "All", 5),
+        ];
+        let outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        assert_eq!(outcome.applied, vec![0, 1]);
+        // saturating_add(MAX, 5) == MAX.
+        assert_eq!(outcome.total_recovered, u64::MAX);
+    }
+
+    #[test]
+    fn batch_each_rule_is_a_clone_of_source_not_a_reference_alias() {
+        // The outcome chain is built from `rules.to_vec()` plus
+        // splice ops — each Rule is a clone of the source. Mutating
+        // a rule in the outcome must NOT visibly mutate the source.
+        let rules = vec![
+            rule_with_predicate("All", RulePredicate::Always),
+            rule_with_predicate(
+                "Tax",
+                RulePredicate::FilenameGlob {
+                    pattern: "tax_*".into(),
+                },
+            ),
+        ];
+        let proposals = vec![proposal(1, "Tax", 0, "All", 3)];
+        let mut outcome = apply_reorder_proposals_batch(&rules, &proposals);
+        outcome.rules[0].name = "Tax-touched".into();
+        assert_eq!(rules[1].name, "Tax", "source rule must be unchanged");
     }
 }
