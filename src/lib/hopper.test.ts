@@ -40,7 +40,12 @@ import {
   worstReorderConfidence,
   summarizeProposalTierBreakdown,
   describeProposalBatch,
+  summarizeReorderEffect,
+  describeReorderEffect,
+  isReorderEffectNoop,
   type ProposalTierBreakdown,
+  type ReorderEffect,
+  type ReorderMove,
   RULE_NOT_FOUND,
   ALREADY_EARLIER,
   type ReorderProposalConfidence,
@@ -2949,5 +2954,235 @@ await (async () => {
   expect(
     worstReorderConfidence([high, medium, low]) === "low",
     "cross-helper worst: high+medium+low",
+  );
+}
+
+// ── Slice 144 — summarizeReorderEffect + describeReorderEffect ───────
+
+function makeRule(name: string): Rule {
+  return { name, predicate: { kind: "always" }, action: { recipe_id: null, output_dir: null, rename_pattern: null } };
+}
+
+{
+  // Empty inputs.
+  const empty = summarizeReorderEffect([], []);
+  expect(empty.moved.length === 0, "effect: empty inputs -> no moves");
+  expect(empty.added.length === 0 && empty.removed.length === 0, "effect: empty inputs -> no added/removed");
+  expect(empty.is_permutation === true, "effect: empty inputs -> trivially permutation");
+}
+
+{
+  // Identity.
+  const rules = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const effect = summarizeReorderEffect(rules, rules);
+  expect(effect.moved.length === 0, "effect: identical chains -> no moves");
+  expect(effect.is_permutation === true, "effect: identical chains -> permutation");
+}
+
+{
+  // Single swap [A,B] -> [B,A].
+  const before = [makeRule("A"), makeRule("B")];
+  const after = [makeRule("B"), makeRule("A")];
+  const effect = summarizeReorderEffect(before, after);
+  expect(effect.moved.length === 2, "effect: swap -> two moves");
+  expect(effect.moved[0].rule_name === "B", "effect: swap -> first entry in AFTER order is B");
+  expect(effect.moved[0].from_index === 1 && effect.moved[0].to_index === 0, "effect: swap -> B 1->0");
+  expect(effect.moved[1].rule_name === "A", "effect: swap -> second entry is A");
+  expect(effect.moved[1].from_index === 0 && effect.moved[1].to_index === 1, "effect: swap -> A 0->1");
+  expect(effect.is_permutation === true, "effect: swap -> permutation");
+}
+
+{
+  // Lift one rule.
+  const before = [makeRule("A"), makeRule("B"), makeRule("C"), makeRule("Dead")];
+  const after = [makeRule("Dead"), makeRule("A"), makeRule("B"), makeRule("C")];
+  const effect = summarizeReorderEffect(before, after);
+  expect(effect.moved.length === 4, "effect: lift -> all four rules moved");
+  const names = effect.moved.map((m) => m.rule_name);
+  expect(JSON.stringify(names) === JSON.stringify(["Dead", "A", "B", "C"]), "effect: lift -> moved in AFTER order");
+  // After-order: to_index strictly ascending.
+  for (let i = 0; i < effect.moved.length; i++) {
+    expect(effect.moved[i].to_index === i, `effect: lift -> to_index ${i}`);
+  }
+  expect(effect.is_permutation === true, "effect: lift -> permutation");
+}
+
+{
+  // Added rule.
+  const before = [makeRule("A"), makeRule("B")];
+  const after = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const effect = summarizeReorderEffect(before, after);
+  expect(effect.moved.length === 0, "effect: pure add -> no moves");
+  expect(JSON.stringify(effect.added) === JSON.stringify(["C"]), "effect: pure add -> ['C']");
+  expect(effect.removed.length === 0, "effect: pure add -> no removed");
+  expect(effect.is_permutation === false, "effect: pure add -> NOT a permutation");
+}
+
+{
+  // Removed rule.
+  const before = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const after = [makeRule("A"), makeRule("B")];
+  const effect = summarizeReorderEffect(before, after);
+  expect(effect.moved.length === 0, "effect: pure remove -> no moves");
+  expect(effect.added.length === 0, "effect: pure remove -> no added");
+  expect(JSON.stringify(effect.removed) === JSON.stringify(["C"]), "effect: pure remove -> ['C']");
+  expect(effect.is_permutation === false, "effect: pure remove -> NOT a permutation");
+}
+
+{
+  // Renamed = add + remove.
+  const before = [makeRule("A"), makeRule("B")];
+  const after = [makeRule("A"), makeRule("B-renamed")];
+  const effect = summarizeReorderEffect(before, after);
+  expect(JSON.stringify(effect.added) === JSON.stringify(["B-renamed"]), "effect: rename -> added [B-renamed]");
+  expect(JSON.stringify(effect.removed) === JSON.stringify(["B"]), "effect: rename -> removed [B]");
+  expect(effect.is_permutation === false, "effect: rename -> NOT a permutation");
+}
+
+{
+  // Source not mutated.
+  const before = [makeRule("A"), makeRule("B")];
+  const after = [makeRule("B"), makeRule("A")];
+  const beforeSnap = JSON.stringify(before);
+  const afterSnap = JSON.stringify(after);
+  summarizeReorderEffect(before, after);
+  expect(JSON.stringify(before) === beforeSnap, "effect: BEFORE array not mutated");
+  expect(JSON.stringify(after) === afterSnap, "effect: AFTER array not mutated");
+}
+
+{
+  // Composes with applyReorderProposalsBatch end-to-end.
+  const before = [makeRule("All"), makeRule("Tax"), makeRule("Receipts")];
+  const props: ReorderProposal[] = [
+    { rule_index: 1, rule_name: "Tax", target_index: 0, shadowing_rule_name: "All", samples_recovered: 2 },
+    { rule_index: 2, rule_name: "Receipts", target_index: 0, shadowing_rule_name: "All", samples_recovered: 4 },
+  ];
+  const outcome = applyReorderProposalsBatch(before, props);
+  const effect = summarizeReorderEffect(before, outcome.rules);
+  expect(effect.moved.length === 3, "effect: cross-helper -> all three rules moved");
+  expect(effect.is_permutation === true, "effect: cross-helper -> permutation");
+  // Undo round-trip: feed the BEFORE back, summarize against AFTER.
+  const undo = summarizeReorderEffect(outcome.rules, before);
+  expect(undo.is_permutation === true, "effect: undo round-trip -> permutation");
+  // Inverse: each moved entry now points from its reordered position
+  // back to its original position.
+  for (const m of undo.moved) {
+    const origPos = before.findIndex((r) => r.name === m.rule_name);
+    const reordPos = outcome.rules.findIndex((r) => r.name === m.rule_name);
+    expect(m.from_index === reordPos && m.to_index === origPos, `effect: undo round-trip ${m.rule_name} reverses positions`);
+  }
+}
+
+{
+  // Duplicate-name canonical first-occurrence handling.
+  const before = [makeRule("A"), makeRule("Dup"), makeRule("Dup")];
+  const after = [makeRule("Dup"), makeRule("A"), makeRule("Dup")];
+  const effect = summarizeReorderEffect(before, after);
+  const names = effect.moved.map((m) => m.rule_name);
+  expect(JSON.stringify(names) === JSON.stringify(["Dup", "A"]), "effect: duplicate-name first-occurrence canonical");
+}
+
+// ── describeReorderEffect ───────────────────────────────────────────
+
+{
+  const noop: ReorderEffect = { moved: [], added: [], removed: [], is_permutation: true };
+  expect(describeReorderEffect(noop) === "No changes to undo", "describe: noop");
+}
+
+{
+  const oneMove: ReorderEffect = {
+    moved: [{ rule_name: "Tax", from_index: 3, to_index: 0 }],
+    added: [],
+    removed: [],
+    is_permutation: true,
+  };
+  expect(describeReorderEffect(oneMove) === "Move 1 rule back", "describe: 1 rule");
+}
+
+{
+  const threeMoves: ReorderEffect = {
+    moved: [
+      { rule_name: "Tax", from_index: 3, to_index: 0 },
+      { rule_name: "Receipts", from_index: 4, to_index: 1 },
+      { rule_name: "All", from_index: 0, to_index: 2 },
+    ],
+    added: [],
+    removed: [],
+    is_permutation: true,
+  };
+  expect(describeReorderEffect(threeMoves) === "Move 3 rules back", "describe: 3 rules");
+}
+
+{
+  const onlyAdded: ReorderEffect = {
+    moved: [],
+    added: ["NewRule"],
+    removed: [],
+    is_permutation: false,
+  };
+  expect(describeReorderEffect(onlyAdded) === "Drop 1 added rule", "describe: only added 1");
+  const moreAdded: ReorderEffect = { ...onlyAdded, added: ["A", "B"] };
+  expect(describeReorderEffect(moreAdded) === "Drop 2 added rules", "describe: only added plural");
+}
+
+{
+  const onlyRemoved: ReorderEffect = {
+    moved: [],
+    added: [],
+    removed: ["GoneRule"],
+    is_permutation: false,
+  };
+  expect(describeReorderEffect(onlyRemoved) === "Restore 1 removed rule", "describe: only removed 1");
+  const moreRemoved: ReorderEffect = { ...onlyRemoved, removed: ["A", "B"] };
+  expect(describeReorderEffect(moreRemoved) === "Restore 2 removed rules", "describe: only removed plural");
+}
+
+{
+  const mixed: ReorderEffect = {
+    moved: [{ rule_name: "Tax", from_index: 3, to_index: 0 }],
+    added: ["NewRule"],
+    removed: ["GoneRule"],
+    is_permutation: false,
+  };
+  expect(describeReorderEffect(mixed) === "Move 1, restore 1 removed, drop 1 added", "describe: mixed move + add + remove");
+}
+
+{
+  const addAndRemove: ReorderEffect = {
+    moved: [],
+    added: ["NewRule"],
+    removed: ["GoneRule"],
+    is_permutation: false,
+  };
+  expect(describeReorderEffect(addAndRemove) === "restore 1 removed, drop 1 added", "describe: only add + remove (no moves)");
+}
+
+// ── isReorderEffectNoop ─────────────────────────────────────────────
+
+{
+  expect(
+    isReorderEffectNoop({ moved: [], added: [], removed: [], is_permutation: true }) === true,
+    "noop: empty permutation",
+  );
+  expect(
+    isReorderEffectNoop({ moved: [], added: [], removed: [], is_permutation: false }) === true,
+    "noop: empty NOT-permutation (treated as no-op too — buckets are what matter)",
+  );
+  expect(
+    isReorderEffectNoop({
+      moved: [{ rule_name: "Tax", from_index: 3, to_index: 0 }],
+      added: [],
+      removed: [],
+      is_permutation: true,
+    }) === false,
+    "noop: one move -> NOT noop",
+  );
+  expect(
+    isReorderEffectNoop({ moved: [], added: ["X"], removed: [], is_permutation: false }) === false,
+    "noop: one added -> NOT noop",
+  );
+  expect(
+    isReorderEffectNoop({ moved: [], added: [], removed: ["X"], is_permutation: false }) === false,
+    "noop: one removed -> NOT noop",
   );
 }

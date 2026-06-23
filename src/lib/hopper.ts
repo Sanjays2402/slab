@@ -1187,6 +1187,167 @@ export function describeProposalBatch(proposals: ReorderProposal[]): string {
   return `${b.total} ${fixNoun} — ${parts.join(", ")}`;
 }
 
+// ─── Slice 143/144 — reorder-effect summary primitive (round-30) ─────
+//
+// Round 30's load-bearing primitive for the undo path. Given a chain
+// BEFORE a fix-it / fix-all reorder and a chain AFTER, produce a
+// structural summary of what changed: which rules moved (by name,
+// with from/to positions), which were added or removed, and whether
+// the AFTER chain is a PERMUTATION of BEFORE.
+//
+// The permutation flag is the gate for undo's staleness check. Undo
+// can only safely revert when the snapshot's chain hasn't drifted
+// in the rule set itself (no add / remove / rename between the
+// reorder and the undo click). When permutation is false, the undo
+// affordance falls back to a "snapshot stale" disabled state rather
+// than silently dropping or duplicating rules.
+//
+// Mirrors `pdf::hopper::coverage::summarize_reorder_effect` 1:1. The
+// wire shapes use snake_case to match Rust; a browser-mode caller
+// goes through this helper directly, a Tauri-mode caller round-trips
+// through `slabHopperSummarizeReorderEffect` (slice 145).
+
+/** One rule that moved positions between two chains. Both indices
+ *  are 0-based into their respective chains. `from === to` is NOT
+ *  represented — only genuinely-moved rules appear. Mirrors
+ *  `pdf::hopper::coverage::ReorderMove`. */
+export interface ReorderMove {
+  /** Display name of the rule. By-name resolution is the canonical
+   *  identity throughout the reorder pipeline. */
+  rule_name: string;
+  /** Position in the BEFORE chain. */
+  from_index: number;
+  /** Position in the AFTER chain. */
+  to_index: number;
+}
+
+/** Structural summary of how an AFTER chain differs from a BEFORE
+ *  chain. Mirrors `pdf::hopper::coverage::ReorderEffect`. */
+export interface ReorderEffect {
+  /** Rules whose index changed between BEFORE and AFTER. In
+   *  AFTER-chain order (ascending `to_index`). A rule that's purely
+   *  added or removed does NOT appear here. */
+  moved: ReorderMove[];
+  /** Rules present in AFTER but absent from BEFORE — by name. In
+   *  AFTER-chain order. */
+  added: string[];
+  /** Rules present in BEFORE but absent from AFTER — by name. In
+   *  BEFORE-chain order. */
+  removed: string[];
+  /** True iff AFTER is a permutation of BEFORE: same length AND
+   *  same multiset of rule names. The load-bearing signal for
+   *  undo's staleness check. */
+  is_permutation: boolean;
+}
+
+/** Summarise the structural difference between two chains by NAME.
+ *  Pure helper, mirrors the Rust primitive 1:1. */
+export function summarizeReorderEffect(
+  before: Rule[],
+  after: Rule[],
+): ReorderEffect {
+  // First-occurrence index map for each chain. By-name resolution
+  // matches the rest of the reorder pipeline.
+  const beforeIdx = new Map<string, number>();
+  for (let i = 0; i < before.length; i++) {
+    if (!beforeIdx.has(before[i].name)) beforeIdx.set(before[i].name, i);
+  }
+  const afterIdx = new Map<string, number>();
+  for (let i = 0; i < after.length; i++) {
+    if (!afterIdx.has(after[i].name)) afterIdx.set(after[i].name, i);
+  }
+
+  // Moved: rules present in BOTH whose first-occurrence indices
+  // differ. Walk the AFTER chain so the output is in AFTER order.
+  const moved: ReorderMove[] = [];
+  for (let toIndex = 0; toIndex < after.length; toIndex++) {
+    const name = after[toIndex].name;
+    if (afterIdx.get(name) !== toIndex) continue;
+    const fromIndex = beforeIdx.get(name);
+    if (fromIndex === undefined) continue;
+    if (fromIndex !== toIndex) {
+      moved.push({ rule_name: name, from_index: fromIndex, to_index: toIndex });
+    }
+  }
+
+  // Added: in AFTER (first occurrence) but not in BEFORE.
+  const added: string[] = [];
+  for (let i = 0; i < after.length; i++) {
+    const name = after[i].name;
+    if (afterIdx.get(name) !== i) continue;
+    if (!beforeIdx.has(name)) added.push(name);
+  }
+
+  // Removed: in BEFORE (first occurrence) but not in AFTER.
+  const removed: string[] = [];
+  for (let i = 0; i < before.length; i++) {
+    const name = before[i].name;
+    if (beforeIdx.get(name) !== i) continue;
+    if (!afterIdx.has(name)) removed.push(name);
+  }
+
+  const is_permutation =
+    added.length === 0 && removed.length === 0 && before.length === after.length;
+
+  return { moved, added, removed, is_permutation };
+}
+
+/** Human-facing copy for a `ReorderEffect`. Discriminated on the
+ *  three buckets so the copy reads naturally for the undo button's
+ *  tooltip / popover header:
+ *
+ *    All buckets empty:      "No changes to undo"
+ *    Pure moves, 1 rule:     "Move 1 rule back"
+ *    Pure moves, N rules:    "Move 3 rules back"
+ *    Added-only:             "Drop 1 added rule" / "Drop N added rules"
+ *    Removed-only:           "Restore 1 removed rule" / "Restore N..."
+ *    Mixed (add + remove):   "Restore N removed, drop M added"
+ *    Mixed (move + add/rem): "Move N, restore K, drop M"
+ *
+ *  Plural-aware on "rule" / "rules". The copy is from the UNDO
+ *  perspective: the effect describes what happened, and the copy
+ *  describes what undo would do (move BACK, restore, drop). */
+export function describeReorderEffect(effect: ReorderEffect): string {
+  const m = effect.moved.length;
+  const a = effect.added.length;
+  const r = effect.removed.length;
+  if (m === 0 && a === 0 && r === 0) return "No changes to undo";
+  const ruleNoun = (n: number) => (n === 1 ? "rule" : "rules");
+  // Pure moves — the fix-it / fix-all happy path.
+  if (a === 0 && r === 0) {
+    return `Move ${m} ${ruleNoun(m)} back`;
+  }
+  // Pure added — undo would drop those rules.
+  if (m === 0 && r === 0) {
+    return `Drop ${a} added ${ruleNoun(a)}`;
+  }
+  // Pure removed — undo would restore them.
+  if (m === 0 && a === 0) {
+    return `Restore ${r} removed ${ruleNoun(r)}`;
+  }
+  // Mixed — enumerate present buckets.
+  const parts: string[] = [];
+  if (m > 0) parts.push(`Move ${m}`);
+  if (r > 0) parts.push(`restore ${r} removed`);
+  if (a > 0) parts.push(`drop ${a} added`);
+  return parts.join(", ");
+}
+
+/** True iff the effect represents a no-op — BEFORE and AFTER are
+ *  pointwise-equal. Convenience predicate for the undo gate: a
+ *  no-op effect means the snapshot matches the current chain
+ *  exactly, so undo is unnecessary (the toast can hide the button).
+ *
+ *  This is NOT the same as `is_permutation === false`: an empty
+ *  effect is a no-op AND a (trivial) permutation. */
+export function isReorderEffectNoop(effect: ReorderEffect): boolean {
+  return (
+    effect.moved.length === 0 &&
+    effect.added.length === 0 &&
+    effect.removed.length === 0
+  );
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors
