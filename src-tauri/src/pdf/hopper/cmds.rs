@@ -984,6 +984,50 @@ pub fn slab_hopper_batch_reorder_dead_rules(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 145 — reorder-effect summary Tauri command (round-30)
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::summarize_reorder_effect`]
+// primitive (slice 143) 1:1. The TS mirror (slice 144) already
+// handles the in-panel undo-toast affordance, so what does the
+// server-side command add?
+//
+// 1. A future scripted-audit consumer (CLI driver / cron health
+//    check / a "what did my last fix-it round actually change?"
+//    diff subcommand) gets the structural summariser as a first-
+//    class command rather than having to mirror the by-name
+//    resolution heuristic in TS itself.
+//
+// 2. Server-side guarantees the summariser compares rule names
+//    against the SAME Rule type the runtime evaluator uses — a
+//    future Rule field added on Rust but not yet mirrored in TS
+//    would silently widen / narrow the by-name equality contract
+//    on the TS side; the server-side command keeps the by-name
+//    resolution authoritative.
+//
+// 3. Symmetry with the rest of the round-29/30 reorder pipeline:
+//    every pure-data primitive has a server-side wire wrapper.
+//
+// Wire shape: Rule[] before + Rule[] after in, ReorderEffect out.
+// Pure-data, no DB, no I/O.
+
+/// `slab_hopper_summarize_reorder_effect` — produce a structural
+/// summary of how the AFTER chain differs from the BEFORE chain by
+/// rule name. See [`super::coverage::summarize_reorder_effect`] for
+/// the algorithm (first-occurrence by-name resolution; AFTER-order
+/// moved entries; is_permutation gate for undo's staleness check).
+///
+/// Returns a [`ReorderEffect`] carrying moved entries, added/removed
+/// name lists, and the permutation flag. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_summarize_reorder_effect(
+    before: Vec<Rule>,
+    after: Vec<Rule>,
+) -> CmdResult<super::coverage::ReorderEffect> {
+    Ok(super::coverage::summarize_reorder_effect(&before, &after))
+}
+
+// ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
 

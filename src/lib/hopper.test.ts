@@ -3186,3 +3186,61 @@ function makeRule(name: string): Rule {
     "noop: one removed -> NOT noop",
   );
 }
+
+// ── Slice 145 — slabHopperSummarizeReorderEffect wrapper-delegation ──
+
+import { slabHopperSummarizeReorderEffect } from "./hopper";
+
+{
+  // In browser-mode (no Tauri global), the wrapper delegates to the
+  // local TS mirror — exercise that path and pin every ReorderEffect
+  // field round-trips correctly.
+  const before = [makeRule("All"), makeRule("Tax"), makeRule("Receipts")];
+  const after = [makeRule("Tax"), makeRule("Receipts"), makeRule("All")];
+  const effect = await slabHopperSummarizeReorderEffect(before, after);
+  expect(Array.isArray(effect.moved), "wrapper: moved is an array");
+  expect(effect.moved.length === 3, "wrapper: moved.length === 3");
+  expect(typeof effect.moved[0].rule_name === "string", "wrapper: moved[0].rule_name is string");
+  expect(typeof effect.moved[0].from_index === "number", "wrapper: moved[0].from_index is number");
+  expect(typeof effect.moved[0].to_index === "number", "wrapper: moved[0].to_index is number");
+  expect(Array.isArray(effect.added) && effect.added.length === 0, "wrapper: added is empty array");
+  expect(Array.isArray(effect.removed) && effect.removed.length === 0, "wrapper: removed is empty array");
+  expect(effect.is_permutation === true, "wrapper: is_permutation true for permutation");
+}
+
+{
+  // Browser-mode delegation: identical chains -> no-op effect.
+  const rules = [makeRule("A"), makeRule("B")];
+  const effect = await slabHopperSummarizeReorderEffect(rules, rules);
+  expect(effect.moved.length === 0, "wrapper: identical -> no moves");
+  expect(effect.added.length === 0, "wrapper: identical -> no added");
+  expect(effect.removed.length === 0, "wrapper: identical -> no removed");
+  expect(effect.is_permutation === true, "wrapper: identical -> permutation");
+}
+
+{
+  // Browser-mode delegation: not-a-permutation pinned through.
+  const before = [makeRule("A"), makeRule("B")];
+  const after = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const effect = await slabHopperSummarizeReorderEffect(before, after);
+  expect(effect.is_permutation === false, "wrapper: pure-add not a permutation");
+  expect(JSON.stringify(effect.added) === JSON.stringify(["C"]), "wrapper: added=[C]");
+  expect(effect.removed.length === 0, "wrapper: removed empty");
+}
+
+{
+  // Browser-mode delegation: removed bucket pinned.
+  const before = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const after = [makeRule("A"), makeRule("B")];
+  const effect = await slabHopperSummarizeReorderEffect(before, after);
+  expect(JSON.stringify(effect.removed) === JSON.stringify(["C"]), "wrapper: removed=[C]");
+  expect(effect.added.length === 0, "wrapper: added empty");
+  expect(effect.is_permutation === false, "wrapper: pure-remove not a permutation");
+}
+
+{
+  // Browser-mode delegation: empty inputs round-trip.
+  const effect = await slabHopperSummarizeReorderEffect([], []);
+  expect(effect.moved.length === 0 && effect.added.length === 0 && effect.removed.length === 0, "wrapper: empty round-trip");
+  expect(effect.is_permutation === true, "wrapper: empty trivially permutation");
+}

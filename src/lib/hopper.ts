@@ -1705,6 +1705,32 @@ export async function slabHopperBatchReorderDeadRules(
   });
 }
 
+/** Slice 145 — produce a structural summary of how the AFTER chain
+ *  differs from the BEFORE chain via the backend
+ *  `slab_hopper_summarize_reorder_effect` command. Returns a
+ *  [`ReorderEffect`] carrying moved entries, added/removed name
+ *  lists, and the permutation flag.
+ *
+ *  Mirrors `summarizeReorderEffect` (slice 144) exactly; the wire
+ *  command exists so a future scripted-audit consumer (CLI diff
+ *  subcommand, cron health-check) gets the summariser as a
+ *  first-class command, and so the server-side Rule type is the
+ *  authoritative source for by-name equality.
+ *
+ *  Wraps to the local TS helper in browser-mode so component-level
+ *  testing doesn't need a Tauri stub. */
+export async function slabHopperSummarizeReorderEffect(
+  before: Rule[],
+  after: Rule[],
+): Promise<ReorderEffect> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return summarizeReorderEffect(before, after);
+  return invoke<ReorderEffect>("slab_hopper_summarize_reorder_effect", {
+    before,
+    after,
+  });
+}
+
 /** Suggest a default filename for a coverage CSV/JSON export.
  *  Mirrors the drilldown filename helper conventions so paralegals
  *  see one consistent naming pattern across the audit-export
