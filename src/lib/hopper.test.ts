@@ -62,6 +62,14 @@ import {
   type RuleSample,
   type SampleBucket,
   type SampleDrilldown,
+  resolveUndoShortcut,
+  detectUndoShortcutPlatform,
+  describeUndoShortcutIntent,
+  formatUndoShortcutChord,
+  type UndoShortcutEvent,
+  type UndoShortcutContext,
+  type UndoShortcutIntent,
+  type UndoShortcutPlatform,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -4576,4 +4584,353 @@ import {
   const ring = [e1, e2];
   const result = jumpToUndoEntry(ring, 0);
   expect(result.target?.snapshot === e1.snapshot, "e2e: snapshot reference preserved");
+}
+
+// =====================================================================
+// Slice 158 — keyboard-shortcut resolver tests (round-33).
+// =====================================================================
+
+function makeShortcutEvent(
+  partial: Partial<UndoShortcutEvent>,
+): UndoShortcutEvent {
+  return {
+    key: partial.key ?? "z",
+    metaKey: partial.metaKey ?? false,
+    ctrlKey: partial.ctrlKey ?? false,
+    shiftKey: partial.shiftKey ?? false,
+    altKey: partial.altKey ?? false,
+  };
+}
+
+function macCtx(popoverOpen = false): UndoShortcutContext {
+  return { popoverOpen, platform: "mac" };
+}
+function otherCtx(popoverOpen = false): UndoShortcutContext {
+  return { popoverOpen, platform: "other" };
+}
+
+// ── detectUndoShortcutPlatform ────────────────────────────────────────
+
+{
+  expect(
+    detectUndoShortcutPlatform("MacIntel") === "mac",
+    "detect: MacIntel -> mac",
+  );
+  expect(
+    detectUndoShortcutPlatform("MacPPC") === "mac",
+    "detect: MacPPC -> mac",
+  );
+  expect(
+    detectUndoShortcutPlatform("iPhone") === "mac",
+    "detect: iPhone -> mac",
+  );
+  expect(
+    detectUndoShortcutPlatform("iPad") === "mac",
+    "detect: iPad -> mac",
+  );
+  expect(
+    detectUndoShortcutPlatform("iPod") === "mac",
+    "detect: iPod -> mac",
+  );
+  expect(
+    detectUndoShortcutPlatform("Win32") === "other",
+    "detect: Win32 -> other",
+  );
+  expect(
+    detectUndoShortcutPlatform("Linux x86_64") === "other",
+    "detect: Linux -> other",
+  );
+  expect(
+    detectUndoShortcutPlatform("") === "other",
+    "detect: empty -> other (safe default)",
+  );
+  expect(
+    detectUndoShortcutPlatform(null as unknown as string) === "other",
+    "detect: null -> other (defensive)",
+  );
+  expect(
+    detectUndoShortcutPlatform("MACINTEL") === "mac",
+    "detect: case-insensitive (UPPER)",
+  );
+  expect(
+    detectUndoShortcutPlatform("macintosh") === "mac",
+    "detect: case-insensitive (lower)",
+  );
+}
+
+// ── resolveUndoShortcut — cascade (Cmd-Z / Ctrl-Z) ────────────────────
+
+{
+  // macOS Cmd-Z fires cascade.
+  const ev = makeShortcutEvent({ key: "z", metaKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "cascade",
+    "resolve: mac Cmd-Z -> cascade",
+  );
+}
+{
+  // Other Ctrl-Z fires cascade.
+  const ev = makeShortcutEvent({ key: "z", ctrlKey: true });
+  expect(
+    resolveUndoShortcut(ev, otherCtx()) === "cascade",
+    "resolve: other Ctrl-Z -> cascade",
+  );
+}
+{
+  // macOS Ctrl-Z (wrong primary) -> none (defer to system default).
+  const ev = makeShortcutEvent({ key: "z", ctrlKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "none",
+    "resolve: mac Ctrl-Z -> none (wrong primary)",
+  );
+}
+{
+  // Other Cmd-Z (wrong primary) -> none.
+  const ev = makeShortcutEvent({ key: "z", metaKey: true });
+  expect(
+    resolveUndoShortcut(ev, otherCtx()) === "none",
+    "resolve: other Cmd-Z -> none (wrong primary)",
+  );
+}
+{
+  // Both Cmd AND Ctrl held -> none (keyboard remapper edge).
+  const ev = makeShortcutEvent({ key: "z", metaKey: true, ctrlKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "none",
+    "resolve: Cmd+Ctrl+Z -> none on mac",
+  );
+  expect(
+    resolveUndoShortcut(ev, otherCtx()) === "none",
+    "resolve: Cmd+Ctrl+Z -> none on other",
+  );
+}
+{
+  // Alt+Cmd+Z -> none (system shortcut for redo style).
+  const ev = makeShortcutEvent({ key: "z", metaKey: true, altKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "none",
+    "resolve: Alt+Cmd+Z -> none (system shortcut)",
+  );
+}
+{
+  // Bare Z (no modifier) -> none.
+  const ev = makeShortcutEvent({ key: "z" });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "none",
+    "resolve: bare z -> none",
+  );
+}
+{
+  // Uppercase Z is normalised.
+  const ev = makeShortcutEvent({ key: "Z", metaKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "cascade",
+    "resolve: Cmd-Shift-Z key=Z (uppercase) normalises",
+  );
+}
+
+// ── resolveUndoShortcut — open-popover / jump-oldest ──────────────────
+
+{
+  // Cmd-Shift-Z with popover CLOSED -> open-popover.
+  const ev = makeShortcutEvent({ key: "z", metaKey: true, shiftKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx(false)) === "open-popover",
+    "resolve: Cmd-Shift-Z (closed) -> open-popover",
+  );
+}
+{
+  // Cmd-Shift-Z with popover OPEN -> jump-oldest.
+  const ev = makeShortcutEvent({ key: "z", metaKey: true, shiftKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "jump-oldest",
+    "resolve: Cmd-Shift-Z (open) -> jump-oldest",
+  );
+}
+{
+  // Ctrl-Shift-Z on other -> open-popover.
+  const ev = makeShortcutEvent({ key: "z", ctrlKey: true, shiftKey: true });
+  expect(
+    resolveUndoShortcut(ev, otherCtx(false)) === "open-popover",
+    "resolve: other Ctrl-Shift-Z (closed) -> open-popover",
+  );
+  expect(
+    resolveUndoShortcut(ev, otherCtx(true)) === "jump-oldest",
+    "resolve: other Ctrl-Shift-Z (open) -> jump-oldest",
+  );
+}
+
+// ── resolveUndoShortcut — popover navigation (arrow + Enter) ─────────
+
+{
+  // ArrowDown with popover open -> focus-next.
+  const ev = makeShortcutEvent({ key: "ArrowDown" });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "focus-next",
+    "resolve: ArrowDown (open) -> focus-next",
+  );
+  // ArrowDown with popover closed -> none.
+  expect(
+    resolveUndoShortcut(ev, macCtx(false)) === "none",
+    "resolve: ArrowDown (closed) -> none",
+  );
+}
+{
+  // ArrowUp.
+  const ev = makeShortcutEvent({ key: "ArrowUp" });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "focus-prev",
+    "resolve: ArrowUp (open) -> focus-prev",
+  );
+  expect(
+    resolveUndoShortcut(ev, macCtx(false)) === "none",
+    "resolve: ArrowUp (closed) -> none",
+  );
+}
+{
+  // Enter with popover open -> activate.
+  const ev = makeShortcutEvent({ key: "Enter" });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "activate",
+    "resolve: Enter (open) -> activate",
+  );
+  expect(
+    resolveUndoShortcut(ev, macCtx(false)) === "none",
+    "resolve: Enter (closed) -> none",
+  );
+}
+{
+  // Space with popover open -> activate.
+  const ev = makeShortcutEvent({ key: " " });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "activate",
+    "resolve: Space (open) -> activate",
+  );
+}
+{
+  // Arrow with modifier -> none (don't intercept scroll-with-modifier).
+  const ev = makeShortcutEvent({ key: "ArrowDown", metaKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "none",
+    "resolve: Cmd-ArrowDown -> none (don't intercept)",
+  );
+}
+{
+  // Arrow with shift -> none.
+  const ev = makeShortcutEvent({ key: "ArrowUp", shiftKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx(true)) === "none",
+    "resolve: Shift-ArrowUp -> none",
+  );
+}
+
+// ── resolveUndoShortcut — defensive / no-op branches ──────────────────
+
+{
+  // Random key + Cmd -> none.
+  const ev = makeShortcutEvent({ key: "a", metaKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "none",
+    "resolve: Cmd-A -> none (not z)",
+  );
+}
+{
+  // Empty key -> none.
+  const ev = makeShortcutEvent({ key: "", metaKey: true });
+  expect(
+    resolveUndoShortcut(ev, macCtx()) === "none",
+    "resolve: empty key -> none",
+  );
+}
+{
+  // Tab/Escape/etc -> none.
+  for (const key of ["Tab", "Escape", "F1", "PageDown", "Home", "End"]) {
+    const ev = makeShortcutEvent({ key });
+    expect(
+      resolveUndoShortcut(ev, macCtx(true)) === "none",
+      `resolve: ${key} -> none even with popover open`,
+    );
+  }
+}
+
+// ── describeUndoShortcutIntent ───────────────────────────────────────
+
+{
+  const intents: UndoShortcutIntent[] = [
+    "cascade",
+    "open-popover",
+    "jump-oldest",
+    "focus-prev",
+    "focus-next",
+    "activate",
+    "none",
+  ];
+  for (const intent of intents) {
+    const text = describeUndoShortcutIntent(intent);
+    expect(typeof text === "string", `describe: ${intent} returns string`);
+    expect(text.length > 0, `describe: ${intent} non-empty`);
+  }
+  expect(
+    describeUndoShortcutIntent("cascade") === "Cascade undo",
+    "describe: cascade copy",
+  );
+  expect(
+    describeUndoShortcutIntent("open-popover") === "Open cascade-jump popover",
+    "describe: open-popover copy",
+  );
+  expect(
+    describeUndoShortcutIntent("jump-oldest") === "Jump to oldest ready entry",
+    "describe: jump-oldest copy",
+  );
+  expect(
+    describeUndoShortcutIntent("none") === "No shortcut",
+    "describe: none copy",
+  );
+}
+
+// ── formatUndoShortcutChord ───────────────────────────────────────────
+
+{
+  // Mac chord vocabulary.
+  const mac: UndoShortcutPlatform = "mac";
+  expect(
+    formatUndoShortcutChord("cascade", mac) === "⌘Z",
+    "chord: mac cascade -> Cmd-Z",
+  );
+  expect(
+    formatUndoShortcutChord("open-popover", mac) === "⌘⇧Z",
+    "chord: mac open-popover -> Cmd-Shift-Z",
+  );
+  expect(
+    formatUndoShortcutChord("jump-oldest", mac) === "⌘⇧Z",
+    "chord: mac jump-oldest -> Cmd-Shift-Z",
+  );
+  expect(
+    formatUndoShortcutChord("focus-prev", mac) === "↑",
+    "chord: mac focus-prev -> ↑",
+  );
+  expect(
+    formatUndoShortcutChord("focus-next", mac) === "↓",
+    "chord: mac focus-next -> ↓",
+  );
+  expect(
+    formatUndoShortcutChord("activate", mac) === "Enter",
+    "chord: mac activate -> Enter",
+  );
+  expect(
+    formatUndoShortcutChord("none", mac) === "",
+    "chord: mac none -> empty",
+  );
+}
+{
+  // Other chord vocabulary.
+  const other: UndoShortcutPlatform = "other";
+  expect(
+    formatUndoShortcutChord("cascade", other) === "CtrlZ",
+    "chord: other cascade -> CtrlZ",
+  );
+  expect(
+    formatUndoShortcutChord("open-popover", other) === "Ctrl⇧Z",
+    "chord: other open-popover -> Ctrl-Shift-Z",
+  );
 }

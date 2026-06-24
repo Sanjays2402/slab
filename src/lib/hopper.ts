@@ -2888,3 +2888,235 @@ export const suggestBackfillCsvFilename = (report: BackfillReport): string => {
   const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return `backfill_${stem}_${iso}.csv`;
 };
+
+// =====================================================================
+// v3.40 Slice 158 — Keyboard-shortcut resolver for the cascade-undo
+// (round-33)
+// =====================================================================
+//
+// Round 32 (slice 157) shipped a per-entry cascade-jump popover that
+// surfaces the full ring with "Jump here" buttons. The popover ONLY
+// opens via a mouse click on the cov-undo-chip — power users editing
+// a 30-rule chain reach for Cmd-Z and get the browser undo (which
+// either reverts a text-input change or no-ops). Slice 158 adds a
+// pure-data resolver that turns a KeyboardEvent into one of three
+// shortcut intents so the UI can wire Cmd-Z to the cascade Undo
+// button, Cmd-Shift-Z to the jump popover, and arrow-keys + Enter
+// to navigate / activate rows inside the popover.
+//
+// The resolver is pure: it inspects the event's key/modifiers but
+// does NOT touch any state. The UI dispatches each intent to the
+// appropriate handler (applyUndo / toggleUndoPopover / focus
+// movement / applyUndoJump). Tests pin every code path including
+// platform-aware Cmd-vs-Ctrl and the "no modifier" / "wrong key"
+// no-op branches.
+//
+// Why a pure resolver instead of inline event handling in the
+// component: (a) tests can exercise every branch without spinning
+// up a Svelte instance + JSDOM, (b) the audit consumer (a future
+// "log every keyboard shortcut" debug surface) gets a first-class
+// classifier, (c) it documents the gesture vocabulary in one place
+// instead of scattered inside an `if (e.key === "z" && ...) else
+// if` chain.
+
+/** The platform-specific modifier key for primary shortcuts. macOS
+ *  / iPadOS use Cmd; Linux / Windows use Ctrl. The resolver accepts
+ *  either at runtime (some Linux users on a Mac keyboard expect Cmd
+ *  to work), but the discriminator helps a future settings surface
+ *  document the "default" platform binding. */
+export type UndoShortcutPlatform = "mac" | "other";
+
+/** The three shortcut intents the cascade-undo surface understands.
+ *  Returned by `resolveUndoShortcut`; the UI dispatches each to a
+ *  matching handler.
+ *
+ *  - `"cascade"`: Cmd-Z / Ctrl-Z — fire the cascade Undo button on
+ *    the newest ready entry. Equivalent to clicking the inline Undo
+ *    button on the toast. Surfaces the round-30/31 cascade UX.
+ *  - `"open-popover"`: Cmd-Shift-Z / Ctrl-Shift-Z — open the
+ *    cascade-jump popover (or close it if already open). Surfaces
+ *    the round-32 per-entry jump UX.
+ *  - `"jump-oldest"`: Cmd-Shift-Z / Ctrl-Shift-Z WHILE the popover
+ *    is already open — jump directly to the oldest ready entry as
+ *    a power-user accelerator. A user who hit Cmd-Shift-Z to open
+ *    the popover, saw the rows, and decided to revert all the way
+ *    back can hit it AGAIN to jump to the bottom without the
+ *    arrow-key walk.
+ *  - `"focus-prev"` / `"focus-next"`: ArrowUp / ArrowDown — move
+ *    focus inside the popover. Only fires when the popover is
+ *    open; otherwise the resolver returns `"none"`.
+ *  - `"activate"`: Enter / Space — activate the focused row's
+ *    Jump-here button. Only fires when the popover is open.
+ *  - `"none"`: any other key + modifier combination. The UI does
+ *    nothing — the event continues bubbling. */
+export type UndoShortcutIntent =
+  | "cascade"
+  | "open-popover"
+  | "jump-oldest"
+  | "focus-prev"
+  | "focus-next"
+  | "activate"
+  | "none";
+
+/** Input shape for `resolveUndoShortcut`. Mirrors the KeyboardEvent
+ *  fields the resolver inspects so tests can pass synthetic objects
+ *  without instantiating a real event. */
+export interface UndoShortcutEvent {
+  /** `e.key` — the printable key name. Lowercased on lookup so the
+   *  resolver matches "z" / "Z" / "ArrowUp" / etc. */
+  key: string;
+  /** `e.metaKey` — Cmd on macOS, Win key on others (we ignore
+   *  Win-key entirely; the resolver flips to `ctrlKey` on non-mac). */
+  metaKey: boolean;
+  /** `e.ctrlKey` — Ctrl on every platform. */
+  ctrlKey: boolean;
+  /** `e.shiftKey` — Shift modifier (gates open-popover vs cascade). */
+  shiftKey: boolean;
+  /** `e.altKey` — Alt/Option. The resolver requires this to be
+   *  FALSE for any intent to fire (Alt-Cmd-Z is a system shortcut
+   *  on macOS for "redo style"; we don't intercept it). */
+  altKey: boolean;
+}
+
+/** Whether the cascade-jump popover is currently open. The resolver
+ *  uses this to discriminate between `"open-popover"` (popover
+ *  closed -> open it) and `"jump-oldest"` (popover already open ->
+ *  shortcut acts as the bottom-row accelerator). Arrow-key + Enter
+ *  intents are ONLY returned when the popover is open. */
+export interface UndoShortcutContext {
+  popoverOpen: boolean;
+  /** The detected platform. Pass `"mac"` when navigator.platform
+   *  indicates macOS / iPadOS, else `"other"`. Default is `"other"`
+   *  (most strict — requires Ctrl on systems we can't classify). */
+  platform: UndoShortcutPlatform;
+}
+
+/** Detect the platform from a `navigator.platform`-shaped string.
+ *  Pure — pass `globalThis.navigator?.platform ?? ""` at call site.
+ *  Matches the historical "MacIntel" / "MacPPC" / "iPhone" / "iPad"
+ *  values that browsers still emit (even after the deprecation of
+ *  `navigator.platform` in modern UA-CH; the legacy field is kept
+ *  for compatibility on every major browser as of 2026). */
+export function detectUndoShortcutPlatform(
+  platformString: string,
+): UndoShortcutPlatform {
+  if (typeof platformString !== "string") return "other";
+  const p = platformString.toLowerCase();
+  if (
+    p.includes("mac") ||
+    p.includes("iphone") ||
+    p.includes("ipad") ||
+    p.includes("ipod")
+  ) {
+    return "mac";
+  }
+  return "other";
+}
+
+/** Resolve a KeyboardEvent-shaped input into a cascade-undo intent.
+ *  Pure — no DOM access, no event mutation. The UI dispatches the
+ *  returned intent to its matching handler.
+ *
+ *  Modifier vocabulary (platform-aware):
+ *    - macOS: Cmd-Z / Cmd-Shift-Z (metaKey).
+ *    - Other: Ctrl-Z / Ctrl-Shift-Z (ctrlKey).
+ *    - Alt/Option must be FALSE for any modifier intent to fire
+ *      (Alt-Cmd-Z is the system "redo style" shortcut on macOS).
+ *
+ *  Defensive: returns `"none"` for any unrecognised key, missing
+ *  required modifier, or wrong-platform modifier (e.g. Ctrl-Z on
+ *  macOS — that's an ASCII control char on some keyboards; we
+ *  defer to the system default). */
+export function resolveUndoShortcut(
+  event: UndoShortcutEvent,
+  context: UndoShortcutContext,
+): UndoShortcutIntent {
+  // Alt/Option always disqualifies — too many system shortcuts use it.
+  if (event.altKey) return "none";
+
+  const key = (event.key || "").toLowerCase();
+
+  // Arrow-key navigation + activation: only fires when the popover
+  // is already open. Modifier keys are forbidden (a user pressing
+  // Cmd-ArrowUp on the chain editor would otherwise lose their
+  // scroll position).
+  if (context.popoverOpen) {
+    if (key === "arrowup" && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      return "focus-prev";
+    }
+    if (key === "arrowdown" && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      return "focus-next";
+    }
+    if (
+      (key === "enter" || key === " ") &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey
+    ) {
+      return "activate";
+    }
+  }
+
+  // Primary modifier check — Cmd on mac, Ctrl on other. Off-platform
+  // modifiers no-op so the system default (browser undo) is preserved.
+  if (key !== "z") return "none";
+  const wantMeta = context.platform === "mac";
+  const primaryHeld = wantMeta ? event.metaKey : event.ctrlKey;
+  const wrongPrimary = wantMeta ? event.ctrlKey : event.metaKey;
+  if (!primaryHeld) return "none";
+  // Don't fire if BOTH primary modifiers are pressed (some keyboard
+  // remappers swap them; we'd rather no-op than misfire).
+  if (wrongPrimary) return "none";
+
+  if (event.shiftKey) {
+    return context.popoverOpen ? "jump-oldest" : "open-popover";
+  }
+  return "cascade";
+}
+
+/** Human-readable name for a shortcut intent. Used by the
+ *  HopperRulesEditor onboarding tooltip + the audit log surface. */
+export function describeUndoShortcutIntent(
+  intent: UndoShortcutIntent,
+): string {
+  switch (intent) {
+    case "cascade":
+      return "Cascade undo";
+    case "open-popover":
+      return "Open cascade-jump popover";
+    case "jump-oldest":
+      return "Jump to oldest ready entry";
+    case "focus-prev":
+      return "Move focus up";
+    case "focus-next":
+      return "Move focus down";
+    case "activate":
+      return "Activate focused row";
+    case "none":
+      return "No shortcut";
+  }
+}
+
+/** Format the shortcut chord for display in tooltips / help copy.
+ *  Returns the platform-correct primary key + Shift suffix. */
+export function formatUndoShortcutChord(
+  intent: UndoShortcutIntent,
+  platform: UndoShortcutPlatform,
+): string {
+  const primary = platform === "mac" ? "⌘" : "Ctrl";
+  switch (intent) {
+    case "cascade":
+      return `${primary}Z`;
+    case "open-popover":
+    case "jump-oldest":
+      return `${primary}⇧Z`;
+    case "focus-prev":
+      return "↑";
+    case "focus-next":
+      return "↓";
+    case "activate":
+      return "Enter";
+    case "none":
+      return "";
+  }
+}
