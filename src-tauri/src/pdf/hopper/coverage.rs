@@ -1469,6 +1469,115 @@ pub fn summarize_undo_ring(entries: &[UndoEntrySummary], capacity: usize) -> Und
     }
 }
 
+/// Structural plan for "jump directly to entry N in the undo ring,
+/// skipping over the newer entries in one click". Returned by
+/// [`compute_undo_jump_plan`] (slice 153) for the round-32 ring
+/// popover.
+///
+/// Mental model: the ring carries entries OLDEST-FIRST (index 0 =
+/// oldest, length-1 = newest). The default cascade button (slice 152)
+/// surfaces the newest entry and the user clicks repeatedly to walk
+/// backwards. The popover lets the user pick a specific entry to
+/// jump to — the plan describes WHICH entries get popped off the
+/// newest end to land on the target as the new newest entry.
+///
+/// Entries between the target (exclusive) and the current newest
+/// (inclusive) are listed in `dropped_labels` in NEWEST-FIRST order
+/// so the popover's confirmation copy reads naturally as "Skip these
+/// 3 reverts" (the user sees the most-recent action they're about
+/// to skip first). The target itself is at `dropped_labels.len()`
+/// entries back from the newest.
+///
+/// Mirrored 1:1 in TS as `UndoJumpPlan` / `computeUndoJumpPlan`
+/// (slice 154).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UndoJumpPlan {
+    /// True iff `target_index` was in range AND there's at least
+    /// one entry to drop (jump distance >= 1). Anchors the popover's
+    /// "Jump here" button's enabled state.
+    pub is_valid: bool,
+    /// How many entries the jump skips over (the count the popover
+    /// renders as "Skip 3 reverts to jump here"). Equal to
+    /// `(entries.len() - 1) - target_index` for valid plans;
+    /// `0` for invalid plans (out-of-range / pointing at the
+    /// already-newest entry — the default-button surface).
+    pub skip_count: usize,
+    /// Labels of the entries that get dropped, in NEWEST-FIRST
+    /// order. The popover renders this as "Skip: fix-all, fix-it:
+    /// Tax, fix-it: Receipts" so the user reads the most-recent
+    /// action they're discarding first. Empty for invalid plans.
+    pub dropped_labels: Vec<String>,
+    /// Label of the entry the jump lands on (becomes the new newest
+    /// after the jump). Empty for invalid plans. Surfaced in the
+    /// popover's confirmation copy as "Jump back to <label>".
+    pub target_label: String,
+    /// Index of the target in the ORIGINAL ring (echoed back for the
+    /// caller's convenience — the UI passes this through to the
+    /// bridge layer's `jumpToUndoEntry` (slice 156) without
+    /// recomputing). Set to `0` for invalid plans where the index
+    /// was out of range.
+    pub target_index: usize,
+}
+
+/// Plan a "jump directly to entry N" operation against an undo ring.
+///
+/// Algorithm:
+///   1. If the ring is empty -> `is_valid = false`, all-zero plan.
+///   2. If `target_index >= entries.len()` -> out-of-range; invalid
+///      plan (the popover should disable the button rather than
+///      silently target the newest entry).
+///   3. If `target_index == entries.len() - 1` -> the target IS the
+///      newest entry; the default cascade button already targets it,
+///      so the jump is a no-op. `is_valid = false` (the popover
+///      hides the "Jump here" button for the row that's already
+///      the active target, avoiding a useless click).
+///   4. Otherwise -> valid plan. `skip_count = (entries.len() - 1)
+///      - target_index`. `dropped_labels` walks NEWEST-FIRST from
+///      `entries.last()` down to but EXCLUDING `entries[target_index]`,
+///      collecting labels. `target_label = entries[target_index].label`.
+///
+/// Pure function — no I/O, no Tauri. Mirrored 1:1 in TS as
+/// `computeUndoJumpPlan` (slice 154).
+pub fn compute_undo_jump_plan(entries: &[UndoEntrySummary], target_index: usize) -> UndoJumpPlan {
+    if entries.is_empty() || target_index >= entries.len() {
+        return UndoJumpPlan {
+            is_valid: false,
+            skip_count: 0,
+            dropped_labels: Vec::new(),
+            target_label: String::new(),
+            target_index: 0,
+        };
+    }
+    let newest = entries.len() - 1;
+    if target_index == newest {
+        // Already the active target — no jump needed. The popover's
+        // row for this entry shows the cascade button copy instead
+        // of the jump button.
+        return UndoJumpPlan {
+            is_valid: false,
+            skip_count: 0,
+            dropped_labels: Vec::new(),
+            target_label: entries[target_index].label.clone(),
+            target_index,
+        };
+    }
+    // Walk newest -> target+1, collecting labels in newest-first
+    // order so the popover reads "Skip: <newest>, <next>, ..." in
+    // user-readable order.
+    let mut dropped_labels: Vec<String> = Vec::with_capacity(newest - target_index);
+    for i in (target_index + 1..=newest).rev() {
+        dropped_labels.push(entries[i].label.clone());
+    }
+    let skip_count = dropped_labels.len();
+    UndoJumpPlan {
+        is_valid: true,
+        skip_count,
+        dropped_labels,
+        target_label: entries[target_index].label.clone(),
+        target_index,
+    }
+}
+
 /// Plan minimal-reorder fixes for every dead rule in `report`.
 ///
 /// Returns one [`ReorderProposal`] per `dead_at_position == true`
@@ -4517,5 +4626,272 @@ mod tests {
             let s = summarize_undo_ring(&[], cap);
             assert_eq!(s.capacity, cap);
         }
+    }
+
+    // ── Slice 153 — compute_undo_jump_plan (round-32) ─────────────────
+
+    #[test]
+    fn jump_plan_empty_ring_is_invalid() {
+        // No entries -> nothing to jump to. All fields zeroed.
+        let plan = compute_undo_jump_plan(&[], 0);
+        assert!(!plan.is_valid);
+        assert_eq!(plan.skip_count, 0);
+        assert!(plan.dropped_labels.is_empty());
+        assert_eq!(plan.target_label, "");
+        assert_eq!(plan.target_index, 0);
+    }
+
+    #[test]
+    fn jump_plan_out_of_range_index_is_invalid() {
+        // target_index >= entries.len() -> invalid; the popover should
+        // disable the button rather than silently target the newest.
+        let entries = vec![summary("a", 100), summary("b", 200)];
+        let plan = compute_undo_jump_plan(&entries, 5);
+        assert!(!plan.is_valid);
+        assert_eq!(plan.skip_count, 0);
+        assert!(plan.dropped_labels.is_empty());
+        assert_eq!(plan.target_label, "");
+        assert_eq!(plan.target_index, 0);
+    }
+
+    #[test]
+    fn jump_plan_target_equals_newest_is_invalid_noop() {
+        // target_index == newest -> the default cascade button already
+        // targets this entry. Invalid (no jump needed) but we echo
+        // the label / index back so the popover can render "this is
+        // the active target" copy without re-deriving it.
+        let entries = vec![summary("a", 100), summary("b", 200), summary("c", 300)];
+        let plan = compute_undo_jump_plan(&entries, 2);
+        assert!(!plan.is_valid);
+        assert_eq!(plan.skip_count, 0);
+        assert!(plan.dropped_labels.is_empty());
+        assert_eq!(plan.target_label, "c");
+        assert_eq!(plan.target_index, 2);
+    }
+
+    #[test]
+    fn jump_plan_skip_one_entry() {
+        // 3-entry ring, jump to index 1 (second-newest) -> skip 1
+        // (the newest entry "c").
+        let entries = vec![summary("a", 100), summary("b", 200), summary("c", 300)];
+        let plan = compute_undo_jump_plan(&entries, 1);
+        assert!(plan.is_valid);
+        assert_eq!(plan.skip_count, 1);
+        assert_eq!(plan.dropped_labels, vec!["c".to_string()]);
+        assert_eq!(plan.target_label, "b");
+        assert_eq!(plan.target_index, 1);
+    }
+
+    #[test]
+    fn jump_plan_skip_to_oldest_skips_all_newer() {
+        // 5-entry ring, jump to index 0 (oldest) -> skip 4 entries
+        // (the newest four), listed newest-first.
+        let entries = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+            summary("e", 500),
+        ];
+        let plan = compute_undo_jump_plan(&entries, 0);
+        assert!(plan.is_valid);
+        assert_eq!(plan.skip_count, 4);
+        // Newest-first order so the popover reads in user-readable
+        // chronology: "Skip: e, d, c, b" -> "skip the most recent
+        // action first".
+        assert_eq!(
+            plan.dropped_labels,
+            vec![
+                "e".to_string(),
+                "d".to_string(),
+                "c".to_string(),
+                "b".to_string()
+            ]
+        );
+        assert_eq!(plan.target_label, "a");
+        assert_eq!(plan.target_index, 0);
+    }
+
+    #[test]
+    fn jump_plan_two_entry_ring_jump_to_oldest() {
+        // Minimal valid case: 2 entries, jump to the oldest. skip = 1.
+        let entries = vec![summary("old", 100), summary("new", 200)];
+        let plan = compute_undo_jump_plan(&entries, 0);
+        assert!(plan.is_valid);
+        assert_eq!(plan.skip_count, 1);
+        assert_eq!(plan.dropped_labels, vec!["new".to_string()]);
+        assert_eq!(plan.target_label, "old");
+        assert_eq!(plan.target_index, 0);
+    }
+
+    #[test]
+    fn jump_plan_single_entry_ring_is_noop() {
+        // 1-entry ring -> the only entry IS the newest, so jumping
+        // to it is a no-op. Echo label/index back; is_valid = false.
+        let entries = vec![summary("only", 100)];
+        let plan = compute_undo_jump_plan(&entries, 0);
+        assert!(!plan.is_valid);
+        assert_eq!(plan.skip_count, 0);
+        assert!(plan.dropped_labels.is_empty());
+        assert_eq!(plan.target_label, "only");
+        assert_eq!(plan.target_index, 0);
+    }
+
+    #[test]
+    fn jump_plan_no_input_mutation() {
+        // Pinned: the input slice is never mutated. Defensive guard
+        // against a future refactor that walks the slice with a
+        // mutating iterator.
+        let entries = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+        ];
+        let snapshot = entries.clone();
+        let _ = compute_undo_jump_plan(&entries, 1);
+        assert_eq!(entries, snapshot);
+    }
+
+    #[test]
+    fn jump_plan_serde_round_trip_snake_case() {
+        // Pin snake_case field names so the TS mirror reads the wire
+        // shape correctly (camelCase would silently drop fields).
+        let entries = vec![summary("a", 100), summary("b", 200), summary("c", 300)];
+        let plan = compute_undo_jump_plan(&entries, 0);
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(
+            json.contains("\"is_valid\":true"),
+            "expected snake_case is_valid in {json}"
+        );
+        assert!(
+            json.contains("\"skip_count\":2"),
+            "expected snake_case skip_count in {json}"
+        );
+        assert!(
+            json.contains("\"dropped_labels\":"),
+            "expected snake_case dropped_labels in {json}"
+        );
+        assert!(
+            json.contains("\"target_label\":\"a\""),
+            "expected snake_case target_label in {json}"
+        );
+        assert!(
+            json.contains("\"target_index\":0"),
+            "expected snake_case target_index in {json}"
+        );
+        let back: UndoJumpPlan = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, plan);
+    }
+
+    #[test]
+    fn jump_plan_skip_count_matches_dropped_labels_len() {
+        // Pinned invariant: skip_count == dropped_labels.len() for
+        // every valid plan. The UI's "Skip N reverts" copy reads
+        // skip_count directly; if the labels list ever drifted from
+        // the count, the count would silently lie.
+        let entries = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+            summary("e", 500),
+        ];
+        for target in 0..=3 {
+            let plan = compute_undo_jump_plan(&entries, target);
+            assert!(plan.is_valid, "target {target} should be valid");
+            assert_eq!(
+                plan.skip_count,
+                plan.dropped_labels.len(),
+                "skip_count must equal dropped_labels.len() for target {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn jump_plan_dropped_labels_in_newest_first_order() {
+        // Pinned: dropped_labels walks newest-first so the popover's
+        // copy reads in user-readable order. Pinned by index-by-index
+        // comparison against the reversed range.
+        let entries = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+            summary("e", 500),
+        ];
+        let plan = compute_undo_jump_plan(&entries, 1);
+        // Target = index 1 ("b"). Dropped = indices 4, 3, 2 ->
+        // labels "e", "d", "c".
+        assert_eq!(
+            plan.dropped_labels,
+            vec!["e".to_string(), "d".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn jump_plan_target_index_field_echoes_input() {
+        // For every valid in-range index, target_index round-trips
+        // the input verbatim. The UI passes this through to the
+        // bridge's jumpToUndoEntry (slice 156) without recomputing.
+        let entries = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+        ];
+        for target in 0..3 {
+            let plan = compute_undo_jump_plan(&entries, target);
+            assert!(plan.is_valid);
+            assert_eq!(plan.target_index, target);
+        }
+    }
+
+    #[test]
+    fn jump_plan_target_label_echoes_entry_label() {
+        // target_label round-trips the entry's label verbatim — the
+        // popover's "Jump back to <label>" copy reads this directly.
+        let entries = vec![
+            summary("fix-it: Tax", 100),
+            summary("fix-all", 200),
+            summary("fix-it: Receipts", 300),
+        ];
+        let plan = compute_undo_jump_plan(&entries, 0);
+        assert!(plan.is_valid);
+        assert_eq!(plan.target_label, "fix-it: Tax");
+        let plan = compute_undo_jump_plan(&entries, 1);
+        assert!(plan.is_valid);
+        assert_eq!(plan.target_label, "fix-all");
+    }
+
+    #[test]
+    fn jump_plan_capacity_consistent_with_summary() {
+        // End-to-end: feed summarize_undo_ring's output into the
+        // jump planner so the two layers compose cleanly. A 7-entry
+        // ring trimmed to capacity 5 (oldest two dropped) leaves
+        // c..g; jumping to index 0 of the summary should target "c".
+        let raw = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+            summary("e", 500),
+            summary("f", 600),
+            summary("g", 700),
+        ];
+        let trimmed = summarize_undo_ring(&raw, 5);
+        let plan = compute_undo_jump_plan(&trimmed.entries, 0);
+        assert!(plan.is_valid);
+        assert_eq!(plan.target_label, "c");
+        assert_eq!(plan.skip_count, 4);
+        assert_eq!(
+            plan.dropped_labels,
+            vec![
+                "g".to_string(),
+                "f".to_string(),
+                "e".to_string(),
+                "d".to_string()
+            ]
+        );
     }
 }
