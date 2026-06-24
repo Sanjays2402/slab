@@ -1,13 +1,323 @@
 # Slab Cron State
 
-Last updated: 2026-06-23 13:25 PT by Cake (cron) — round-30 BATCH shipped: 5 slices closing the fix-it / fix-all UNDO arc. Reorder-effect summary primitive summarize_reorder_effect(before, after) -> ReorderEffect with {moved, added, removed, is_permutation} + first-occurrence by-name resolution + AFTER-order moved enumeration + length-aware permutation gate + 15 tests (slice 143); TS mirror summarizeReorderEffect 1:1 + describeReorderEffect discriminated copy from UNDO perspective ("Move N rules back" / "Drop N added rules" / "Restore N removed rules" / mixed branches) + isReorderEffectNoop predicate + 52 inline tests (slice 144); slab_hopper_summarize_reorder_effect Tauri command wired into invoke handler + slabHopperSummarizeReorderEffect async wrapper with browser-mode delegation + 20 wrapper-delegation tests pinning every ReorderEffect field (slice 145); captureUndoEntry(before, after, label, now?) bridge primitive composing snapshot defensive-copy + label + capturedAt + pre-computed appliedEffect + computeUndoStatus(entry, current) discriminating noop/stale/ready via REVERT-direction diff + short dominant-bucket reason ("1 rule added since fix-all" / "renamed" framing on tie) + describeUndoStatus composing kind + describeReorderEffect + 29 inline tests including end-to-end capture -> compute -> undo round trip (slice 146); demo-able UI Undo button INLINE on cov-export-toast row + green-tint pill matching toast palette + worst-tier amber stale badge with reason tooltip + reactive $derived undoStatus over (undoEntry, rules) + label discriminating "fix-it: Tax" vs "fix-all" + optimistic apply via slabHopperSetRules with rollback on failure + "Reverted N rules" confirmation toast on success + lifecycle tied to toast dwell (entry clears with toast fade) + export-path explicit clear (no phantom undo on unrelated toast) + applied=0 fast path skipping snapshot (no useless button) + ~80 lines scoped CSS (slice 147). Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings PASSED CLEAN in 10.45s, cargo test --lib 2596 passed / 0 failed (round-29 baseline 2581 + 15 slice-143 tests = 2596), pnpm check 0 errors / 104 warnings (round-29 baseline preserved EXACTLY), tsx src/lib/hopper.test.ts 460 inline expects pass (round-29 baseline 359 + 52 slice-144 + 20 slice-145 + 29 slice-146 = 460; slice 147 is a UI slice with no new TS-helper assertions).
+Last updated: 2026-06-23 17:18 PT by Cake (cron) — round-31 BATCH shipped: 5 slices promoting round-30's single-entry undo to a bounded cascade ring. summarize_undo_ring(entries, capacity) -> UndoRingSummary with {entries (oldest-trimmed), capacity, full} + UndoEntrySummary {label, captured_at_ms, applied_effect} compact wire view + defensive capacity==0 always-full branch + snake_case serde round-trip + 10 tests (slice 148); TS mirror summarizeUndoRing 1:1 + UndoEntrySummary/UndoRingSummary wire-shape interfaces + describeUndoRingSummary discriminated copy ("No undo history" / "1 undo step" / "3 undo steps (oldest: fix-all)" / "5 undo steps — at capacity") + isUndoRingFull predicate + negative-cap defensive normalisation + 42 inline tests (slice 149); slab_hopper_summarize_undo_ring Tauri command wired into invoke handler + slabHopperSummarizeUndoRing async wrapper with browser-mode delegation + 22 wrapper-delegation tests pinning every UndoRingSummary field (slice 150); pushUndoEntry(ring, entry, capacity) returning new array with oldest-trim + popUndoEntry(ring) -> {entry, remaining} idempotent on empty + selectActiveUndo(ring, current) walking newest -> oldest computing computeUndoStatus per entry surfacing first ready as active with totalReady/totalStale counters + UNDO_RING_CAPACITY=5 constant + 58 inline tests including 3-step cascade end-to-end (slice 151); demo-able UI promoting undoEntry: ReorderUndoEntry | null to undoRing: ReorderUndoEntry[] capped at UNDO_RING_CAPACITY + undoSelection $derived from selectActiveUndo + undoStepChip $derived "Step N of M" newest-first copy (empty when ring has <2 entries) + cascade-aware toast copy ("Reverted 3 rules · 2 undo steps remaining" mid-cascade / "Reverted 3 rules" on drain) + 4s dwell refresh after each successful undo so cascading clicks have a full window + new .cov-undo-chip muted-blue informational pill with amber-tinted .full variant when ring at capacity + ~40 lines new scoped CSS (slice 152). Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings PASSED CLEAN in 28.55s, cargo test --lib 2606 passed / 0 failed (round-30 baseline 2596 + 10 slice-148 tests = 2606), pnpm check 0 errors / 104 warnings (round-30 baseline preserved EXACTLY), tsx src/lib/hopper.test.ts 582 inline expects pass (round-30 baseline 460 + 42 slice-149 + 22 slice-150 + 58 slice-151 = 582; slice 152 is a UI slice with no new TS-helper assertions). Commits: cc1baa4 (slice 148) -> c599acc (slice 149) -> 701f7c3 (slice 150) -> a065c38 (slice 151) -> 1a17674 (slice 152).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `88129fa` — "feat(hopper): Undo for fix-it / fix-all on the coverage toast".
+Latest commit: `1a17674` — "feat(hopper): cascading Undo ring with \"Step N of M\" chip".
+
+### What round-31 (2026-06-23 17:18 PT) just shipped
+
+Five slices closing one cohesive arc. Round 30 (slice 147) shipped
+a SINGLE-ENTRY undo: any subsequent fix-it / fix-all overwrote the
+stashed snapshot, so a paralegal who did "fix-it on Tax, then
+fix-all on the rest, then realised the original order was better"
+could only undo ONCE — and the fix-all snapshot replaced the
+fix-it snapshot in the process, so the Tax fix was already lost
+before they noticed. Tonight that cascade closes end-to-end: a
+pure-data ring summariser on the backend (oldest-trimmed-to-
+capacity, with capacity / full metadata for the UI's chip and the
+audit log's "at capacity" warning), TS mirror + discriminated
+copy + isFull predicate, server-side wire command for the
+scripted-audit path, a live-ring bridge layer (push with oldest-
+trim, pop newest, selectActiveUndo walking newest -> oldest to
+find first ready), and a demo-able UI promoting the round-30
+single-entry undoEntry to a 5-slot ring with a "Step N of M"
+counter chip + cascade-aware toast copy ("Reverted 3 rules · 2
+undo steps remaining" mid-cascade) + 4s dwell refresh after every
+successful undo so chaining clicks works at full window.
+
+Round 30's closing notes listed undo STACK as a high-value
+candidate ("a future round could promote it to a bounded ring so
+the user can undo several reorders in sequence"); round 31 picked
+it because it's the structurally-cleanest 5-layer arc that
+EXTENDS the same Undo surface (the round-30 INLINE button stays
+exactly where it is — the cascade is invisible until the user
+does >1 fix in a row, at which point the chip surfaces) without
+inventing a new gesture vocabulary. The implementation differs
+from "stack" — we ship a RING (bounded buffer with oldest-
+eviction) rather than an unbounded LIFO, because a paralegal
+walking through 30 rules shouldn't accumulate 30 snapshots of
+Vec<Rule> in memory; UNDO_RING_CAPACITY = 5 covers a typical
+fix-it-fix-all-realise-was-wrong workflow without bloat.
+
+- Slice 148: Rust ring summary primitive (cc1baa4).
+  summarize_undo_ring(entries, capacity) -> UndoRingSummary with
+  oldest-trim-to-capacity + full flag + capacity round-trip.
+  UndoEntrySummary {label, captured_at_ms, applied_effect} is the
+  compact snapshot-free wire shape — the UI keeps the full
+  Vec<Rule> snapshot in TS state alongside this summary, the
+  wire payload stays small enough to log without bloating disk.
+  Defensive capacity == 0 branch returns empty entries with
+  full = true (a zero-capacity ring is structurally always full).
+  Snake-case serde field names pinned by round-trip test for the
+  TS mirror. Source slice never mutated (pinned by snapshot test).
+  10 tests including empty / single-under-cap / at-cap / over-cap
+  (7 -> 5 keeps c..g) / cap=0 / cap=1 keeps only newest / field-
+  identity pass-through / serde round-trip / no-input-mutation /
+  capacity-field echo for every cap in {1, 3, 5, 10, 100}.
+
+- Slice 149: TS mirror + describe + isFull (c599acc).
+  summarizeUndoRing 1:1 mirror with same oldest-trim algorithm
+  + cap=0 always-full defensive branch + negative-cap defensive
+  normalisation to 0. UndoEntrySummary / UndoRingSummary wire-
+  shape interfaces use snake_case to round-trip cleanly with
+  Rust serde defaults. describeUndoRingSummary discriminated
+  copy: "No undo history" (empty) / "1 undo step" (single under
+  cap; no "oldest:" suffix because single entry IS oldest) /
+  "3 undo steps (oldest: fix-all)" (N under cap; label of
+  oldest so user sees which action will be lost first when ring
+  fills) / "5 undo steps — at capacity" (full ring). Plural-
+  aware on "step"/"steps". isUndoRingFull convenience predicate
+  matches the .full flag for the UI's chip styling. 42 inline
+  tests including end-to-end ring fill+trim cycle, snake_case
+  wire shape preserved through JSON round-trip.
+
+- Slice 150: server-side command + TS wrapper (701f7c3).
+  slab_hopper_summarize_undo_ring Tauri command wraps slice 148
+  1:1 registered in lib.rs invoke handler.
+  slabHopperSummarizeUndoRing async wrapper with browser-mode
+  delegation. Reasons for a server-side command (the TS mirror
+  already handles the in-panel ring chip): (1) future scripted-
+  audit consumer (CLI "what undo steps does the UI have buffered
+  right now" subcommand / cron health-check surfacing rings at
+  full capacity for weeks) gets the summariser as a first-class
+  command; (2) server-side keeps the trim logic authoritative —
+  a future audit consumer that hard-codes capacity would
+  silently drift if the UI ever bumps UNDO_RING_CAPACITY;
+  (3) symmetry with rounds 29/30: every pure-data primitive has
+  a wire wrapper. 22 wrapper-delegation tests pinning every
+  UndoRingSummary field through the browser-mode path.
+
+- Slice 151: live-ring bridge primitives (a065c38).
+  Slice 149 owns the SUMMARY view (snapshot-free, audit-
+  friendly). Slice 151 owns the LIVE-RING operations on the
+  full ReorderUndoEntry[] the UI keeps in $state.
+  pushUndoEntry(ring, entry, capacity) returns NEW array (input
+  never mutated; defensive cap<=0 -> empty). Trims oldest when
+  ring exceeds capacity.
+  popUndoEntry(ring) -> {entry, remaining} pops newest;
+  idempotent on empty.
+  selectActiveUndo(ring, current) walks newest -> oldest
+  computing computeUndoStatus per entry; surfaces FIRST ready
+  entry as active (the natural cascade target — undoing the
+  newest ready entry pops it, the next-newest ready becomes
+  active on next render). Falls back to newest stale entry when
+  every entry is stale (so badge surfaces something rather than
+  going invisible). Counters: totalEntries / totalReady /
+  totalStale expose ring health. Active entry index is in
+  oldest-first order so the UI can compute newest-first
+  "Step N of M" copy as (totalEntries - index).
+  UNDO_RING_CAPACITY = 5 — covers a typical paralegal workflow
+  (three fix-its + two fix-alls before cascading undo) without
+  bloating memory.
+  58 inline tests including end-to-end 3-step cascade (push 3,
+  undo cascades through to empty ring with correct active
+  entry at each step), selectActiveUndo skipping stale newer
+  entries to surface ready older, all-stale fallback surfacing
+  newest, noop entries excluded from ready count.
+
+- Slice 152: demo-able UI (1a17674). Promotes round-30's
+  undoEntry: ReorderUndoEntry | null to
+  undoRing: ReorderUndoEntry[] = $state([]) capped at
+  UNDO_RING_CAPACITY. undoSelection $derived from
+  selectActiveUndo(undoRing, rules) — the bridge walker (slice
+  151) picks the newest ready entry as the button target;
+  counters expose ring health. undoStatus / undoLabel kept under
+  round-30 names so the existing template + applyUndo path stays
+  stable. New undoStepChip $derived "Step N of M" newest-first
+  copy (empty when ring has <2 entries — a single entry IS the
+  round-30 surface; no chip needed). The numerator is newest-
+  first so "Step 1 of 3" means the surfaced button targets the
+  newest entry and 2 more cascading undos are queued.
+  stashUndoSnapshot now calls pushUndoEntry (slice 151) instead
+  of overwriting a single slot.
+  applyUndo: validates active ready entry, optimistic apply via
+  slabHopperSetRules with rollback on failure, pops active
+  entry on success, surfaces cascade-aware toast copy
+  ("Reverted 3 rules · 2 undo steps remaining" mid-cascade /
+  "Reverted 3 rules" on drain), refreshes 4s timer so cascading
+  clicks have a full window.
+  Toast-fade lifecycle: when the timer fires with the user not
+  clicking further, the entire ring drains. Export-path
+  explicit clear empties the ring (same hygiene as round-30's
+  single-entry clear).
+  New .cov-undo-chip rendered alongside the undo button when
+  the ring has >1 entries. Muted blue informational tint by
+  default; amber-tinted .full variant when ring at
+  UNDO_RING_CAPACITY so user knows the next apply will evict
+  the oldest. Chip title carries either "ring at capacity" or
+  "N more cascading undos available after this one" so a
+  paralegal can audit the queue depth without opening devtools.
+  ~40 lines new scoped CSS: .cov-undo-chip (informational pill
+  with hover-help cursor + tabular numerics + entrance
+  animation reusing cov-export-toast keyframes),
+  .cov-undo-chip.full (at-capacity amber variant matching the
+  round-29/30 confidence-warning palette).
+
+Gates result: cargo fmt clean (no changes needed), cargo clippy
+--lib -- -D warnings PASSED CLEAN in 28.55s, cargo test --lib
+2606 passed / 0 failed (round-30 baseline 2596 + 10 slice-148
+tests = 2606), pnpm check 0 errors / 104 warnings (round-30
+baseline preserved EXACTLY — zero new warnings from the chip
+markup, the new $derived blocks, or the ~40 lines of new CSS),
+tsx src/lib/hopper.test.ts 582 inline expects pass (round-30
+baseline 460 + 42 slice-149 + 22 slice-150 + 58 slice-151 = 582;
+slice 152 is a UI slice with no new TS-helper assertions).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-30: backend
+  primitive -> TS mirror primitive -> Tauri command + TS client
+  wrapper -> pure-helper bridge (slice 151 — the live-ring
+  operations push/pop/selectActiveUndo composing the slice 146
+  computeUndoStatus over each ring entry to find the active
+  cascade target) -> demo-able UI slice. Round 31's bridge layer
+  is structurally similar to round-30's (both are pure helpers
+  composing with the wire-mirror primitives), but slice 151
+  carries the LIVE state (ReorderUndoEntry[] with Vec<Rule>
+  snapshots) while slice 149 carries the SUMMARY (snapshot-free
+  UndoEntrySummary). The split lets audit consumers read the
+  compact summary without needing the live snapshots, and lets
+  the UI's $state stay in the live-ring shape without serialising
+  the snapshots over the wire.
+- Round 31 picked the ring path over Hopper rule reorder-by-drag
+  (the deferred candidate from rounds 26-30) because (a) it's
+  the structurally-cleanest 5-layer arc EXTENDING the round-30
+  undo surface (the same INLINE-on-toast button + new "Step N
+  of M" sibling chip closes the "single undo / cascading undo"
+  two-mode loop) without inventing a new gesture vocabulary, and
+  (b) it COMPOUNDS round 30's value — a user who clicks "Fix all"
+  then realises their fix-it choices earlier were also wrong can
+  now cascade undos through the whole sequence in N clicks
+  instead of being stuck at one undo.
+- The newest-first selectActiveUndo walker is the load-bearing
+  piece for cascade UX. A naive oldest-first walker would surface
+  the oldest ready entry first, which means undoing it would
+  skip past more recent fixes the user hadn't asked to revert.
+  Newest-first means undo always targets the MOST RECENT action,
+  matching the user's mental model ("Cmd-Z reverts what I just
+  did"). The fallback to newest-stale-when-all-stale keeps the
+  badge surface alive — without it, a ring with 5 stale entries
+  would silently render no affordance, leaving the user
+  wondering whether the undo queue exists.
+
+DESIGN NOTES:
+- The "Step N of M" chip rather than a full-stack listing was the
+  design call that made this slice land cleanly. Surfacing the
+  whole queue as a popover (with per-entry timestamps and labels)
+  would be tempting — a future round could promote it — but the
+  one-line counter chip is the minimum information the user
+  needs to know cascading undos are available. The chip's
+  tooltip carries the at-capacity warning + cascade count for
+  the rare user who wants more detail.
+- Newest-first numbering ("Step 1 of 3") rather than oldest-first
+  ("Step 3 of 3") matches the cascade mental model: the user
+  clicks Undo and Step 1 disappears, Step 2 becomes the new
+  Step 1. Oldest-first would mean clicking Undo on Step 3 makes
+  the counter go to Step 2, which reads as "going backwards"
+  even though it's the same intent.
+- Muted blue for the default chip (vs the green undo button)
+  keeps the chip clearly informational rather than actionable.
+  A user who sees a green pill expects to click it; the chip's
+  blue tint signals "this is metadata about the surfaced
+  button". The amber .full variant is deliberately the same
+  palette as the round-30 stale badge — both communicate "the
+  next step has a cost" (stale = undo refuses; full = next push
+  evicts the oldest snapshot).
+- Cascade toast copy ("Reverted 3 rules · 2 undo steps
+  remaining") rather than separate confirmation toasts keeps the
+  surface count to one. A user cascading three undos sees ONE
+  toast cell update three times rather than three stacked
+  notifications. The "remaining" suffix tells the user how many
+  more undos are queued so they can stop when they want without
+  guessing.
+- The toast-dwell refresh (clearTimeout + restart the 4s timer
+  on every successful undo) is the load-bearing piece for
+  cascade ergonomics. Without it, a user's third undo click
+  would have less than 4s on the toast before the ring drains;
+  with it, each successful undo gives the user a fresh 4s
+  window to chain the next click. The drain-on-natural-fade
+  branch still fires when the user lets the toast time out,
+  keeping the ring tight.
+- 5 entries was chosen as the capacity over 3 (too small for
+  fix-it-on-3-rules-then-fix-all-on-2-then-realise) and 10
+  (memory bloat for a paralegal with 20 rules; the snapshot is
+  Vec<Rule> not a diff). 5 lets a user fix-it on three rules
+  in sequence, then fix-all the remaining two, then cascade-undo
+  all five — the round-trip a paralegal who second-guesses their
+  judgment is most likely to perform.
+
+## Roadmap — round 31 (Hopper Undo Ring) — ALL DONE
+
+Round 31 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: promoting round-30's single-entry undo to a
+bounded cascade ring (slices 148-152). One backend pure-data
+ring summariser primitive, one TS mirror + discriminated copy +
+isFull predicate, one server-side wire command + TS client
+wrapper, one live-ring bridge layer (push/pop/selectActiveUndo)
++ UNDO_RING_CAPACITY constant, and one demo-able UI slice
+promoting undoEntry to undoRing with a "Step N of M" cascade
+chip. Same canonical five-layer pattern as rounds 19-30.
+
+148. ~~**ring summary primitive**~~ —
+     DONE (2026-06-23 16:58 PT, cc1baa4). summarize_undo_ring(
+     entries, capacity) -> UndoRingSummary with oldest-trim-to-
+     capacity + full flag + UndoEntrySummary {label,
+     captured_at_ms, applied_effect} compact wire view +
+     defensive capacity == 0 always-full branch + snake_case
+     serde round-trip. 10 tests.
+149. ~~**TS mirror + describe + isFull**~~ —
+     DONE (2026-06-23 17:01 PT, c599acc). summarizeUndoRing
+     1:1 mirror + UndoEntrySummary/UndoRingSummary wire-shape
+     interfaces + describeUndoRingSummary discriminated copy +
+     isUndoRingFull predicate + negative-cap defensive
+     normalisation. 42 inline tests.
+150. ~~**ring Tauri command + TS wrapper**~~ —
+     DONE (2026-06-23 17:06 PT, 701f7c3). slab_hopper_summarize_undo_ring
+     Tauri command wired into invoke handler +
+     slabHopperSummarizeUndoRing async wrapper with browser-
+     mode delegation. 22 wrapper-delegation tests pinning
+     every UndoRingSummary field.
+151. ~~**live-ring bridge primitives**~~ —
+     DONE (2026-06-23 17:10 PT, a065c38). pushUndoEntry with
+     oldest-trim + popUndoEntry returning newest + selectActiveUndo
+     walking newest -> oldest to find first ready entry with
+     totalReady/totalStale counters + UNDO_RING_CAPACITY = 5
+     constant. 58 inline tests.
+152. ~~**cascading Undo UI**~~ —
+     DONE (2026-06-23 17:18 PT, 1a17674). undoRing $state
+     replacing undoEntry + undoSelection $derived from
+     selectActiveUndo + undoStepChip $derived "Step N of M"
+     newest-first copy + cascade-aware toast copy + 4s dwell
+     refresh after each successful undo + new .cov-undo-chip
+     muted-blue informational pill with amber .full variant
+     when ring at capacity + ~40 lines new scoped CSS.
+
+     With round 31 done, the dead-rule "diagnose -> drill ->
+     fix one / fix all -> CASCADE-UNDO" loop closes end-to-
+     end — a paralegal seeing "3 dead rules" can drill in one
+     click (round 27), FIX one (round 28), or FIX ALL (round
+     29), or UNDO the most recent fix (round 30), or CASCADE-
+     UNDO through a sequence of fixes back to the original
+     chain (round 31). Next subsystem candidates: Hopper rule
+     reorder-by-drag (rounds 26-31's deferred candidate, now
+     even less critical with both batch fix-all AND cascading
+     undo available), drilldown row -> cross-surface filter
+     (clicking a fall-through filename in the popover carries
+     the search query into the document inspector), Loom-grade
+     tagging explorer, doc-detail metadata editor read/write
+     surface, Beacon cache inspector polish (column sort by
+     basename / model facet), Quill multi-document field-
+     detect queueing, histogram hover-tooltip on bar segments,
+     per-plugin "Run prune now" affordance (round 25's
+     deferred candidate), undo ring popover (round 31 surfaced
+     a "Step N of M" counter chip; a future round could add a
+     popover listing per-entry labels + timestamps for a user
+     who wants to skip directly to a specific cascade depth
+     rather than walking newest-first).
 
 ### What round-30 (2026-06-23 13:25 PT) just shipped
 
