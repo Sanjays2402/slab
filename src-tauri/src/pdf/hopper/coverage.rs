@@ -1378,6 +1378,97 @@ pub fn summarize_reorder_effect(before: &[Rule], after: &[Rule]) -> ReorderEffec
     }
 }
 
+/// One entry in the Hopper UI's undo ring — a compact summary the
+/// audit / script layer can read without round-tripping the full
+/// snapshot `Vec<Rule>` that the UI keeps in memory.
+///
+/// This is the SUMMARY view (no snapshot, no full-fidelity diff)
+/// because the ring's audit consumers (CLI "what did I undo
+/// recently" subcommand, cron health-check) only need the label /
+/// timestamp / applied-effect breadcrumb. The UI keeps the
+/// `Vec<Rule>` snapshot in TS state alongside this summary; the
+/// wire shape stays small enough to log without bloat.
+///
+/// Mirrors `UndoEntrySummary` in `src/lib/hopper.ts` (slice 149).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UndoEntrySummary {
+    /// Human-facing label sourced from the apply call site —
+    /// `"fix-all"` / `"fix-it: Tax"` / etc. Used for the ring
+    /// summary copy (`"3 undo steps (oldest: fix-it: Tax)"`).
+    pub label: String,
+    /// Unix-ms timestamp of when the entry was captured. Signed
+    /// because `chrono`'s JS-style Date.now() can predate the epoch
+    /// in unit-test injectables; the UI never sends a value < 0
+    /// in practice.
+    pub captured_at_ms: i64,
+    /// Structural breadcrumb describing what the reorder DID.
+    /// Pre-computed at capture time by the bridge layer; carried
+    /// through here so a scripted-audit consumer can render
+    /// `describeReorderEffect`-style copy without re-running the
+    /// diff against a snapshot it doesn't have access to.
+    pub applied_effect: ReorderEffect,
+}
+
+/// Structural summary of an undo ring — the entries (oldest-trimmed
+/// to capacity) plus capacity / full metadata for the UI's counter
+/// chip and the audit log's "at capacity" warning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UndoRingSummary {
+    /// Entries OLDEST-FIRST in the order they were captured (after
+    /// trimming). `entries[0]` is the next entry to be evicted when
+    /// the ring fills; `entries.last()` is the most-recent capture
+    /// (the one the UI's button would target by default).
+    pub entries: Vec<UndoEntrySummary>,
+    /// Configured capacity — the maximum number of entries the
+    /// ring retains. The UI seeds this with `UNDO_RING_CAPACITY`
+    /// (slice 152, currently 5); audit consumers receive it so
+    /// they can render `"at capacity"` warnings without hard-coding
+    /// the constant.
+    pub capacity: usize,
+    /// True iff `entries.len() == capacity` — the ring is full
+    /// and the next push will evict the oldest. The UI surfaces
+    /// this as a subtle visual cue (the counter chip darkens).
+    pub full: bool,
+}
+
+/// Summarise a list of undo entries against a ring capacity.
+///
+/// Algorithm:
+///   1. If `capacity == 0` -> empty summary with `full = true`
+///      (a zero-capacity ring is structurally always full;
+///      defensive against a UI bug that passes 0).
+///   2. If `entries.len() > capacity` -> trim the OLDEST entries
+///      (keep the most-recent `capacity` entries). The trim is
+///      defensive — the UI's `pushUndoEntry` (slice 151) trims at
+///      push time, but a stale caller (e.g. an audit replay that
+///      hands in raw historical entries) should still get a sane
+///      summary.
+///   3. Otherwise pass the entries through unchanged.
+///   4. `full = entries_after_trim.len() == capacity`.
+///
+/// Pure function — no I/O, no Tauri. Mirrored 1:1 in TS as
+/// `summarizeUndoRing` (slice 149).
+pub fn summarize_undo_ring(entries: &[UndoEntrySummary], capacity: usize) -> UndoRingSummary {
+    if capacity == 0 {
+        return UndoRingSummary {
+            entries: Vec::new(),
+            capacity: 0,
+            full: true,
+        };
+    }
+    let kept: Vec<UndoEntrySummary> = if entries.len() > capacity {
+        entries[entries.len() - capacity..].to_vec()
+    } else {
+        entries.to_vec()
+    };
+    let full = kept.len() == capacity;
+    UndoRingSummary {
+        entries: kept,
+        capacity,
+        full,
+    }
+}
+
 /// Plan minimal-reorder fixes for every dead rule in `report`.
 ///
 /// Returns one [`ReorderProposal`] per `dead_at_position == true`
@@ -4265,6 +4356,166 @@ mod tests {
                 .unwrap();
             assert_eq!(m.from_index, reord_pos);
             assert_eq!(m.to_index, orig_pos);
+        }
+    }
+
+    // ── Slice 148 — summarize_undo_ring (round-31) ────────────────────
+
+    fn summary(label: &str, captured_at_ms: i64) -> UndoEntrySummary {
+        // Use a trivial single-move effect so the entries are
+        // distinguishable when we test trim ordering / round-trip
+        // fidelity. Content doesn't matter to the summariser — it
+        // never inspects entries beyond passing them through.
+        UndoEntrySummary {
+            label: label.into(),
+            captured_at_ms,
+            applied_effect: ReorderEffect {
+                moved: vec![ReorderMove {
+                    rule_name: label.into(),
+                    from_index: 1,
+                    to_index: 0,
+                }],
+                added: Vec::new(),
+                removed: Vec::new(),
+                is_permutation: true,
+            },
+        }
+    }
+
+    #[test]
+    fn ring_empty_summary_not_full() {
+        // Edge case: zero entries against a non-zero capacity.
+        // is_full = false; the UI's chip stays hidden when there's
+        // nothing to undo.
+        let summary = summarize_undo_ring(&[], 5);
+        assert!(summary.entries.is_empty());
+        assert_eq!(summary.capacity, 5);
+        assert!(!summary.full);
+    }
+
+    #[test]
+    fn ring_single_entry_under_capacity() {
+        // One entry against capacity 5 — pass-through, not full.
+        let e = summary("fix-it: Tax", 1000);
+        let summary = summarize_undo_ring(&[e.clone()], 5);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0], e);
+        assert_eq!(summary.capacity, 5);
+        assert!(!summary.full);
+    }
+
+    #[test]
+    fn ring_at_capacity_marks_full() {
+        // Exactly capacity entries -> full = true. The UI's chip
+        // darkens to warn the user the next undo capture will evict
+        // the oldest.
+        let entries = vec![summary("a", 100), summary("b", 200), summary("c", 300)];
+        let summary = summarize_undo_ring(&entries, 3);
+        assert_eq!(summary.entries.len(), 3);
+        assert!(summary.full);
+        // Order preserved (oldest first).
+        assert_eq!(summary.entries[0].label, "a");
+        assert_eq!(summary.entries[2].label, "c");
+    }
+
+    #[test]
+    fn ring_over_capacity_trims_oldest() {
+        // 7 entries against capacity 5 -> trim 2 oldest (a, b);
+        // keep c, d, e, f, g in that order. full = true.
+        let entries = vec![
+            summary("a", 100),
+            summary("b", 200),
+            summary("c", 300),
+            summary("d", 400),
+            summary("e", 500),
+            summary("f", 600),
+            summary("g", 700),
+        ];
+        let summary = summarize_undo_ring(&entries, 5);
+        assert_eq!(summary.entries.len(), 5);
+        assert!(summary.full);
+        assert_eq!(summary.entries[0].label, "c");
+        assert_eq!(summary.entries[1].label, "d");
+        assert_eq!(summary.entries[4].label, "g");
+        // Oldest (a, b) dropped.
+        assert!(!summary.entries.iter().any(|e| e.label == "a"));
+        assert!(!summary.entries.iter().any(|e| e.label == "b"));
+    }
+
+    #[test]
+    fn ring_zero_capacity_is_always_full() {
+        // Defensive: capacity == 0 -> empty entries, full = true.
+        // A zero-capacity ring is structurally always full.
+        let entries = vec![summary("a", 100), summary("b", 200)];
+        let summary = summarize_undo_ring(&entries, 0);
+        assert!(summary.entries.is_empty());
+        assert_eq!(summary.capacity, 0);
+        assert!(summary.full);
+    }
+
+    #[test]
+    fn ring_one_capacity_keeps_only_newest() {
+        // Capacity 1, two entries -> keep only the most-recent.
+        let entries = vec![summary("old", 100), summary("new", 200)];
+        let summary = summarize_undo_ring(&entries, 1);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].label, "new");
+        assert!(summary.full);
+    }
+
+    #[test]
+    fn ring_summary_pass_through_preserves_field_identity() {
+        // Pinned: the summariser does NOT mutate / re-serialise
+        // entries; the carried effect / timestamp round-trip with
+        // exact equality. Audit consumers depend on this.
+        let entry = summary("fix-all", 1700000000000);
+        let summary = summarize_undo_ring(std::slice::from_ref(&entry), 5);
+        assert_eq!(summary.entries[0], entry);
+        assert_eq!(summary.entries[0].captured_at_ms, 1700000000000);
+        assert_eq!(summary.entries[0].label, "fix-all");
+        assert_eq!(summary.entries[0].applied_effect.moved.len(), 1);
+    }
+
+    #[test]
+    fn ring_summary_serde_round_trip_snake_case() {
+        // Pin snake_case field names so the TS mirror reads the
+        // wire shape correctly: captured_at_ms / applied_effect
+        // (camelCase would silently drop both on the TS side).
+        let entries = vec![summary("fix-it: Tax", 1700000000000)];
+        let summary = summarize_undo_ring(&entries, 5);
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(
+            json.contains("\"captured_at_ms\":1700000000000"),
+            "expected snake_case captured_at_ms in {json}"
+        );
+        assert!(
+            json.contains("\"applied_effect\":"),
+            "expected snake_case applied_effect in {json}"
+        );
+        assert!(json.contains("\"capacity\":5"));
+        assert!(json.contains("\"full\":false"));
+        let back: UndoRingSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, summary);
+    }
+
+    #[test]
+    fn ring_no_input_mutation() {
+        // Pinned: the input slice is never mutated (the summariser
+        // builds a fresh Vec). Defensive guard against future
+        // refactor breaking the contract.
+        let entries = vec![summary("a", 100), summary("b", 200), summary("c", 300)];
+        let snapshot = entries.clone();
+        let _ = summarize_undo_ring(&entries, 2);
+        assert_eq!(entries, snapshot);
+    }
+
+    #[test]
+    fn ring_summary_capacity_field_echoes_input() {
+        // The capacity field round-trips the input verbatim so the
+        // UI's "X of Y undo steps" chip reads the right denominator.
+        for cap in [1usize, 3, 5, 10, 100] {
+            let s = summarize_undo_ring(&[], cap);
+            assert_eq!(s.capacity, cap);
         }
     }
 }
