@@ -76,6 +76,14 @@ import {
   countFocusableJumpRows,
   type JumpableRow,
   type JumpFocusDirection,
+  formatAbsoluteCapture,
+  formatJumpableRowTimestamp,
+  summarizeRingHealth,
+  describeRingHealth,
+  toggleCaptureTimestampMode,
+  describeCaptureTimestampMode,
+  type CaptureTimestampMode,
+  type RingHealthSummary,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -5212,4 +5220,282 @@ function makeRow(
   // Walk forward starting null; expect first focusable.
   const first = nextFocusableJumpIndex(rows, null, "forward");
   expect(first !== null, "e2e: walk has a first focusable");
+}
+
+// =====================================================================
+// Slice 161 — formatAbsoluteCapture + ring-health describer tests
+// (round-33).
+// =====================================================================
+
+// ── formatAbsoluteCapture: same-day / Today vocabulary ────────────────
+
+{
+  // Same instant -> Today HH:MM.
+  const now = new Date(2026, 5, 24, 14, 23).getTime(); // 2026-06-24 14:23
+  const out = formatAbsoluteCapture(now, now);
+  expect(out === "Today 14:23", `absolute: same instant -> ${out}`);
+}
+
+{
+  // Two hours earlier same day -> Today HH:MM.
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const earlier = new Date(2026, 5, 24, 9, 5).getTime();
+  const out = formatAbsoluteCapture(earlier, now);
+  expect(out === "Today 09:05", `absolute: same day morning -> ${out}`);
+}
+
+{
+  // Midnight boundary same calendar day.
+  const now = new Date(2026, 5, 24, 23, 59).getTime();
+  const earlier = new Date(2026, 5, 24, 0, 0).getTime();
+  const out = formatAbsoluteCapture(earlier, now);
+  expect(out === "Today 00:00", `absolute: same-day midnight -> ${out}`);
+}
+
+// ── formatAbsoluteCapture: yesterday vocabulary ──────────────────────
+
+{
+  // Yesterday (any time) -> Yesterday HH:MM.
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const yesterday = new Date(2026, 5, 23, 19, 45).getTime();
+  const out = formatAbsoluteCapture(yesterday, now);
+  expect(out === "Yesterday 19:45", `absolute: yesterday evening -> ${out}`);
+}
+
+{
+  // Cross-month boundary still "Yesterday".
+  const now = new Date(2026, 6, 1, 9, 0).getTime(); // July 1
+  const yesterday = new Date(2026, 5, 30, 23, 30).getTime(); // June 30
+  const out = formatAbsoluteCapture(yesterday, now);
+  expect(out === "Yesterday 23:30", `absolute: yesterday cross-month -> ${out}`);
+}
+
+{
+  // Cross-year still "Yesterday".
+  const now = new Date(2027, 0, 1, 9, 0).getTime(); // Jan 1, 2027
+  const yesterday = new Date(2026, 11, 31, 23, 30).getTime(); // Dec 31, 2026
+  const out = formatAbsoluteCapture(yesterday, now);
+  expect(out === "Yesterday 23:30", `absolute: yesterday cross-year -> ${out}`);
+}
+
+// ── formatAbsoluteCapture: same year ─────────────────────────────────
+
+{
+  // 5 days ago, same year -> "Jun 19, HH:MM".
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const past = new Date(2026, 5, 19, 8, 30).getTime();
+  const out = formatAbsoluteCapture(past, now);
+  expect(out === "Jun 19, 08:30", `absolute: same year -> ${out}`);
+}
+
+{
+  // 6 months ago, same year.
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const past = new Date(2026, 0, 5, 16, 0).getTime();
+  const out = formatAbsoluteCapture(past, now);
+  expect(out === "Jan 5, 16:00", `absolute: 6 months back -> ${out}`);
+}
+
+// ── formatAbsoluteCapture: different year ────────────────────────────
+
+{
+  // Last year -> "MMM D YYYY, HH:MM".
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const past = new Date(2025, 11, 31, 12, 0).getTime();
+  const out = formatAbsoluteCapture(past, now);
+  expect(out === "Dec 31 2025, 12:00", `absolute: last year -> ${out}`);
+}
+
+{
+  // Many years ago.
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const past = new Date(2020, 0, 1, 0, 0).getTime();
+  const out = formatAbsoluteCapture(past, now);
+  expect(out === "Jan 1 2020, 00:00", `absolute: ancient -> ${out}`);
+}
+
+// ── formatAbsoluteCapture: defensive ─────────────────────────────────
+
+{
+  expect(formatAbsoluteCapture(NaN, 1_000) === "", "absolute: NaN -> empty");
+  expect(formatAbsoluteCapture(Infinity, 1_000) === "", "absolute: Infinity -> empty");
+}
+{
+  // Non-finite now still produces something (uses Date.now() fallback).
+  const out = formatAbsoluteCapture(1_000, NaN);
+  expect(typeof out === "string" && out.length > 0, "absolute: NaN now uses fallback");
+}
+
+// ── formatJumpableRowTimestamp: delegates to the chosen formatter ─────
+
+{
+  const now = new Date(2026, 5, 24, 14, 23).getTime();
+  const at = new Date(2026, 5, 24, 14, 22).getTime(); // 1 min ago
+  expect(
+    formatJumpableRowTimestamp(at, "relative", now) === "1m ago",
+    "row-ts: relative -> formatJumpableRowAge",
+  );
+  expect(
+    formatJumpableRowTimestamp(at, "absolute", now) === "Today 14:22",
+    "row-ts: absolute -> formatAbsoluteCapture",
+  );
+}
+
+// ── summarizeRingHealth: counts by status ────────────────────────────
+
+function makeHealthRow(
+  ringIndex: number,
+  status: "ready" | "stale" | "noop",
+  isFocusable: boolean,
+  isActiveTarget = false,
+): JumpableRow {
+  let statusValue: JumpableRow["status"];
+  if (status === "ready") {
+    statusValue = {
+      kind: "ready",
+      effect: { moved: [], added: [], removed: [], is_permutation: true },
+    };
+  } else if (status === "stale") {
+    statusValue = {
+      kind: "stale",
+      reason: "test stale",
+      effect: { moved: [], added: [], removed: [], is_permutation: false },
+    };
+  } else {
+    statusValue = { kind: "noop" };
+  }
+  return {
+    ringIndex,
+    stepNumber: ringIndex + 1,
+    label: `e${ringIndex}`,
+    capturedAt: 100 + ringIndex,
+    ageCopy: "just now",
+    status: statusValue,
+    plan: null,
+    isActiveTarget,
+    isFocusable,
+  };
+}
+
+{
+  expect(
+    summarizeRingHealth([]).total === 0,
+    "health: empty -> total=0",
+  );
+  expect(
+    summarizeRingHealth(null as unknown as JumpableRow[]).total === 0,
+    "health: null -> total=0",
+  );
+}
+
+{
+  const rows: JumpableRow[] = [
+    makeHealthRow(0, "ready", true),
+    makeHealthRow(1, "ready", true),
+    makeHealthRow(2, "ready", false, true), // active target
+  ];
+  const h = summarizeRingHealth(rows);
+  expect(h.total === 3, "health: total=3");
+  expect(h.ready === 3, "health: ready=3");
+  expect(h.stale === 0, "health: stale=0");
+  expect(h.noop === 0, "health: noop=0");
+  expect(h.focusable === 2, "health: focusable=2 (skipping active)");
+}
+
+{
+  const rows: JumpableRow[] = [
+    makeHealthRow(0, "stale", false),
+    makeHealthRow(1, "noop", false),
+    makeHealthRow(2, "ready", true),
+    makeHealthRow(3, "ready", false, true),
+  ];
+  const h = summarizeRingHealth(rows);
+  expect(h.total === 4, "health: mixed total");
+  expect(h.ready === 2, "health: mixed ready");
+  expect(h.stale === 1, "health: mixed stale");
+  expect(h.noop === 1, "health: mixed noop");
+  expect(h.focusable === 1, "health: mixed focusable");
+}
+
+// ── describeRingHealth: copy branches ────────────────────────────────
+
+{
+  expect(
+    describeRingHealth({ total: 0, ready: 0, stale: 0, noop: 0, focusable: 0 }) ===
+      "No undo steps queued",
+    "describe: empty copy",
+  );
+}
+{
+  expect(
+    describeRingHealth({ total: 1, ready: 1, stale: 0, noop: 0, focusable: 0 }) ===
+      "1 undo step ready",
+    "describe: single ready copy",
+  );
+}
+{
+  expect(
+    describeRingHealth({ total: 3, ready: 3, stale: 0, noop: 0, focusable: 2 }) ===
+      "3 undo steps ready",
+    "describe: all-ready copy",
+  );
+}
+{
+  expect(
+    describeRingHealth({ total: 5, ready: 3, stale: 2, noop: 0, focusable: 3 }) ===
+      "3 of 5 undo steps jumpable (2 stale)",
+    "describe: mixed stale copy",
+  );
+}
+{
+  expect(
+    describeRingHealth({ total: 5, ready: 2, stale: 1, noop: 2, focusable: 2 }) ===
+      "2 of 5 undo steps jumpable (1 stale, 2 unchanged)",
+    "describe: mixed stale+unchanged copy",
+  );
+}
+{
+  // Edge case: total > ready+stale+noop is impossible by construction
+  // (every row maps to exactly one bucket). Verify the mixed branch
+  // copy when noop is present alongside ready.
+  expect(
+    describeRingHealth({ total: 5, ready: 4, stale: 0, noop: 1, focusable: 3 }) ===
+      "4 of 5 undo steps jumpable (1 unchanged)",
+    "describe: ready-with-noop copy",
+  );
+}
+{
+  expect(
+    describeRingHealth({ total: 4, ready: 0, stale: 4, noop: 0, focusable: 0 }) ===
+      "No jumpable steps (4 stale)",
+    "describe: all-stale copy",
+  );
+}
+{
+  expect(
+    describeRingHealth({ total: 4, ready: 0, stale: 2, noop: 2, focusable: 0 }) ===
+      "No jumpable steps (2 stale, 2 unchanged)",
+    "describe: stale+unchanged none-ready copy",
+  );
+}
+
+// ── toggleCaptureTimestampMode / describeCaptureTimestampMode ─────────
+
+{
+  expect(
+    toggleCaptureTimestampMode("relative") === "absolute",
+    "toggle: relative -> absolute",
+  );
+  expect(
+    toggleCaptureTimestampMode("absolute") === "relative",
+    "toggle: absolute -> relative",
+  );
+  expect(
+    describeCaptureTimestampMode("relative") === "Relative time",
+    "describe: relative copy",
+  );
+  expect(
+    describeCaptureTimestampMode("absolute") === "Absolute time",
+    "describe: absolute copy",
+  );
 }

@@ -3333,3 +3333,198 @@ export function countFocusableJumpRows(rows: JumpableRow[]): number {
   if (!Array.isArray(rows)) return 0;
   return rows.filter((r) => r.isFocusable).length;
 }
+
+// =====================================================================
+// v3.40 Slice 161 — Absolute-timestamp format + ring-health describer
+// (round-33)
+// =====================================================================
+//
+// Round 32's closing notes listed two power-user surfaces as next
+// candidates: (a) absolute-timestamp toggle for the cascade-jump
+// popover (round 32 ships relative-only — "12s ago" / "3m ago" —
+// which is great for fresh undo cycles but useless for cross-
+// session audit: a user who closed and reopened the panel sees
+// "3h ago" but doesn't know if that was last lunch or yesterday
+// morning); (b) ring-health summary so the user understands at a
+// glance how many ready vs stale vs noop entries the ring holds.
+//
+// Slice 161 ships both as pure helpers. The UI slice (162) wires
+// the toggle + the summary header.
+
+/** Display mode for the cascade-jump popover's per-row timestamp.
+ *  Round 32 shipped relative-only ("12s ago"); slice 161 adds
+ *  absolute as an opt-in toggle persisted in localStorage. */
+export type CaptureTimestampMode = "relative" | "absolute";
+
+/** Format a captured-at timestamp as an absolute clock + date
+ *  string. Pure helper — uses `Intl.DateTimeFormat` so locale +
+ *  timezone follow the user's environment.
+ *
+ *  Format vocabulary (chosen for cross-session audit, not for the
+ *  fresh-undo case):
+ *    - SAME DAY as `now`: "Today 14:23" (uppercase Today,
+ *      24-hour clock so 11 PM doesn't ambiguously read as "11").
+ *    - YESTERDAY: "Yesterday 14:23".
+ *    - SAME YEAR but older: "Apr 15, 14:23" (month + day + clock).
+ *    - DIFFERENT YEAR: "Apr 15 2025, 14:23" (year carries so a
+ *      paralegal who left the panel open across a Dec/Jan
+ *      boundary doesn't see two days that read identically).
+ *
+ *  Defensive: NaN / non-finite input -> empty string (the popover
+ *  row falls back to the relative copy at call site). */
+export function formatAbsoluteCapture(
+  capturedAt: number,
+  now: number = Date.now(),
+): string {
+  if (!Number.isFinite(capturedAt)) return "";
+  const at = new Date(capturedAt);
+  const reference = new Date(Number.isFinite(now) ? now : Date.now());
+
+  // Same-day check uses Y/M/D triple — comparing date strings
+  // would mis-handle timezones in some Intl configurations.
+  const sameYear = at.getFullYear() === reference.getFullYear();
+  const sameMonth = at.getMonth() === reference.getMonth();
+  const sameDay = at.getDate() === reference.getDate();
+
+  const yesterday = new Date(reference);
+  yesterday.setDate(reference.getDate() - 1);
+  const isYesterday =
+    at.getFullYear() === yesterday.getFullYear() &&
+    at.getMonth() === yesterday.getMonth() &&
+    at.getDate() === yesterday.getDate();
+
+  const hh = String(at.getHours()).padStart(2, "0");
+  const mm = String(at.getMinutes()).padStart(2, "0");
+  const clock = `${hh}:${mm}`;
+
+  if (sameYear && sameMonth && sameDay) {
+    return `Today ${clock}`;
+  }
+  if (isYesterday) {
+    return `Yesterday ${clock}`;
+  }
+
+  const monthAbbr = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ][at.getMonth()];
+  const day = at.getDate();
+
+  if (sameYear) {
+    return `${monthAbbr} ${day}, ${clock}`;
+  }
+  return `${monthAbbr} ${day} ${at.getFullYear()}, ${clock}`;
+}
+
+/** Format a row's timestamp respecting the user's chosen display
+ *  mode. Convenience wrapper around `formatJumpableRowAge` (for
+ *  "relative") and `formatAbsoluteCapture` (for "absolute"). */
+export function formatJumpableRowTimestamp(
+  capturedAt: number,
+  mode: CaptureTimestampMode,
+  now: number = Date.now(),
+): string {
+  if (mode === "absolute") {
+    return formatAbsoluteCapture(capturedAt, now);
+  }
+  return formatJumpableRowAge(capturedAt, now);
+}
+
+/** A summary breakdown of the cascade-undo ring's health. Counts
+ *  every entry by current-chain status (ready / stale / noop) plus
+ *  the active-target row count (always 0 or 1). Used by the
+ *  popover header copy + the audit log. */
+export interface RingHealthSummary {
+  /** Total entries in the ring (newest + older combined). */
+  total: number;
+  /** Number of entries with kind="ready" — the user can jump to
+   *  any of them. */
+  ready: number;
+  /** Number of entries with kind="stale" — chain drifted away from
+   *  the snapshot. UI surfaces these as disabled Unavailable badges. */
+  stale: number;
+  /** Number of entries with kind="noop" — snapshot already matches
+   *  the current chain. UI surfaces these as muted No change badges. */
+  noop: number;
+  /** Number of focusable entries (ready + non-active). The popover
+   *  header reads "N jumpable steps" for the user. */
+  focusable: number;
+}
+
+/** Compute a RingHealthSummary from slice 159's `jumpableRows`
+ *  array. Pure — folds the rows by status discriminant. Safe on
+ *  empty / null input. */
+export function summarizeRingHealth(
+  rows: JumpableRow[],
+): RingHealthSummary {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { total: 0, ready: 0, stale: 0, noop: 0, focusable: 0 };
+  }
+  let ready = 0;
+  let stale = 0;
+  let noop = 0;
+  let focusable = 0;
+  for (const row of rows) {
+    if (row.status.kind === "ready") ready += 1;
+    else if (row.status.kind === "stale") stale += 1;
+    else if (row.status.kind === "noop") noop += 1;
+    if (row.isFocusable) focusable += 1;
+  }
+  return { total: rows.length, ready, stale, noop, focusable };
+}
+
+/** Render a RingHealthSummary as a human-readable copy line for the
+ *  popover header. Examples:
+ *    - {total: 0}              -> "No undo steps queued"
+ *    - {total: 1, ready: 1}    -> "1 undo step ready"
+ *    - {total: 3, ready: 3}    -> "3 undo steps ready"
+ *    - {total: 5, ready: 3, stale: 2}
+ *                              -> "3 of 5 undo steps jumpable (2 stale)"
+ *    - {total: 5, ready: 2, stale: 1, noop: 2}
+ *                              -> "2 of 5 undo steps jumpable (1 stale, 2 unchanged)"
+ *    - {total: 5, ready: 5, noop: 1} (rare)
+ *                              -> "5 of 5 undo steps jumpable (1 unchanged)"
+ *    - {total: 4, ready: 0, stale: 4}
+ *                              -> "No jumpable steps (4 stale)"
+ *
+ *  Quantities are pluralisation-aware ("step"/"steps" /
+ *  "stale"/"stale" — both invariant). Skips zero-count parentheticals
+ *  for cleanliness. */
+export function describeRingHealth(summary: RingHealthSummary): string {
+  if (summary.total === 0) {
+    return "No undo steps queued";
+  }
+  const stepNoun = summary.total === 1 ? "step" : "steps";
+  if (summary.ready === 0) {
+    const parts: string[] = [];
+    if (summary.stale > 0) parts.push(`${summary.stale} stale`);
+    if (summary.noop > 0) parts.push(`${summary.noop} unchanged`);
+    const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+    return `No jumpable ${stepNoun}${suffix}`;
+  }
+  if (summary.ready === summary.total) {
+    if (summary.total === 1) return `1 undo step ready`;
+    return `${summary.total} undo ${stepNoun} ready`;
+  }
+  // Mixed: ready + (stale and/or noop).
+  const parts: string[] = [];
+  if (summary.stale > 0) parts.push(`${summary.stale} stale`);
+  if (summary.noop > 0) parts.push(`${summary.noop} unchanged`);
+  const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `${summary.ready} of ${summary.total} undo ${stepNoun} jumpable${suffix}`;
+}
+
+/** Toggle the next CaptureTimestampMode. Convenience for the UI's
+ *  toggle button — pure flip between the two values. */
+export function toggleCaptureTimestampMode(
+  mode: CaptureTimestampMode,
+): CaptureTimestampMode {
+  return mode === "relative" ? "absolute" : "relative";
+}
+
+/** Human-readable label for the toggle button. */
+export function describeCaptureTimestampMode(
+  mode: CaptureTimestampMode,
+): string {
+  return mode === "absolute" ? "Absolute time" : "Relative time";
+}
