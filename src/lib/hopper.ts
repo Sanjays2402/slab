@@ -1637,6 +1637,152 @@ export function isUndoRingFull(summary: UndoRingSummary): boolean {
   return summary.full;
 }
 
+// ─── Slice 154 — undo-ring jump-plan summary (round-32) ──────────────
+//
+// Round 31 shipped a cascade ring + a "Step N of M" chip surfacing
+// how many cascading undos are queued. The cascade button always
+// targets the NEWEST ready entry — a user with a 5-entry ring who
+// wants to revert to the snapshot from 4 clicks ago has to click
+// Undo four times. Round 32 promotes the chip into a popover that
+// lets the user pick a specific entry to jump to in one click.
+//
+// This module owns the SUMMARY of the jump operation — what the
+// popover surfaces to the user before they confirm: how many
+// entries get skipped, which entries those are (labels in newest-
+// first order), which entry the jump lands on. The actual ring
+// mutation lives in the bridge layer (slice 156, jumpToUndoEntry).
+//
+// Mirrors `pdf::hopper::coverage::compute_undo_jump_plan` 1:1.
+// Wire shape uses snake_case to match Rust; a browser-mode caller
+// goes through this helper directly, a Tauri-mode caller round-
+// trips through `slabHopperComputeUndoJumpPlan` (slice 155).
+
+/** Structural plan for a "jump to entry N" operation against an
+ *  undo ring. Mirrors Rust `UndoJumpPlan`. Wire-shape uses
+ *  snake_case to round-trip with Rust serde defaults. */
+export interface UndoJumpPlan {
+  /** True iff `target_index` was in range AND there's at least one
+   *  entry to drop. Anchors the popover's "Jump here" button's
+   *  enabled state. */
+  is_valid: boolean;
+  /** How many entries the jump skips. Equal to
+   *  `(entries.length - 1) - target_index` for valid plans; `0`
+   *  for invalid (out-of-range / target-equals-newest). */
+  skip_count: number;
+  /** Labels of the entries that get dropped, in NEWEST-FIRST order
+   *  so the popover reads "Skip: fix-all, fix-it: Tax" in user-
+   *  readable chronology. Empty for invalid plans. */
+  dropped_labels: string[];
+  /** Label of the entry the jump lands on (the new newest after
+   *  the jump). Surfaced in the popover's "Jump back to <label>"
+   *  copy. Empty string when the input ring was empty or the
+   *  target was out-of-range; echoes the actual label when the
+   *  target is the already-newest entry (so the popover can
+   *  render "active target" copy without re-deriving). */
+  target_label: string;
+  /** Index of the target in the ORIGINAL ring (echoed back). The
+   *  UI passes this through to the bridge's jumpToUndoEntry (slice
+   *  156) without recomputing. `0` when the input was empty or the
+   *  target was out-of-range; the actual index when target-equals-
+   *  newest. */
+  target_index: number;
+}
+
+/** Plan a "jump directly to entry N" operation against an undo
+ *  ring. 1:1 mirror of Rust `compute_undo_jump_plan`.
+ *
+ *  Algorithm:
+ *    1. Empty ring -> invalid; zeroed plan.
+ *    2. `targetIndex >= entries.length` -> invalid; zeroed plan
+ *       (popover disables the button rather than silently
+ *       targeting the newest).
+ *    3. `targetIndex === entries.length - 1` -> the target IS the
+ *       newest entry; the default cascade button already targets
+ *       it. Invalid (no jump needed); echo label/index back so the
+ *       popover can render "active target" copy without re-deriving.
+ *    4. Otherwise -> valid; walk `entries[newest..=target+1]` in
+ *       reverse, collecting labels in newest-first order;
+ *       `skip_count = (entries.length - 1) - targetIndex`.
+ *
+ *  Pure helper — does NOT mutate the input array. Accepts negative
+ *  / NaN target indices defensively (treated as out-of-range). */
+export function computeUndoJumpPlan(
+  entries: UndoEntrySummary[],
+  targetIndex: number,
+): UndoJumpPlan {
+  // Defensive normalisation: a negative / NaN / non-integer index
+  // is treated as out-of-range. The UI never passes one in
+  // practice (the popover surfaces a row per entry with a known
+  // integer index), but a future audit consumer might.
+  const idx = Number.isInteger(targetIndex) ? targetIndex : -1;
+  if (entries.length === 0 || idx < 0 || idx >= entries.length) {
+    return {
+      is_valid: false,
+      skip_count: 0,
+      dropped_labels: [],
+      target_label: "",
+      target_index: 0,
+    };
+  }
+  const newest = entries.length - 1;
+  if (idx === newest) {
+    // Already the active target — no jump needed. Echo label/index
+    // back so the popover can render "active target" copy.
+    return {
+      is_valid: false,
+      skip_count: 0,
+      dropped_labels: [],
+      target_label: entries[idx].label,
+      target_index: idx,
+    };
+  }
+  // Walk newest -> target+1, collecting labels in newest-first
+  // order so the popover reads "Skip: <newest>, <next>, ...".
+  const droppedLabels: string[] = [];
+  for (let i = newest; i > idx; i--) {
+    droppedLabels.push(entries[i].label);
+  }
+  return {
+    is_valid: true,
+    skip_count: droppedLabels.length,
+    dropped_labels: droppedLabels,
+    target_label: entries[idx].label,
+    target_index: idx,
+  };
+}
+
+/** Human-facing copy for a jump plan. Discriminated:
+ *
+ *    Invalid (empty ring / out-of-range): "No jump available"
+ *    Invalid (target == newest):           "Already the newest entry"
+ *    Valid (skip 1 entry):                 "Skip 1 revert to jump back to <label>"
+ *    Valid (skip N entries):               "Skip N reverts to jump back to <label>"
+ *
+ *  Plural-aware on "revert" / "reverts". Used in the popover's
+ *  confirmation tooltip / aria-label. Pure helper. */
+export function describeUndoJumpPlan(plan: UndoJumpPlan): string {
+  if (!plan.is_valid) {
+    // Two invalid sub-cases: target-equals-newest carries a label
+    // (we can be specific); empty / out-of-range doesn't.
+    if (plan.target_label.length > 0) {
+      return "Already the newest entry";
+    }
+    return "No jump available";
+  }
+  const revertNoun = plan.skip_count === 1 ? "revert" : "reverts";
+  return `Skip ${plan.skip_count} ${revertNoun} to jump back to ${plan.target_label}`;
+}
+
+/** True iff the plan represents a real cascade-shortening jump
+ *  (valid AND skip_count >= 1). Convenience predicate for the
+ *  popover's button enabled state. Mirrors the `is_valid` flag
+ *  directly — `is_valid === true` implies `skip_count >= 1` by
+ *  construction — but reads more naturally at call sites that
+ *  want a boolean for `disabled`. */
+export function canApplyUndoJump(plan: UndoJumpPlan): boolean {
+  return plan.is_valid && plan.skip_count >= 1;
+}
+
 // ─── Slice 151 — undo-ring live-operations bridge (round-31) ─────────
 //
 // Slice 149 owns the SUMMARY view (snapshot-free, audit-friendly).

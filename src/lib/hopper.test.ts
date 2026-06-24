@@ -3975,3 +3975,239 @@ function liveEntry(label: string, snapshot: Rule[], ts: number = 0): ReorderUndo
   sel = selectActiveUndo(ring, original);
   expect(sel.active === null, "cascade: empty ring -> null active");
 }
+
+// ── Slice 154 — computeUndoJumpPlan / describeUndoJumpPlan / canApplyUndoJump ──
+
+import {
+  computeUndoJumpPlan,
+  describeUndoJumpPlan,
+  canApplyUndoJump,
+} from "./hopper";
+
+{
+  // computeUndoJumpPlan: empty ring -> invalid; zeroed plan.
+  const plan = computeUndoJumpPlan([], 0);
+  expect(plan.is_valid === false, "jump: empty ring invalid");
+  expect(plan.skip_count === 0, "jump: empty ring skip=0");
+  expect(plan.dropped_labels.length === 0, "jump: empty ring no labels");
+  expect(plan.target_label === "", "jump: empty ring no label");
+  expect(plan.target_index === 0, "jump: empty ring index=0");
+}
+
+{
+  // computeUndoJumpPlan: out-of-range index -> invalid.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = computeUndoJumpPlan(entries, 5);
+  expect(plan.is_valid === false, "jump: oor invalid");
+  expect(plan.skip_count === 0, "jump: oor skip=0");
+  expect(plan.target_label === "", "jump: oor no label");
+}
+
+{
+  // computeUndoJumpPlan: target == newest -> invalid noop, label echoed.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = computeUndoJumpPlan(entries, 2);
+  expect(plan.is_valid === false, "jump: target=newest invalid");
+  expect(plan.skip_count === 0, "jump: target=newest skip=0");
+  expect(plan.target_label === "c", "jump: target=newest label echoed");
+  expect(plan.target_index === 2, "jump: target=newest index echoed");
+  expect(plan.dropped_labels.length === 0, "jump: target=newest no dropped");
+}
+
+{
+  // computeUndoJumpPlan: skip one entry.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = computeUndoJumpPlan(entries, 1);
+  expect(plan.is_valid === true, "jump: skip-1 valid");
+  expect(plan.skip_count === 1, "jump: skip-1 count");
+  expect(plan.dropped_labels.length === 1, "jump: skip-1 labels len");
+  expect(plan.dropped_labels[0] === "c", "jump: skip-1 dropped is newest 'c'");
+  expect(plan.target_label === "b", "jump: skip-1 target 'b'");
+  expect(plan.target_index === 1, "jump: skip-1 index echoed");
+}
+
+{
+  // computeUndoJumpPlan: skip to oldest, all newer dropped newest-first.
+  const entries = [
+    ringEntry("a", 100),
+    ringEntry("b", 200),
+    ringEntry("c", 300),
+    ringEntry("d", 400),
+    ringEntry("e", 500),
+  ];
+  const plan = computeUndoJumpPlan(entries, 0);
+  expect(plan.is_valid === true, "jump: skip-to-oldest valid");
+  expect(plan.skip_count === 4, "jump: skip-to-oldest count=4");
+  expect(plan.dropped_labels.length === 4, "jump: skip-to-oldest labels len");
+  // Newest-first order.
+  expect(plan.dropped_labels[0] === "e", "jump: dropped[0]=e (newest first)");
+  expect(plan.dropped_labels[1] === "d", "jump: dropped[1]=d");
+  expect(plan.dropped_labels[2] === "c", "jump: dropped[2]=c");
+  expect(plan.dropped_labels[3] === "b", "jump: dropped[3]=b");
+  expect(plan.target_label === "a", "jump: skip-to-oldest target 'a'");
+}
+
+{
+  // computeUndoJumpPlan: single-entry ring -> noop (only entry IS newest).
+  const entries = [ringEntry("only", 100)];
+  const plan = computeUndoJumpPlan(entries, 0);
+  expect(plan.is_valid === false, "jump: single-entry invalid noop");
+  expect(plan.target_label === "only", "jump: single-entry label echoed");
+}
+
+{
+  // computeUndoJumpPlan: NaN target index defensively treated as oor.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = computeUndoJumpPlan(entries, NaN);
+  expect(plan.is_valid === false, "jump: NaN index invalid");
+  expect(plan.skip_count === 0, "jump: NaN skip=0");
+}
+
+{
+  // computeUndoJumpPlan: negative target index defensively treated as oor.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = computeUndoJumpPlan(entries, -1);
+  expect(plan.is_valid === false, "jump: negative index invalid");
+  expect(plan.skip_count === 0, "jump: negative skip=0");
+}
+
+{
+  // computeUndoJumpPlan: non-integer (e.g. 1.5) defensively treated as oor.
+  // Avoids floor-vs-round ambiguity at call sites.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = computeUndoJumpPlan(entries, 1.5);
+  expect(plan.is_valid === false, "jump: non-integer index invalid");
+  expect(plan.skip_count === 0, "jump: non-integer skip=0");
+}
+
+{
+  // computeUndoJumpPlan: no input mutation.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const snapshot = JSON.stringify(entries);
+  computeUndoJumpPlan(entries, 1);
+  expect(JSON.stringify(entries) === snapshot, "jump: input unchanged");
+}
+
+{
+  // computeUndoJumpPlan: skip_count invariant matches dropped_labels.length
+  // for every valid in-range target.
+  const entries = [
+    ringEntry("a", 100),
+    ringEntry("b", 200),
+    ringEntry("c", 300),
+    ringEntry("d", 400),
+    ringEntry("e", 500),
+  ];
+  for (let target = 0; target < entries.length - 1; target++) {
+    const plan = computeUndoJumpPlan(entries, target);
+    expect(plan.is_valid === true, `jump: target=${target} valid`);
+    expect(
+      plan.skip_count === plan.dropped_labels.length,
+      `jump: skip_count === dropped_labels.length at target=${target}`,
+    );
+    expect(plan.target_index === target, `jump: target_index echoes input at target=${target}`);
+  }
+}
+
+{
+  // describeUndoJumpPlan: empty ring -> "No jump available".
+  const plan = computeUndoJumpPlan([], 0);
+  expect(describeUndoJumpPlan(plan) === "No jump available", "describe: empty");
+}
+
+{
+  // describeUndoJumpPlan: out-of-range -> "No jump available".
+  const entries = [ringEntry("a", 100)];
+  const plan = computeUndoJumpPlan(entries, 99);
+  expect(describeUndoJumpPlan(plan) === "No jump available", "describe: oor");
+}
+
+{
+  // describeUndoJumpPlan: target=newest -> "Already the newest entry".
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = computeUndoJumpPlan(entries, 1);
+  expect(
+    describeUndoJumpPlan(plan) === "Already the newest entry",
+    "describe: target=newest",
+  );
+}
+
+{
+  // describeUndoJumpPlan: skip 1 -> "Skip 1 revert to jump back to <label>".
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = computeUndoJumpPlan(entries, 1);
+  expect(
+    describeUndoJumpPlan(plan) === "Skip 1 revert to jump back to b",
+    "describe: skip-1 singular",
+  );
+}
+
+{
+  // describeUndoJumpPlan: skip N>1 -> "Skip N reverts to jump back to <label>".
+  const entries = [
+    ringEntry("fix-it: Tax", 100),
+    ringEntry("fix-all", 200),
+    ringEntry("fix-it: Receipts", 300),
+    ringEntry("fix-it: Misc", 400),
+  ];
+  const plan = computeUndoJumpPlan(entries, 0);
+  expect(
+    describeUndoJumpPlan(plan) === "Skip 3 reverts to jump back to fix-it: Tax",
+    "describe: skip-N plural with real label",
+  );
+}
+
+{
+  // canApplyUndoJump: invalid -> false.
+  const plan = computeUndoJumpPlan([], 0);
+  expect(canApplyUndoJump(plan) === false, "canApply: empty false");
+}
+
+{
+  // canApplyUndoJump: target=newest -> false.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = computeUndoJumpPlan(entries, 1);
+  expect(canApplyUndoJump(plan) === false, "canApply: target=newest false");
+}
+
+{
+  // canApplyUndoJump: valid skip>=1 -> true.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = computeUndoJumpPlan(entries, 0);
+  expect(canApplyUndoJump(plan) === true, "canApply: valid jump true");
+}
+
+{
+  // Pinned: wire shape uses snake_case for round-tripping with Rust.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = computeUndoJumpPlan(entries, 0);
+  const json = JSON.stringify(plan);
+  expect(json.includes('"is_valid":true'), "wire: snake_case is_valid");
+  expect(json.includes('"skip_count":2'), "wire: snake_case skip_count");
+  expect(json.includes('"dropped_labels":'), "wire: snake_case dropped_labels");
+  expect(json.includes('"target_label":"a"'), "wire: snake_case target_label");
+  expect(json.includes('"target_index":0'), "wire: snake_case target_index");
+}
+
+{
+  // End-to-end composition with summarizeUndoRing: feed trimmed
+  // entries into computeUndoJumpPlan. A 7-entry ring trimmed to
+  // capacity 5 (oldest two dropped) leaves c..g; jumping to index 0
+  // of the summary should target "c".
+  const raw = [
+    ringEntry("a", 100),
+    ringEntry("b", 200),
+    ringEntry("c", 300),
+    ringEntry("d", 400),
+    ringEntry("e", 500),
+    ringEntry("f", 600),
+    ringEntry("g", 700),
+  ];
+  const trimmed = summarizeUndoRing(raw, 5);
+  const plan = computeUndoJumpPlan(trimmed.entries, 0);
+  expect(plan.is_valid === true, "compose: trimmed jump valid");
+  expect(plan.target_label === "c", "compose: target post-trim is 'c'");
+  expect(plan.skip_count === 4, "compose: skip post-trim is 4");
+  expect(plan.dropped_labels[0] === "g", "compose: newest dropped is 'g'");
+  expect(plan.dropped_labels[3] === "d", "compose: oldest dropped is 'd'");
+}
