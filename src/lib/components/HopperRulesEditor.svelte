@@ -77,6 +77,12 @@
     nextFocusableJumpIndex,
     countFocusableJumpRows,
     type UndoShortcutPlatform,
+    formatJumpableRowTimestamp,
+    summarizeRingHealth,
+    describeRingHealth,
+    toggleCaptureTimestampMode,
+    describeCaptureTimestampMode,
+    type CaptureTimestampMode,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -1047,6 +1053,77 @@
       jumpRowButtons = {};
     }
   });
+
+  // -------------------------------------------------------------------
+  // Slice 162 — Relative/Absolute timestamp toggle + ring-health header
+  // (round-33)
+  // -------------------------------------------------------------------
+  //
+  // Round 32 (slice 157) shipped relative-only timestamps in the
+  // cascade-jump popover ("12s ago" / "3m ago"). That's great for a
+  // fresh undo cycle but useless for cross-session audit — a user
+  // who closed the panel and reopened it sees "3h ago" but doesn't
+  // know if that was last lunch or yesterday morning.
+  //
+  // Slice 162 wires slice 161's helpers into the UI:
+  //   - A two-state toggle in the popover header lets the user pick
+  //     Relative / Absolute. The chosen mode persists across
+  //     re-opens via localStorage.
+  //   - A ring-health summary line shows at a glance how many of
+  //     the queued steps are jumpable (vs stale / unchanged) so
+  //     the user doesn't have to scan the rows to understand
+  //     ring state.
+
+  /** localStorage key for the timestamp-mode preference. Scoped
+   *  per-watch would be overkill (the preference is about display
+   *  vocabulary, not chain content); a single global key keeps the
+   *  toggle stable across watch switches. */
+  const CAPTURE_TIMESTAMP_MODE_KEY = "slab.hopper.cascadeJump.timestampMode";
+
+  /** Load the persisted timestamp mode from localStorage. Defensive
+   *  against missing-DOM / corrupted-value scenarios — invalid
+   *  values fall back to "relative" (the round-32 default). */
+  function loadCaptureTimestampMode(): CaptureTimestampMode {
+    if (typeof localStorage === "undefined") return "relative";
+    try {
+      const raw = localStorage.getItem(CAPTURE_TIMESTAMP_MODE_KEY);
+      if (raw === "absolute") return "absolute";
+      return "relative";
+    } catch {
+      return "relative";
+    }
+  }
+
+  /** Persist the chosen mode to localStorage. Silently swallows
+   *  storage exceptions (private-mode browsers / quota exceeded)
+   *  so the UI never throws on a preference write. */
+  function persistCaptureTimestampMode(mode: CaptureTimestampMode) {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(CAPTURE_TIMESTAMP_MODE_KEY, mode);
+    } catch {
+      // Storage unavailable — preference holds in-memory for this
+      // session only. The popover still works.
+    }
+  }
+
+  /** The active timestamp display mode for the cascade-jump popover.
+   *  Loaded from localStorage at init; persisted on every toggle. */
+  let captureTimestampMode = $state<CaptureTimestampMode>(loadCaptureTimestampMode());
+
+  /** Toggle the timestamp mode and persist the new value. */
+  function toggleCaptureMode() {
+    const next = toggleCaptureTimestampMode(captureTimestampMode);
+    captureTimestampMode = next;
+    persistCaptureTimestampMode(next);
+  }
+
+  /** $derived ring-health summary from slice 159's jumpableRows.
+   *  Feeds the popover header copy + the audit log surface. */
+  let ringHealthSummary = $derived.by(() => summarizeRingHealth(jumpableRows));
+
+  /** $derived header copy from the ring health summary. */
+  let ringHealthCopy = $derived.by(() => describeRingHealth(ringHealthSummary));
 
   /** Open the fix-it confirm popover for a given dead rule index.
    *  Auto-closes the drilldown popover + coverage Export menu (the
@@ -2054,9 +2131,26 @@
                     role="menu"
                     aria-label="Cascade undo jump targets"
                   >
-                    <p class="cov-undo-jump-header">
-                      Jump directly to any undo step
-                    </p>
+                    <!-- Slice 162 (round-33) — header now shows the
+                         ring-health copy + a Relative/Absolute toggle.
+                         The toggle is a single-button pill so it stays
+                         inside one row at the popover width. -->
+                    <div class="cov-undo-jump-header-row">
+                      <p class="cov-undo-jump-header">
+                        {ringHealthCopy}
+                      </p>
+                      <button
+                        type="button"
+                        class="cov-undo-jump-ts-toggle"
+                        onclick={toggleCaptureMode}
+                        title={captureTimestampMode === "absolute"
+                          ? "Showing absolute timestamps — click to switch to relative (\"2m ago\")"
+                          : "Showing relative timestamps — click to switch to absolute (\"Today 14:23\") for cross-session audit"}
+                        aria-label={`Toggle timestamp mode (currently ${describeCaptureTimestampMode(captureTimestampMode)})`}
+                      >
+                        {captureTimestampMode === "absolute" ? "Abs" : "Rel"}
+                      </button>
+                    </div>
                     <ul class="cov-undo-jump-list">
                       {#each jumpableRows as row (row.capturedAt)}
                         <li
@@ -2067,8 +2161,11 @@
                           <div class="cov-undo-jump-meta">
                             <span class="cov-undo-jump-step">Step {row.stepNumber}</span>
                             <span class="cov-undo-jump-label">{row.label}</span>
-                            <span class="cov-undo-jump-age">
-                              {row.ageCopy}
+                            <span
+                              class="cov-undo-jump-age"
+                              class:abs={captureTimestampMode === "absolute"}
+                            >
+                              {formatJumpableRowTimestamp(row.capturedAt, captureTimestampMode)}
                             </span>
                           </div>
                           {#if row.isActiveTarget}
@@ -3327,6 +3424,61 @@
     color: rgba(255, 255, 255, 0.55);
     text-transform: uppercase;
     letter-spacing: 0.06em;
+  }
+  /* Slice 162 (round-33) — header row containing the ring-health
+     copy + Relative/Absolute toggle pill. Flex row so the toggle
+     sits flush right and the copy truncates with ellipsis if a
+     future copy variant gets long. */
+  .cov-undo-jump-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .cov-undo-jump-header-row .cov-undo-jump-header {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Tiny toggle pill — Rel / Abs alternating. Muted-blue accent
+     matches the round-32 cov-undo-chip vocabulary so the toggle
+     reads as part of the same surface. */
+  .cov-undo-jump-ts-toggle {
+    flex: 0 0 auto;
+    appearance: none;
+    border: 1px solid rgba(96, 165, 250, 0.28);
+    background: rgba(96, 165, 250, 0.07);
+    color: rgba(186, 218, 255, 0.92);
+    padding: 2px 8px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease,
+                color 0.12s ease;
+  }
+  .cov-undo-jump-ts-toggle:hover {
+    background: rgba(96, 165, 250, 0.13);
+    border-color: rgba(96, 165, 250, 0.42);
+    color: rgba(214, 232, 255, 1);
+  }
+  .cov-undo-jump-ts-toggle:focus-visible {
+    outline: 2px solid rgba(96, 165, 250, 0.55);
+    outline-offset: 1px;
+  }
+  /* Absolute-mode age column gets a touch more horizontal room (the
+     "Today HH:MM" / "Apr 15 2025, HH:MM" strings are longer than
+     "12s ago") + tabular numerics for clean alignment. */
+  .cov-undo-jump-age.abs {
+    font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
+    color: rgba(255, 255, 255, 0.6);
   }
   .cov-undo-jump-list {
     list-style: none;
