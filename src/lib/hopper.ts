@@ -1934,6 +1934,123 @@ export function selectActiveUndo(
  *  the oldest entry. */
 export const UNDO_RING_CAPACITY = 5;
 
+// ─── Slice 156 — undo-ring jump live-bridge (round-32) ───────────────
+//
+// Slice 154 owns the SUMMARY view of a jump plan (snapshot-free,
+// audit-friendly). Slice 156 owns the LIVE-RING operations: pop
+// every entry NEWER than the target so the target becomes the new
+// newest. The popover (slice 157) calls `applyUndoJumpToIndex` to
+// realise the plan after the user confirms.
+//
+// The split mirrors slices 149/151 (summary vs live-ring helpers):
+// summary helpers are pure-data over the compact wire shape and
+// shared with audit consumers; bridge helpers operate on the live
+// `ReorderUndoEntry[]` (with `snapshot: Rule[]`) and stay UI-side
+// because the snapshots aren't worth serialising.
+//
+// All bridge helpers are pure (no Svelte runes, no Tauri).
+
+/** Result of trimming a live undo ring to a target index. */
+export interface UndoRingJump {
+  /** True iff the trim is structurally valid: target_index was in
+   *  range AND there's at least one entry to drop. Mirrors the
+   *  slice-154 plan's `is_valid`. */
+  readonly is_valid: boolean;
+  /** The trimmed ring — entries [0..=targetIndex] from the input,
+   *  in oldest-first order. The target becomes the new newest
+   *  (entries.length - 1). For invalid jumps this is a defensive
+   *  shallow copy of the input ring (no mutation, no-op). */
+  readonly ring: ReorderUndoEntry[];
+  /** The entry the jump landed on (the new newest after the trim),
+   *  or null when invalid. The UI uses this to surface the
+   *  "Reverted to <label>" toast copy after a confirmed jump. */
+  readonly target: ReorderUndoEntry | null;
+  /** How many entries were dropped from the newest end. Equal to
+   *  the slice-154 plan's `skip_count` for valid jumps; 0 for
+   *  invalid. */
+  readonly dropped: number;
+}
+
+/** Apply a jump-to-index trim to a live undo ring. Returns a new
+ *  array with entries newer than `targetIndex` dropped; the input
+ *  ring is never mutated.
+ *
+ *  Algorithm:
+ *    1. Empty ring -> invalid; ring is a defensive shallow copy
+ *       (`[]`); target = null; dropped = 0.
+ *    2. `targetIndex < 0` / `targetIndex >= ring.length` /
+ *       non-integer -> invalid; ring is a defensive shallow copy;
+ *       target = null; dropped = 0.
+ *    3. `targetIndex === ring.length - 1` -> the target IS the
+ *       current newest entry; nothing to drop. Invalid (no jump
+ *       needed), but target = ring[targetIndex] and ring is a
+ *       defensive shallow copy. The popover surfaces this as
+ *       "active target — use the cascade button" without
+ *       confusing the user.
+ *    4. Otherwise -> valid; new ring is `ring.slice(0, targetIndex + 1)`;
+ *       target = `ring[targetIndex]`; dropped = `(ring.length - 1)
+ *       - targetIndex`.
+ *
+ *  Defensive against non-integer / negative / NaN target indices
+ *  the same way `computeUndoJumpPlan` (slice 154) is. Pure helper
+ *  — does NOT mutate the input ring (the returned array is always
+ *  a fresh slice).
+ *
+ *  Note: this helper does NOT apply the snapshot to the live chain
+ *  — that's the UI slice (157)'s responsibility via the existing
+ *  `slabHopperSetRules` path. This helper only TRIMS the ring; the
+ *  caller is responsible for applying `target.snapshot` to the
+ *  rules state. */
+export function jumpToUndoEntry(
+  ring: ReorderUndoEntry[],
+  targetIndex: number,
+): UndoRingJump {
+  // Defensive normalisation: a negative / NaN / non-integer index
+  // is treated as out-of-range. Mirrors slice 154's defensive
+  // handling so the two helpers stay consistent at call sites.
+  const idx = Number.isInteger(targetIndex) ? targetIndex : -1;
+  if (ring.length === 0 || idx < 0 || idx >= ring.length) {
+    return { is_valid: false, ring: ring.slice(), target: null, dropped: 0 };
+  }
+  const newest = ring.length - 1;
+  if (idx === newest) {
+    // Already the newest entry — no trim needed. Echo target back
+    // so the popover row for this entry can render "active target"
+    // copy without re-deriving.
+    return {
+      is_valid: false,
+      ring: ring.slice(),
+      target: ring[idx],
+      dropped: 0,
+    };
+  }
+  const next = ring.slice(0, idx + 1);
+  return {
+    is_valid: true,
+    ring: next,
+    target: ring[idx],
+    dropped: newest - idx,
+  };
+}
+
+/** Build per-entry `UndoEntrySummary[]` from a live ring for the
+ *  slice-154 planner. The summary is the compact wire-shape the
+ *  planner operates on (snapshot-free) — the live ring carries
+ *  `snapshot: Rule[]` which the planner doesn't need.
+ *
+ *  Used by the slice-157 popover to render the per-row plan copy
+ *  via `computeUndoJumpPlan(summarizeRingForJump(ring), index)`.
+ *  Pure helper — does NOT mutate the input. */
+export function summarizeRingForJump(
+  ring: ReorderUndoEntry[],
+): UndoEntrySummary[] {
+  return ring.map((entry) => ({
+    label: entry.label,
+    captured_at_ms: entry.capturedAt,
+    applied_effect: entry.appliedEffect,
+  }));
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors

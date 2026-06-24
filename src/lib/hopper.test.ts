@@ -4346,3 +4346,234 @@ import { slabHopperComputeUndoJumpPlan } from "./hopper";
   expect(typeof plan.target_label === "string", "wrapper: target_label type");
   expect(typeof plan.target_index === "number", "wrapper: target_index type");
 }
+
+// ── Slice 156 — jumpToUndoEntry / summarizeRingForJump bridge ──────
+
+import {
+  jumpToUndoEntry,
+  summarizeRingForJump,
+} from "./hopper";
+
+{
+  // jumpToUndoEntry: empty ring -> invalid; defensive copy; target null.
+  const result = jumpToUndoEntry([], 0);
+  expect(result.is_valid === false, "jump-live: empty invalid");
+  expect(result.ring.length === 0, "jump-live: empty ring stays empty");
+  expect(result.target === null, "jump-live: empty target null");
+  expect(result.dropped === 0, "jump-live: empty dropped=0");
+}
+
+{
+  // jumpToUndoEntry: out-of-range -> invalid; defensive shallow copy.
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const ring = [e1];
+  const result = jumpToUndoEntry(ring, 99);
+  expect(result.is_valid === false, "jump-live: oor invalid");
+  expect(result.ring.length === 1, "jump-live: oor ring preserved");
+  expect(result.target === null, "jump-live: oor target null");
+  expect(result.dropped === 0, "jump-live: oor dropped=0");
+  // Defensive copy: result.ring is NOT the same array as input.
+  expect(result.ring !== ring, "jump-live: oor returns fresh array");
+}
+
+{
+  // jumpToUndoEntry: target == newest -> invalid noop; target echoed.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 1);
+  const e3 = captureUndoEntry([a, b], [c, a, b], "e3", 2);
+  const ring = [e1, e2, e3];
+  const result = jumpToUndoEntry(ring, 2);
+  expect(result.is_valid === false, "jump-live: target=newest invalid");
+  expect(result.ring.length === 3, "jump-live: target=newest ring preserved");
+  expect(result.target?.label === "e3", "jump-live: target=newest echoed");
+  expect(result.dropped === 0, "jump-live: target=newest dropped=0");
+}
+
+{
+  // jumpToUndoEntry: valid skip-1 trims newest entry.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 1);
+  const e3 = captureUndoEntry([a, b], [c, a, b], "e3", 2);
+  const ring = [e1, e2, e3];
+  const result = jumpToUndoEntry(ring, 1);
+  expect(result.is_valid === true, "jump-live: skip-1 valid");
+  expect(result.ring.length === 2, "jump-live: skip-1 ring len");
+  expect(result.ring[0].label === "e1", "jump-live: skip-1 ring[0] preserved");
+  expect(result.ring[1].label === "e2", "jump-live: skip-1 new newest is e2");
+  expect(result.target?.label === "e2", "jump-live: skip-1 target is e2");
+  expect(result.dropped === 1, "jump-live: skip-1 dropped=1");
+}
+
+{
+  // jumpToUndoEntry: valid skip-to-oldest keeps only target.
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 1);
+  const e3 = captureUndoEntry([a, b], [b, a], "e3", 2);
+  const e4 = captureUndoEntry([b, a], [a, b], "e4", 3);
+  const ring = [e1, e2, e3, e4];
+  const result = jumpToUndoEntry(ring, 0);
+  expect(result.is_valid === true, "jump-live: skip-to-oldest valid");
+  expect(result.ring.length === 1, "jump-live: skip-to-oldest keeps only target");
+  expect(result.ring[0].label === "e1", "jump-live: skip-to-oldest ring is [e1]");
+  expect(result.target?.label === "e1", "jump-live: skip-to-oldest target e1");
+  expect(result.dropped === 3, "jump-live: skip-to-oldest dropped=3");
+}
+
+{
+  // jumpToUndoEntry: defensive negative index.
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const ring = [e1];
+  const result = jumpToUndoEntry(ring, -1);
+  expect(result.is_valid === false, "jump-live: negative invalid");
+  expect(result.ring.length === 1, "jump-live: negative ring preserved");
+  expect(result.target === null, "jump-live: negative target null");
+}
+
+{
+  // jumpToUndoEntry: defensive NaN index.
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const ring = [e1];
+  const result = jumpToUndoEntry(ring, NaN);
+  expect(result.is_valid === false, "jump-live: NaN invalid");
+  expect(result.target === null, "jump-live: NaN target null");
+}
+
+{
+  // jumpToUndoEntry: defensive non-integer (1.5) index.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 1);
+  const e3 = captureUndoEntry([a, b], [c, a, b], "e3", 2);
+  const ring = [e1, e2, e3];
+  const result = jumpToUndoEntry(ring, 1.5);
+  expect(result.is_valid === false, "jump-live: non-integer invalid");
+  expect(result.ring.length === 3, "jump-live: non-integer ring preserved");
+  expect(result.target === null, "jump-live: non-integer target null");
+}
+
+{
+  // jumpToUndoEntry: no input mutation.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 1);
+  const e3 = captureUndoEntry([a, b], [c, a, b], "e3", 2);
+  const ring = [e1, e2, e3];
+  const before = ring.length;
+  jumpToUndoEntry(ring, 0);
+  expect(ring.length === before, "jump-live: input ring length unchanged");
+  expect(ring[0].label === "e1", "jump-live: ring[0] unchanged");
+  expect(ring[2].label === "e3", "jump-live: ring[2] unchanged");
+}
+
+{
+  // jumpToUndoEntry: dropped + new ring.length = original length
+  // for valid jumps. This is the load-bearing invariant the popover's
+  // toast copy depends on ("Reverted N rules · ring drained to step M").
+  const a = makeRule("A"), b = makeRule("B");
+  const ring = [
+    captureUndoEntry([a, b], [b, a], "e1", 0),
+    captureUndoEntry([b, a], [a, b], "e2", 1),
+    captureUndoEntry([a, b], [b, a], "e3", 2),
+    captureUndoEntry([b, a], [a, b], "e4", 3),
+    captureUndoEntry([a, b], [b, a], "e5", 4),
+  ];
+  for (let target = 0; target < ring.length - 1; target++) {
+    const result = jumpToUndoEntry(ring, target);
+    expect(result.is_valid === true, `invariant: target=${target} valid`);
+    expect(
+      result.ring.length + result.dropped === ring.length,
+      `invariant: ring.length + dropped === original at target=${target}`,
+    );
+    expect(result.target?.label === `e${target + 1}`, `invariant: target label at ${target}`);
+  }
+}
+
+{
+  // jumpToUndoEntry: trimmed ring preserves snapshot reference
+  // identity for retained entries. The UI's applyJump path passes
+  // ring[targetIndex].snapshot to slabHopperSetRules; if the trim
+  // dropped or rebuilt entries, the snapshot would silently lose
+  // its identity for downstream consumers (audit logging,
+  // selectActiveUndo).
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 0);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 1);
+  const e3 = captureUndoEntry([a, b], [c, a, b], "e3", 2);
+  const ring = [e1, e2, e3];
+  const result = jumpToUndoEntry(ring, 0);
+  expect(result.target === e1, "jump-live: target is reference-identical to ring[0]");
+  expect(result.ring[0] === e1, "jump-live: ring[0] preserves reference identity");
+}
+
+{
+  // summarizeRingForJump: empty ring -> empty array.
+  const summaries = summarizeRingForJump([]);
+  expect(summaries.length === 0, "summarize: empty");
+}
+
+{
+  // summarizeRingForJump: each entry maps to its compact wire shape.
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "fix-it: Tax", 100);
+  const e2 = captureUndoEntry([b, a], [a, b], "fix-all", 200);
+  const summaries = summarizeRingForJump([e1, e2]);
+  expect(summaries.length === 2, "summarize: 2-entry length");
+  expect(summaries[0].label === "fix-it: Tax", "summarize: label[0]");
+  expect(summaries[0].captured_at_ms === 100, "summarize: captured_at_ms[0]");
+  expect(summaries[0].applied_effect === e1.appliedEffect, "summarize: effect[0] reference");
+  expect(summaries[1].label === "fix-all", "summarize: label[1]");
+  expect(summaries[1].captured_at_ms === 200, "summarize: captured_at_ms[1]");
+}
+
+{
+  // summarizeRingForJump: no input mutation; result is fresh array.
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 100);
+  const ring = [e1];
+  const beforeLen = ring.length;
+  const summaries = summarizeRingForJump(ring);
+  expect(ring.length === beforeLen, "summarize: input length unchanged");
+  expect(summaries !== ring as unknown, "summarize: fresh array");
+}
+
+{
+  // End-to-end: summarize -> compute plan -> apply jump.
+  // Mirrors what the popover does: take live ring, render plan
+  // via slice-154 planner, user confirms, apply trim.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b, c], [b, a, c], "e1", 100);
+  const e2 = captureUndoEntry([b, a, c], [c, b, a], "e2", 200);
+  const e3 = captureUndoEntry([c, b, a], [a, c, b], "e3", 300);
+  const ring = [e1, e2, e3];
+  // Render plan for "jump to oldest" (index 0).
+  const summaries = summarizeRingForJump(ring);
+  const plan = computeUndoJumpPlan(summaries, 0);
+  expect(plan.is_valid === true, "e2e: plan valid");
+  expect(plan.skip_count === 2, "e2e: plan skip_count");
+  expect(plan.target_label === "e1", "e2e: plan target");
+  // User confirms; bridge trims the live ring.
+  const result = jumpToUndoEntry(ring, plan.target_index);
+  expect(result.is_valid === true, "e2e: bridge valid");
+  expect(result.ring.length === 1, "e2e: bridge ring trimmed to 1");
+  expect(result.target?.label === "e1", "e2e: bridge target matches plan");
+  expect(result.dropped === plan.skip_count, "e2e: bridge dropped matches plan");
+}
+
+{
+  // End-to-end: plan-then-apply round-trips snapshot identity.
+  // The applyJump path passes target.snapshot to slabHopperSetRules;
+  // verify the snapshot is identical to the snapshot at the
+  // pre-trim entry (no copying/serialising in the bridge layer).
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 100);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 200);
+  const ring = [e1, e2];
+  const result = jumpToUndoEntry(ring, 0);
+  expect(result.target?.snapshot === e1.snapshot, "e2e: snapshot reference preserved");
+}
