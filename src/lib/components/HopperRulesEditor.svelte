@@ -65,6 +65,11 @@
     popUndoEntry,
     selectActiveUndo,
     UNDO_RING_CAPACITY,
+    computeUndoJumpPlan,
+    describeUndoJumpPlan,
+    canApplyUndoJump,
+    jumpToUndoEntry,
+    summarizeRingForJump,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -766,6 +771,170 @@
     undoRing = pushUndoEntry(undoRing, entry, UNDO_RING_CAPACITY);
   }
 
+  // -------------------------------------------------------------------
+  // Slice 157 — Cascade-jump popover (round-32)
+  // -------------------------------------------------------------------
+  //
+  // Round 31 (slice 152) shipped a "Step N of M" counter chip that
+  // showed how many cascading undos were queued. The cascade button
+  // always targeted the NEWEST entry — a user with a 5-entry ring
+  // who wanted to revert to the snapshot from 4 clicks ago had to
+  // click Undo four times. Round 32 promotes that chip into a
+  // CLICKABLE button that opens a popover listing per-entry rows
+  // (label / relative timestamp / live status / "Jump here" button)
+  // so the user can skip directly to any entry in one click.
+  //
+  // The popover is rendered as an absolute-positioned panel anchored
+  // beneath the cov-undo-chip button. Per-row:
+  //   - active target row (the newest ready entry): renders the
+  //     current undoLabel as static copy with a "Active target —
+  //     use the cascade button" hint.
+  //   - older ready rows: render the slice-154 plan copy
+  //     ("Skip 3 reverts to jump back to fix-it: Tax") as the
+  //     button's title/aria + a "Jump here" affordance.
+  //   - stale rows: render the live stale-reason as a disabled
+  //     "Unavailable — N rules added since fix-all" badge.
+  //   - noop rows: render disabled "Already matches current chain"
+  //     (rare; the snapshot is the same as the live chain).
+  //
+  // Opening the popover dismisses the Fix-all + Fix-it + Export-menu
+  // overlays (it's a new most-recently-opened overlay; the Escape
+  // chain unwinds it FIRST among them). The popover closes on:
+  //   - Escape (handled in the existing onWindowKeydown chain)
+  //   - successful jump (the ring trims; the popover would re-render
+  //     with the new newest as active, but we close it explicitly to
+  //     let the toast surface the result)
+  //   - ring drain (slice 152's toast-fade or undo-drain branches
+  //     null undoRing; the popover hides since undoStepChip empties)
+  //   - clicking the chip again (toggle semantics matching openFixIt)
+
+  /** Cascade-jump popover open/closed state. Toggled by the
+   *  cov-undo-chip button. Closes automatically when the ring
+   *  drains (no entries to surface) or on Escape. */
+  let undoPopoverOpen = $state(false);
+
+  /** Busy gate for jump-apply — prevents a second click while the
+   *  persist round-trip is in flight. Independent from undoBusy
+   *  so a user couldn't queue a jump AND a cascade simultaneously. */
+  let undoJumpBusy = $state(false);
+
+  /** Toggle the cascade-jump popover. Closes other overlays the
+   *  same way openFixItPopover does (popover is a new most-
+   *  recently-opened overlay; Escape unwinds it first). Re-opening
+   *  on the same chip toggles off. */
+  function toggleUndoPopover() {
+    if (undoPopoverOpen) {
+      undoPopoverOpen = false;
+      return;
+    }
+    coverageExportMenuOpen = false;
+    closeFixItPopover();
+    closeFixAllPopover();
+    closeDrilldown();
+    undoPopoverOpen = true;
+  }
+
+  /** Close the cascade-jump popover. Idempotent. */
+  function closeUndoPopover() {
+    undoPopoverOpen = false;
+  }
+
+  /** Apply a jump-to-index against the live ring + chain.
+   *
+   *  Algorithm:
+   *    1. Compute the plan via slice 154 (validates index).
+   *    2. If invalid -> noop (popover row should never call this).
+   *    3. Optimistic: ring trims locally + chain reverts to the
+   *       target snapshot, then slabHopperSetRules persists.
+   *    4. On failure: rollback both ring AND chain; surface
+   *       errorMsg; popover stays open so the user can retry.
+   *    5. On success: pop the toast copy + refresh the 4s dwell
+   *       timer (same lifecycle as slice 152's applyUndo so chain
+   *       cascades + jumps share one toast surface). Close the
+   *       popover so the result is visible. */
+  async function applyUndoJump(targetIndex: number) {
+    if (undoJumpBusy) return;
+    const summaries = summarizeRingForJump(undoRing);
+    const plan = computeUndoJumpPlan(summaries, targetIndex);
+    if (!canApplyUndoJump(plan)) return;
+    const trim = jumpToUndoEntry(undoRing, targetIndex);
+    if (!trim.is_valid || trim.target === null) return;
+    const prev = rules;
+    const prevRing = undoRing;
+    const snapshot = trim.target.snapshot;
+    const targetLabel = trim.target.label;
+    const droppedCount = trim.dropped;
+    undoJumpBusy = true;
+    rules = snapshot.slice();
+    undoRing = trim.ring;
+    try {
+      await slabHopperSetRules(watchId, snapshot);
+      savedAt = Date.now();
+      schedulePreview();
+      scheduleCoverage();
+      // After a successful jump the target entry is now the newest
+      // entry in the ring. Pop it too so the cascade button doesn't
+      // surface a stale "Undo · Move 0 rules back" for the entry
+      // we just landed on. Matches slice 152's applyUndo semantics
+      // (popping AFTER the apply) so cascade + jump share toast
+      // copy lifecycle.
+      undoRing = popUndoEntry(undoRing).remaining;
+      // Toast copy reads: "Jumped past N reverts to <label>" so the
+      // user knows the depth of the jump + the action they landed
+      // on. When the ring drained fully, omit the trailing
+      // "remaining" suffix.
+      const revertNoun = droppedCount === 1 ? "revert" : "reverts";
+      const remainingSteps = undoRing.length;
+      if (remainingSteps > 0) {
+        const stepNoun = remainingSteps === 1 ? "step" : "steps";
+        coverageExportToast = `Jumped past ${droppedCount} ${revertNoun} to ${targetLabel} · ${remainingSteps} undo ${stepNoun} remaining`;
+      } else {
+        coverageExportToast = `Jumped past ${droppedCount} ${revertNoun} to ${targetLabel}`;
+      }
+      // Refresh the dwell so the toast stays visible long enough
+      // for the user to absorb the jump result before fading.
+      if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
+      coverageExportToastTimer = setTimeout(() => {
+        coverageExportToast = null;
+        undoRing = [];
+      }, 4_000);
+      // Close the popover so the toast is unobstructed. The user
+      // can re-open it for the next jump.
+      undoPopoverOpen = false;
+    } catch (e) {
+      rules = prev;
+      undoRing = prevRing;
+      errorMsg = `Jump failed: ${String(e)}`;
+    } finally {
+      undoJumpBusy = false;
+    }
+  }
+
+  /** Format a captured-at timestamp as a SHORT relative duration
+   *  for the popover rows ("just now" / "12s ago" / "3m ago").
+   *  Pure helper — accepts a `now` injectable for tests. */
+  function formatRelativeAge(capturedAt: number, now: number = Date.now()): string {
+    const deltaMs = Math.max(0, now - capturedAt);
+    if (deltaMs < 5_000) return "just now";
+    const seconds = Math.floor(deltaMs / 1_000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ago`;
+  }
+
+  /** $effect: auto-close the cascade-jump popover when the ring
+   *  drains. Avoids leaving a phantom open popover after the toast
+   *  fades / a cascade undo empties the ring / an explicit clear.
+   *  Reading undoRing.length triggers reactive close when the ring
+   *  flips to empty. */
+  $effect(() => {
+    if (undoRing.length === 0 && undoPopoverOpen) {
+      undoPopoverOpen = false;
+    }
+  });
+
   /** Open the fix-it confirm popover for a given dead rule index.
    *  Auto-closes the drilldown popover + coverage Export menu (the
    *  fix-it popover is a SECOND most-recently-opened overlay; the
@@ -1081,6 +1250,14 @@
    *  filter clear. */
   function onWindowKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
+    if (undoPopoverOpen) {
+      // Slice 157: the cascade-jump popover is the newest most-
+      // recently-opened overlay (toggleUndoPopover dismisses fix-all
+      // / fix-it / drilldown before opening). Unwind it first.
+      e.stopPropagation();
+      closeUndoPopover();
+      return;
+    }
     if (openFixAll) {
       e.stopPropagation();
       closeFixAllPopover();
@@ -1648,25 +1825,104 @@
               </span>
             {/if}
             {#if undoStepChip}
-              <!-- Slice 152 — cascade counter chip. Surfaces only
-                   when the ring has > 1 entries (a single entry IS
-                   the round-30 surface; no chip needed). Counter
-                   reads newest-first so "Step 1 of 3" means the
-                   surfaced button targets the newest entry and 2
-                   more cascading undos are queued. Darkens when
-                   the ring is at capacity so the user knows the
-                   next apply will evict the oldest entry. -->
-              <span
-                class="cov-undo-chip"
-                class:full={undoSelection.totalEntries === UNDO_RING_CAPACITY}
-                role="status"
-                aria-label="{undoStepChip} — {undoSelection.totalEntries === UNDO_RING_CAPACITY ? 'ring at capacity' : 'cascading undos available'}"
-                title={undoSelection.totalEntries === UNDO_RING_CAPACITY
-                  ? `Undo ring at capacity — the next fix will evict the oldest snapshot`
-                  : `${undoSelection.totalEntries - 1} more cascading undo${undoSelection.totalEntries - 1 === 1 ? "" : "s"} available after this one`}
-              >
-                {undoStepChip}
-              </span>
+              <!-- Slice 152 — cascade counter chip.
+                   Slice 157 (round-32) — chip is now a BUTTON that
+                   opens a per-entry jump popover. The chip still
+                   surfaces only when the ring has > 1 entries (a
+                   single entry IS the round-30 surface; no chip
+                   needed). Counter reads newest-first so "Step 1
+                   of 3" means the surfaced button targets the
+                   newest entry and 2 more cascading undos are
+                   queued. Darkens when the ring is at capacity so
+                   the user knows the next apply will evict the
+                   oldest entry. -->
+              <div class="cov-undo-chip-anchor">
+                <button
+                  type="button"
+                  class="cov-undo-chip"
+                  class:full={undoSelection.totalEntries === UNDO_RING_CAPACITY}
+                  class:open={undoPopoverOpen}
+                  onclick={toggleUndoPopover}
+                  aria-haspopup="menu"
+                  aria-expanded={undoPopoverOpen}
+                  aria-label="{undoStepChip} — {undoSelection.totalEntries === UNDO_RING_CAPACITY ? 'ring at capacity' : 'cascading undos available'} — click to open jump menu"
+                  title={undoSelection.totalEntries === UNDO_RING_CAPACITY
+                    ? `Undo ring at capacity — click to jump directly to any entry (next fix evicts the oldest)`
+                    : `${undoSelection.totalEntries - 1} more cascading undo${undoSelection.totalEntries - 1 === 1 ? "" : "s"} available — click to jump directly to any entry`}
+                >
+                  {undoStepChip}
+                </button>
+                {#if undoPopoverOpen}
+                  <!-- Slice 157 — cascade-jump popover. Per-row:
+                       - Active target (newest ready): static "Active
+                         target — use the cascade button" copy.
+                       - Older ready: "Jump here" button with the
+                         slice-154 plan copy as title/aria.
+                       - Stale: disabled badge with live stale reason.
+                       - Noop (snapshot matches live): disabled
+                         "Already matches current chain". -->
+                  <div
+                    class="cov-undo-jump-popover"
+                    role="menu"
+                    aria-label="Cascade undo jump targets"
+                  >
+                    <p class="cov-undo-jump-header">
+                      Jump directly to any undo step
+                    </p>
+                    <ul class="cov-undo-jump-list">
+                      {#each undoRing as entry, idx (entry.capturedAt)}
+                        {@const entryStatus = computeUndoStatus(entry, rules)}
+                        {@const summaries = summarizeRingForJump(undoRing)}
+                        {@const plan = computeUndoJumpPlan(summaries, idx)}
+                        {@const isNewest = idx === undoRing.length - 1}
+                        {@const stepNumber = undoRing.length - idx}
+                        <li class="cov-undo-jump-row" class:active={isNewest}>
+                          <div class="cov-undo-jump-meta">
+                            <span class="cov-undo-jump-step">Step {stepNumber}</span>
+                            <span class="cov-undo-jump-label">{entry.label}</span>
+                            <span class="cov-undo-jump-age">
+                              {formatRelativeAge(entry.capturedAt)}
+                            </span>
+                          </div>
+                          {#if isNewest}
+                            <span
+                              class="cov-undo-jump-active"
+                              title="Active target — use the cascade Undo button to revert this step"
+                            >
+                              Active target
+                            </span>
+                          {:else if entryStatus.kind === "stale"}
+                            <span
+                              class="cov-undo-jump-stale"
+                              title={entryStatus.reason}
+                            >
+                              Unavailable
+                            </span>
+                          {:else if entryStatus.kind === "noop"}
+                            <span
+                              class="cov-undo-jump-noop"
+                              title="Snapshot already matches the current chain"
+                            >
+                              No change
+                            </span>
+                          {:else}
+                            <button
+                              type="button"
+                              class="cov-undo-jump-btn"
+                              onclick={() => void applyUndoJump(idx)}
+                              disabled={undoJumpBusy || !canApplyUndoJump(plan)}
+                              title={describeUndoJumpPlan(plan)}
+                              aria-label={describeUndoJumpPlan(plan)}
+                            >
+                              Jump here
+                            </button>
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
+              </div>
             {/if}
           {/if}
         </div>
@@ -2764,7 +3020,19 @@
    * user how many cascading undos remain. Muted blue tint so it
    * reads as informational metadata (not an action). The .full
    * variant deepens the color so an at-capacity ring is
-   * visually distinct — the next apply will evict the oldest. */
+   * visually distinct — the next apply will evict the oldest.
+   *
+   * Slice 157 (round-32) — chip is now a BUTTON that opens a
+   * jump-to-step popover. Button-reset rules below override the
+   * default native button appearance; the chip retains its
+   * informational pill look but gains hover / focus / pressed-
+   * open states. Anchor wrapper (.cov-undo-chip-anchor) lets the
+   * popover absolute-position beneath the chip without disturbing
+   * the toast-row flex layout. */
+  .cov-undo-chip-anchor {
+    position: relative;
+    display: inline-flex;
+  }
   .cov-undo-chip {
     flex: 0 0 auto;
     display: inline-flex;
@@ -2778,13 +3046,193 @@
     border-radius: 6px;
     letter-spacing: 0.02em;
     font-variant-numeric: tabular-nums;
-    cursor: help;
+    /* Slice 157 — clickable; pointer cursor + reset native button
+       chrome (font, line-height) so the chip looks identical to
+       its round-31 <span> form when idle. */
+    cursor: pointer;
+    font-family: inherit;
+    line-height: 18px;
+    appearance: none;
     animation: cov-export-toast-fade-in 0.18s ease-out;
+    transition: background 0.12s, border-color 0.12s, transform 0.12s;
+  }
+  .cov-undo-chip:hover {
+    background: rgba(110, 165, 255, 0.14);
+    border-color: rgba(110, 165, 255, 0.36);
+    transform: translateY(-1px);
+  }
+  .cov-undo-chip:focus-visible {
+    outline: 2px solid rgba(110, 165, 255, 0.5);
+    outline-offset: 1px;
+  }
+  .cov-undo-chip:active,
+  .cov-undo-chip.open {
+    background: rgba(110, 165, 255, 0.22);
+    border-color: rgba(110, 165, 255, 0.5);
+    transform: translateY(0);
   }
   .cov-undo-chip.full {
     color: rgba(220, 195, 165, 0.9);
     background: rgba(220, 170, 110, 0.14);
     border-color: rgba(220, 170, 110, 0.36);
+  }
+  .cov-undo-chip.full:hover {
+    background: rgba(220, 170, 110, 0.22);
+    border-color: rgba(220, 170, 110, 0.52);
+  }
+  .cov-undo-chip.full.open {
+    background: rgba(220, 170, 110, 0.3);
+    border-color: rgba(220, 170, 110, 0.65);
+  }
+
+  /* Slice 157 — Cascade-jump popover. Anchored beneath the chip
+     via .cov-undo-chip-anchor's relative positioning. Same dark
+     panel treatment as the fix-it popover for visual consistency,
+     but wider (320px) and structured as a list of step rows. */
+  .cov-undo-jump-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 320px;
+    max-width: 360px;
+    padding: 10px 10px 8px;
+    background: rgba(20, 22, 30, 0.97);
+    border: 1px solid rgba(110, 165, 255, 0.28);
+    border-radius: 8px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.46);
+    z-index: 16;
+    animation: cov-export-toast-fade-in 0.16s ease-out;
+  }
+  .cov-undo-jump-header {
+    margin: 0 0 8px;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.55);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .cov-undo-jump-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cov-undo-jump-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .cov-undo-jump-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  .cov-undo-jump-row.active {
+    border-color: rgba(110, 220, 154, 0.36);
+    background: rgba(110, 220, 154, 0.08);
+  }
+  .cov-undo-jump-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .cov-undo-jump-step {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.42);
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    text-transform: uppercase;
+  }
+  .cov-undo-jump-label {
+    flex: 1 1 auto;
+    font-size: 12px;
+    color: rgb(232, 234, 240);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cov-undo-jump-age {
+    flex: 0 0 auto;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+    font-variant-numeric: tabular-nums;
+  }
+  .cov-undo-jump-btn {
+    flex: 0 0 auto;
+    appearance: none;
+    background: rgba(124, 140, 255, 0.18);
+    color: rgb(208, 216, 255);
+    border: 1px solid rgba(124, 140, 255, 0.42);
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 9px;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s, transform 0.1s;
+  }
+  .cov-undo-jump-btn:hover:not(:disabled) {
+    background: rgba(124, 140, 255, 0.3);
+    border-color: rgba(124, 140, 255, 0.58);
+    transform: translateY(-1px);
+  }
+  .cov-undo-jump-btn:focus-visible {
+    outline: 2px solid rgba(124, 140, 255, 0.55);
+    outline-offset: 1px;
+  }
+  .cov-undo-jump-btn:disabled {
+    opacity: 0.5;
+    cursor: progress;
+    transform: none;
+  }
+  .cov-undo-jump-active {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(110, 220, 154, 0.9);
+    padding: 3px 8px;
+    background: rgba(110, 220, 154, 0.12);
+    border: 1px solid rgba(110, 220, 154, 0.32);
+    border-radius: 5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: help;
+  }
+  .cov-undo-jump-stale {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 220, 160, 0.85);
+    padding: 3px 8px;
+    background: rgba(255, 200, 120, 0.08);
+    border: 1px solid rgba(255, 200, 120, 0.28);
+    border-radius: 5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: help;
+  }
+  .cov-undo-jump-noop {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.42);
+    padding: 3px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: help;
   }
 
   .cov-error {

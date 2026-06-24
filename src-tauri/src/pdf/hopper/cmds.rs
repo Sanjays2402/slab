@@ -1113,7 +1113,10 @@ pub fn slab_hopper_compute_undo_jump_plan(
     entries: Vec<super::coverage::UndoEntrySummary>,
     target_index: usize,
 ) -> CmdResult<super::coverage::UndoJumpPlan> {
-    Ok(super::coverage::compute_undo_jump_plan(&entries, target_index))
+    Ok(super::coverage::compute_undo_jump_plan(
+        &entries,
+        target_index,
+    ))
 }
 
 // ---------------------------------------------------------------------
