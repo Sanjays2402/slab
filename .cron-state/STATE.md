@@ -1,13 +1,311 @@
 # Slab Cron State
 
-Last updated: 2026-06-23 17:18 PT by Cake (cron) — round-31 BATCH shipped: 5 slices promoting round-30's single-entry undo to a bounded cascade ring. summarize_undo_ring(entries, capacity) -> UndoRingSummary with {entries (oldest-trimmed), capacity, full} + UndoEntrySummary {label, captured_at_ms, applied_effect} compact wire view + defensive capacity==0 always-full branch + snake_case serde round-trip + 10 tests (slice 148); TS mirror summarizeUndoRing 1:1 + UndoEntrySummary/UndoRingSummary wire-shape interfaces + describeUndoRingSummary discriminated copy ("No undo history" / "1 undo step" / "3 undo steps (oldest: fix-all)" / "5 undo steps — at capacity") + isUndoRingFull predicate + negative-cap defensive normalisation + 42 inline tests (slice 149); slab_hopper_summarize_undo_ring Tauri command wired into invoke handler + slabHopperSummarizeUndoRing async wrapper with browser-mode delegation + 22 wrapper-delegation tests pinning every UndoRingSummary field (slice 150); pushUndoEntry(ring, entry, capacity) returning new array with oldest-trim + popUndoEntry(ring) -> {entry, remaining} idempotent on empty + selectActiveUndo(ring, current) walking newest -> oldest computing computeUndoStatus per entry surfacing first ready as active with totalReady/totalStale counters + UNDO_RING_CAPACITY=5 constant + 58 inline tests including 3-step cascade end-to-end (slice 151); demo-able UI promoting undoEntry: ReorderUndoEntry | null to undoRing: ReorderUndoEntry[] capped at UNDO_RING_CAPACITY + undoSelection $derived from selectActiveUndo + undoStepChip $derived "Step N of M" newest-first copy (empty when ring has <2 entries) + cascade-aware toast copy ("Reverted 3 rules · 2 undo steps remaining" mid-cascade / "Reverted 3 rules" on drain) + 4s dwell refresh after each successful undo so cascading clicks have a full window + new .cov-undo-chip muted-blue informational pill with amber-tinted .full variant when ring at capacity + ~40 lines new scoped CSS (slice 152). Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings PASSED CLEAN in 28.55s, cargo test --lib 2606 passed / 0 failed (round-30 baseline 2596 + 10 slice-148 tests = 2606), pnpm check 0 errors / 104 warnings (round-30 baseline preserved EXACTLY), tsx src/lib/hopper.test.ts 582 inline expects pass (round-30 baseline 460 + 42 slice-149 + 22 slice-150 + 58 slice-151 = 582; slice 152 is a UI slice with no new TS-helper assertions). Commits: cc1baa4 (slice 148) -> c599acc (slice 149) -> 701f7c3 (slice 150) -> a065c38 (slice 151) -> 1a17674 (slice 152).
+Last updated: 2026-06-23 20:55 PT by Cake (cron) — round-32 BATCH shipped: 5 slices promoting round-31's "Step N of M" counter chip into a clickable per-step cascade-jump popover. compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan with {is_valid, skip_count, dropped_labels (newest-first), target_label, target_index} pure-data planner — invalid for empty/oor/target-equals-newest with label-echo for target=newest + valid newest-first walk via reverse range collecting labels + snake_case serde round-trip + 14 tests (slice 153); TS mirror computeUndoJumpPlan 1:1 + UndoJumpPlan snake_case wire-shape interface + describeUndoJumpPlan discriminated copy ("No jump available" / "Already the newest entry" / "Skip 1 revert to jump back to <label>" / "Skip N reverts to jump back to <label>") + canApplyUndoJump predicate + defensive NaN/negative/non-integer normalisation + 66 inline tests (slice 154); slab_hopper_compute_undo_jump_plan Tauri command wired into invoke handler + slabHopperComputeUndoJumpPlan async wrapper with browser-mode delegation + 45 wrapper-delegation tests pinning every UndoJumpPlan field through browser-mode path with real fix-it/fix-all labels and runtime-type pinning (slice 155); jumpToUndoEntry(ring, targetIndex) -> UndoRingJump {is_valid, ring, target, dropped} live-ring bridge trimming entries [0..=targetIndex] returning fresh array (input never mutated) with snapshot reference identity preserved for retained entries + summarizeRingForJump(ring) -> UndoEntrySummary[] mapping live ring to compact wire-shape for slice-154 planner + 66 inline tests including end-to-end summarize -> plan -> apply round-trip (slice 156); demo-able UI promoting cov-undo-chip from <span> to <button> with hover/focus/open states + cov-undo-chip-anchor relative wrapper + cov-undo-jump-popover 320-360px dark panel with per-row layout (Step N tag / label / relative timestamp via formatRelativeAge / per-state trailing affordance: Active target green badge for newest, Jump-here blue button with describeUndoJumpPlan tooltip for older ready, Stale amber badge with live reason, Noop muted badge) + applyUndoJump optimistic apply with rollback for both ring AND chain on failure + popover dismissal in Escape chain (newest most-recently-opened overlay, unwinds FIRST) + $effect auto-close when ring drains + ~155 lines new scoped CSS (slice 157). Gates result: cargo fmt clean (no changes needed after folding tiny slice-155 formatting drift), cargo clippy --lib -- -D warnings PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed (round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check 0 errors / 104 warnings (round-31 baseline preserved EXACTLY — zero new warnings from the chip-button conversion, popover markup, formatRelativeAge helper, the new $state/$effect blocks, or the ~155 lines of new CSS), tsx src/lib/hopper.test.ts 759 inline expects pass (round-31 baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `1a17674` — "feat(hopper): cascading Undo ring with \"Step N of M\" chip".
+Latest commit: `7f09329` — "feat(hopper): cascade-jump popover with per-step Jump-here buttons".
+
+### What round-32 (2026-06-23 20:55 PT) just shipped
+
+Five slices closing one cohesive arc. Round 31 (slice 152) shipped
+a "Step N of M" counter chip telling the user how many cascading
+undos were queued, but the cascade button always targeted the
+NEWEST ready entry — a paralegal with a 5-entry ring who wanted to
+revert to the snapshot from 4 clicks ago had to click Undo four
+times in a row. Round 32 promotes that chip into a CLICKABLE
+button that opens a per-entry popover listing every step in the
+ring with a "Jump here" affordance per row, so the user can skip
+directly to any entry in one click.
+
+Round 31's closing notes listed "undo ring popover (round 31
+surfaced a 'Step N of M' counter chip; a future round could add
+a popover listing per-entry labels + timestamps for a user who
+wants to skip directly to a specific cascade depth rather than
+walking newest-first)" as the top candidate; round 32 picked it
+because it's the structurally-cleanest 5-layer arc EXTENDING the
+round-31 chip surface (no new gesture vocabulary; the same chip
+becomes the popover trigger) and COMPOUNDS round 31's value (a
+user who would have had to chain 4 undo clicks now does it in
+one).
+
+- Slice 153: Rust jump-plan summary primitive (5d0b0fe).
+  compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan
+  with {is_valid, skip_count, dropped_labels (newest-first
+  vector), target_label, target_index}. Three invalid sub-cases
+  with deliberate behaviour: empty ring (no labels echoed) /
+  out-of-range index (popover should disable button rather than
+  silently target newest) / target == newest (echoes label+index
+  back so popover renders "active target" copy without
+  re-deriving). Valid jumps compute skip_count = (entries.len()
+  - 1) - target_index + walk entries[newest..=target+1].rev()
+  collecting labels in newest-first order. Pinned invariants:
+  skip_count == dropped_labels.len() for every valid plan;
+  target_index round-trips input verbatim (UI passes through to
+  bridge without recomputing); snake_case serde field names
+  pinned by round-trip test for the TS mirror. 14 tests
+  including end-to-end composition with summarize_undo_ring
+  (a 7-entry ring trimmed to capacity 5 leaves c..g; jumping
+  to summary index 0 targets "c" with dropped=[g,f,e,d]).
+
+- Slice 154: TS mirror + describe + canApply (4e0b8bd).
+  computeUndoJumpPlan 1:1 mirror with same algorithm.
+  UndoJumpPlan wire-shape interface uses snake_case to round-
+  trip cleanly with Rust serde defaults. describeUndoJumpPlan
+  discriminated copy with four branches: "No jump available"
+  (empty/oor — no label to surface) / "Already the newest
+  entry" (target=newest — we have a label but cascade button
+  already targets it) / "Skip 1 revert to jump back to <label>"
+  (skip=1 singular) / "Skip N reverts to jump back to <label>"
+  (skip>1 plural). canApplyUndoJump convenience predicate
+  matches is_valid for the popover button's disabled state.
+  Defensive normalisation: NaN / negative / non-integer (e.g.
+  1.5) target indices treated as out-of-range so a future
+  audit consumer can't accidentally surface a partial jump via
+  floor-vs-round ambiguity. 66 inline tests including every
+  describeUndoJumpPlan branch + wire-shape snake-case round-
+  trip + end-to-end composition with summarizeUndoRing.
+
+- Slice 155: server-side command + TS wrapper (421dfbe).
+  slab_hopper_compute_undo_jump_plan Tauri command wraps
+  slice 153 1:1 registered in lib.rs invoke handler.
+  slabHopperComputeUndoJumpPlan async wrapper with browser-
+  mode delegation. Reasons for a server-side command: (1)
+  future scripted-audit consumer (CLI "what would a jump-to-
+  oldest do" subcommand / cron health-check surfacing deep
+  jumps the user attempted but never confirmed); (2) server-
+  side keeps the newest-first walk contract authoritative —
+  a future audit consumer that hard-codes the walk would
+  silently drift if the UI ever changes semantics; (3)
+  symmetry with rounds 29/30/31. 45 wrapper-delegation tests
+  pinning every UndoJumpPlan field through the browser-mode
+  path with real fix-it/fix-all labels round-tripping cleanly
+  and runtime-type pinning for every field.
+
+- Slice 156: live-ring jump bridge (8294195).
+  jumpToUndoEntry(ring, targetIndex) -> UndoRingJump
+  {is_valid, ring, target, dropped} trims the ring to entries
+  [0..=targetIndex], returning a fresh array (input never
+  mutated). Invalid for: empty ring / out-of-range index /
+  target == newest (echoes target back so popover row can
+  render "active target" copy without re-deriving). Defensive
+  against negative / NaN / non-integer indices (same shape as
+  slice 154 so the two helpers behave consistently). Snapshot
+  reference identity preserved for retained entries (pinned
+  by test) so downstream consumers (audit logging,
+  selectActiveUndo) see the same object the user originally
+  captured. The bridge ONLY trims the ring; the UI slice
+  (157) is responsible for applying target.snapshot to the
+  rules state via slabHopperSetRules.
+  summarizeRingForJump(ring) -> UndoEntrySummary[] maps each
+  live entry to the compact wire-shape the slice-154 planner
+  consumes. 66 inline tests including end-to-end summarize
+  -> plan -> apply jump round-trip + snapshot reference
+  identity preserved through the full pipeline + dropped +
+  new ring.length === original length invariant for every
+  valid target.
+
+- Slice 157: demo-able UI (7f09329). Promotes round-31's
+  cov-undo-chip from a static <span> to a clickable <button>
+  with hover-lift / focus-ring / open-state pressed appearance
+  + cov-undo-chip-anchor relative wrapper letting the popover
+  absolute-anchor beneath without disturbing the cov-toast-row
+  flex layout. cov-undo-jump-popover is a 320-360px dark
+  panel matching fix-it / fix-all visual treatment but wider
+  and structured as an ordered <ul> of step rows.
+  Per-row layout: Step N tag (newest-first numbering, tabular-
+  numeric uppercase) / label (truncated with ellipsis) /
+  relative timestamp via formatRelativeAge helper ("just now"
+  < 5s; "Ns ago" < 60s; "Nm ago" < 60m; "Nh ago" beyond) /
+  one of four trailing affordances discriminated on row
+  position + entry status: Active target green badge (newest
+  ready — directs user to cascade Undo button); Jump-here
+  blue button with describeUndoJumpPlan tooltip ("Skip 3
+  reverts to jump back to fix-it: Tax") for older ready
+  entries; Stale amber badge with live computeUndoStatus
+  reason tooltip ("1 rule added since fix-all") for stale;
+  muted Noop badge ("No change") for snapshots already
+  matching live.
+  applyUndoJump(targetIndex): optimistic ring trim via slice
+  156 + chain revert via slabHopperSetRules; rollback on
+  failure restores BOTH ring AND chain so the user can retry.
+  After success the target entry is popped (same lifecycle
+  as slice 152's applyUndo so cascade + jump share toast
+  surface), toast renders "Jumped past N reverts to <label>
+  · M undo steps remaining" (cascade-aware suffix), 4s dwell
+  refreshed, popover closes so toast is unobstructed.
+  undoJumpBusy busy gate is independent from undoBusy so user
+  can't queue cascade + jump simultaneously.
+  onWindowKeydown chain prepends popover-dismissal: the
+  cascade-jump popover is the newest most-recently-opened
+  overlay (toggleUndoPopover dismisses Fix-all / Fix-it /
+  Export-menu / drilldown before opening), Escape unwinds it
+  FIRST. $effect auto-closes the popover when undoRing
+  drains, avoiding a phantom open panel after the toast
+  fades or a cascade undo empties the ring.
+  ~155 lines new scoped CSS: .cov-undo-chip-anchor relative
+  wrapper, .cov-undo-chip button-reset + hover/focus/open
+  states (preserved muted-blue at-rest, amber .full at-
+  capacity, pressed .open state), .cov-undo-jump-popover
+  (dark panel with muted-blue border accent + entrance
+  animation reusing cov-export-toast-fade-in keyframes), row
+  layout + truncating label + tabular-numeric step/age, four
+  per-state trailing badges (green active, amber stale, muted
+  noop, blue Jump-here button) all matching round-29/30
+  palette vocabulary.
+
+Gates result: cargo fmt clean, cargo clippy --lib -- -D warnings
+PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed
+(round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check
+0 errors / 104 warnings (round-31 baseline preserved EXACTLY),
+tsx src/lib/hopper.test.ts 759 inline expects pass (round-31
+baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
+
+PROCESS NOTES:
+- Same canonical 5-layer cadence as rounds 19-31: backend
+  primitive -> TS mirror primitive -> Tauri command + TS client
+  wrapper -> pure-helper bridge (slice 156 — jumpToUndoEntry +
+  summarizeRingForJump composing slice 154's planner with the
+  live ReorderUndoEntry[] shape) -> demo-able UI slice. Round
+  32's bridge layer is structurally similar to round-31's both
+  in returning a fresh array (input never mutated) and in
+  preserving the snapshot reference identity for retained
+  entries so downstream consumers see the same object.
+- Round 32 picked the popover path over Hopper rule reorder-by-
+  drag (the deferred candidate from rounds 26-31) because (a)
+  it's the structurally-cleanest 5-layer arc EXTENDING the
+  round-31 chip surface (same chip becomes the popover trigger
+  — no new gesture vocabulary, no new chrome to learn), and
+  (b) it COMPOUNDS round 31's value — a user with a 5-entry
+  ring who would have had to chain 4 cascade clicks to reach
+  the oldest snapshot now jumps directly in one click.
+- The newest-first dropped_labels order is the load-bearing
+  copy choice. An oldest-first walk would surface labels in
+  the order they were captured (a, b, c, d, e), reading as
+  "skip the oldest entries first" — wrong, because the JUMP
+  drops the newest entries (the most recent actions the user
+  is about to discard). Newest-first reads naturally as "skip
+  these reverts" in chronological order from now-backwards.
+
+DESIGN NOTES:
+- The popover renders a row PER ring entry rather than only
+  per-skippable entry because the audit value of seeing the
+  full ring at a glance (with the cascade button's target
+  highlighted as "Active target", stale entries flagged,
+  noop entries muted) is high. A paralegal who opens the
+  popover sees the full chain history with one glance,
+  including which entries are usable + which were edited
+  away.
+- Newest-first row order (Step N at top -> Step 1 at bottom)
+  matches the round-31 chip's "Step 1 of 3" numbering
+  (newest is Step 1). A user clicking the chip sees the row
+  for their current cascade target at the TOP of the popover,
+  then the row for "1 step back", "2 steps back" descending —
+  the same mental model as clicking the cascade Undo button
+  repeatedly, except they can skip rows.
+- The Active target badge for the newest-ready row (rather
+  than a "Jump here" button on it) prevents an obvious
+  footgun: clicking "Jump here" on the newest entry would
+  be identical to clicking the cascade Undo button. Two
+  affordances for the same action would confuse; one explicit
+  surface (cascade Undo button) plus a clear "Active target"
+  pointer keeps the surface count one.
+- Relative timestamps ("just now" / "12s ago" / "3m ago")
+  rather than absolute timestamps because the popover's
+  primary use case is "I just did three fixes, now I want to
+  undo back two" — the user mentally tracks "how long ago"
+  not "what time". Absolute timestamps would be useful for
+  cross-session audit (a future jump popover could carry a
+  "Today 4:23 PM" toggle) but premature for the round-32
+  scope.
+- The $effect auto-close on ring drain is load-bearing for
+  the cascade UX. Without it, a user who opens the popover,
+  the toast fades while it's open (4s timeout from a
+  previous fix-all not undone), the ring drains, but the
+  popover remains rendering an empty <ul> with the chip's
+  empty title. The $effect lets the popover hide cleanly
+  alongside the chip when the ring goes empty for any
+  reason.
+
+## Roadmap — round 32 (Hopper Cascade-Jump Popover) — ALL DONE
+
+Round 32 batched FIVE feature slices into one cron tick closing
+ONE cohesive arc: promoting round-31's "Step N of M" counter
+chip into a clickable per-step cascade-jump popover (slices
+153-157). One backend pure-data jump-plan primitive, one TS
+mirror + discriminated copy + canApply predicate, one server-
+side wire command + TS client wrapper, one live-ring bridge
+layer (jumpToUndoEntry + summarizeRingForJump), and one
+demo-able UI slice promoting the chip from <span> to <button>
+with a per-entry popover. Same canonical five-layer pattern as
+rounds 19-31.
+
+153. ~~**jump-plan summary primitive**~~ —
+     DONE (2026-06-23 20:44 PT, 5d0b0fe). compute_undo_jump_plan(
+     entries, target_index) -> UndoJumpPlan with {is_valid,
+     skip_count, dropped_labels (newest-first), target_label,
+     target_index} + invalid for empty/oor/target=newest with
+     label-echo + valid newest-first walk + snake_case serde
+     round-trip. 14 tests.
+154. ~~**TS mirror + describe + canApply**~~ —
+     DONE (2026-06-23 20:46 PT, 4e0b8bd). computeUndoJumpPlan 1:1
+     mirror + UndoJumpPlan wire-shape interface +
+     describeUndoJumpPlan discriminated copy + canApplyUndoJump
+     predicate + defensive NaN/negative/non-integer normalisation.
+     66 inline tests.
+155. ~~**jump-plan Tauri command + TS wrapper**~~ —
+     DONE (2026-06-23 20:49 PT, 421dfbe).
+     slab_hopper_compute_undo_jump_plan Tauri command +
+     slabHopperComputeUndoJumpPlan async wrapper with browser-mode
+     delegation. 45 wrapper-delegation tests.
+156. ~~**live-ring jump bridge**~~ —
+     DONE (2026-06-23 20:51 PT, 8294195). jumpToUndoEntry(ring,
+     targetIndex) -> UndoRingJump trimming ring to [0..=targetIndex]
+     with snapshot reference identity preserved + summarizeRingForJump
+     mapping live ring to compact wire-shape. 66 inline tests
+     including end-to-end summarize -> plan -> apply round-trip.
+157. ~~**cascade-jump popover UI**~~ —
+     DONE (2026-06-23 20:55 PT, 7f09329). cov-undo-chip promoted
+     from <span> to <button> + cov-undo-chip-anchor wrapper +
+     cov-undo-jump-popover with per-row layout (Step N tag /
+     label / relative age / per-state trailing affordance:
+     Active target / Jump here / Stale / Noop) + applyUndoJump
+     optimistic with rollback for both ring AND chain + popover
+     dismissal in Escape chain + $effect auto-close on ring
+     drain + formatRelativeAge helper + ~155 lines new scoped CSS.
+
+     With round 32 done, the dead-rule "diagnose -> drill -> fix
+     one / fix all -> undo / CASCADE-UNDO / JUMP-TO-STEP" loop
+     closes end-to-end — a paralegal seeing "3 dead rules" can
+     drill in one click (round 27), FIX one (round 28), or FIX
+     ALL (round 29), or UNDO the most recent fix (round 30), or
+     CASCADE-UNDO through a sequence of fixes (round 31), or
+     JUMP directly to any step in the cascade ring (round 32) in
+     one click. Next subsystem candidates: Hopper rule reorder-
+     by-drag (rounds 26-32's deferred candidate, now even less
+     urgent with batch fix-all + cascading undo + jump-to-step
+     all available — but still useful for a paralegal who wants
+     to tune a healthy chain rather than fix dead rules),
+     drilldown row -> cross-surface filter (clicking a fall-
+     through filename in the popover carries the search query
+     into the document inspector), Loom-grade tagging explorer,
+     doc-detail metadata editor read/write surface, Beacon cache
+     inspector polish (column sort by basename / model facet),
+     Quill multi-document field-detect queueing, histogram hover
+     -tooltip on bar segments, per-plugin "Run prune now"
+     affordance (round 25's deferred candidate), absolute-
+     timestamp toggle in the cascade-jump popover (round 32
+     ships relative-only; a power user might want an absolute
+     view for cross-session audit), undo ring keyboard shortcut
+     (Cmd-Z bound to the cascade button + Cmd-Shift-Z to jump
+     to oldest ready as a power-user accelerator), persisted
+     ring across sessions (currently ephemeral — round 32's
+     snapshot is UI-local; a future round could persist the ring
+     to disk so a paralegal who quits the app mid-cascade can
+     resume).
 
 ### What round-31 (2026-06-23 17:18 PT) just shipped
 
