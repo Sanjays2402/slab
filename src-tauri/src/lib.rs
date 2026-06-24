@@ -7952,6 +7952,7 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_plan_dead_rule_reorder,
             crate::pdf::hopper::cmds::slab_hopper_batch_reorder_dead_rules,
             crate::pdf::hopper::cmds::slab_hopper_summarize_reorder_effect,
+            crate::pdf::hopper::cmds::slab_hopper_summarize_undo_ring,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

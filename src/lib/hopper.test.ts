@@ -3629,3 +3629,71 @@ function ringEntry(label: string, ms: number): UndoEntrySummary {
   expect(json.includes('"full":false'), "wire: full field");
 }
 
+// ── Slice 150 — slabHopperSummarizeUndoRing wrapper-delegation ─────
+
+import { slabHopperSummarizeUndoRing } from "./hopper";
+
+{
+  // Browser-mode delegation: empty entries pass-through.
+  const summary = await slabHopperSummarizeUndoRing([], 5);
+  expect(Array.isArray(summary.entries), "wrapper: entries is array");
+  expect(summary.entries.length === 0, "wrapper: empty entries");
+  expect(summary.capacity === 5, "wrapper: capacity round-trip");
+  expect(summary.full === false, "wrapper: empty not full");
+}
+
+{
+  // Browser-mode delegation: under-capacity ring passes through.
+  const entries = [ringEntry("a", 1), ringEntry("b", 2)];
+  const summary = await slabHopperSummarizeUndoRing(entries, 5);
+  expect(summary.entries.length === 2, "wrapper: under-cap length");
+  expect(summary.entries[0].label === "a", "wrapper: label[0]");
+  expect(summary.entries[1].label === "b", "wrapper: label[1]");
+  expect(summary.full === false, "wrapper: under-cap not full");
+}
+
+{
+  // Browser-mode delegation: at-capacity ring marked full.
+  const entries = [ringEntry("a", 1), ringEntry("b", 2), ringEntry("c", 3)];
+  const summary = await slabHopperSummarizeUndoRing(entries, 3);
+  expect(summary.entries.length === 3, "wrapper: at-cap length");
+  expect(summary.full === true, "wrapper: at-cap full");
+  expect(summary.capacity === 3, "wrapper: capacity round-trip");
+}
+
+{
+  // Browser-mode delegation: over-capacity trims oldest.
+  const entries = [
+    ringEntry("a", 1),
+    ringEntry("b", 2),
+    ringEntry("c", 3),
+    ringEntry("d", 4),
+    ringEntry("e", 5),
+    ringEntry("f", 6),
+  ];
+  const summary = await slabHopperSummarizeUndoRing(entries, 4);
+  expect(summary.entries.length === 4, "wrapper: trimmed to 4");
+  expect(summary.entries[0].label === "c", "wrapper: oldest after trim is c");
+  expect(summary.entries[3].label === "f", "wrapper: newest is f");
+  expect(summary.full === true, "wrapper: trimmed -> full");
+}
+
+{
+  // Browser-mode delegation: pins every UndoEntrySummary field
+  // round-trips through the wrapper path.
+  const entry = ringEntry("fix-it: Tax", 1700000000000);
+  const summary = await slabHopperSummarizeUndoRing([entry], 5);
+  expect(summary.entries[0].label === "fix-it: Tax", "wrapper: label pinned");
+  expect(summary.entries[0].captured_at_ms === 1700000000000, "wrapper: captured_at_ms pinned");
+  expect(summary.entries[0].applied_effect.moved.length === 1, "wrapper: applied_effect.moved pinned");
+  expect(summary.entries[0].applied_effect.is_permutation === true, "wrapper: applied_effect.is_permutation pinned");
+}
+
+{
+  // Browser-mode delegation: capacity 0 -> always full, empty.
+  const summary = await slabHopperSummarizeUndoRing([ringEntry("a", 1)], 0);
+  expect(summary.entries.length === 0, "wrapper: cap=0 empty");
+  expect(summary.full === true, "wrapper: cap=0 full");
+  expect(summary.capacity === 0, "wrapper: cap=0 round-trip");
+}
+

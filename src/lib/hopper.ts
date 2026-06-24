@@ -2020,6 +2020,31 @@ export async function slabHopperSummarizeReorderEffect(
   });
 }
 
+/** Summarise the Hopper UI's undo ring against a capacity cap via
+ *  the backend `slab_hopper_summarize_undo_ring` command. Returns
+ *  an [`UndoRingSummary`] carrying the trimmed entries plus
+ *  capacity / full metadata.
+ *
+ *  Mirrors `summarizeUndoRing` (slice 149) exactly; the wire
+ *  command exists so a future scripted-audit consumer (CLI driver,
+ *  cron health-check) gets the summariser as a first-class command,
+ *  and so the server-side wire shape is the authoritative source
+ *  for the trim contract.
+ *
+ *  Wraps to the local TS helper in browser-mode so component-level
+ *  testing doesn't need a Tauri stub. */
+export async function slabHopperSummarizeUndoRing(
+  entries: UndoEntrySummary[],
+  capacity: number,
+): Promise<UndoRingSummary> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return summarizeUndoRing(entries, capacity);
+  return invoke<UndoRingSummary>("slab_hopper_summarize_undo_ring", {
+    entries,
+    capacity,
+  });
+}
+
 /** Suggest a default filename for a coverage CSV/JSON export.
  *  Mirrors the drilldown filename helper conventions so paralegals
  *  see one consistent naming pattern across the audit-export

@@ -1028,6 +1028,50 @@ pub fn slab_hopper_summarize_reorder_effect(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 150 — undo-ring summary Tauri command (round-31)
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::summarize_undo_ring`]
+// primitive (slice 148) 1:1. The TS mirror (slice 149) already
+// handles the in-panel ring-counter chip, so what does the server-
+// side command add? Same three reasons as slice 145:
+//
+// 1. A future scripted-audit consumer (CLI "what undo steps does
+//    the UI have buffered right now" subcommand / cron health
+//    check that surfaces a paralegal's ring at full capacity for
+//    weeks) gets the summariser as a first-class command rather
+//    than re-implementing the trim-oldest logic in another
+//    language.
+//
+// 2. Server-side guarantees the trim respects the same capacity
+//    constant the UI uses — a future audit consumer that hard-
+//    codes the constant would silently drift if the UI ever
+//    bumps UNDO_RING_CAPACITY. Routing through the command keeps
+//    the wire shape authoritative.
+//
+// 3. Symmetry with the rest of the round-29/30/31 reorder pipeline:
+//    every pure-data primitive has a server-side wire wrapper.
+//
+// Wire shape: UndoEntrySummary[] entries + usize capacity in,
+// UndoRingSummary out. Pure-data, no DB, no I/O.
+
+/// `slab_hopper_summarize_undo_ring` — produce a structural summary
+/// of the Hopper UI's undo ring against a capacity cap. See
+/// [`super::coverage::summarize_undo_ring`] for the algorithm
+/// (oldest-trimmed-to-capacity; capacity / full metadata for the
+/// audit log's "at capacity" warning).
+///
+/// Returns an [`UndoRingSummary`] carrying the trimmed entries plus
+/// capacity / full metadata. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_summarize_undo_ring(
+    entries: Vec<super::coverage::UndoEntrySummary>,
+    capacity: usize,
+) -> CmdResult<super::coverage::UndoRingSummary> {
+    Ok(super::coverage::summarize_undo_ring(&entries, capacity))
+}
+
+// ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
 
