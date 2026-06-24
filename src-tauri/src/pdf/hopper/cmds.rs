@@ -1072,6 +1072,51 @@ pub fn slab_hopper_summarize_undo_ring(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 155 — undo-ring jump-plan Tauri command (round-32)
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::compute_undo_jump_plan`]
+// primitive (slice 153) 1:1. The TS mirror (slice 154) already
+// handles the in-popover plan rendering, so what does the server-
+// side command add? Same three reasons as slices 145 / 150:
+//
+// 1. A future scripted-audit consumer (CLI "what would a jump-to-
+//    oldest do" subcommand / cron health-check that surfaces deep
+//    jumps the user attempted but never confirmed) gets the
+//    planner as a first-class command rather than re-implementing
+//    the newest-first walk in another language.
+//
+// 2. Server-side keeps the index-resolution contract authoritative
+//    — a future audit consumer that hard-codes the newest-first
+//    walk would silently drift if the UI ever changes the
+//    semantics (e.g. if we ever surface a flipped ring with
+//    oldest-last).
+//
+// 3. Symmetry with the rest of the round-29/30/31/32 reorder
+//    pipeline: every pure-data primitive has a server-side wire
+//    wrapper.
+//
+// Wire shape: UndoEntrySummary[] entries + usize target_index in,
+// UndoJumpPlan out. Pure-data, no DB, no I/O.
+
+/// `slab_hopper_compute_undo_jump_plan` — plan a "skip directly to
+/// entry N" operation against the Hopper UI's undo ring. See
+/// [`super::coverage::compute_undo_jump_plan`] for the algorithm
+/// (newest-first walk collecting dropped labels; invalid for empty
+/// / out-of-range / target-equals-newest).
+///
+/// Returns an [`UndoJumpPlan`] carrying validity, skip count,
+/// dropped labels (newest-first), target label, and echoed target
+/// index. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_compute_undo_jump_plan(
+    entries: Vec<super::coverage::UndoEntrySummary>,
+    target_index: usize,
+) -> CmdResult<super::coverage::UndoJumpPlan> {
+    Ok(super::coverage::compute_undo_jump_plan(&entries, target_index))
+}
+
+// ---------------------------------------------------------------------
 // Ollama TitleProvider bridge
 // ---------------------------------------------------------------------
 

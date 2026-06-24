@@ -2342,6 +2342,32 @@ export async function slabHopperSummarizeUndoRing(
   });
 }
 
+/** Plan a jump-to-entry-N operation against the Hopper UI's undo
+ *  ring via the backend `slab_hopper_compute_undo_jump_plan`
+ *  command. Returns an [`UndoJumpPlan`] carrying validity, skip
+ *  count, dropped labels (newest-first), target label, and echoed
+ *  target index.
+ *
+ *  Mirrors `computeUndoJumpPlan` (slice 154) exactly; the wire
+ *  command exists so a future scripted-audit consumer (CLI driver,
+ *  cron health-check that surfaces deep jumps) gets the planner as
+ *  a first-class command, and so the server-side wire shape is the
+ *  authoritative source for the newest-first walk contract.
+ *
+ *  Wraps to the local TS helper in browser-mode so component-level
+ *  testing doesn't need a Tauri stub. */
+export async function slabHopperComputeUndoJumpPlan(
+  entries: UndoEntrySummary[],
+  targetIndex: number,
+): Promise<UndoJumpPlan> {
+  const { isInTauri } = await import("$lib/tauri");
+  if (!isInTauri()) return computeUndoJumpPlan(entries, targetIndex);
+  return invoke<UndoJumpPlan>("slab_hopper_compute_undo_jump_plan", {
+    entries,
+    targetIndex,
+  });
+}
+
 /** Suggest a default filename for a coverage CSV/JSON export.
  *  Mirrors the drilldown filename helper conventions so paralegals
  *  see one consistent naming pattern across the audit-export

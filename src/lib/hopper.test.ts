@@ -4211,3 +4211,138 @@ import {
   expect(plan.dropped_labels[0] === "g", "compose: newest dropped is 'g'");
   expect(plan.dropped_labels[3] === "d", "compose: oldest dropped is 'd'");
 }
+
+// ── Slice 155 — slabHopperComputeUndoJumpPlan wrapper-delegation ────
+
+import { slabHopperComputeUndoJumpPlan } from "./hopper";
+
+{
+  // Browser-mode delegation: empty ring -> invalid plan.
+  const plan = await slabHopperComputeUndoJumpPlan([], 0);
+  expect(plan.is_valid === false, "wrapper: empty invalid");
+  expect(plan.skip_count === 0, "wrapper: empty skip=0");
+  expect(plan.dropped_labels.length === 0, "wrapper: empty no labels");
+  expect(plan.target_label === "", "wrapper: empty no label");
+  expect(plan.target_index === 0, "wrapper: empty index=0");
+}
+
+{
+  // Browser-mode delegation: out-of-range index -> invalid plan.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 5);
+  expect(plan.is_valid === false, "wrapper: oor invalid");
+  expect(plan.skip_count === 0, "wrapper: oor skip=0");
+  expect(plan.target_label === "", "wrapper: oor no label");
+}
+
+{
+  // Browser-mode delegation: target == newest -> invalid noop, label echoed.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 2);
+  expect(plan.is_valid === false, "wrapper: target=newest invalid");
+  expect(plan.skip_count === 0, "wrapper: target=newest skip=0");
+  expect(plan.target_label === "c", "wrapper: target=newest label echoed");
+  expect(plan.target_index === 2, "wrapper: target=newest index echoed");
+}
+
+{
+  // Browser-mode delegation: valid skip-1 plan.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200), ringEntry("c", 300)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 1);
+  expect(plan.is_valid === true, "wrapper: skip-1 valid");
+  expect(plan.skip_count === 1, "wrapper: skip-1 count");
+  expect(plan.dropped_labels.length === 1, "wrapper: skip-1 labels len");
+  expect(plan.dropped_labels[0] === "c", "wrapper: skip-1 dropped 'c'");
+  expect(plan.target_label === "b", "wrapper: skip-1 target 'b'");
+  expect(plan.target_index === 1, "wrapper: skip-1 index echoed");
+}
+
+{
+  // Browser-mode delegation: valid skip-to-oldest plan,
+  // newest-first dropped order pinned through the wrapper.
+  const entries = [
+    ringEntry("a", 100),
+    ringEntry("b", 200),
+    ringEntry("c", 300),
+    ringEntry("d", 400),
+    ringEntry("e", 500),
+  ];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 0);
+  expect(plan.is_valid === true, "wrapper: skip-to-oldest valid");
+  expect(plan.skip_count === 4, "wrapper: skip-to-oldest count=4");
+  expect(plan.dropped_labels[0] === "e", "wrapper: dropped[0]=e (newest)");
+  expect(plan.dropped_labels[1] === "d", "wrapper: dropped[1]=d");
+  expect(plan.dropped_labels[2] === "c", "wrapper: dropped[2]=c");
+  expect(plan.dropped_labels[3] === "b", "wrapper: dropped[3]=b");
+  expect(plan.target_label === "a", "wrapper: target=a");
+  expect(plan.target_index === 0, "wrapper: target_index=0 echoed");
+}
+
+{
+  // Browser-mode delegation: defensive negative index.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, -1);
+  expect(plan.is_valid === false, "wrapper: negative invalid");
+}
+
+{
+  // Browser-mode delegation: defensive NaN index.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, NaN);
+  expect(plan.is_valid === false, "wrapper: NaN invalid");
+}
+
+{
+  // Browser-mode delegation: single-entry ring is a noop.
+  const entries = [ringEntry("only", 100)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 0);
+  expect(plan.is_valid === false, "wrapper: single-entry noop");
+  expect(plan.target_label === "only", "wrapper: single-entry label echoed");
+}
+
+{
+  // Browser-mode delegation: skip_count matches dropped_labels.length
+  // through the wrapper (pinned-invariant check via wrapper path).
+  const entries = [
+    ringEntry("a", 100),
+    ringEntry("b", 200),
+    ringEntry("c", 300),
+    ringEntry("d", 400),
+  ];
+  for (let target = 0; target < entries.length - 1; target++) {
+    const plan = await slabHopperComputeUndoJumpPlan(entries, target);
+    expect(plan.is_valid === true, `wrapper: target=${target} valid`);
+    expect(
+      plan.skip_count === plan.dropped_labels.length,
+      `wrapper: skip_count===dropped_labels.length at target=${target}`,
+    );
+  }
+}
+
+{
+  // Browser-mode delegation: real fix-it / fix-all labels round-trip
+  // through the wrapper without truncation / escaping.
+  const entries = [
+    ringEntry("fix-it: Tax", 100),
+    ringEntry("fix-all", 200),
+    ringEntry("fix-it: Receipts", 300),
+  ];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 0);
+  expect(plan.is_valid === true, "wrapper: real-labels valid");
+  expect(plan.target_label === "fix-it: Tax", "wrapper: target label round-trip");
+  expect(plan.dropped_labels[0] === "fix-it: Receipts", "wrapper: dropped[0] label round-trip");
+  expect(plan.dropped_labels[1] === "fix-all", "wrapper: dropped[1] label round-trip");
+}
+
+{
+  // Wrapper preserves the wire-shape snake_case fields exactly.
+  // The Tauri-mode path round-trips JSON through serde so this is
+  // the strongest guarantee a future audit consumer needs.
+  const entries = [ringEntry("a", 100), ringEntry("b", 200)];
+  const plan = await slabHopperComputeUndoJumpPlan(entries, 0);
+  expect(typeof plan.is_valid === "boolean", "wrapper: is_valid type");
+  expect(typeof plan.skip_count === "number", "wrapper: skip_count type");
+  expect(Array.isArray(plan.dropped_labels), "wrapper: dropped_labels array");
+  expect(typeof plan.target_label === "string", "wrapper: target_label type");
+  expect(typeof plan.target_index === "number", "wrapper: target_index type");
+}
