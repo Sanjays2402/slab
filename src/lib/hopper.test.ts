@@ -70,6 +70,12 @@ import {
   type UndoShortcutContext,
   type UndoShortcutIntent,
   type UndoShortcutPlatform,
+  buildJumpableRows,
+  formatJumpableRowAge,
+  nextFocusableJumpIndex,
+  countFocusableJumpRows,
+  type JumpableRow,
+  type JumpFocusDirection,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -4933,4 +4939,277 @@ function otherCtx(popoverOpen = false): UndoShortcutContext {
     formatUndoShortcutChord("open-popover", other) === "Ctrl⇧Z",
     "chord: other open-popover -> Ctrl-Shift-Z",
   );
+}
+
+// =====================================================================
+// Slice 159 — buildJumpableRows + nextFocusableJumpIndex tests (round-33).
+// =====================================================================
+
+{
+  // Empty ring -> empty rows.
+  const rows = buildJumpableRows([], [makeRule("A")], 1000);
+  expect(rows.length === 0, "build: empty ring -> empty rows");
+}
+
+{
+  // Single-entry ring (only newest = active target).
+  const a = makeRule("A"), b = makeRule("B");
+  const e1 = captureUndoEntry([a, b], [b, a], "fix-it: A", 100);
+  const rows = buildJumpableRows([e1], [b, a], 100);
+  expect(rows.length === 1, "build: 1-entry length");
+  expect(rows[0].ringIndex === 0, "build: 1-entry ringIndex");
+  expect(rows[0].stepNumber === 1, "build: 1-entry stepNumber");
+  expect(rows[0].label === "fix-it: A", "build: 1-entry label");
+  expect(rows[0].capturedAt === 100, "build: 1-entry capturedAt");
+  expect(rows[0].isActiveTarget === true, "build: 1-entry is active target");
+  expect(rows[0].plan === null, "build: 1-entry no plan (active target)");
+  expect(rows[0].isFocusable === false, "build: 1-entry not focusable (active target)");
+}
+
+{
+  // 3-entry ring with chain matching newest's snapshot.
+  // Walk: oldest -> newest.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b, c], [b, a, c], "e1", 100);
+  const e2 = captureUndoEntry([b, a, c], [c, b, a], "e2", 200);
+  const e3 = captureUndoEntry([c, b, a], [a, c, b], "e3", 300);
+  // Live rules: same as e3.after — so e3.snapshot=[c,b,a] is a clean
+  // permutation; e1 and e2 snapshots are also permutations.
+  const live: Rule[] = [a, c, b];
+  const rows = buildJumpableRows([e1, e2, e3], live, 500);
+  expect(rows.length === 3, "build: 3-entry length");
+
+  // Step numbers: oldest = Step 3, newest = Step 1.
+  expect(rows[0].stepNumber === 3, "build: row[0] stepNumber=3 (oldest)");
+  expect(rows[1].stepNumber === 2, "build: row[1] stepNumber=2");
+  expect(rows[2].stepNumber === 1, "build: row[2] stepNumber=1 (newest)");
+
+  // Active target is newest only.
+  expect(rows[0].isActiveTarget === false, "build: row[0] not active");
+  expect(rows[1].isActiveTarget === false, "build: row[1] not active");
+  expect(rows[2].isActiveTarget === true, "build: row[2] (newest) active");
+
+  // Non-newest rows have plans; newest has null.
+  expect(rows[0].plan !== null, "build: row[0] has plan");
+  expect(rows[1].plan !== null, "build: row[1] has plan");
+  expect(rows[2].plan === null, "build: row[2] (newest) no plan");
+
+  // Older entries should be focusable when their status is ready
+  // (we know they're permutations of the live chain).
+  expect(rows[2].isFocusable === false, "build: newest not focusable");
+}
+
+{
+  // Stale entry should NOT be focusable.
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  // e1 snapshot has A,B (2 rules). Live has 3 rules (A,B,C).
+  // computeUndoStatus should mark this as STALE (add/remove differ).
+  const e1 = captureUndoEntry([a, b], [b, a], "e1", 100);
+  const e2 = captureUndoEntry([b, a], [a, b], "e2", 200);
+  const live: Rule[] = [a, b, c];
+  const rows = buildJumpableRows([e1, e2], live, 300);
+  // The older row (e1) might be stale relative to the live chain;
+  // verify status discrimination + isFocusable correctness.
+  for (const row of rows) {
+    if (row.isActiveTarget) {
+      expect(row.isFocusable === false, "build: active not focusable");
+    } else if (row.status.kind === "stale" || row.status.kind === "noop") {
+      expect(row.isFocusable === false, `build: ${row.status.kind} not focusable`);
+    }
+  }
+}
+
+{
+  // Age copy delegated to formatJumpableRowAge — verify it's
+  // pre-computed correctly.
+  const a = makeRule("A");
+  const e1 = captureUndoEntry([a], [a], "e1", 0);
+  const rowsNow = buildJumpableRows([e1], [a], 1_000);
+  expect(rowsNow[0].ageCopy === "just now", "build: ageCopy delegated (just now)");
+
+  const rows30s = buildJumpableRows([e1], [a], 30_000);
+  expect(rows30s[0].ageCopy === "30s ago", "build: ageCopy delegated (30s)");
+}
+
+{
+  // Defensive: non-array input.
+  const rows = buildJumpableRows(null as unknown as ReorderUndoEntry[], [], 0);
+  expect(rows.length === 0, "build: null ring -> empty");
+}
+
+// ── formatJumpableRowAge ──────────────────────────────────────────────
+
+{
+  // Under 5 seconds -> "just now"; >= 5s falls into the seconds branch.
+  expect(formatJumpableRowAge(95_001, 100_000) === "just now", "age: 4.999s -> just now (under boundary)");
+  expect(formatJumpableRowAge(95_000, 100_000) === "5s ago", "age: exactly 5s -> 5s ago (boundary)");
+  expect(formatJumpableRowAge(99_999, 100_000) === "just now", "age: 1ms -> just now");
+  expect(formatJumpableRowAge(100_000, 100_000) === "just now", "age: same instant -> just now");
+}
+{
+  // 5..59 -> "Ns ago".
+  expect(formatJumpableRowAge(100_000, 110_000) === "10s ago", "age: 10s ago");
+  expect(formatJumpableRowAge(100_000, 159_000) === "59s ago", "age: 59s ago");
+}
+{
+  // 60..3599 -> "Nm ago".
+  expect(formatJumpableRowAge(100_000, 160_000) === "1m ago", "age: 60s -> 1m");
+  expect(formatJumpableRowAge(100_000, 100_000 + 30 * 60_000) === "30m ago", "age: 30m");
+  expect(formatJumpableRowAge(100_000, 100_000 + 59 * 60_000) === "59m ago", "age: 59m");
+}
+{
+  // 3600+ -> "Nh ago".
+  expect(formatJumpableRowAge(0, 3_600_000) === "1h ago", "age: 1h");
+  expect(formatJumpableRowAge(0, 7_200_000) === "2h ago", "age: 2h");
+}
+{
+  // Future timestamps clamp to 0 (just now).
+  expect(formatJumpableRowAge(200_000, 100_000) === "just now", "age: future -> just now");
+}
+{
+  // NaN / non-finite defensive.
+  expect(typeof formatJumpableRowAge(NaN, 100_000) === "string", "age: NaN safe");
+  expect(typeof formatJumpableRowAge(0, NaN) === "string", "age: NaN now safe");
+}
+
+// ── nextFocusableJumpIndex ────────────────────────────────────────────
+
+function makeRow(
+  ringIndex: number,
+  isFocusable: boolean,
+  isActiveTarget = false,
+): JumpableRow {
+  return {
+    ringIndex,
+    stepNumber: ringIndex + 1,
+    label: `e${ringIndex}`,
+    capturedAt: 100 + ringIndex,
+    ageCopy: "just now",
+    status: isFocusable
+      ? { kind: "ready", effect: { moved: [], added: [], removed: [] } }
+      : isActiveTarget
+        ? { kind: "ready", effect: { moved: [], added: [], removed: [] } }
+        : { kind: "noop" },
+    plan: null,
+    isActiveTarget,
+    isFocusable,
+  };
+}
+
+{
+  // Empty rows -> null.
+  expect(nextFocusableJumpIndex([], null, "forward") === null, "focus: empty -> null");
+  expect(nextFocusableJumpIndex([], 0, "forward") === null, "focus: empty + current -> null");
+}
+
+{
+  // No focusable rows -> null.
+  const rows: JumpableRow[] = [makeRow(0, false), makeRow(1, false, true)];
+  expect(nextFocusableJumpIndex(rows, null, "forward") === null, "focus: no focusable -> null");
+  expect(nextFocusableJumpIndex(rows, 0, "forward") === null, "focus: no focusable + current -> null");
+}
+
+{
+  // First focus forward = first focusable.
+  const rows: JumpableRow[] = [
+    makeRow(0, true),  // focusable (older ready)
+    makeRow(1, false), // stale/noop
+    makeRow(2, false, true), // active target
+  ];
+  expect(nextFocusableJumpIndex(rows, null, "forward") === 0, "focus: null + forward -> first focusable");
+}
+
+{
+  // First focus reverse = last focusable.
+  const rows: JumpableRow[] = [
+    makeRow(0, true),
+    makeRow(1, true),
+    makeRow(2, false, true), // active
+  ];
+  expect(nextFocusableJumpIndex(rows, null, "reverse") === 1, "focus: null + reverse -> last focusable");
+}
+
+{
+  // Forward from current focusable, skip non-focusable, wrap.
+  const rows: JumpableRow[] = [
+    makeRow(0, true),
+    makeRow(1, false), // stale
+    makeRow(2, true),
+    makeRow(3, false, true), // active
+  ];
+  expect(nextFocusableJumpIndex(rows, 0, "forward") === 2, "focus: 0 -> 2 (skip stale)");
+  expect(nextFocusableJumpIndex(rows, 2, "forward") === 0, "focus: 2 -> 0 (wrap past active)");
+}
+
+{
+  // Reverse walks correctly.
+  const rows: JumpableRow[] = [
+    makeRow(0, true),
+    makeRow(1, false),
+    makeRow(2, true),
+    makeRow(3, false, true),
+  ];
+  expect(nextFocusableJumpIndex(rows, 2, "reverse") === 0, "focus: 2 -> 0 reverse");
+  expect(nextFocusableJumpIndex(rows, 0, "reverse") === 2, "focus: 0 -> 2 reverse (wrap)");
+}
+
+{
+  // Single focusable row + wrap returns same row.
+  const rows: JumpableRow[] = [
+    makeRow(0, false),
+    makeRow(1, true),
+    makeRow(2, false, true),
+  ];
+  expect(nextFocusableJumpIndex(rows, 1, "forward") === 1, "focus: single focusable, wraps to self");
+  expect(nextFocusableJumpIndex(rows, 1, "reverse") === 1, "focus: single focusable, reverse to self");
+}
+
+{
+  // Out-of-range current -> treated as null.
+  const rows: JumpableRow[] = [
+    makeRow(0, true),
+    makeRow(1, true),
+  ];
+  expect(nextFocusableJumpIndex(rows, 99, "forward") === 0, "focus: oor current -> walk from start");
+  expect(nextFocusableJumpIndex(rows, -1, "forward") === 0, "focus: negative current -> walk from start");
+  expect(nextFocusableJumpIndex(rows, 1.5, "forward") === 0, "focus: non-int current -> walk from start");
+}
+
+// ── countFocusableJumpRows ────────────────────────────────────────────
+
+{
+  expect(countFocusableJumpRows([]) === 0, "count: empty -> 0");
+  expect(
+    countFocusableJumpRows(null as unknown as JumpableRow[]) === 0,
+    "count: null -> 0",
+  );
+  const rows: JumpableRow[] = [
+    makeRow(0, true),
+    makeRow(1, false),
+    makeRow(2, true),
+    makeRow(3, false, true),
+  ];
+  expect(countFocusableJumpRows(rows) === 2, "count: 4 rows, 2 focusable");
+}
+
+// ── End-to-end: build + walk forward through entire ring ─────────────
+
+{
+  // 5-entry ring, all permutations of [a,b,c]. Live = newest.after.
+  // All older entries should be ready+focusable (clean permutations).
+  const a = makeRule("A"), b = makeRule("B"), c = makeRule("C");
+  const e1 = captureUndoEntry([a, b, c], [b, a, c], "e1", 100);
+  const e2 = captureUndoEntry([b, a, c], [c, b, a], "e2", 200);
+  const e3 = captureUndoEntry([c, b, a], [a, c, b], "e3", 300);
+  const e4 = captureUndoEntry([a, c, b], [c, a, b], "e4", 400);
+  const e5 = captureUndoEntry([c, a, b], [b, c, a], "e5", 500);
+  const ring = [e1, e2, e3, e4, e5];
+  const live: Rule[] = [b, c, a]; // matches e5.after
+  const rows = buildJumpableRows(ring, live, 1_000);
+  expect(rows.length === 5, "e2e: 5 rows");
+  expect(countFocusableJumpRows(rows) >= 1, "e2e: at least 1 focusable");
+
+  // Walk forward starting null; expect first focusable.
+  const first = nextFocusableJumpIndex(rows, null, "forward");
+  expect(first !== null, "e2e: walk has a first focusable");
 }

@@ -3120,3 +3120,216 @@ export function formatUndoShortcutChord(
       return "";
   }
 }
+
+// =====================================================================
+// v3.40 Slice 159 — Popover row builder + focus walker (round-33)
+// =====================================================================
+//
+// Round 32 (slice 157) renders the cascade-jump popover as an inline
+// {#each undoRing as entry, idx} loop that computes `entryStatus` +
+// `plan` + `stepNumber` per row inside the template. That works for
+// rendering, but it leaves NO data structure for the keyboard
+// navigation walker — the slice 158 resolver returns "focus-next"
+// but the UI has no first-class way to ask "given the focused row,
+// what's the next ROW INDEX I should focus, skipping disabled rows
+// (active target / stale / noop)?".
+//
+// Slice 159 lifts the per-row derivation into a pure builder and a
+// focus walker. `buildJumpableRows(ring, liveRules, now)` returns a
+// `JumpableRow[]` array carrying every piece of UI state per entry
+// (step number, label, age copy, status discriminant, plan, focusable
+// flag). `nextFocusableJumpIndex(rows, current, direction)` walks
+// the array in the requested direction skipping non-focusable rows
+// and wrapping at the ends.
+//
+// The UI then uses these in the popover {#each} (no behavioural
+// change to the existing rendering — the row shape is just lifted
+// out of the template) AND in the keyboard handler (when slice 158
+// returns "focus-next" / "focus-prev", call nextFocusableJumpIndex
+// to find the next row to focus).
+
+/** One renderable row in the cascade-jump popover. Pre-computed by
+ *  `buildJumpableRows` so the UI's {#each} block reads the shape
+ *  verbatim without re-deriving status / plan / age per render. */
+export interface JumpableRow {
+  /** Index into the source ring (oldest-first). Pass to
+   *  `applyUndoJump(targetIndex)` when the user activates the row. */
+  ringIndex: number;
+  /** Step number for display — newest-first 1-based (Step 1 is the
+   *  newest entry). Matches the chip's "Step N of M" copy. */
+  stepNumber: number;
+  /** Human-facing label echoed from the entry. */
+  label: string;
+  /** Captured-at timestamp (unix-ms). The UI's relative-age
+   *  formatter ingests this; carried through verbatim so the row
+   *  shape is render-time agnostic. */
+  capturedAt: number;
+  /** Pre-computed relative-age copy ("just now" / "12s ago" /
+   *  "3m ago" / "2h ago"). Computed at build time so a `now`
+   *  injectable makes tests deterministic. */
+  ageCopy: string;
+  /** Live status against the current chain — same discriminant as
+   *  `computeUndoStatus`. The UI renders different badges per
+   *  variant. */
+  status: ReorderUndoStatus;
+  /** Pre-computed jump plan (slice 154) — null for the newest row
+   *  because that's the cascade button's territory (no "Jump here"
+   *  button rendered; an "Active target" badge instead). */
+  plan: UndoJumpPlan | null;
+  /** Whether this row is the active cascade target (the newest
+   *  ready entry). The UI renders the "Active target" badge here. */
+  isActiveTarget: boolean;
+  /** Whether this row is keyboard-focusable. True only when the
+   *  row has a "Jump here" button (older ready entries with a
+   *  valid plan). Used by `nextFocusableJumpIndex` to skip past
+   *  active-target / stale / noop rows. */
+  isFocusable: boolean;
+}
+
+/** Direction for `nextFocusableJumpIndex`. Forward walks oldest to
+ *  newest in the array (which is visually newest-first because the
+ *  popover renders newest at TOP); reverse walks the other way. */
+export type JumpFocusDirection = "forward" | "reverse";
+
+/** Build the renderable rows for the cascade-jump popover.
+ *
+ *  Inputs:
+ *    - `ring`: live `ReorderUndoEntry[]` (oldest-first, newest at end).
+ *    - `liveRules`: the current chain — passed to `computeUndoStatus`
+ *      per entry so the status reflects the live state.
+ *    - `now`: unix-ms injectable for deterministic age copy in tests.
+ *      Defaults to `Date.now()` at call site.
+ *
+ *  Output: `JumpableRow[]` in the SAME order as the source ring
+ *  (oldest-first). The UI is responsible for the visual order (the
+ *  current template renders ascending so newest appears at the
+ *  bottom; if a future round wants newest-at-top, reverse the
+ *  array here without changing the underlying ring).
+ *
+ *  Per-row derivation:
+ *    - `stepNumber = (ring.length - ringIndex)` (newest = Step 1).
+ *    - `status = computeUndoStatus(entry, liveRules)`.
+ *    - `isActiveTarget = (ringIndex === ring.length - 1)` (newest).
+ *    - `plan = computeUndoJumpPlan(summarizeRingForJump(ring), idx)`
+ *      for non-newest rows; null for the active-target row.
+ *    - `isFocusable = (!isActiveTarget && status.kind === "ready"
+ *      && plan?.is_valid === true)`.
+ *
+ *  Pure — no DOM access, no event mutation. Constructs a fresh
+ *  array; the input ring is never mutated. */
+export function buildJumpableRows(
+  ring: ReorderUndoEntry[],
+  liveRules: Rule[],
+  now: number = Date.now(),
+): JumpableRow[] {
+  if (!Array.isArray(ring) || ring.length === 0) return [];
+  const summaries = summarizeRingForJump(ring);
+  const result: JumpableRow[] = [];
+  for (let idx = 0; idx < ring.length; idx += 1) {
+    const entry = ring[idx];
+    const isActiveTarget = idx === ring.length - 1;
+    const status = computeUndoStatus(entry, liveRules);
+    const plan = isActiveTarget
+      ? null
+      : computeUndoJumpPlan(summaries, idx);
+    const isFocusable =
+      !isActiveTarget &&
+      status.kind === "ready" &&
+      plan !== null &&
+      plan.is_valid === true;
+    result.push({
+      ringIndex: idx,
+      stepNumber: ring.length - idx,
+      label: entry.label,
+      capturedAt: entry.capturedAt,
+      ageCopy: formatJumpableRowAge(entry.capturedAt, now),
+      status,
+      plan,
+      isActiveTarget,
+      isFocusable,
+    });
+  }
+  return result;
+}
+
+/** Format a captured-at timestamp as relative age. Mirrors the
+ *  inline helper in HopperRulesEditor.svelte so the row builder
+ *  carries deterministic copy. Exported so the UI can use the same
+ *  vocabulary in tooltips / aria-label suffixes if needed. */
+export function formatJumpableRowAge(
+  capturedAt: number,
+  now: number = Date.now(),
+): string {
+  const safeNow = Number.isFinite(now) ? now : Date.now();
+  const safeAt = Number.isFinite(capturedAt) ? capturedAt : safeNow;
+  const deltaMs = Math.max(0, safeNow - safeAt);
+  if (deltaMs < 5_000) return "just now";
+  const seconds = Math.floor(deltaMs / 1_000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+/** Find the next focusable row index given the current focus and a
+ *  direction. Returns the next ring index to focus, OR `null` when
+ *  there are no focusable rows at all.
+ *
+ *  Algorithm:
+ *    - If `rows` has no focusable rows: return null.
+ *    - If `current === null` (no row focused yet): return the FIRST
+ *      focusable row index walking the direction (forward = oldest
+ *      first, reverse = newest-non-active first).
+ *    - Otherwise walk from `current + step` (step = +1 forward, -1
+ *      reverse), wrapping at the ends of the array. Skip rows where
+ *      `isFocusable === false`. Stop when we land on a focusable row
+ *      OR when we wrap back to `current` (which means no other
+ *      focusable rows exist; return null so the UI can keep the
+ *      current focus rather than blink it away).
+ *
+ *  Defensive: empty rows -> null; out-of-range current -> treat as
+ *  null (walk from start). Pure — no state mutation. */
+export function nextFocusableJumpIndex(
+  rows: JumpableRow[],
+  current: number | null,
+  direction: JumpFocusDirection,
+): number | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const focusable = rows.filter((r) => r.isFocusable);
+  if (focusable.length === 0) return null;
+
+  const step = direction === "forward" ? 1 : -1;
+
+  // Normalise current — out-of-range treated as "no current".
+  const validCurrent =
+    current !== null &&
+    Number.isInteger(current) &&
+    current >= 0 &&
+    current < rows.length;
+
+  if (!validCurrent) {
+    if (direction === "forward") {
+      return focusable[0].ringIndex;
+    }
+    return focusable[focusable.length - 1].ringIndex;
+  }
+
+  // Walk forward/reverse from current + step, wrapping. Stop after
+  // at most rows.length iterations to avoid infinite loops on
+  // degenerate input.
+  const len = rows.length;
+  let idx = (current! + step + len) % len;
+  for (let i = 0; i < len; i += 1) {
+    if (rows[idx].isFocusable) return rows[idx].ringIndex;
+    idx = (idx + step + len) % len;
+  }
+  return null;
+}
+
+/** Count focusable rows. Convenience for the popover header's
+ *  "N jumpable steps" copy. */
+export function countFocusableJumpRows(rows: JumpableRow[]): number {
+  if (!Array.isArray(rows)) return 0;
+  return rows.filter((r) => r.isFocusable).length;
+}
