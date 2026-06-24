@@ -1637,6 +1637,157 @@ export function isUndoRingFull(summary: UndoRingSummary): boolean {
   return summary.full;
 }
 
+// ─── Slice 151 — undo-ring live-operations bridge (round-31) ─────────
+//
+// Slice 149 owns the SUMMARY view (snapshot-free, audit-friendly).
+// Slice 151 owns the LIVE-RING operations on the full
+// `ReorderUndoEntry[]` the UI keeps in $state: push (with oldest-
+// trim at capacity), pop (returning the newest entry), and
+// selectActiveUndo (walking newest -> oldest to find the first
+// "ready" entry the button should target).
+//
+// The split is deliberate. Summary helpers are pure-data over the
+// compact wire shape (`UndoEntrySummary`) and are shared with audit
+// consumers. Bridge helpers operate on the live `ReorderUndoEntry`
+// (with `snapshot: Rule[]`) and stay UI-side because the snapshots
+// aren't worth serialising. Both layers compose without circular
+// dependency — the bridge call sites cast `appliedEffect` <-> wire
+// shape only at the wire boundary (slice 152).
+//
+// All bridge helpers are pure (no Svelte runes, no Tauri). The UI
+// slice (152) holds the $state and the cascading-undo button.
+
+/** Push a new entry into a live undo ring, trimming the OLDEST when
+ *  the ring exceeds `capacity`. Returns a NEW array — the input is
+ *  never mutated, matching the rest of the round-29/30/31 pure-data
+ *  contract.
+ *
+ *  Defensive when `capacity <= 0`: returns an empty array (a zero-
+ *  capacity ring can't hold any entries, including the new one).
+ *  In production the UI passes `UNDO_RING_CAPACITY = 5`, so this
+ *  branch is a guard rather than a hot path. */
+export function pushUndoEntry(
+  ring: ReorderUndoEntry[],
+  entry: ReorderUndoEntry,
+  capacity: number,
+): ReorderUndoEntry[] {
+  if (capacity <= 0) return [];
+  const next = ring.concat(entry);
+  return next.length > capacity ? next.slice(next.length - capacity) : next;
+}
+
+/** Result of popping the most-recent entry from a ring. `entry` is
+ *  null when the ring was empty; `remaining` is the ring without
+ *  the popped entry (always a fresh array). */
+export interface UndoRingPop {
+  /** The just-popped entry, or null when the ring was empty. */
+  entry: ReorderUndoEntry | null;
+  /** Ring after the pop — `[]` when ring was empty or had one entry,
+   *  otherwise `ring.slice(0, ring.length - 1)`. */
+  remaining: ReorderUndoEntry[];
+}
+
+/** Pop the most-recent (newest) entry from a ring. Returns the
+ *  popped entry plus the ring without it. Idempotent on an empty
+ *  ring (returns `{ entry: null, remaining: [] }`). The UI calls
+ *  this after a successful undo apply so the next undo click
+ *  targets the now-newest entry. */
+export function popUndoEntry(ring: ReorderUndoEntry[]): UndoRingPop {
+  if (ring.length === 0) return { entry: null, remaining: [] };
+  return {
+    entry: ring[ring.length - 1],
+    remaining: ring.slice(0, ring.length - 1),
+  };
+}
+
+/** Result of selecting the active undo target from a ring against
+ *  the live chain. Discriminates whether there's anything to surface
+ *  at all (`active === null` -> empty ring), and carries counters
+ *  for the UI's status chip. */
+export interface ActiveUndoSelection {
+  /** The selected entry and its status against the current chain,
+   *  or null when the ring is empty. The selector walks newest ->
+   *  oldest and returns the first entry whose status is `ready`,
+   *  falling back to the NEWEST entry if every entry is stale (so
+   *  the staleness badge surfaces something rather than going
+   *  invisible while still nominally non-empty). */
+  active: { entry: ReorderUndoEntry; status: ReorderUndoStatus; index: number } | null;
+  /** Total entries in the ring (regardless of status). The UI's
+   *  counter chip reads this denominator: "Step 2 of 4". */
+  totalEntries: number;
+  /** Count of entries whose computed status against the live chain
+   *  is `ready` — i.e. truly cascade-undoable. The UI uses this to
+   *  decide whether to render the chip at all (totalReady < 2 ->
+   *  hide the chip; single ready entry is the round-30 surface). */
+  totalReady: number;
+  /** Count of entries whose status is `stale` (the user edited the
+   *  chain between the apply and now). The UI surfaces this only
+   *  in a tooltip; the badge copy on the surfaced entry already
+   *  carries the staleness reason. */
+  totalStale: number;
+}
+
+/** Select the active undo target from a ring against the live chain.
+ *
+ *  Algorithm:
+ *    1. If the ring is empty -> `active = null`, all counters = 0.
+ *    2. Walk every entry computing `computeUndoStatus(entry, current)`.
+ *       Count ready / stale tallies. Track the FIRST ready entry
+ *       found (walking newest -> oldest) and its index.
+ *    3. If any ready entry was found -> surface IT as active.
+ *    4. Otherwise -> surface the NEWEST entry (last in the array)
+ *       with its (stale or noop) status, so the UI has something
+ *       to render rather than going invisible.
+ *
+ *  Newest-first walk lets the user cascade undos cleanly: undoing
+ *  the newest ready entry pops it, the next-newest ready becomes
+ *  the active entry on the next render.
+ *
+ *  Index is in the ring's own array (0 = oldest, length-1 = newest)
+ *  so the UI can render "Step 3 of 5" with the right denominator
+ *  (totalEntries - index — newest is "Step 1 of N", oldest is
+ *  "Step N of N"). */
+export function selectActiveUndo(
+  ring: ReorderUndoEntry[],
+  current: Rule[],
+): ActiveUndoSelection {
+  if (ring.length === 0) {
+    return { active: null, totalEntries: 0, totalReady: 0, totalStale: 0 };
+  }
+  let totalReady = 0;
+  let totalStale = 0;
+  let firstReadyIndex: number | null = null;
+  // Walk newest -> oldest so the FIRST ready we find is the
+  // most-recent ready entry — the natural cascade target.
+  for (let i = ring.length - 1; i >= 0; i--) {
+    const status = computeUndoStatus(ring[i], current);
+    if (status.kind === "ready") {
+      totalReady += 1;
+      if (firstReadyIndex === null) firstReadyIndex = i;
+    } else if (status.kind === "stale") {
+      totalStale += 1;
+    }
+  }
+  const idx = firstReadyIndex !== null ? firstReadyIndex : ring.length - 1;
+  const status = computeUndoStatus(ring[idx], current);
+  return {
+    active: { entry: ring[idx], status, index: idx },
+    totalEntries: ring.length,
+    totalReady,
+    totalStale,
+  };
+}
+
+/** Default capacity for the Hopper UI's undo ring — the maximum
+ *  number of `ReorderUndoEntry` slots retained at any time. Chosen
+ *  to cover a typical paralegal workflow (fix-it on three dead
+ *  rules, then fix-all on the remaining two, then realise the
+ *  original order was better and undo all five) without bloating
+ *  memory. The UI surfaces a counter chip when the ring is at
+ *  capacity so the user knows the next undo capture will evict
+ *  the oldest entry. */
+export const UNDO_RING_CAPACITY = 5;
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors

@@ -3697,3 +3697,281 @@ import { slabHopperSummarizeUndoRing } from "./hopper";
   expect(summary.capacity === 0, "wrapper: cap=0 round-trip");
 }
 
+// ── Slice 151 — pushUndoEntry / popUndoEntry / selectActiveUndo ──
+
+import {
+  pushUndoEntry,
+  popUndoEntry,
+  selectActiveUndo,
+  UNDO_RING_CAPACITY,
+} from "./hopper";
+
+function liveEntry(label: string, snapshot: Rule[], ts: number = 0): ReorderUndoEntry {
+  return {
+    snapshot: snapshot.slice(),
+    label,
+    capturedAt: ts,
+    appliedEffect: { moved: [], added: [], removed: [], is_permutation: true },
+  };
+}
+
+{
+  // UNDO_RING_CAPACITY constant pinned at 5.
+  expect(UNDO_RING_CAPACITY === 5, "constant: UNDO_RING_CAPACITY === 5");
+}
+
+{
+  // pushUndoEntry: empty ring + first entry -> single-entry array.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const ring = pushUndoEntry([], e1, 5);
+  expect(ring.length === 1, "push: empty + push -> length 1");
+  expect(ring[0] === e1, "push: entry reference preserved");
+}
+
+{
+  // pushUndoEntry: under capacity -> append.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const e2 = liveEntry("b", [makeRule("B")]);
+  const ring = pushUndoEntry([e1], e2, 5);
+  expect(ring.length === 2, "push: under-cap appended");
+  expect(ring[0].label === "a" && ring[1].label === "b", "push: order preserved");
+}
+
+{
+  // pushUndoEntry: at capacity -> drop oldest, append new.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const e2 = liveEntry("b", [makeRule("B")]);
+  const e3 = liveEntry("c", [makeRule("C")]);
+  const e4 = liveEntry("d", [makeRule("D")]);
+  const ring = pushUndoEntry([e1, e2, e3], e4, 3);
+  expect(ring.length === 3, "push: at-cap stays at capacity");
+  expect(ring[0].label === "b", "push: oldest (a) evicted");
+  expect(ring[2].label === "d", "push: new entry is newest");
+}
+
+{
+  // pushUndoEntry: capacity 0 -> empty.
+  const ring = pushUndoEntry([], liveEntry("a", [makeRule("A")]), 0);
+  expect(ring.length === 0, "push: cap=0 -> empty");
+}
+
+{
+  // pushUndoEntry: negative capacity -> empty (defensive).
+  const ring = pushUndoEntry([liveEntry("a", [makeRule("A")])], liveEntry("b", [makeRule("B")]), -1);
+  expect(ring.length === 0, "push: cap<0 -> empty");
+}
+
+{
+  // pushUndoEntry: input ring NOT mutated.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const e2 = liveEntry("b", [makeRule("B")]);
+  const input = [e1];
+  pushUndoEntry(input, e2, 5);
+  expect(input.length === 1, "push: input ring untouched");
+  expect(input[0] === e1, "push: input ring identity preserved");
+}
+
+{
+  // pushUndoEntry: simulating cascade fills then trims oldest.
+  let ring: ReorderUndoEntry[] = [];
+  for (let i = 1; i <= 7; i++) {
+    ring = pushUndoEntry(ring, liveEntry(`step-${i}`, [makeRule(`R${i}`)]), 5);
+  }
+  expect(ring.length === 5, "push e2e: ring stable at 5");
+  expect(ring[0].label === "step-3", "push e2e: oldest after trim is step-3");
+  expect(ring[4].label === "step-7", "push e2e: newest is step-7");
+}
+
+{
+  // popUndoEntry: empty -> { entry: null, remaining: [] }.
+  const result = popUndoEntry([]);
+  expect(result.entry === null, "pop: empty -> null entry");
+  expect(result.remaining.length === 0, "pop: empty -> empty remaining");
+}
+
+{
+  // popUndoEntry: single -> entry + empty remaining.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const result = popUndoEntry([e1]);
+  expect(result.entry === e1, "pop: single -> e1 returned");
+  expect(result.remaining.length === 0, "pop: single -> empty remaining");
+}
+
+{
+  // popUndoEntry: multi -> newest entry + rest.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const e2 = liveEntry("b", [makeRule("B")]);
+  const e3 = liveEntry("c", [makeRule("C")]);
+  const result = popUndoEntry([e1, e2, e3]);
+  expect(result.entry === e3, "pop: multi -> newest popped");
+  expect(result.remaining.length === 2, "pop: remaining length");
+  expect(result.remaining[0] === e1 && result.remaining[1] === e2, "pop: remaining order");
+}
+
+{
+  // popUndoEntry: input array NOT mutated.
+  const e1 = liveEntry("a", [makeRule("A")]);
+  const e2 = liveEntry("b", [makeRule("B")]);
+  const input = [e1, e2];
+  popUndoEntry(input);
+  expect(input.length === 2, "pop: input length untouched");
+  expect(input[0] === e1 && input[1] === e2, "pop: input identity preserved");
+}
+
+{
+  // selectActiveUndo: empty ring -> null active + zero counters.
+  const sel = selectActiveUndo([], [makeRule("A")]);
+  expect(sel.active === null, "select: empty -> null active");
+  expect(sel.totalEntries === 0, "select: empty -> 0 entries");
+  expect(sel.totalReady === 0, "select: empty -> 0 ready");
+  expect(sel.totalStale === 0, "select: empty -> 0 stale");
+}
+
+{
+  // selectActiveUndo: single ready entry -> surfaced as active.
+  const original = [makeRule("All"), makeRule("Tax")];
+  const reordered = [makeRule("Tax"), makeRule("All")];
+  const entry = captureUndoEntry(original, reordered, "fix-it: Tax", 0);
+  const sel = selectActiveUndo([entry], reordered);
+  expect(sel.active !== null, "select: single ready -> active not null");
+  if (sel.active !== null) {
+    expect(sel.active.status.kind === "ready", "select: single ready -> ready status");
+    expect(sel.active.index === 0, "select: single -> index 0");
+  }
+  expect(sel.totalEntries === 1, "select: single -> totalEntries 1");
+  expect(sel.totalReady === 1, "select: single ready -> totalReady 1");
+  expect(sel.totalStale === 0, "select: single ready -> totalStale 0");
+}
+
+{
+  // selectActiveUndo: multi ready -> walks newest first, picks
+  // the newest ready entry.
+  const original1 = [makeRule("A"), makeRule("B")];
+  const reordered1 = [makeRule("B"), makeRule("A")];
+  const entry1 = captureUndoEntry(original1, reordered1, "fix-it: 1", 0);
+  // After undoing entry1 in our heads, the chain is back to original1.
+  // Now apply another reorder.
+  const reordered2 = [makeRule("A"), makeRule("B")];  // identity for simplicity
+  const original2 = [makeRule("B"), makeRule("A")];
+  const entry2 = captureUndoEntry(original2, reordered2, "fix-it: 2", 0);
+  // Live chain matches entry2's snapshot's reversed state == reordered2.
+  const sel = selectActiveUndo([entry1, entry2], reordered2);
+  expect(sel.active !== null, "select: multi -> active not null");
+  if (sel.active !== null) {
+    // Newest (index 1) is the natural target.
+    expect(sel.active.index === 1, "select: multi -> newest index");
+    expect(sel.active.entry.label === "fix-it: 2", "select: multi -> newest label");
+  }
+}
+
+{
+  // selectActiveUndo: when newest is STALE but older is READY,
+  // surface the older ready entry (newest-first walk picks first
+  // ready, not first stale).
+  const ruleA = makeRule("A");
+  const ruleB = makeRule("B");
+  // Older entry (snapshot is [A, B], applied [B, A]): live chain
+  // could still be the reorder, making it ready.
+  const olderEntry = captureUndoEntry([ruleA, ruleB], [ruleB, ruleA], "older", 0);
+  // Newer entry: snapshot has an extra rule the live chain now lacks
+  // (we simulate user removing a rule between applies).
+  const newerEntry = captureUndoEntry(
+    [ruleA, ruleB, makeRule("PHANTOM")],
+    [makeRule("PHANTOM"), ruleA, ruleB],
+    "newer",
+    0,
+  );
+  // Live chain matches reorder of older entry, but lacks PHANTOM -> newer is stale.
+  const sel = selectActiveUndo([olderEntry, newerEntry], [ruleB, ruleA]);
+  expect(sel.totalReady === 1, "select: 1 ready");
+  expect(sel.totalStale === 1, "select: 1 stale");
+  expect(sel.active !== null, "select: active not null");
+  if (sel.active !== null) {
+    expect(sel.active.entry.label === "older", "select: skipped stale newer, picked ready older");
+    expect(sel.active.status.kind === "ready", "select: surfaced ready status");
+  }
+}
+
+{
+  // selectActiveUndo: all stale -> surface newest with stale status.
+  const ruleA = makeRule("A");
+  const ruleB = makeRule("B");
+  // Both entries' snapshots include a rule the live chain no longer has.
+  const stale1 = captureUndoEntry(
+    [ruleA, ruleB, makeRule("X1")],
+    [makeRule("X1"), ruleA, ruleB],
+    "stale1",
+    0,
+  );
+  const stale2 = captureUndoEntry(
+    [ruleA, ruleB, makeRule("X2")],
+    [makeRule("X2"), ruleA, ruleB],
+    "stale2",
+    0,
+  );
+  const sel = selectActiveUndo([stale1, stale2], [ruleA, ruleB]);
+  expect(sel.totalReady === 0, "select: all stale -> 0 ready");
+  expect(sel.totalStale === 2, "select: all stale -> 2 stale");
+  expect(sel.active !== null, "select: all stale -> active still surfaced");
+  if (sel.active !== null) {
+    expect(sel.active.entry.label === "stale2", "select: all stale -> newest surfaced");
+    expect(sel.active.status.kind === "stale", "select: status is stale");
+  }
+}
+
+{
+  // selectActiveUndo: noop entries (snapshot matches live) -> not
+  // counted as ready, not surfaced if other ready entries exist.
+  const ruleA = makeRule("A");
+  const ruleB = makeRule("B");
+  // First entry: snapshot IS the current chain -> noop.
+  const noopEntry = captureUndoEntry([ruleA, ruleB], [ruleA, ruleB], "noop", 0);
+  // Second entry: snapshot differs by permutation -> ready.
+  const readyEntry = captureUndoEntry([ruleB, ruleA], [ruleA, ruleB], "ready", 0);
+  const sel = selectActiveUndo([noopEntry, readyEntry], [ruleA, ruleB]);
+  expect(sel.totalReady === 1, "select: ready count excludes noop");
+  expect(sel.totalStale === 0, "select: noop count excludes stale");
+  if (sel.active !== null) {
+    // Newer (ready) entry is at index 1; surfaced.
+    expect(sel.active.index === 1, "select: noop skipped, ready surfaced");
+  }
+}
+
+{
+  // End-to-end cascade: push 3 ready entries, undo one (= pop newest),
+  // then verify selectActiveUndo finds the next-newest ready.
+  const original = [makeRule("A"), makeRule("B"), makeRule("C")];
+  const step1 = [makeRule("B"), makeRule("A"), makeRule("C")];
+  const step2 = [makeRule("C"), makeRule("B"), makeRule("A")];
+  const step3 = [makeRule("A"), makeRule("C"), makeRule("B")];
+  let ring: ReorderUndoEntry[] = [];
+  ring = pushUndoEntry(ring, captureUndoEntry(original, step1, "step1", 0), UNDO_RING_CAPACITY);
+  ring = pushUndoEntry(ring, captureUndoEntry(step1, step2, "step2", 0), UNDO_RING_CAPACITY);
+  ring = pushUndoEntry(ring, captureUndoEntry(step2, step3, "step3", 0), UNDO_RING_CAPACITY);
+  expect(ring.length === 3, "cascade: 3 entries pushed");
+  // Live chain is step3 -> newest entry (step3 snapshot is step2) is ready.
+  // Since all snapshots are permutations of the same {A,B,C} rule set,
+  // ALL three entries are technically "ready" against any live chain;
+  // selectActiveUndo correctly picks the newest one.
+  let sel = selectActiveUndo(ring, step3);
+  expect(sel.active?.entry.label === "step3", "cascade: step3 entry active");
+  expect(sel.totalReady === 3, "cascade: all 3 entries ready (same rule set)");
+  // Simulate undo: chain reverts to step2, pop the newest entry.
+  const pop1 = popUndoEntry(ring);
+  ring = pop1.remaining;
+  expect(ring.length === 2, "cascade: ring after pop has 2 entries");
+  // Live chain now step2; step2 entry (snapshot=step1) should be ready.
+  sel = selectActiveUndo(ring, step2);
+  expect(sel.active?.entry.label === "step2", "cascade: step2 entry now active");
+  // Undo again: chain -> step1, pop.
+  const pop2 = popUndoEntry(ring);
+  ring = pop2.remaining;
+  sel = selectActiveUndo(ring, step1);
+  expect(sel.active?.entry.label === "step1", "cascade: step1 entry now active");
+  // Final undo: chain -> original, ring -> empty.
+  const pop3 = popUndoEntry(ring);
+  ring = pop3.remaining;
+  expect(ring.length === 0, "cascade: ring fully drained");
+  sel = selectActiveUndo(ring, original);
+  expect(sel.active === null, "cascade: empty ring -> null active");
+}
