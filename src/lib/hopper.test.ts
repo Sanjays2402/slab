@@ -3430,3 +3430,202 @@ import {
   const afterUndo = computeUndoStatus(entry, original);
   expect(afterUndo.kind === "noop", "end-to-end: post-undo -> noop");
 }
+
+// ── Slice 149 — summarizeUndoRing / describeUndoRingSummary / isUndoRingFull ──
+
+import {
+  summarizeUndoRing,
+  describeUndoRingSummary,
+  isUndoRingFull,
+  type UndoEntrySummary,
+  type UndoRingSummary,
+} from "./hopper";
+
+function ringEntry(label: string, ms: number): UndoEntrySummary {
+  return {
+    label,
+    captured_at_ms: ms,
+    applied_effect: {
+      moved: [{ rule_name: label, from_index: 1, to_index: 0 }],
+      added: [],
+      removed: [],
+      is_permutation: true,
+    },
+  };
+}
+
+{
+  // Empty ring under capacity -> empty entries, not full.
+  const summary = summarizeUndoRing([], 5);
+  expect(summary.entries.length === 0, "ring: empty entries");
+  expect(summary.capacity === 5, "ring: capacity round-trip");
+  expect(summary.full === false, "ring: empty -> not full");
+}
+
+{
+  // One entry under capacity -> pass-through.
+  const entry = ringEntry("fix-it: Tax", 1000);
+  const summary = summarizeUndoRing([entry], 5);
+  expect(summary.entries.length === 1, "ring: single entry length");
+  expect(summary.entries[0].label === "fix-it: Tax", "ring: label round-trip");
+  expect(summary.entries[0].captured_at_ms === 1000, "ring: ts round-trip");
+  expect(summary.full === false, "ring: single under cap -> not full");
+}
+
+{
+  // At capacity -> full.
+  const entries = [ringEntry("a", 1), ringEntry("b", 2), ringEntry("c", 3)];
+  const summary = summarizeUndoRing(entries, 3);
+  expect(summary.entries.length === 3, "ring: at-capacity length");
+  expect(summary.full === true, "ring: at-capacity -> full");
+  expect(summary.entries[0].label === "a", "ring: oldest first preserved");
+  expect(summary.entries[2].label === "c", "ring: newest last preserved");
+}
+
+{
+  // Over capacity -> trim oldest, keep most-recent.
+  const entries = [
+    ringEntry("a", 1),
+    ringEntry("b", 2),
+    ringEntry("c", 3),
+    ringEntry("d", 4),
+    ringEntry("e", 5),
+    ringEntry("f", 6),
+    ringEntry("g", 7),
+  ];
+  const summary = summarizeUndoRing(entries, 5);
+  expect(summary.entries.length === 5, "ring: over-cap trimmed to 5");
+  expect(summary.full === true, "ring: trimmed -> full");
+  expect(summary.entries[0].label === "c", "ring: oldest kept is c");
+  expect(summary.entries[4].label === "g", "ring: newest kept is g");
+  expect(
+    !summary.entries.some((e) => e.label === "a" || e.label === "b"),
+    "ring: a/b dropped",
+  );
+}
+
+{
+  // Capacity 0 -> always full, no entries (defensive).
+  const entries = [ringEntry("a", 1), ringEntry("b", 2)];
+  const summary = summarizeUndoRing(entries, 0);
+  expect(summary.entries.length === 0, "ring: cap=0 empty");
+  expect(summary.capacity === 0, "ring: cap=0 round-trip");
+  expect(summary.full === true, "ring: cap=0 always full");
+}
+
+{
+  // Negative capacity -> same as 0 (defensive — UI bug guard).
+  const summary = summarizeUndoRing([ringEntry("a", 1)], -3);
+  expect(summary.entries.length === 0, "ring: negative cap empty");
+  expect(summary.capacity === 0, "ring: negative cap normalised to 0");
+  expect(summary.full === true, "ring: negative cap always full");
+}
+
+{
+  // Capacity 1 -> keeps only newest.
+  const entries = [ringEntry("old", 100), ringEntry("new", 200)];
+  const summary = summarizeUndoRing(entries, 1);
+  expect(summary.entries.length === 1, "ring: cap=1 single entry");
+  expect(summary.entries[0].label === "new", "ring: cap=1 keeps newest");
+  expect(summary.full === true, "ring: cap=1 single entry -> full");
+}
+
+{
+  // Pinned: input array NOT mutated by summarise.
+  const entries = [ringEntry("a", 1), ringEntry("b", 2), ringEntry("c", 3)];
+  const before = entries.length;
+  const snapshotLabels = entries.map((e) => e.label).join(",");
+  summarizeUndoRing(entries, 1);
+  expect(entries.length === before, "ring: input length not mutated");
+  expect(entries.map((e) => e.label).join(",") === snapshotLabels, "ring: input labels not mutated");
+}
+
+{
+  // describeUndoRingSummary: empty.
+  const summary: UndoRingSummary = { entries: [], capacity: 5, full: false };
+  expect(describeUndoRingSummary(summary) === "No undo history", "describe: empty");
+}
+
+{
+  // describeUndoRingSummary: 1 entry under cap -> no "oldest:" suffix.
+  const summary = summarizeUndoRing([ringEntry("fix-all", 1)], 5);
+  expect(describeUndoRingSummary(summary) === "1 undo step", "describe: 1 entry");
+}
+
+{
+  // describeUndoRingSummary: 3 entries under cap -> "oldest:" suffix.
+  const summary = summarizeUndoRing(
+    [ringEntry("fix-all", 1), ringEntry("fix-it: Tax", 2), ringEntry("fix-it: Rent", 3)],
+    5,
+  );
+  expect(
+    describeUndoRingSummary(summary) === "3 undo steps (oldest: fix-all)",
+    "describe: multi entries with oldest label",
+  );
+}
+
+{
+  // describeUndoRingSummary: at capacity -> "at capacity" copy.
+  const summary = summarizeUndoRing(
+    [
+      ringEntry("a", 1),
+      ringEntry("b", 2),
+      ringEntry("c", 3),
+      ringEntry("d", 4),
+      ringEntry("e", 5),
+    ],
+    5,
+  );
+  expect(
+    describeUndoRingSummary(summary) === "5 undo steps — at capacity",
+    "describe: at-capacity",
+  );
+}
+
+{
+  // describeUndoRingSummary: cap=1 single entry IS full -> at-capacity copy.
+  const summary = summarizeUndoRing([ringEntry("a", 1)], 1);
+  expect(
+    describeUndoRingSummary(summary) === "1 undo step — at capacity",
+    "describe: cap=1 single full",
+  );
+}
+
+{
+  // isUndoRingFull predicate matches the .full flag.
+  const empty = summarizeUndoRing([], 5);
+  expect(isUndoRingFull(empty) === false, "isFull: empty");
+  const full = summarizeUndoRing([ringEntry("a", 1), ringEntry("b", 2)], 2);
+  expect(isUndoRingFull(full) === true, "isFull: full");
+  const cap0 = summarizeUndoRing([], 0);
+  expect(isUndoRingFull(cap0) === true, "isFull: cap=0 always full");
+}
+
+{
+  // End-to-end: ring fills, then a subsequent push trims oldest.
+  // Mirrors the UI's pushUndoEntry pattern (slice 151).
+  let ring: UndoEntrySummary[] = [];
+  const capacity = 3;
+  for (const ts of [1, 2, 3, 4, 5]) {
+    ring.push(ringEntry(`step-${ts}`, ts));
+    // UI would call slice 151 trimmer here; simulate via summariser.
+    const summary = summarizeUndoRing(ring, capacity);
+    ring = summary.entries.slice();
+  }
+  expect(ring.length === 3, "e2e: ring stabilises at capacity");
+  expect(ring[0].label === "step-3", "e2e: oldest is step-3 after eviction");
+  expect(ring[2].label === "step-5", "e2e: newest is step-5");
+}
+
+{
+  // Pinned: serialising and re-parsing summary preserves snake_case.
+  // This is the contract that lets the Tauri command (slice 150) and
+  // the TS mirror agree on the wire shape.
+  const summary = summarizeUndoRing([ringEntry("fix-all", 1700000000000)], 5);
+  const json = JSON.stringify(summary);
+  expect(json.includes('"captured_at_ms":1700000000000'), "wire: snake_case captured_at_ms");
+  expect(json.includes('"applied_effect":'), "wire: snake_case applied_effect");
+  expect(json.includes('"capacity":5'), "wire: capacity field");
+  expect(json.includes('"full":false'), "wire: full field");
+}
+

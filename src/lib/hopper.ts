@@ -1519,6 +1519,124 @@ export function describeUndoStatus(status: ReorderUndoStatus): string {
   }
 }
 
+// ─── Slice 149 — undo-ring summary (round-31) ────────────────────────
+//
+// Round 30 shipped single-entry undo (one most-recent snapshot at a
+// time; a second fix-it would overwrite the snapshot). Round 31
+// promotes that to a bounded ring — the UI keeps up to
+// UNDO_RING_CAPACITY (slice 152, currently 5) most-recent entries,
+// and the user can cascade undos through the ring.
+//
+// This module owns the SUMMARY view — the compact, snapshot-free
+// shape an audit / script consumer reads. The full `ReorderUndoEntry`
+// (with its `snapshot: Rule[]`) lives in the UI's $state. The
+// summary carries only `label` + `captured_at_ms` + `applied_effect`
+// per entry, plus the ring's `capacity` + `full` flag, so the wire
+// payload stays small enough to log without bloating disk.
+//
+// Mirrors `pdf::hopper::coverage::summarize_undo_ring` 1:1. Wire
+// shape uses snake_case to match Rust; a browser-mode caller goes
+// through this helper directly, a Tauri-mode caller round-trips
+// through `slabHopperSummarizeUndoRing` (slice 150).
+
+/** One entry in the undo ring summary — a compact, snapshot-free
+ *  view of a stashed undo state. Mirrors Rust `UndoEntrySummary`.
+ *
+ *  The UI's full `ReorderUndoEntry` (with `snapshot: Rule[]`) lives
+ *  in $state and is what `applyUndo` reverts through. This summary
+ *  is the audit-friendly projection — it's what a CLI / cron
+ *  consumer reads. Wire-shape uses snake_case to match Rust serde
+ *  defaults; do NOT rename to camelCase or the round-trip breaks. */
+export interface UndoEntrySummary {
+  /** Human-facing label from the apply call site (`"fix-all"` /
+   *  `"fix-it: Tax"`). */
+  label: string;
+  /** Unix-ms timestamp of when the entry was captured. Signed in
+   *  the wire shape so a test injectable can use 0 / negative values
+   *  without serde refusing; the UI never sends < 0 in practice. */
+  captured_at_ms: number;
+  /** Structural breadcrumb describing what the reorder DID, in
+   *  AFTER-vs-BEFORE terms. Pre-computed at capture time. */
+  applied_effect: ReorderEffect;
+}
+
+/** Structural summary of the entire ring — entries (oldest-trimmed
+ *  to capacity) plus capacity / full metadata. Mirrors Rust
+ *  `UndoRingSummary`. */
+export interface UndoRingSummary {
+  /** Entries OLDEST-FIRST after trimming. `entries[0]` is the next
+   *  to evict; `entries[entries.length - 1]` is the most-recent
+   *  capture (the UI's default undo target). */
+  entries: UndoEntrySummary[];
+  /** Configured capacity — `UNDO_RING_CAPACITY` in the UI. */
+  capacity: number;
+  /** True iff `entries.length === capacity` (next push evicts
+   *  oldest). */
+  full: boolean;
+}
+
+/** Summarise a list of undo entries against a ring capacity. 1:1
+ *  mirror of Rust `summarize_undo_ring`. Algorithm:
+ *
+ *    1. If capacity === 0 -> empty entries, full = true.
+ *    2. If entries.length > capacity -> trim OLDEST (keep last
+ *       `capacity` entries).
+ *    3. Otherwise pass entries through.
+ *    4. full = trimmed.length === capacity.
+ *
+ *  Pure helper — does NOT mutate the input array. */
+export function summarizeUndoRing(
+  entries: UndoEntrySummary[],
+  capacity: number,
+): UndoRingSummary {
+  if (capacity <= 0) {
+    return { entries: [], capacity: 0, full: true };
+  }
+  const kept =
+    entries.length > capacity
+      ? entries.slice(entries.length - capacity)
+      : entries.slice();
+  return {
+    entries: kept,
+    capacity,
+    full: kept.length === capacity,
+  };
+}
+
+/** Human-facing summary of the ring state. Discriminated copy:
+ *
+ *    Empty:                  "No undo history"
+ *    1 entry:                "1 undo step"
+ *    N entries under cap:    "3 undo steps (oldest: fix-all)"
+ *    Full ring:              "5 undo steps — at capacity"
+ *
+ *  Plural-aware on "step" / "steps". The "oldest:" suffix is shown
+ *  only when there are more than one entries (a single entry IS
+ *  the oldest AND newest; saying "oldest:" is redundant) and the
+ *  ring is NOT full (the at-capacity copy already telegraphs that
+ *  the next push evicts the oldest). The label is the OLDEST
+ *  entry's label so the user sees which action will be lost first
+ *  when the ring fills. */
+export function describeUndoRingSummary(summary: UndoRingSummary): string {
+  const n = summary.entries.length;
+  if (n === 0) return "No undo history";
+  const stepNoun = n === 1 ? "step" : "steps";
+  if (summary.full) {
+    return `${n} undo ${stepNoun} — at capacity`;
+  }
+  if (n === 1) {
+    return `1 undo step`;
+  }
+  return `${n} undo ${stepNoun} (oldest: ${summary.entries[0].label})`;
+}
+
+/** True iff the ring is at capacity (next push will evict the
+ *  oldest entry). Convenience predicate for the UI's counter chip
+ *  styling — at-capacity rings render with a darker tint. */
+export function isUndoRingFull(summary: UndoRingSummary): boolean {
+  return summary.full;
+}
+
 // ─── Slice 85 — sample drilldown TS client (legacy header below) ─────
 
 /** Bucket selector for the drilldown command. Mirrors
