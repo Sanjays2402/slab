@@ -61,6 +61,10 @@
     computeUndoStatus,
     describeUndoStatus,
     summarizeReorderEffect,
+    pushUndoEntry,
+    popUndoEntry,
+    selectActiveUndo,
+    UNDO_RING_CAPACITY,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -554,8 +558,9 @@
       if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
       coverageExportToastTimer = setTimeout(() => {
         coverageExportToast = null;
-        // Slice 147 — undo affordance dwells with the toast.
-        undoEntry = null;
+        // Slice 152 — undo ring dwells with the toast. Unclicked
+        // entries fall off when the user moves on.
+        undoRing = [];
       }, 4_000);
       // Surface per-skipped-proposal reasons via console.info so a
       // power user with the devtools open can audit a partial batch.
@@ -610,45 +615,96 @@
   // (manual moves are reversed alongside the fix); add/remove/rename
   // would silently drop the new rule and we refuse.
 
-  /** The most recent undo entry — snapshot of the chain BEFORE a
-   *  fix-it / fix-all apply, plus label + breadcrumb. Set at
-   *  capture time (inside applyFixIt / applyFixAll), cleared when
-   *  the toast fades or the user clicks Undo successfully.
-   *  Pinned to one most-recent entry (no undo stack) because the
-   *  toast surface only carries one affordance at a time. */
-  let undoEntry = $state<ReorderUndoEntry | null>(null);
+  // -------------------------------------------------------------------
+  // v3.40 Slice 152 — Undo RING for fix-it / fix-all (round-31)
+  // -------------------------------------------------------------------
+  //
+  // Round 30 (slice 147) shipped a SINGLE-ENTRY undo: any subsequent
+  // fix-it / fix-all overwrote the stashed snapshot, so a paralegal
+  // who did "fix-it on Tax, then fix-all on the rest, then realised
+  // the original order was better" could only undo ONCE. Round 31
+  // promotes that single entry to a bounded RING (capacity
+  // UNDO_RING_CAPACITY, currently 5) so the user can CASCADE undos.
+  //
+  // State model:
+  //   undoRing: ReorderUndoEntry[] — newest at the end. Push on every
+  //     apply (oldest evicted at capacity); pop on every successful
+  //     undo (the next-newest entry becomes the active target on the
+  //     next render).
+  //   undoSelection: $derived — selectActiveUndo(undoRing, rules).
+  //     Walks newest -> oldest computing live status; surfaces the
+  //     first ready entry as the button target. Counters expose
+  //     ring health.
+  //
+  // The cascade UX preserves the toast surface across consecutive
+  // undos. When an undo succeeds AND the ring has more entries,
+  // the toast copy refreshes ("Reverted 3 rules · 2 undo steps
+  // remaining") and the 4s timer restarts so the user can chain
+  // clicks. The toast clears AND the ring drains together only
+  // when (a) the toast naturally fades (user didn't click within
+  // 4s), or (b) an undo drained the ring fully.
 
-  /** $derived live undo status against the current rules array.
-   *  Recomputes reactively on every rules mutation so the button
-   *  copy / staleness reason refresh in real time. */
-  let undoStatus = $derived.by(() => {
-    if (undoEntry === null) return null;
-    return computeUndoStatus(undoEntry, rules);
-  });
+  /** The undo ring — newest entry at the end. Stashed by
+   *  `stashUndoSnapshot` (called from applyFixIt / applyFixAll) and
+   *  popped by `applyUndo`. Capped at UNDO_RING_CAPACITY via the
+   *  pure-data trimmer (slice 151) so old entries silently fall off
+   *  when the user does more than 5 reorders without undoing. */
+  let undoRing = $state<ReorderUndoEntry[]>([]);
+
+  /** $derived selection from the ring against the live chain. The
+   *  bridge walker (slice 151) picks the newest ready entry as
+   *  the active target; counters expose how many ready vs stale
+   *  entries the ring holds. Recomputes reactively over every
+   *  rule mutation. */
+  let undoSelection = $derived.by(() => selectActiveUndo(undoRing, rules));
+
+  /** $derived live undo status for the active entry. Null when the
+   *  ring is empty (the button doesn't render). Kept under its
+   *  round-30 name so the existing template + applyUndo path stays
+   *  stable. */
+  let undoStatus = $derived.by(() => undoSelection.active?.status ?? null);
 
   /** $derived button copy from the live status. Empty string when
-   *  there's no entry. */
+   *  there's no active entry. */
   let undoLabel = $derived.by(() => {
     if (undoStatus === null) return "";
     return describeUndoStatus(undoStatus);
+  });
+
+  /** $derived "Step N of M" counter copy for the ring chip. Empty
+   *  string when the ring has 0 or 1 entries (a single entry IS
+   *  the round-30 surface; no chip needed). The numerator is
+   *  newest-first (Step 1 = newest), so the user reads it as "I
+   *  can chain 1 more undo" / "I can chain 4 more undos". */
+  let undoStepChip = $derived.by(() => {
+    const total = undoSelection.totalEntries;
+    if (total < 2) return "";
+    const active = undoSelection.active;
+    if (active === null) return "";
+    // Active entry index is in oldest-first order; convert to
+    // newest-first 1-based step number for human reading.
+    const step = total - active.index;
+    return `Step ${step} of ${total}`;
   });
 
   /** Busy gate for the undo apply — prevents a second click while
    *  the persist round-trip is in flight. */
   let undoBusy = $state(false);
 
-  /** Apply the undo: revert the chain to the snapshot stashed by
-   *  the most-recent fix-it / fix-all apply. Optimistic: the chain
-   *  updates locally first, then slabHopperSetRules persists. On
-   *  failure the chain rolls back AND the entry stays so the user
-   *  can retry. On success the entry clears + the toast updates
-   *  to "Reverted N rules" (sharing the cov-export-toast surface). */
+  /** Apply the undo: revert the chain to the snapshot of the active
+   *  ring entry. Optimistic: the chain updates locally first, then
+   *  slabHopperSetRules persists. On failure the chain rolls back
+   *  AND the entry stays in the ring so the user can retry. On
+   *  success the entry is popped; if the ring still has entries,
+   *  the toast copy + 4s dwell refreshes so the user can cascade
+   *  undos. If the ring fully drains, the toast fades normally. */
   async function applyUndo() {
     if (undoBusy) return;
-    if (undoEntry === null) return;
+    if (undoSelection.active === null) return;
     if (undoStatus === null || undoStatus.kind !== "ready") return;
+    const active = undoSelection.active;
     const prev = rules;
-    const snapshot = undoEntry.snapshot;
+    const snapshot = active.entry.snapshot;
     undoBusy = true;
     rules = snapshot.slice();
     try {
@@ -656,18 +712,42 @@
       savedAt = Date.now();
       schedulePreview();
       scheduleCoverage();
-      // Replace the toast copy with a confirmation; the entry
-      // clears so the button disappears (snapshot is now stale
-      // against the just-undone chain).
+      // Pop the active entry — if it was the newest ready entry
+      // (the common case), popUndoEntry removes it cleanly. If
+      // selectActiveUndo had surfaced an older entry (because newer
+      // ones were stale), the pop still removes the NEWEST entry
+      // in the array — we trim stale-newer along with the
+      // ready-older they were skipped over. This matches the
+      // intuitive cascade: "undo the action I just reverted" =
+      // "drop the newest entry the ring has been carrying for
+      // me". A future round could promote this to a positional
+      // splice if we ever want to preserve stale-older history
+      // across a cascade, but the simpler popNewest is the right
+      // default for the round-31 surface.
+      undoRing = popUndoEntry(undoRing).remaining;
       const movedCount = undoStatus.effect.moved.length;
       const ruleNoun = movedCount === 1 ? "rule" : "rules";
-      coverageExportToast = `Reverted ${movedCount} ${ruleNoun}`;
+      // Cascade UX: surface remaining-steps count when the ring is
+      // not yet drained, so the user knows another undo is queued
+      // and ready to click.
+      const remainingSteps = undoRing.length;
+      if (remainingSteps > 0) {
+        const stepNoun = remainingSteps === 1 ? "step" : "steps";
+        coverageExportToast = `Reverted ${movedCount} ${ruleNoun} · ${remainingSteps} undo ${stepNoun} remaining`;
+      } else {
+        coverageExportToast = `Reverted ${movedCount} ${ruleNoun}`;
+      }
+      // Refresh the 4s dwell so the next undo button has a full
+      // window. When the cascade ends (ring drained), the timer
+      // still fires and clears the toast cleanly.
       if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
       coverageExportToastTimer = setTimeout(() => {
         coverageExportToast = null;
-        undoEntry = null;
+        // Drain anything the user didn't click — keeps the ring
+        // tight and avoids stale snapshots accumulating across
+        // long sessions.
+        undoRing = [];
       }, 4_000);
-      undoEntry = null;
     } catch (e) {
       rules = prev;
       errorMsg = `Undo failed: ${String(e)}`;
@@ -677,11 +757,13 @@
   }
 
   /** Snapshot helper called from applyFixIt / applyFixAll right
-   *  before the optimistic chain update. Pre-computes the entry's
-   *  appliedEffect so a scripted-audit consumer reading undoEntry
-   *  gets a fully-formed breadcrumb. */
+   *  before the optimistic chain update. Pushes the entry into the
+   *  ring, trimming the oldest when at capacity. The pure-data
+   *  pushUndoEntry (slice 151) returns a fresh array; we assign
+   *  back so Svelte's reactivity picks up the change. */
   function stashUndoSnapshot(before: Rule[], after: Rule[], label: string) {
-    undoEntry = captureUndoEntry(before, after, label);
+    const entry = captureUndoEntry(before, after, label);
+    undoRing = pushUndoEntry(undoRing, entry, UNDO_RING_CAPACITY);
   }
 
   /** Open the fix-it confirm popover for a given dead rule index.
@@ -741,8 +823,8 @@
       if (coverageExportToastTimer) clearTimeout(coverageExportToastTimer);
       coverageExportToastTimer = setTimeout(() => {
         coverageExportToast = null;
-        // Slice 147 — undo affordance dwells with the toast.
-        undoEntry = null;
+        // Slice 152 — undo ring dwells with the toast.
+        undoRing = [];
       }, 4_000);
     } catch (e) {
       rules = prev;
@@ -913,9 +995,9 @@
     if (coverageExporting) return;
     coverageExporting = true;
     coverageExportToast = null;
-    // Slice 147 — clear any pending undo affordance; export
-    // toasts shouldn't carry a fix-it / fix-all undo button.
-    undoEntry = null;
+    // Slice 152 — clear any pending undo ring; export toasts
+    // shouldn't carry a fix-it / fix-all undo button.
+    undoRing = [];
     try {
       const defaultPath = suggestCoverageExportFilename({
         watchId,
@@ -1563,6 +1645,27 @@
                 aria-label={undoLabel}
               >
                 {undoLabel}
+              </span>
+            {/if}
+            {#if undoStepChip}
+              <!-- Slice 152 — cascade counter chip. Surfaces only
+                   when the ring has > 1 entries (a single entry IS
+                   the round-30 surface; no chip needed). Counter
+                   reads newest-first so "Step 1 of 3" means the
+                   surfaced button targets the newest entry and 2
+                   more cascading undos are queued. Darkens when
+                   the ring is at capacity so the user knows the
+                   next apply will evict the oldest entry. -->
+              <span
+                class="cov-undo-chip"
+                class:full={undoSelection.totalEntries === UNDO_RING_CAPACITY}
+                role="status"
+                aria-label="{undoStepChip} — {undoSelection.totalEntries === UNDO_RING_CAPACITY ? 'ring at capacity' : 'cascading undos available'}"
+                title={undoSelection.totalEntries === UNDO_RING_CAPACITY
+                  ? `Undo ring at capacity — the next fix will evict the oldest snapshot`
+                  : `${undoSelection.totalEntries - 1} more cascading undo${undoSelection.totalEntries - 1 === 1 ? "" : "s"} available after this one`}
+              >
+                {undoStepChip}
               </span>
             {/if}
           {/if}
@@ -2655,6 +2758,33 @@
     font-variant-numeric: tabular-nums;
     cursor: help;
     animation: cov-export-toast-fade-in 0.18s ease-out;
+  }
+  /* Slice 152 — cascade counter chip. Sits to the right of the
+   * undo button when the ring has more than one entry; tells the
+   * user how many cascading undos remain. Muted blue tint so it
+   * reads as informational metadata (not an action). The .full
+   * variant deepens the color so an at-capacity ring is
+   * visually distinct — the next apply will evict the oldest. */
+  .cov-undo-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 9px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: rgba(170, 195, 235, 0.85);
+    background: rgba(110, 165, 255, 0.08);
+    border: 1px solid rgba(110, 165, 255, 0.22);
+    border-radius: 6px;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+    animation: cov-export-toast-fade-in 0.18s ease-out;
+  }
+  .cov-undo-chip.full {
+    color: rgba(220, 195, 165, 0.9);
+    background: rgba(220, 170, 110, 0.14);
+    border-color: rgba(220, 170, 110, 0.36);
   }
 
   .cov-error {
