@@ -5086,9 +5086,9 @@ function makeRow(
     capturedAt: 100 + ringIndex,
     ageCopy: "just now",
     status: isFocusable
-      ? { kind: "ready", effect: { moved: [], added: [], removed: [] } }
+      ? { kind: "ready", effect: { moved: [], added: [], removed: [], is_permutation: true } }
       : isActiveTarget
-        ? { kind: "ready", effect: { moved: [], added: [], removed: [] } }
+        ? { kind: "ready", effect: { moved: [], added: [], removed: [], is_permutation: true } }
         : { kind: "noop" },
     plan: null,
     isActiveTarget,

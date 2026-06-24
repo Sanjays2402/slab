@@ -70,6 +70,13 @@
     canApplyUndoJump,
     jumpToUndoEntry,
     summarizeRingForJump,
+    resolveUndoShortcut,
+    detectUndoShortcutPlatform,
+    formatUndoShortcutChord,
+    buildJumpableRows,
+    nextFocusableJumpIndex,
+    countFocusableJumpRows,
+    type UndoShortcutPlatform,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -910,19 +917,11 @@
     }
   }
 
-  /** Format a captured-at timestamp as a SHORT relative duration
-   *  for the popover rows ("just now" / "12s ago" / "3m ago").
-   *  Pure helper — accepts a `now` injectable for tests. */
-  function formatRelativeAge(capturedAt: number, now: number = Date.now()): string {
-    const deltaMs = Math.max(0, now - capturedAt);
-    if (deltaMs < 5_000) return "just now";
-    const seconds = Math.floor(deltaMs / 1_000);
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ago`;
-  }
+  // Slice 159 (round-33) extracted `formatRelativeAge` to
+  // `formatJumpableRowAge` in `$lib/hopper` and reads it via the
+  // builder's pre-computed `row.ageCopy`. The local copy was
+  // removed in slice 160; the popover template now uses
+  // `jumpableRows` directly.
 
   /** $effect: auto-close the cascade-jump popover when the ring
    *  drains. Avoids leaving a phantom open popover after the toast
@@ -932,6 +931,120 @@
   $effect(() => {
     if (undoRing.length === 0 && undoPopoverOpen) {
       undoPopoverOpen = false;
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // Slice 160 — Keyboard shortcuts for cascade-undo + jump popover
+  // (round-33)
+  // -------------------------------------------------------------------
+  //
+  // Round 32 (slice 157) shipped the cascade-jump popover but every
+  // gesture required the mouse — a paralegal editing a 30-rule chain
+  // reached for Cmd-Z and got the browser's text-input undo. Slice
+  // 160 wires the slice-158 resolver into the existing onWindowKeydown
+  // chain so:
+  //   - Cmd-Z / Ctrl-Z fires the cascade Undo button (same as
+  //     clicking the inline toast button).
+  //   - Cmd-Shift-Z / Ctrl-Shift-Z opens the cascade-jump popover
+  //     (or closes it on a second press), giving the user a
+  //     keyboard-only path to the per-step jump UI.
+  //   - When the popover is OPEN, Cmd-Shift-Z jumps directly to the
+  //     oldest ready entry as a power-user accelerator.
+  //   - ArrowUp / ArrowDown walk focus between focusable rows
+  //     (slice 159's nextFocusableJumpIndex skips active-target /
+  //     stale / noop rows).
+  //   - Enter / Space activates the currently focused Jump-here
+  //     button.
+  //
+  // The slice-158 resolver is platform-aware (Cmd on macOS via
+  // metaKey; Ctrl elsewhere via ctrlKey). slice-159's buildJumpableRows
+  // + nextFocusableJumpIndex provide the per-row + focus data.
+
+  /** Detected platform for shortcut display + dispatch. Computed
+   *  once at module load — navigator.platform doesn't change at
+   *  runtime. */
+  const undoShortcutPlatform: UndoShortcutPlatform =
+    detectUndoShortcutPlatform(
+      typeof navigator !== "undefined" ? navigator.platform : "",
+    );
+
+  /** $derived renderable rows for the cascade-jump popover. Slice
+   *  159's buildJumpableRows lifts the per-row derivation out of
+   *  the template so the keyboard walker (focusedJumpRowIndex) can
+   *  ask "what's the next focusable row index" without re-deriving
+   *  status per row. Recomputes reactively over ring + rule
+   *  mutations.
+   *
+   *  Note: passing Date.now() here means age copy doesn't tick
+   *  every second; rows are rebuilt only on ring / chain change.
+   *  That's fine for the UI — a 4s toast dwell means the user
+   *  rarely sees the same popover for more than one age tick. */
+  let jumpableRows = $derived.by(() => buildJumpableRows(undoRing, rules));
+
+  /** $derived count of focusable rows for the popover header copy
+   *  ("N jumpable steps") and the keyboard hint. */
+  let focusableJumpCount = $derived.by(() => countFocusableJumpRows(jumpableRows));
+
+  /** Currently keyboard-focused row index (into the ring's
+   *  oldest-first layout). Null when no row has been focused via
+   *  the keyboard. Reset when the popover closes so a re-open
+   *  starts focusless again. */
+  let focusedJumpRowIndex = $state<number | null>(null);
+
+  /** Map of `bind:this` refs for the Jump-here buttons — keyed by
+   *  ring index so the keyboard handler can call .focus() on the
+   *  right element. Cleared when the popover closes. */
+  let jumpRowButtons = $state<Record<number, HTMLButtonElement | null>>({});
+
+  /** Move keyboard focus to the row at `ringIndex`. Updates the
+   *  $state index AND calls .focus() on the DOM element so the
+   *  visible focus ring follows. Silently no-ops when the button
+   *  isn't yet mounted (the popover just opened; the buttons
+   *  haven't rendered yet — the $effect on undoPopoverOpen retries
+   *  on next tick). */
+  function focusJumpRow(ringIndex: number) {
+    focusedJumpRowIndex = ringIndex;
+    const btn = jumpRowButtons[ringIndex];
+    if (btn) btn.focus();
+  }
+
+  /** Walk focus forward / reverse using slice 159's walker. */
+  function walkJumpFocus(direction: "forward" | "reverse") {
+    const next = nextFocusableJumpIndex(jumpableRows, focusedJumpRowIndex, direction);
+    if (next !== null) focusJumpRow(next);
+  }
+
+  /** Activate the currently focused row's "Jump here" button.
+   *  Falls back to the first focusable row when nothing is focused
+   *  (e.g. user opened the popover via Cmd-Shift-Z then pressed
+   *  Enter without arrow-key-walking first). */
+  function activateFocusedJump() {
+    let target = focusedJumpRowIndex;
+    if (target === null) {
+      target = nextFocusableJumpIndex(jumpableRows, null, "forward");
+    }
+    if (target !== null) void applyUndoJump(target);
+  }
+
+  /** Jump directly to the oldest READY entry — the power-user
+   *  accelerator for Cmd-Shift-Z while the popover is already
+   *  open. Walks forward from null (returns the OLDEST focusable
+   *  row, which sits at the bottom of the newest-first visual
+   *  layout). */
+  function jumpToOldestReady() {
+    const target = nextFocusableJumpIndex(jumpableRows, null, "forward");
+    if (target !== null) void applyUndoJump(target);
+  }
+
+  /** Auto-focus the first focusable row when the popover opens via
+   *  keyboard. Skipped when the popover opens via mouse (the click
+   *  itself doesn't set focusedJumpRowIndex; the first ArrowDown /
+   *  ArrowUp picks the right row). */
+  $effect(() => {
+    if (!undoPopoverOpen) {
+      focusedJumpRowIndex = null;
+      jumpRowButtons = {};
     }
   });
 
@@ -1249,6 +1362,81 @@
    *  fix-it > coverage Export > drilldown popover > coverage
    *  filter clear. */
   function onWindowKeydown(e: KeyboardEvent) {
+    // Slice 160: cascade-undo keyboard shortcuts (Cmd-Z / Cmd-Shift-Z
+    // / ArrowUp / ArrowDown / Enter / Space). The resolver returns
+    // "none" for anything that isn't a recognised shortcut, so the
+    // event falls through to the Escape handler / the browser
+    // default without interference.
+    //
+    // Important: only fire the cascade shortcut when the ring has
+    // an active READY entry — otherwise Cmd-Z is a no-op and we
+    // shouldn't intercept the browser's text-undo (which the user
+    // might want for an open input). For the popover-open shortcut
+    // we DO intercept even when the ring is empty (the chip wouldn't
+    // render so opening the popover is harmless; but if the user
+    // somehow triggered it, the toggleUndoPopover does nothing of
+    // its own).
+    const intent = resolveUndoShortcut(
+      {
+        key: e.key,
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      },
+      { popoverOpen: undoPopoverOpen, platform: undoShortcutPlatform },
+    );
+    if (intent === "cascade") {
+      if (
+        undoSelection.active !== null &&
+        undoStatus !== null &&
+        undoStatus.kind === "ready" &&
+        !undoBusy
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        void applyUndo();
+        return;
+      }
+    } else if (intent === "open-popover") {
+      // Only intercept when the chip is actually visible (ring has
+      // >= 2 entries — same gate as undoStepChip rendering). Else
+      // the shortcut would silently no-op and confuse the user.
+      if (undoSelection.totalEntries >= 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleUndoPopover();
+        return;
+      }
+    } else if (intent === "jump-oldest") {
+      if (!undoJumpBusy) {
+        e.preventDefault();
+        e.stopPropagation();
+        jumpToOldestReady();
+        return;
+      }
+    } else if (intent === "focus-next") {
+      e.preventDefault();
+      e.stopPropagation();
+      walkJumpFocus("forward");
+      return;
+    } else if (intent === "focus-prev") {
+      e.preventDefault();
+      e.stopPropagation();
+      walkJumpFocus("reverse");
+      return;
+    } else if (intent === "activate") {
+      // Only intercept Enter / Space when a Jump-here button is
+      // already keyboard-focused. Otherwise the user is likely
+      // typing in an input and Enter / Space should fall through.
+      if (focusedJumpRowIndex !== null && !undoJumpBusy) {
+        e.preventDefault();
+        e.stopPropagation();
+        activateFocusedJump();
+        return;
+      }
+    }
+
     if (e.key !== "Escape") return;
     if (undoPopoverOpen) {
       // Slice 157: the cascade-jump popover is the newest most-
@@ -1845,10 +2033,10 @@
                   onclick={toggleUndoPopover}
                   aria-haspopup="menu"
                   aria-expanded={undoPopoverOpen}
-                  aria-label="{undoStepChip} — {undoSelection.totalEntries === UNDO_RING_CAPACITY ? 'ring at capacity' : 'cascading undos available'} — click to open jump menu"
+                  aria-label="{undoStepChip} — {undoSelection.totalEntries === UNDO_RING_CAPACITY ? 'ring at capacity' : 'cascading undos available'} — click to open jump menu ({formatUndoShortcutChord('open-popover', undoShortcutPlatform)})"
                   title={undoSelection.totalEntries === UNDO_RING_CAPACITY
-                    ? `Undo ring at capacity — click to jump directly to any entry (next fix evicts the oldest)`
-                    : `${undoSelection.totalEntries - 1} more cascading undo${undoSelection.totalEntries - 1 === 1 ? "" : "s"} available — click to jump directly to any entry`}
+                    ? `Undo ring at capacity — click to jump directly to any entry (next fix evicts the oldest) · ${formatUndoShortcutChord("open-popover", undoShortcutPlatform)}`
+                    : `${undoSelection.totalEntries - 1} more cascading undo${undoSelection.totalEntries - 1 === 1 ? "" : "s"} available — click to jump directly to any entry · ${formatUndoShortcutChord("open-popover", undoShortcutPlatform)}`}
                 >
                   {undoStepChip}
                 </button>
@@ -1870,35 +2058,34 @@
                       Jump directly to any undo step
                     </p>
                     <ul class="cov-undo-jump-list">
-                      {#each undoRing as entry, idx (entry.capturedAt)}
-                        {@const entryStatus = computeUndoStatus(entry, rules)}
-                        {@const summaries = summarizeRingForJump(undoRing)}
-                        {@const plan = computeUndoJumpPlan(summaries, idx)}
-                        {@const isNewest = idx === undoRing.length - 1}
-                        {@const stepNumber = undoRing.length - idx}
-                        <li class="cov-undo-jump-row" class:active={isNewest}>
+                      {#each jumpableRows as row (row.capturedAt)}
+                        <li
+                          class="cov-undo-jump-row"
+                          class:active={row.isActiveTarget}
+                          class:focused={focusedJumpRowIndex === row.ringIndex}
+                        >
                           <div class="cov-undo-jump-meta">
-                            <span class="cov-undo-jump-step">Step {stepNumber}</span>
-                            <span class="cov-undo-jump-label">{entry.label}</span>
+                            <span class="cov-undo-jump-step">Step {row.stepNumber}</span>
+                            <span class="cov-undo-jump-label">{row.label}</span>
                             <span class="cov-undo-jump-age">
-                              {formatRelativeAge(entry.capturedAt)}
+                              {row.ageCopy}
                             </span>
                           </div>
-                          {#if isNewest}
+                          {#if row.isActiveTarget}
                             <span
                               class="cov-undo-jump-active"
-                              title="Active target — use the cascade Undo button to revert this step"
+                              title="Active target — use the cascade Undo button to revert this step ({formatUndoShortcutChord('cascade', undoShortcutPlatform)})"
                             >
                               Active target
                             </span>
-                          {:else if entryStatus.kind === "stale"}
+                          {:else if row.status.kind === "stale"}
                             <span
                               class="cov-undo-jump-stale"
-                              title={entryStatus.reason}
+                              title={row.status.reason}
                             >
                               Unavailable
                             </span>
-                          {:else if entryStatus.kind === "noop"}
+                          {:else if row.status.kind === "noop"}
                             <span
                               class="cov-undo-jump-noop"
                               title="Snapshot already matches the current chain"
@@ -1909,10 +2096,12 @@
                             <button
                               type="button"
                               class="cov-undo-jump-btn"
-                              onclick={() => void applyUndoJump(idx)}
-                              disabled={undoJumpBusy || !canApplyUndoJump(plan)}
-                              title={describeUndoJumpPlan(plan)}
-                              aria-label={describeUndoJumpPlan(plan)}
+                              bind:this={jumpRowButtons[row.ringIndex]}
+                              onclick={() => void applyUndoJump(row.ringIndex)}
+                              onfocus={() => { focusedJumpRowIndex = row.ringIndex; }}
+                              disabled={undoJumpBusy || row.plan === null || !canApplyUndoJump(row.plan)}
+                              title={row.plan ? describeUndoJumpPlan(row.plan) : ""}
+                              aria-label={row.plan ? describeUndoJumpPlan(row.plan) : "Jump here"}
                             >
                               Jump here
                             </button>
@@ -1920,6 +2109,34 @@
                         </li>
                       {/each}
                     </ul>
+                    <!-- Slice 160 (round-33) — keyboard hint footer.
+                         Surfaces the shortcut chords inline so a power
+                         user who opened the popover via Cmd-Shift-Z
+                         immediately learns the rest of the gesture
+                         vocabulary without leaving the chain editor.
+                         Hidden when there are no focusable rows (the
+                         row-walk shortcuts would be no-ops). -->
+                    {#if focusableJumpCount > 0}
+                      <div class="cov-undo-jump-kbd-hint" aria-hidden="true">
+                        <span class="cov-undo-jump-kbd-pair">
+                          <kbd>{formatUndoShortcutChord("focus-prev", undoShortcutPlatform)}</kbd>
+                          <kbd>{formatUndoShortcutChord("focus-next", undoShortcutPlatform)}</kbd>
+                          walk
+                        </span>
+                        <span class="cov-undo-jump-kbd-pair">
+                          <kbd>{formatUndoShortcutChord("activate", undoShortcutPlatform)}</kbd>
+                          jump
+                        </span>
+                        <span class="cov-undo-jump-kbd-pair">
+                          <kbd>{formatUndoShortcutChord("jump-oldest", undoShortcutPlatform)}</kbd>
+                          oldest
+                        </span>
+                        <span class="cov-undo-jump-kbd-pair">
+                          <kbd>Esc</kbd>
+                          close
+                        </span>
+                      </div>
+                    {/if}
                   </div>
                 {/if}
               </div>
@@ -3138,6 +3355,15 @@
     border-color: rgba(110, 220, 154, 0.36);
     background: rgba(110, 220, 154, 0.08);
   }
+  /* Slice 160 (round-33) — keyboard-focused row gets a stronger
+     hint than :hover (the user is driving from the keyboard now;
+     hover state would be misleading). Muted blue accent matches
+     the .cov-undo-jump-btn focus-visible ring. */
+  .cov-undo-jump-row.focused {
+    background: rgba(96, 165, 250, 0.07);
+    border-color: rgba(96, 165, 250, 0.32);
+    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.16) inset;
+  }
   .cov-undo-jump-meta {
     display: flex;
     align-items: baseline;
@@ -3233,6 +3459,46 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: help;
+  }
+
+  /* Slice 160 (round-33) — keyboard-shortcut hint footer for the
+     cascade-jump popover. Surfaces the chord vocabulary inline so a
+     user who opened the popover via Cmd-Shift-Z immediately learns
+     the rest of the gesture vocabulary (arrows / Enter / Cmd-Shift-Z
+     to jump oldest / Esc to close) without leaving the chain editor.
+     Mute-on-mute styling so the hint reads as "ambient help" rather
+     than a status bar. */
+  .cov-undo-jump-kbd-hint {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.42);
+    letter-spacing: 0.02em;
+  }
+  .cov-undo-jump-kbd-pair {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .cov-undo-jump-kbd-pair kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 3px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
   }
 
   .cov-error {
