@@ -15,7 +15,9 @@ import {
   pauseToastTimer,
   resumeToastTimer,
   toastTimerRemaining,
+  normalizeToastAction,
   type ToastTimer,
+  type ToastAction,
 } from "./toastStack";
 
 export type ToastKind = "success" | "error" | "info" | "warning";
@@ -29,12 +31,21 @@ export interface Toast {
   createdAt: number;
   /** Repeat count. >1 when identical toasts coalesced; renders as "xN". */
   count: number;
+  /** Optional inline action button (e.g. "Undo" / "Retry"). */
+  action?: ToastAction;
 }
 
 export interface NotifyOpts {
   detail?: string;
   /** ms before auto-dismiss. Pass 0 to keep until the user dismisses. */
   duration?: number;
+  /**
+   * Optional inline action button (e.g. an "Undo" on a destructive op).
+   * Ignored if it has no callable handler or a blank label. A toast with
+   * an action defaults to STICKY (duration 0) when no explicit duration
+   * is passed, so the user isn't racing the timer to click it.
+   */
+  action?: ToastAction;
 }
 
 const DEFAULT_DURATION: Record<ToastKind, number> = {
@@ -67,7 +78,10 @@ function armTimer(id: number): void {
 }
 
 function push(kind: ToastKind, message: string, opts: NotifyOpts = {}): number {
-  const duration = opts.duration ?? DEFAULT_DURATION[kind];
+  const action = normalizeToastAction(opts.action) ?? undefined;
+  // A toast carrying an action defaults to STICKY: the user shouldn't be
+  // racing a 3s timer to click "Undo". An explicit duration still wins.
+  const duration = opts.duration ?? (action ? 0 : DEFAULT_DURATION[kind]);
   let mergedId = -1;
   toasts.update((list) => {
     // Coalesce identical toasts: a button mashed N times, or a loop
@@ -81,6 +95,9 @@ function push(kind: ToastKind, message: string, opts: NotifyOpts = {}): number {
         count: target.count + 1,
         createdAt: Date.now(),
         duration,
+        // A repeat carrying a fresh action rebinds it (the latest handler
+        // closes over the latest state); otherwise keep the existing one.
+        action: action ?? target.action,
       };
       return [...list.filter((x) => x.id !== target.id), bumped];
     }
@@ -94,6 +111,7 @@ function push(kind: ToastKind, message: string, opts: NotifyOpts = {}): number {
       duration,
       createdAt: Date.now(),
       count: 1,
+      action,
     };
     return [...list, toast];
   });
@@ -150,9 +168,35 @@ export function dismissAll(): void {
   toasts.set([]);
 }
 
+/**
+ * Activate a toast's inline action (called from the action button's
+ * click / Enter / Space handler). Runs the normalized handler, then —
+ * unless the action opted out via `dismissOnClick: false` — dismisses
+ * the toast. No-op if the toast has no usable action. Centralizing this
+ * here keeps the dismiss-after-run policy in one place rather than in
+ * the Svelte template.
+ */
+export function runToastAction(id: number): void {
+  let toRun: ToastAction | null = null;
+  toasts.update((list) => {
+    const t = list.find((x) => x.id === id);
+    toRun = t ? normalizeToastAction(t.action) : null;
+    return list;
+  });
+  if (!toRun) return;
+  const action: ToastAction = toRun;
+  try {
+    action.onClick();
+  } finally {
+    if (action.dismissOnClick !== false) dismiss(id);
+  }
+}
+
 export const notify = {
   success: (message: string, opts?: NotifyOpts) => push("success", message, opts),
   error: (message: string, opts?: NotifyOpts) => push("error", message, opts),
   info: (message: string, opts?: NotifyOpts) => push("info", message, opts),
   warning: (message: string, opts?: NotifyOpts) => push("warning", message, opts),
 };
+
+export type { ToastAction };

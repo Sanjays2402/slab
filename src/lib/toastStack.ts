@@ -332,6 +332,80 @@ export function splitToastsByPoliteness(
   return { assertive, polite };
 }
 
+// ─── Toast action buttons (round-36 Slice 1) ────────────────────────
+
+/**
+ * An inline action a toast can carry, e.g. an "Undo" on a destructive
+ * op or a "Retry" on a failed render. Rendered as a button beside the
+ * close ×; clicking (or Enter/Space) runs {@link onClick} and — unless
+ * {@link dismissOnClick} is false — dismisses the toast. The label lives
+ * in the pure layer (trim/clamp/validate); the handler lives in the
+ * store since it closes over caller state.
+ */
+export interface ToastAction {
+  /** Button text, e.g. "Undo". Trimmed; blank after trim = no action. */
+  label: string;
+  /** Invoked on activation (click / Enter / Space). */
+  onClick: () => void;
+  /** Dismiss the toast after the handler runs. Defaults to true. */
+  dismissOnClick?: boolean;
+}
+
+/**
+ * Action labels are a single word or two — clamp so a long string can't
+ * blow out the toast's fixed width and crowd out the message.
+ */
+export const TOAST_ACTION_LABEL_MAX = 24;
+
+/**
+ * Validate + normalize a raw action into a clean, renderable one, or
+ * `null` if it can't be shown. A usable action needs a non-blank label
+ * AND a callable handler — a label with no handler is a dead button, a
+ * handler with no label has nothing to click. The label is trimmed and
+ * length-clamped; `dismissOnClick` defaults to true. Pure: builds a
+ * fresh object, never mutates the input.
+ */
+export function normalizeToastAction(
+  action: ToastAction | undefined | null,
+): ToastAction | null {
+  if (!action || typeof action.onClick !== "function") return null;
+  const label = clampToastActionLabel(action.label);
+  if (!label) return null;
+  return {
+    label,
+    onClick: action.onClick,
+    dismissOnClick: action.dismissOnClick !== false,
+  };
+}
+
+/**
+ * Trim + length-clamp an action label, appending an ellipsis when
+ * truncated. A non-string / blank label yields "" so callers can treat
+ * it as "no action". The ellipsis counts toward the cap so the rendered
+ * string never exceeds {@link TOAST_ACTION_LABEL_MAX}.
+ */
+export function clampToastActionLabel(label: unknown): string {
+  if (typeof label !== "string") return "";
+  const trimmed = label.trim();
+  if (trimmed.length <= TOAST_ACTION_LABEL_MAX) return trimmed;
+  return trimmed.slice(0, TOAST_ACTION_LABEL_MAX - 1).trimEnd() + "\u2026";
+}
+
+/** Whether a toast currently carries a usable, renderable action. */
+export function hasToastAction(toast: Pick<Toast, "action">): boolean {
+  return normalizeToastAction(toast.action) !== null;
+}
+
+/**
+ * Whether activating an action should also dismiss its toast. Reads the
+ * normalized flag (default true); a non-actionable toast returns false
+ * so a stray keypress can't dismiss a toast with no action.
+ */
+export function toastActionDismisses(toast: Pick<Toast, "action">): boolean {
+  const a = normalizeToastAction(toast.action);
+  return a !== null && a.dismissOnClick === true;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

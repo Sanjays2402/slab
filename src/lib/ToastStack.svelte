@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { toasts, dismiss, dismissAll, pauseToast, resumeToast, type Toast } from "$lib/notify";
+  import { toasts, dismiss, dismissAll, pauseToast, resumeToast, runToastAction, type Toast } from "$lib/notify";
   import {
     partitionToasts,
     describeToastOverflow,
@@ -8,6 +8,7 @@
     shouldShowClearAll,
     splitToastsByPoliteness,
     announceToast,
+    normalizeToastAction,
   } from "$lib/toastStack";
   import { fly } from "svelte/transition";
 
@@ -74,6 +75,13 @@
         </div>
         {#if t.detail}<div class="detail">{t.detail}</div>{/if}
       </div>
+      {#if normalizeToastAction(t.action)}
+        <button
+          class="action"
+          onclick={() => runToastAction(t.id)}
+          aria-label="{normalizeToastAction(t.action)?.label}: {t.message}"
+        >{normalizeToastAction(t.action)?.label}</button>
+      {/if}
       <button class="close" onclick={() => dismiss(t.id)} aria-label="Dismiss notification: {t.message}">×</button>
       {#if t.duration > 0}
         <!-- Lifespan bar: depletes over t.duration; pauses with the JS
@@ -281,6 +289,56 @@
   .close:hover {
     color: var(--text);
     background: var(--bg-3);
+  }
+  .action {
+    flex-shrink: 0;
+    align-self: center;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm, 5px);
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+  .action:hover {
+    background: var(--bg-1);
+    border-color: var(--text-3);
+  }
+  .action:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  /* The action adopts the toast's severity accent so an "Undo" on a
+     success reads green, a "Retry" on an error reads red — matching the
+     left border + icon vocabulary. */
+  .toast.success .action {
+    color: #3fc88c;
+    border-color: rgba(63, 200, 140, 0.4);
+  }
+  .toast.success .action:hover {
+    background: rgba(63, 200, 140, 0.14);
+  }
+  .toast.error .action {
+    color: #ff5d6c;
+    border-color: rgba(255, 93, 108, 0.4);
+  }
+  .toast.error .action:hover {
+    background: rgba(255, 93, 108, 0.14);
+  }
+  .toast.warning .action {
+    color: #ffb648;
+    border-color: rgba(255, 182, 72, 0.4);
+  }
+  .toast.warning .action:hover {
+    background: rgba(255, 182, 72, 0.14);
   }
   .lifespan {
     position: absolute;

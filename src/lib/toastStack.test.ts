@@ -27,7 +27,13 @@ import {
   toastKindLabel,
   announceToast,
   splitToastsByPoliteness,
+  TOAST_ACTION_LABEL_MAX,
+  normalizeToastAction,
+  clampToastActionLabel,
+  hasToastAction,
+  toastActionDismisses,
   type Toast,
+  type ToastAction,
 } from "./toastStack";
 
 let passed = 0;
@@ -446,6 +452,88 @@ function ids(list: readonly Toast[]): string {
   const s = splitToastsByPoliteness(list);
   expect(ids(s.assertive) === "5,6", "split: preserves store order within bucket");
   expect(ids(list) === before, "split: does not mutate input");
+}
+
+// ── Toast action buttons (round-36 Slice 1) ──────────────────────────
+
+{
+  // normalizeToastAction: a usable action needs label + callable handler.
+  const noop = () => {};
+  expect(
+    normalizeToastAction({ label: "Undo", onClick: noop })?.label === "Undo",
+    "action: valid label + handler -> normalized",
+  );
+  expect(
+    normalizeToastAction({ label: "Undo", onClick: noop })?.dismissOnClick === true,
+    "action: dismissOnClick defaults true",
+  );
+  expect(
+    normalizeToastAction({ label: "Keep", onClick: noop, dismissOnClick: false })
+      ?.dismissOnClick === false,
+    "action: explicit dismissOnClick false preserved",
+  );
+  expect(normalizeToastAction(undefined) === null, "action: undefined -> null");
+  expect(normalizeToastAction(null) === null, "action: null -> null");
+  expect(
+    normalizeToastAction({ label: "", onClick: noop }) === null,
+    "action: blank label -> null (dead button)",
+  );
+  expect(
+    normalizeToastAction({ label: "   ", onClick: noop }) === null,
+    "action: whitespace-only label -> null",
+  );
+  expect(
+    // @ts-expect-error deliberately bad handler
+    normalizeToastAction({ label: "Undo", onClick: "nope" }) === null,
+    "action: non-function handler -> null (nothing to run)",
+  );
+  // Purity: returns a fresh object, input untouched.
+  const raw: ToastAction = { label: "  Undo  ", onClick: noop };
+  const norm = normalizeToastAction(raw);
+  expect(norm !== null && norm !== raw, "action: returns fresh object");
+  expect(raw.label === "  Undo  ", "action: does not mutate input label");
+  expect(norm?.label === "Undo", "action: trims label");
+}
+
+{
+  // clampToastActionLabel: trim + length clamp with ellipsis.
+  expect(clampToastActionLabel("Undo") === "Undo", "clampLabel: short passes through");
+  expect(clampToastActionLabel("  Retry  ") === "Retry", "clampLabel: trims");
+  expect(clampToastActionLabel(42 as unknown) === "", "clampLabel: non-string -> empty");
+  expect(clampToastActionLabel("") === "", "clampLabel: empty -> empty");
+  const long = "Reconnect to the document server now";
+  const clamped = clampToastActionLabel(long);
+  expect(clamped.length <= TOAST_ACTION_LABEL_MAX, "clampLabel: never exceeds max");
+  expect(clamped.endsWith("\u2026"), "clampLabel: truncated gets ellipsis");
+  const exact = "x".repeat(TOAST_ACTION_LABEL_MAX);
+  expect(
+    clampToastActionLabel(exact) === exact,
+    "clampLabel: exactly at max not truncated",
+  );
+}
+
+{
+  // hasToastAction / toastActionDismisses read the normalized action.
+  const noop = () => {};
+  const withAction: Pick<Toast, "action"> = { action: { label: "Undo", onClick: noop } };
+  const noAction: Pick<Toast, "action"> = {};
+  const deadAction: Pick<Toast, "action"> = { action: { label: "", onClick: noop } };
+  expect(hasToastAction(withAction) === true, "hasAction: usable action -> true");
+  expect(hasToastAction(noAction) === false, "hasAction: no action -> false");
+  expect(hasToastAction(deadAction) === false, "hasAction: dead action -> false");
+  expect(
+    toastActionDismisses(withAction) === true,
+    "actionDismisses: default action dismisses",
+  );
+  expect(
+    toastActionDismisses(noAction) === false,
+    "actionDismisses: no action -> false (no stray dismiss)",
+  );
+  expect(
+    toastActionDismisses({ action: { label: "Keep", onClick: noop, dismissOnClick: false } }) ===
+      false,
+    "actionDismisses: opt-out action does not dismiss",
+  );
 }
 
 // eslint-disable-next-line no-console
