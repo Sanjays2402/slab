@@ -83,6 +83,11 @@
     toggleCaptureTimestampMode,
     describeCaptureTimestampMode,
     type CaptureTimestampMode,
+    moveRuleToIndex,
+    dropEdgeFromOffset,
+    resolveDropIndex,
+    isNoopDrop,
+    type DropEdge,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
     predicateLabel,
@@ -125,6 +130,21 @@
   let saving = $state(false);
   let savedAt = $state<number | null>(null);
   let errorMsg = $state<string | null>(null);
+
+  // -------------------------------------------------------------------
+  // Slice 166 — drag-to-reorder (round-34)
+  // -------------------------------------------------------------------
+  //
+  // Until now a rule moved one position per up/down click; dragging
+  // rule #9 to #2 took seven clicks. dragFrom is the index of the
+  // rule currently being dragged (null when no drag is active);
+  // dropIndex is the slice-164-resolved FINAL resting index used to
+  // render the insertion indicator; dropEdge tracks which edge of the
+  // hovered row the pointer is nearer so the indicator sits in the
+  // right gap.
+  let dragFrom = $state<number | null>(null);
+  let dropIndex = $state<number | null>(null);
+  let dropEdge = $state<DropEdge>("before");
 
   /** Files the preview pane evaluates against. Seeded from the
    *  watch's recent run log (so users see *their* files) plus a
@@ -1595,19 +1615,79 @@
   }
 
   function moveUp(i: number) {
-    if (i === 0) return;
-    const next = rules.slice();
-    [next[i - 1], next[i]] = [next[i], next[i - 1]];
-    rules = next;
-    scheduleSave();
+    commitReorder(i, i - 1);
   }
 
   function moveDown(i: number) {
-    if (i >= rules.length - 1) return;
-    const next = rules.slice();
-    [next[i], next[i + 1]] = [next[i + 1], next[i]];
-    rules = next;
+    commitReorder(i, i + 1);
+  }
+
+  /** Shared reorder commit path for the up/down buttons and drag-drop
+   *  (slice 166). Uses the slice-163 primitive so the no-op guard and
+   *  the persistence round-trip live in ONE place. Returns true iff
+   *  the chain actually moved. */
+  function commitReorder(from: number, to: number): boolean {
+    const result = moveRuleToIndex(rules, from, to);
+    if (!result.moved) return false;
+    rules = result.rules;
     scheduleSave();
+    return true;
+  }
+
+  // ── Slice 166 — mouse drag-to-reorder handlers ────────────────────
+  //
+  // HTML5 drag-and-drop on the rule row's grab handle. dragstart
+  // records the source index; dragover on each row computes the drop
+  // edge (slice 164's dropEdgeFromOffset) + the resolved final index
+  // (resolveDropIndex) so the insertion indicator renders in the
+  // right gap; drop commits via the shared commitReorder path.
+
+  function onRuleDragStart(e: DragEvent, i: number) {
+    dragFrom = i;
+    dropIndex = null;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox requires data to be set for the drag to initiate.
+      try {
+        e.dataTransfer.setData("text/plain", String(i));
+      } catch {
+        // Some environments throw on setData; the drag still works.
+      }
+    }
+  }
+
+  function onRuleDragOver(e: DragEvent, i: number) {
+    if (dragFrom === null) return;
+    e.preventDefault(); // allow drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const row = e.currentTarget as HTMLElement;
+    const rect = row.getBoundingClientRect();
+    const edge = dropEdgeFromOffset(e.clientY - rect.top, rect.height);
+    // Suppress the indicator when hovering the dragged rule's own
+    // flanking gaps (a move that would do nothing).
+    if (isNoopDrop(dragFrom, i, edge, rules.length)) {
+      dropIndex = null;
+      return;
+    }
+    dropEdge = edge;
+    dropIndex = resolveDropIndex(dragFrom, i, edge, rules.length);
+  }
+
+  function onRuleDrop(e: DragEvent, i: number) {
+    if (dragFrom === null) return;
+    e.preventDefault();
+    const row = e.currentTarget as HTMLElement;
+    const rect = row.getBoundingClientRect();
+    const edge = dropEdgeFromOffset(e.clientY - rect.top, rect.height);
+    const to = resolveDropIndex(dragFrom, i, edge, rules.length);
+    const from = dragFrom;
+    endRuleDrag();
+    if (to >= 0) commitReorder(from, to);
+  }
+
+  function endRuleDrag() {
+    dragFrom = null;
+    dropIndex = null;
   }
 
   function setPredicateKind(i: number, kind: RulePredicate["kind"]) {
@@ -1706,8 +1786,34 @@
         </li>
       {:else}
         {#each rules as rule, i (i)}
-          <li class="rule">
+          <li
+            class="rule"
+            class:dragging={dragFrom === i}
+            class:drop-before={dropIndex === i && dropEdge === "before"}
+            class:drop-after={dropIndex === i && dropEdge === "after"}
+            ondragover={(e) => onRuleDragOver(e, i)}
+            ondrop={(e) => onRuleDrop(e, i)}
+            ondragend={endRuleDrag}
+            draggable={dragFrom === i}
+          >
             <div class="rule-head">
+              <button
+                class="grip"
+                aria-label="Drag to reorder {ruleNameAt(i)}"
+                title="Drag to reorder"
+                draggable="true"
+                ondragstart={(e) => onRuleDragStart(e, i)}
+                ondragend={endRuleDrag}
+              >
+                <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true">
+                  <circle cx="2.5" cy="3" r="1.2" />
+                  <circle cx="7.5" cy="3" r="1.2" />
+                  <circle cx="2.5" cy="8" r="1.2" />
+                  <circle cx="7.5" cy="8" r="1.2" />
+                  <circle cx="2.5" cy="13" r="1.2" />
+                  <circle cx="7.5" cy="13" r="1.2" />
+                </svg>
+              </button>
               <div class="reorder">
                 <button
                   class="rbtn"
@@ -2700,6 +2806,7 @@
   }
 
   .rule {
+    position: relative;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -2707,11 +2814,75 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    transition:
+      opacity 0.12s ease,
+      box-shadow 0.12s ease,
+      transform 0.12s ease;
+  }
+  /* Slice 166 — the rule currently being dragged dims + lifts. */
+  .rule.dragging {
+    opacity: 0.4;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    transform: scale(0.99);
+  }
+  /* Slice 166 — drop indicator: a glowing insertion line in the gap
+     above (.drop-before) or below (.drop-after) the hovered row. The
+     ::before is absolutely positioned to the row edge so it reads as
+     "the dragged rule will land here". */
+  .rule.drop-before::before,
+  .rule.drop-after::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    height: 2px;
+    border-radius: 2px;
+    background: rgba(110, 165, 255, 0.95);
+    box-shadow: 0 0 7px rgba(110, 165, 255, 0.7);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .rule.drop-before::before {
+    top: -5px;
+  }
+  .rule.drop-after::before {
+    bottom: -5px;
   }
   .rule-head {
     display: flex;
     gap: 8px;
     align-items: center;
+  }
+  /* Slice 166/167 — drag grab handle. Six-dot glyph, grab cursor;
+     focus-ring for the keyboard reorder path. */
+  .grip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 2px 2px;
+    margin: 0;
+    cursor: grab;
+    color: var(--text-muted, #888);
+    border-radius: 4px;
+    flex: 0 0 auto;
+    touch-action: none;
+  }
+  .grip:hover {
+    color: rgba(110, 165, 255, 0.9);
+    background: rgba(110, 165, 255, 0.1);
+  }
+  .grip:active {
+    cursor: grabbing;
+  }
+  .grip:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(110, 165, 255, 0.65);
+    color: rgba(110, 165, 255, 0.95);
+  }
+  .grip svg circle {
+    fill: currentColor;
   }
   .reorder {
     display: flex;
