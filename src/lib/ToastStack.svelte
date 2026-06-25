@@ -1,8 +1,6 @@
 <script lang="ts">
   import { toasts, dismiss, dismissAll, pauseToast, resumeToast, runToastAction, type Toast } from "$lib/notify";
   import {
-    partitionToasts,
-    describeToastOverflow,
     describeToastCount,
     describeClearAll,
     shouldShowClearAll,
@@ -18,6 +16,8 @@
     pickToastFocusIndex,
     newestToastFocusIndex,
     hasToastAction,
+    resolveToastStackView,
+    describeOverflowToggleAria,
     type ToastSwipe,
   } from "$lib/toastStack";
   import { fly } from "svelte/transition";
@@ -28,18 +28,27 @@
   // a "+N more" pill (slice 1) so the stack never fills the viewport.
   // Dismiss on click of × or via the auto-timer set by notify.ts.
 
-  // Newest TOAST_MAX_VISIBLE render; older collapse behind the pill. The
-  // pill sits ABOVE the visible toasts (older = higher in the corner).
-  const part = $derived(partitionToasts($toasts));
-  const overflowCopy = $derived(describeToastOverflow(part.hiddenCount));
+  // Expand/collapse state (round-36 slice 5): the overflow "+N more" is
+  // now a real toggle. Collapsed -> newest TOAST_MAX_VISIBLE render, older
+  // hidden; expanded -> every toast renders, toggle reads "Show less".
+  let expanded = $state(false);
+  const view = $derived(resolveToastStackView($toasts, expanded));
+  // Auto-collapse once the overflow drains so the toggle can't strand the
+  // stack in an expanded state with nothing extra to show.
+  $effect(() => {
+    if (expanded && view.overflowCount === 0) expanded = false;
+  });
+  const overflowAria = $derived(
+    describeOverflowToggleAria(view.overflowCount, view.expanded),
+  );
   // Clear-all header (slice 3) tops the stack once 2+ toasts are live,
   // wiring the bulk dismissAll the notify store has always exposed.
   const showClearAll = $derived(shouldShowClearAll($toasts.length));
   const clearAllCopy = $derived(describeClearAll($toasts.length));
-  // a11y (slice 5): the visual stack reorders + coalesces toasts, a poor
-  // live region. Mirror every toast into one of two dedicated hidden
-  // regions by politeness — errors/warnings assertive, the rest polite —
-  // so screen readers announce each exactly once at the right urgency.
+  // a11y: the visual stack reorders + coalesces toasts, a poor live
+  // region. Mirror every toast into one of two dedicated hidden regions
+  // by politeness — errors/warnings assertive, the rest polite — so
+  // screen readers announce each exactly once at the right urgency.
   const announce = $derived(splitToastsByPoliteness($toasts));
 
   function icon(kind: Toast["kind"]): string {
@@ -110,7 +119,7 @@
 
   function focusToastAt(index: number) {
     if (index < 0) return;
-    const list = part.visible;
+    const list = view.rendered;
     const t = list[index];
     if (!t) return;
     toastEls[t.id]?.focus();
@@ -118,10 +127,10 @@
 
   async function onGlobalKeydown(e: KeyboardEvent) {
     if (!resolveToastFocusHotkey(e)) return;
-    if (part.visible.length === 0) return;
+    if (view.rendered.length === 0) return;
     e.preventDefault();
     await tick();
-    focusToastAt(newestToastFocusIndex(part.visible.length));
+    focusToastAt(newestToastFocusIndex(view.rendered.length));
   }
 
   async function onToastKeydown(e: KeyboardEvent, id: number, index: number) {
@@ -129,7 +138,7 @@
     // button (action / close) is focused, let its own handler win so we
     // don't double-fire on Enter/Space.
     if (e.target !== e.currentTarget) return;
-    const t = part.visible.find((x) => x.id === id);
+    const t = view.rendered.find((x) => x.id === id);
     const intent = resolveFocusedToastKey(e, t ? hasToastAction(t) : false);
     if (intent === "none") return;
     e.preventDefault();
@@ -138,7 +147,7 @@
       return;
     }
     // dismiss + move focus to the sibling that takes the freed slot.
-    const remaining = part.visible.length - 1;
+    const remaining = view.rendered.length - 1;
     dismiss(id);
     await tick();
     focusToastAt(pickToastFocusIndex(remaining, index));
@@ -156,10 +165,18 @@
       <button class="clear-all" onclick={() => dismissAll()}>{clearAllCopy}</button>
     </div>
   {/if}
-  {#if overflowCopy}
-    <div class="overflow-pill" aria-hidden="true">{overflowCopy}</div>
+  {#if view.showToggle}
+    <div class="overflow-row">
+      <button
+        class="overflow-toggle"
+        class:expanded={view.expanded}
+        onclick={() => (expanded = !expanded)}
+        aria-expanded={view.expanded}
+        aria-label={overflowAria}
+      >{view.toggleLabel}</button>
+    </div>
   {/if}
-  {#each part.visible as t, i (t.id)}
+  {#each view.rendered as t, i (t.id)}
     <div
       class="toast {t.kind}"
       class:swiping={swipeId === t.id}
@@ -249,9 +266,13 @@
     pointer-events: none;
     max-width: min(380px, calc(100vw - 32px));
   }
-  .overflow-pill {
+  .overflow-row {
     pointer-events: auto;
     align-self: flex-end;
+    display: flex;
+  }
+  .overflow-toggle {
+    pointer-events: auto;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -259,8 +280,23 @@
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: 999px;
-    padding: 2px 10px;
+    padding: 3px 11px;
+    cursor: pointer;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    transition:
+      color 120ms ease,
+      border-color 120ms ease;
+  }
+  .overflow-toggle:hover {
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .overflow-toggle.expanded {
+    color: var(--text);
+  }
+  .overflow-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .clear-all-row {
     pointer-events: auto;

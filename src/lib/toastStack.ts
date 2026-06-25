@@ -679,6 +679,76 @@ export function newestToastFocusIndex(count: number): number {
   return Math.floor(count) - 1;
 }
 
+// ─── Expandable overflow (round-36 Slice 5) ─────────────────────────
+
+/**
+ * Number of toasts collapsed beyond the visible cap, INDEPENDENT of
+ * whether the stack is currently expanded. Round-35's partitionToasts
+ * reports `hiddenCount` as 0 once expanded (everything's rendered), so
+ * the toggle needs this stable count to keep showing "Show less".
+ */
+export function countToastOverflow(
+  total: number,
+  maxVisible: number = TOAST_MAX_VISIBLE,
+): number {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  const cap =
+    Number.isFinite(maxVisible) && maxVisible > 0 ? Math.floor(maxVisible) : TOAST_MAX_VISIBLE;
+  const over = Math.floor(total) - cap;
+  return over > 0 ? over : 0;
+}
+
+/**
+ * Resolved render plan for the toast stack, folding the round-35
+ * partition together with the expand/collapse state (slice 5). When
+ * COLLAPSED it behaves exactly like before — newest `maxVisible` render,
+ * older collapse behind a "+N more" toggle. When EXPANDED every toast
+ * renders and the toggle reads "Show less". The toggle only appears when
+ * there's genuine overflow. Pure: never mutates the input.
+ */
+export interface ToastStackView {
+  /** Toasts to render, store order (oldest-first, newest nearest corner). */
+  rendered: Toast[];
+  /** Count collapsed beyond the cap (stable across expand state). */
+  overflowCount: number;
+  /** Whether the stack is currently expanded. */
+  expanded: boolean;
+  /** Whether to render the overflow toggle at all. */
+  showToggle: boolean;
+  /** Toggle copy: "+N more" collapsed, "Show less" expanded, else "". */
+  toggleLabel: string;
+}
+
+export function resolveToastStackView(
+  toasts: readonly Toast[],
+  expanded: boolean,
+  maxVisible: number = TOAST_MAX_VISIBLE,
+): ToastStackView {
+  const list = Array.isArray(toasts) ? toasts : [];
+  const overflowCount = countToastOverflow(list.length, maxVisible);
+  const showToggle = overflowCount > 0;
+  // Expanded only matters when there's something to expand.
+  const reallyExpanded = expanded && showToggle;
+  const rendered = reallyExpanded ? [...list] : partitionToasts(list, maxVisible).visible;
+  let toggleLabel = "";
+  if (showToggle) {
+    toggleLabel = reallyExpanded ? "Show less" : describeToastOverflow(overflowCount);
+  }
+  return { rendered, overflowCount, expanded: reallyExpanded, showToggle, toggleLabel };
+}
+
+/**
+ * Accessible label for the overflow toggle button — more descriptive
+ * than the visible copy for screen-reader users: "Show 2 older
+ * notifications" / "Collapse notifications". Empty when no overflow.
+ */
+export function describeOverflowToggleAria(overflowCount: number, expanded: boolean): string {
+  if (!Number.isFinite(overflowCount) || overflowCount <= 0) return "";
+  if (expanded) return "Collapse notifications";
+  const n = Math.floor(overflowCount);
+  return `Show ${n} older notification${n === 1 ? "" : "s"}`;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

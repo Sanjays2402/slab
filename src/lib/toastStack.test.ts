@@ -48,6 +48,9 @@ import {
   resolveFocusedToastKey,
   pickToastFocusIndex,
   newestToastFocusIndex,
+  countToastOverflow,
+  resolveToastStackView,
+  describeOverflowToggleAria,
   type Toast,
   type ToastAction,
   type ToastPromiseSpec,
@@ -769,6 +772,80 @@ function ids(list: readonly Toast[]): string {
   expect(newestToastFocusIndex(1) === 0, "newestFocus: 1 -> index 0");
   expect(newestToastFocusIndex(0) === -1, "newestFocus: empty -> -1");
   expect(newestToastFocusIndex(NaN) === -1, "newestFocus: NaN -> -1");
+}
+
+// ── Expandable overflow (round-36 Slice 5) ───────────────────────────
+
+{
+  // countToastOverflow: stable count beyond the cap.
+  expect(countToastOverflow(3, 4) === 0, "overflow: under cap -> 0");
+  expect(countToastOverflow(4, 4) === 0, "overflow: at cap -> 0");
+  expect(countToastOverflow(7, 4) === 3, "overflow: 7 with cap 4 -> 3");
+  expect(countToastOverflow(0, 4) === 0, "overflow: empty -> 0");
+  expect(countToastOverflow(NaN, 4) === 0, "overflow: NaN total -> 0");
+  expect(countToastOverflow(10, 0) === 10 - TOAST_MAX_VISIBLE, "overflow: bad cap -> default");
+}
+
+{
+  // resolveToastStackView COLLAPSED: behaves like partition.
+  const list = [toast(1), toast(2), toast(3), toast(4), toast(5), toast(6)];
+  const v = resolveToastStackView(list, false, 4);
+  expect(ids(v.rendered) === "3,4,5,6", "view: collapsed renders newest cap");
+  expect(v.overflowCount === 2, "view: collapsed overflowCount 2");
+  expect(v.expanded === false, "view: collapsed not expanded");
+  expect(v.showToggle === true, "view: collapsed shows toggle");
+  expect(v.toggleLabel === "+2 more", "view: collapsed label '+2 more'");
+}
+
+{
+  // resolveToastStackView EXPANDED: renders everything, "Show less".
+  const list = [toast(1), toast(2), toast(3), toast(4), toast(5), toast(6)];
+  const v = resolveToastStackView(list, true, 4);
+  expect(ids(v.rendered) === "1,2,3,4,5,6", "view: expanded renders all");
+  expect(v.overflowCount === 2, "view: expanded overflowCount stable at 2");
+  expect(v.expanded === true, "view: expanded flag true");
+  expect(v.toggleLabel === "Show less", "view: expanded label 'Show less'");
+}
+
+{
+  // No overflow: no toggle, expanded coerced false.
+  const list = [toast(1), toast(2)];
+  const collapsed = resolveToastStackView(list, false, 4);
+  expect(collapsed.showToggle === false, "view: no overflow -> no toggle");
+  expect(collapsed.toggleLabel === "", "view: no overflow -> empty label");
+  // Even if asked to expand, with no overflow it stays effectively collapsed.
+  const askExpand = resolveToastStackView(list, true, 4);
+  expect(askExpand.expanded === false, "view: expand request ignored without overflow");
+  expect(ids(askExpand.rendered) === "1,2", "view: all render (under cap) regardless");
+}
+
+{
+  // Purity: input not mutated; rendered is a fresh array.
+  const list = [toast(1), toast(2), toast(3), toast(4), toast(5)];
+  const before = ids(list);
+  const v = resolveToastStackView(list, true, 4);
+  expect(ids(list) === before, "view: does not mutate input");
+  expect(v.rendered !== list, "view: rendered is a fresh array");
+  // Bad input guarded.
+  const empty = resolveToastStackView(null as unknown as Toast[], false, 4);
+  expect(empty.rendered.length === 0 && empty.showToggle === false, "view: bad input -> empty safe");
+}
+
+{
+  // describeOverflowToggleAria: descriptive SR copy.
+  expect(
+    describeOverflowToggleAria(2, false) === "Show 2 older notifications",
+    "overflowAria: collapsed plural",
+  );
+  expect(
+    describeOverflowToggleAria(1, false) === "Show 1 older notification",
+    "overflowAria: collapsed singular",
+  );
+  expect(
+    describeOverflowToggleAria(3, true) === "Collapse notifications",
+    "overflowAria: expanded",
+  );
+  expect(describeOverflowToggleAria(0, false) === "", "overflowAria: no overflow -> empty");
 }
 
 // eslint-disable-next-line no-console
