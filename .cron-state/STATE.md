@@ -1,13 +1,114 @@
 # Slab Cron State
 
-Last updated: 2026-06-25 02:45 PT by Cake (cron) — round-34 BATCH shipped (5 frontend/UX slices, 163-167): the long-deferred (since round 26) Hopper rule reorder-by-drag, closing the #1 frontend candidate. Three tested pure-TS helper layers + two demo-able UI capstones. Slice 163 moveRuleToIndex/describeRuleMove final-index array-move primitive (81 tests); slice 164 dropEdgeFromOffset/resolveDropIndex/isNoopDrop drag geometry resolver with source-removal-shift off-by-one handling, validated by a 50-case independent marker-insertion oracle (153 tests); slice 165 resolveRuleReorderKey Alt+Arrow keyboard classifier (29 tests); slice 166 mouse drag-to-reorder UI (six-dot grab handle, live insertion indicator, dragged-row dim/lift); slice 167 keyboard reorder a11y capstone (Alt+Arrow move, focus-follow, aria-live announcements). SHAs af06a6c, 2ac3f3c, ea05f6c, 0e82822, b04bf73. Gates: tsx hopper.test.ts 1189/1189 pass (round-33 baseline 926 +263), pnpm check 0 errors/104 warnings (round-32/33 baseline preserved EXACTLY), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-33 note follows -- round-33 BATCH shipped (RECOVERY: a prior tick built+committed these 5 frontend slices locally at 02:12-02:50 PT today but CRASHED before gating/pushing/logging; origin was still at the round-32 log. This tick re-gated the orphaned batch clean and pushed it). Round 33 = 5 frontend/UX slices (158-162) making the round-32 cascade-jump popover fully keyboard-drivable (Cmd-Z cascade / Cmd-Shift-Z jump popover / Arrow+Enter row nav via a pure resolver + focus walker) PLUS a Relative/Absolute per-row timestamp toggle (localStorage-persisted) and a ring-health popover header. SHAs de87a9d, e0206f3, 429da78, db2319f, 9c065a3. Gates: pnpm check 0 errors/104 warnings (round-32 baseline preserved exactly), tsx hopper.test.ts 926/926 pass (round-32 baseline 759 +167), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-32 note follows -- round-32 BATCH shipped: 5 slices promoting round-31's "Step N of M" counter chip into a clickable per-step cascade-jump popover. compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan with {is_valid, skip_count, dropped_labels (newest-first), target_label, target_index} pure-data planner — invalid for empty/oor/target-equals-newest with label-echo for target=newest + valid newest-first walk via reverse range collecting labels + snake_case serde round-trip + 14 tests (slice 153); TS mirror computeUndoJumpPlan 1:1 + UndoJumpPlan snake_case wire-shape interface + describeUndoJumpPlan discriminated copy ("No jump available" / "Already the newest entry" / "Skip 1 revert to jump back to <label>" / "Skip N reverts to jump back to <label>") + canApplyUndoJump predicate + defensive NaN/negative/non-integer normalisation + 66 inline tests (slice 154); slab_hopper_compute_undo_jump_plan Tauri command wired into invoke handler + slabHopperComputeUndoJumpPlan async wrapper with browser-mode delegation + 45 wrapper-delegation tests pinning every UndoJumpPlan field through browser-mode path with real fix-it/fix-all labels and runtime-type pinning (slice 155); jumpToUndoEntry(ring, targetIndex) -> UndoRingJump {is_valid, ring, target, dropped} live-ring bridge trimming entries [0..=targetIndex] returning fresh array (input never mutated) with snapshot reference identity preserved for retained entries + summarizeRingForJump(ring) -> UndoEntrySummary[] mapping live ring to compact wire-shape for slice-154 planner + 66 inline tests including end-to-end summarize -> plan -> apply round-trip (slice 156); demo-able UI promoting cov-undo-chip from <span> to <button> with hover/focus/open states + cov-undo-chip-anchor relative wrapper + cov-undo-jump-popover 320-360px dark panel with per-row layout (Step N tag / label / relative timestamp via formatRelativeAge / per-state trailing affordance: Active target green badge for newest, Jump-here blue button with describeUndoJumpPlan tooltip for older ready, Stale amber badge with live reason, Noop muted badge) + applyUndoJump optimistic apply with rollback for both ring AND chain on failure + popover dismissal in Escape chain (newest most-recently-opened overlay, unwinds FIRST) + $effect auto-close when ring drains + ~155 lines new scoped CSS (slice 157). Gates result: cargo fmt clean (no changes needed after folding tiny slice-155 formatting drift), cargo clippy --lib -- -D warnings PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed (round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check 0 errors / 104 warnings (round-31 baseline preserved EXACTLY — zero new warnings from the chip-button conversion, popover markup, formatRelativeAge helper, the new $state/$effect blocks, or the ~155 lines of new CSS), tsx src/lib/hopper.test.ts 759 inline expects pass (round-31 baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
+Last updated: 2026-06-25 07:55 PT by Cake (cron) — round-35 BATCH shipped (5 frontend/UX slices) PIVOTING off the 8-round Hopper-undo streak (rounds 26-34) to a fresh high-visibility subsystem: the GLOBAL TOAST/NOTIFICATION system (notify.ts + ToastStack.svelte), which every panel surfaces. Built a new pure-presentation helper module src/lib/toastStack.ts (128 inline tests) backing five demo-able UI capabilities. Slice 1 overflow partition (partitionToasts splits newest TOAST_MAX_VISIBLE=4 visible + older collapsed behind a "+N more" pill so a burst never fills the viewport); slice 2 duplicate coalescing (identical kind+message+detail merge into one row with a "xN" badge, resurfacing to newest with a refreshed timer — newline-escaped collision-safe key, undefined detail == ""); slice 3 clear-all header (wires the dead dismissAll, "Clear all N" pill once 2+ live); slice 4 lifespan progress bar + pause-on-hover (pure pausable ToastTimer model: pause banks elapsed & freezes, resume restarts keeping remainder, sticky=Infinity; notify.ts drives the real setTimeout from the model's remaining ms via armTimer + pauseToast/resumeToast; CSS scaleX keyframe paused via animation-play-state on :hover so visual + JS clocks stay in lockstep, no rAF; honours prefers-reduced-motion); slice 5 screen-reader announcer (two dedicated sr-only live regions — assertive role=alert for error/warning, polite role=status for success/info; announceToast composes "Error: msg. detail (repeated N times)"; visible toast body aria-hidden, close button keeps accessible name, toast div role=group). SHAs 9c5491a, 7977d8b, f3e89ff, 23c0e97, a4fd831. Gates: tsx toastStack.test.ts 128/128 pass (new suite), tsx hopper.test.ts 1189/1189 unchanged, pnpm check 0 errors/104 warnings (round-32/33/34 baseline preserved EXACTLY — introduced one a11y warning on the hover-handler div, fixed with role=group before gating), cargo fmt --all --check clean, ZERO Rust changed (lib green baseline 2620 carries forward), ToastStack clean in scripts/audit-a11y.mjs. PRIOR round-34 note follows -- round-34 BATCH shipped (5 frontend/UX slices, 163-167): the long-deferred (since round 26) Hopper rule reorder-by-drag, closing the #1 frontend candidate. Three tested pure-TS helper layers + two demo-able UI capstones. Slice 163 moveRuleToIndex/describeRuleMove final-index array-move primitive (81 tests); slice 164 dropEdgeFromOffset/resolveDropIndex/isNoopDrop drag geometry resolver with source-removal-shift off-by-one handling, validated by a 50-case independent marker-insertion oracle (153 tests); slice 165 resolveRuleReorderKey Alt+Arrow keyboard classifier (29 tests); slice 166 mouse drag-to-reorder UI (six-dot grab handle, live insertion indicator, dragged-row dim/lift); slice 167 keyboard reorder a11y capstone (Alt+Arrow move, focus-follow, aria-live announcements). SHAs af06a6c, 2ac3f3c, ea05f6c, 0e82822, b04bf73. Gates: tsx hopper.test.ts 1189/1189 pass (round-33 baseline 926 +263), pnpm check 0 errors/104 warnings (round-32/33 baseline preserved EXACTLY), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-33 note follows -- round-33 BATCH shipped (RECOVERY: a prior tick built+committed these 5 frontend slices locally at 02:12-02:50 PT today but CRASHED before gating/pushing/logging; origin was still at the round-32 log. This tick re-gated the orphaned batch clean and pushed it). Round 33 = 5 frontend/UX slices (158-162) making the round-32 cascade-jump popover fully keyboard-drivable (Cmd-Z cascade / Cmd-Shift-Z jump popover / Arrow+Enter row nav via a pure resolver + focus walker) PLUS a Relative/Absolute per-row timestamp toggle (localStorage-persisted) and a ring-health popover header. SHAs de87a9d, e0206f3, 429da78, db2319f, 9c065a3. Gates: pnpm check 0 errors/104 warnings (round-32 baseline preserved exactly), tsx hopper.test.ts 926/926 pass (round-32 baseline 759 +167), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-32... [truncated]
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `b04bf73` — "feat(hopper): keyboard reorder + screen-reader a11y for rule chain".
+Latest commit: `a4fd831` — "feat(toast): screen-reader announcer with severity-aware politeness".
+
+### What round-35 (2026-06-25 07:55 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+PIVOTING off the 8-round Hopper-undo streak (rounds 26-34) to a
+fresh, high-visibility subsystem: the **global toast / notification
+system** (`notify.ts` + `ToastStack.svelte`) that every panel in the
+app surfaces. It was bare — the "stacks up to 5" comment wasn't even
+enforced, `dismissAll()` existed but nothing called it, rapid
+identical toasts spammed the corner, no pause-on-hover, no lifespan
+indicator, and the JS fly transition ignored reduced-motion. Round 35
+takes it to Sonner / Linear grade.
+
+New pure-presentation module `src/lib/toastStack.ts` (128 inline
+tests, zero DOM/store deps beyond the Toast type) backs all five UI
+capabilities — same helper-split discipline as hopper.ts.
+
+- Slice 1: overflow partition (9c5491a). partitionToasts splits the
+  live list into the newest TOAST_MAX_VISIBLE=4 (rendered) + older
+  remainder collapsed behind a "+N more" pill so a burst never fills
+  the viewport. describeToastOverflow composes the pill copy. 25
+  tests: under/at/over cap, store-order reconstruction invariant,
+  default-cap + bad-maxVisible fallback, fractional floor, purity.
+
+- Slice 2: duplicate coalescing (7977d8b). Identical toasts (same
+  kind+message+detail) merge into one row with a "xN" count badge,
+  resurfacing to newest with a refreshed timer instead of stacking N
+  copies. toastCoalesceKey newline-escapes so "a|b"+"c" can't collide
+  with "a"+"b|c", undefined detail == "". findCoalesceTarget returns
+  the most-recent match. Toast gains a required count field; notify.ts
+  push() consults the store and bumps-or-appends. 19 tests.
+
+- Slice 3: clear-all header (f3e89ff). Wires the dead dismissAll: once
+  2+ toasts are live, a "Clear all N" pill tops the stack.
+  shouldShowClearAll gates on TOAST_CLEAR_ALL_THRESHOLD=2 (a lone
+  toast has its own x); describeClearAll bakes the count into the
+  label. 12 tests.
+
+- Slice 4: lifespan progress bar + pause-on-hover (23c0e97). Every
+  auto-dismissing toast shows a thin accent bar depleting over its
+  lifetime; hover/focus PAUSES both the bar and the real dismiss timer
+  so a toast can't vanish mid-read, resuming from where it stopped.
+  Pure pausable ToastTimer model (create/pause/resume/remaining/
+  fraction/isExpired/isPaused): pause banks elapsed into `remaining`
+  and freezes the clock, resume restarts from now keeping the
+  remainder, sticky (duration 0) = Infinity remaining + no bar.
+  notify.ts drives the real setTimeout from the model's remaining ms
+  (armTimer) + exposes pauseToast/resumeToast; the bar is a CSS scaleX
+  keyframe (animation-duration = toast duration) paused via
+  animation-play-state on :hover/:focus-within so visual + JS clocks
+  stay in lockstep with no rAF loop. Keyed on count so a coalesced
+  repeat restarts the sweep. Honours prefers-reduced-motion (bar
+  frozen full as state, not animating). 49 tests including a full
+  long-hover round-trip and paused-never-expires.
+
+- Slice 5: screen-reader announcer (a4fd831). The visual stack
+  reorders (coalesce) + adds/removes nodes (partition), an erratic
+  live region. Decoupled announcements into two dedicated sr-only
+  regions: assertive role=alert for error+warning (interrupt), polite
+  role=status for success+info. announceToast composes the spoken
+  string with a severity prefix ("Error: Render failed. Disk full")
+  + "(repeated N times)" when coalesced. Visible toast icon+body
+  aria-hidden (text lives in the regions); close button keeps an
+  accessible name carrying the message; toast div role=group so the
+  hover handlers satisfy the static-interactive rule. 23 tests:
+  politeness map, kind labels, announce composition, total-partition
+  split + purity.
+
+Gates result: tsx src/lib/toastStack.test.ts 128/128 pass (new
+suite), tsx src/lib/hopper.test.ts 1189/1189 unchanged, pnpm check
+0 errors / 104 warnings (rounds 32-34 baseline preserved EXACTLY —
+slice-4's hover-handler div tripped one new a11y_no_static_element
+warning which I fixed with role=group BEFORE gating, so net zero new
+warnings), cargo fmt --all --check clean, ZERO Rust files changed so
+the round-32 lib baseline (clippy clean, 2620 tests) carries forward
+unchanged, ToastStack clean in scripts/audit-a11y.mjs.
+
+PROCESS NOTES (round 35):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (array partition, store coalescing, pausable-timer math,
+  CSS animation, ARIA live regions). Zero backend.
+- DELIBERATE PIVOT off Hopper. Rounds 26-34 (nine rounds) all lived
+  inside the Hopper dead-rule / undo subsystem. The undo loop is now
+  feature-complete (diagnose -> drill -> fix-one/fix-all -> undo ->
+  cascade -> jump -> reorder-by-drag). Rather than a tenth Hopper
+  round, I picked the toast system: it's listed on the roadmap
+  ("toast stacking + dismiss-all", "reduced-motion pass"), it's
+  high-visibility (every panel toasts), and it was genuinely bare —
+  five real capabilities, not padding.
+- The pausable-timer is a PURE data model (no DOM, no setTimeout) so
+  every pause/resume/fraction branch is testable without fake timers
+  or JSDOM. notify.ts owns the single real setTimeout, re-armed from
+  the model's remaining ms — same "pure core, thin imperative shell"
+  split as the Hopper helpers.
+- The dual-live-region a11y pattern (assertive + polite, decoupled
+  from the reordering visual stack) is the Radix/Sonner-grade fix; a
+  single aria-live on the visual stack would mis-announce on every
+  coalesce/partition mutation.
+- Caught + fixed the one new svelte-check warning (role=group) before
+  gating so the 104-warning baseline holds exactly, per the standing
+  "never push red / never inflate the baseline" discipline.
 
 ### What round-34 (2026-06-25 02:45 PT) just shipped
 
@@ -502,6 +603,11 @@ demo value:
   mouse drag + Alt+Arrow keyboard reorder, both through one
   commitReorder + moveRuleToIndex path. The #1 deferred candidate
   since round 26 is now shipped.
+- ~~toast stacking + dismiss-all~~ — DONE round 35 (SHAs 9c5491a..
+  a4fd831): overflow "+N more" partition, duplicate coalescing with
+  xN badge, "Clear all N" header (wired dismissAll), lifespan bar +
+  pause-on-hover, dual-live-region SR announcer. The global toast
+  system is now Sonner/Linear grade.
 - persisted undo ring across sessions UI (round 31 ring is
   ephemeral; surface a "restored N undo steps" banner on reopen).
 - drilldown row -> cross-surface filter (clicking a fall-through
@@ -523,15 +629,21 @@ demo value:
   navigation — Raycast-grade.
 - keyboard-shortcut cheat-sheet overlay (? key) surfacing every
   bound chord app-wide.
-- toast stacking + dismiss-all (currently single toast surface;
-  multiple rapid actions clobber each other).
+- toast ACTION button + undo affordance (round 35 toasts are
+  message-only; an optional inline action — e.g. "Undo" on a
+  destructive op — would let a toast carry a one-click follow-up,
+  the natural next step now that the stack/timer/a11y plumbing is
+  in place).
+- toast swipe / drag-to-dismiss (pointer-drag a toast off the edge
+  to dismiss, with the round-34 Pointer Events vocabulary).
 - responsive / narrow-window layout pass for the Hopper rules
   editor + coverage popover (popover currently fixed 320-360px).
 - focus-trap + restore-focus polish for every popover/modal so Tab
   never escapes an open overlay (a11y).
 - reduced-motion media-query pass (the cov-export-toast-fade-in +
-  popover entrance animations + the new round-34 drag dim/lift
-  transitions should honour prefers-reduced-motion).
+  popover entrance animations + the round-34 drag dim/lift
+  transitions should honour prefers-reduced-motion; round 35 did
+  the toast lifespan bar).
 - touch/pointer drag-reorder fallback (round 34 uses HTML5 drag-
   and-drop which is mouse-only; a Pointer Events path would make
   the rule chain reorderable on a trackpad-tap or touchscreen).
