@@ -3699,3 +3699,94 @@ export function isNoopDrop(
   const resolved = resolveDropIndex(from, hoverIndex, edge, len);
   return resolved === -1 || resolved === from;
 }
+
+// ─── Slice 165 — keyboard reorder resolver (round-34) ────────────────
+//
+// The a11y fallback for drag-to-reorder: a keyboard user focuses a
+// rule's drag handle and presses Alt+ArrowUp / Alt+ArrowDown to move
+// that rule one position. This pure classifier turns a key event +
+// the focused row's position into a concrete move plan that composes
+// onto slice 163's moveRuleToIndex. It mirrors resolveUndoShortcut's
+// shape (pure, no DOM) but lives in its own surface because the
+// gesture vocabulary is distinct (Alt+Arrow vs Cmd-Z) and the
+// resolver needs the focused index + chain length to compute the
+// destination.
+//
+// Alt+Arrow (not bare Arrow) is the deliberate chord: bare ArrowUp/
+// Down on a focused button is browser-default focus movement / page
+// scroll, and the cascade-undo popover already claims bare Arrow keys
+// when open. Alt+Arrow is the de-facto reorder convention (matches
+// macOS list reordering, Notion, Linear).
+
+/** A resolved keyboard reorder intent. `move-up` / `move-down` carry
+ *  the destination index already clamped to the chain; `none` means
+ *  the event wasn't a reorder chord (the caller lets it fall through
+ *  to the browser default). */
+export type RuleReorderIntent =
+  | { kind: "none" }
+  | { kind: "move-up"; from: number; to: number }
+  | { kind: "move-down"; from: number; to: number };
+
+/** Stable singleton for the no-op intent — saves a per-call literal
+ *  and keeps identity checks cheap. */
+export const RULE_REORDER_NONE: RuleReorderIntent = { kind: "none" } as const;
+
+/** KeyboardEvent-shaped input for the reorder resolver. */
+export interface RuleReorderEvent {
+  /** `e.key` — "ArrowUp" / "ArrowDown" (case-insensitive). */
+  key: string;
+  /** `e.altKey` — REQUIRED true for any reorder intent to fire. */
+  altKey: boolean;
+  /** `e.metaKey` — must be false (Alt+Cmd+Arrow is a desktop-switch
+   *  shortcut on some systems). */
+  metaKey: boolean;
+  /** `e.ctrlKey` — must be false. */
+  ctrlKey: boolean;
+  /** `e.shiftKey` — must be false (Alt+Shift+Arrow is text-selection
+   *  by word in inputs). */
+  shiftKey: boolean;
+}
+
+/** Resolve an Alt+Arrow keyboard event into a rule-reorder intent.
+ *  Pure — no DOM, no event mutation.
+ *
+ *  Requirements for a move intent:
+ *    - Alt/Option held; Meta, Ctrl, Shift all released.
+ *    - key is ArrowUp (move-up) or ArrowDown (move-down).
+ *    - `focusedIndex` is a valid integer in [0, len).
+ *    - The move stays in range: move-up no-ops at index 0, move-down
+ *      no-ops at the last index (returns `none` so the caller lets
+ *      the event through rather than swallowing a boundary press).
+ *
+ *  Returns a `none` intent for everything else. */
+export function resolveRuleReorderKey(
+  event: RuleReorderEvent,
+  focusedIndex: number,
+  len: number,
+): RuleReorderIntent {
+  // Modifier gate: Alt required, the rest forbidden.
+  if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) {
+    return RULE_REORDER_NONE;
+  }
+  if (!Number.isInteger(len) || len <= 0) return RULE_REORDER_NONE;
+  if (!Number.isInteger(focusedIndex) || focusedIndex < 0 || focusedIndex >= len) {
+    return RULE_REORDER_NONE;
+  }
+  const key = (event.key || "").toLowerCase();
+  if (key === "arrowup") {
+    if (focusedIndex === 0) return RULE_REORDER_NONE; // at top, nothing above
+    return { kind: "move-up", from: focusedIndex, to: focusedIndex - 1 };
+  }
+  if (key === "arrowdown") {
+    if (focusedIndex === len - 1) return RULE_REORDER_NONE; // at bottom
+    return { kind: "move-down", from: focusedIndex, to: focusedIndex + 1 };
+  }
+  return RULE_REORDER_NONE;
+}
+
+/** True iff the intent represents an actual move (not `none`).
+ *  Convenience predicate so the UI's keydown handler can decide
+ *  whether to preventDefault + persist in one check. */
+export function isReorderMove(intent: RuleReorderIntent): boolean {
+  return intent.kind !== "none";
+}

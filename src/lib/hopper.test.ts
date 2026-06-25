@@ -91,6 +91,11 @@ import {
   resolveDropIndex,
   isNoopDrop,
   type DropEdge,
+  resolveRuleReorderKey,
+  isReorderMove,
+  RULE_REORDER_NONE,
+  type RuleReorderIntent,
+  type RuleReorderEvent,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -5799,4 +5804,178 @@ function oracleDrop(items: string[], from: number, hover: number, edge: DropEdge
   // isNoopDrop: invalid inputs count as no-op (suppress the indicator).
   expect(isNoopDrop(0, 0, "after", 0) === true, "noop: empty len");
   expect(isNoopDrop(9, 1, "before", 5) === true, "noop: oor from");
+}
+
+// ── Slice 165 — resolveRuleReorderKey / isReorderMove (round-34) ──────
+
+/** Build a reorder event with Alt held + the other modifiers off,
+ *  overridable per-field. */
+function reorderEvt(over: Partial<RuleReorderEvent> = {}): RuleReorderEvent {
+  return {
+    key: "ArrowUp",
+    altKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    ...over,
+  };
+}
+
+{
+  // Alt+ArrowUp on a middle row -> move-up with from/to.
+  const intent = resolveRuleReorderKey(reorderEvt({ key: "ArrowUp" }), 2, 5);
+  expect(intent.kind === "move-up", "reorder: Alt+Up -> move-up");
+  if (intent.kind === "move-up") {
+    expect(intent.from === 2 && intent.to === 1, "reorder: Alt+Up from2 to1");
+  }
+}
+
+{
+  // Alt+ArrowDown on a middle row -> move-down with from/to.
+  const intent = resolveRuleReorderKey(reorderEvt({ key: "ArrowDown" }), 2, 5);
+  expect(intent.kind === "move-down", "reorder: Alt+Down -> move-down");
+  if (intent.kind === "move-down") {
+    expect(intent.from === 2 && intent.to === 3, "reorder: Alt+Down from2 to3");
+  }
+}
+
+{
+  // Case-insensitive key match.
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "arrowup" }), 2, 5).kind === "move-up",
+    "reorder: lowercase arrowup",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ARROWDOWN" }), 0, 5).kind ===
+      "move-down",
+    "reorder: uppercase ARROWDOWN",
+  );
+}
+
+{
+  // Boundary no-ops: move-up at top, move-down at bottom -> none.
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ArrowUp" }), 0, 5).kind === "none",
+    "reorder: Alt+Up at top -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ArrowDown" }), 4, 5).kind === "none",
+    "reorder: Alt+Down at bottom -> none",
+  );
+  // ...but move-down at top and move-up at bottom DO fire.
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ArrowDown" }), 0, 5).kind ===
+      "move-down",
+    "reorder: Alt+Down at top -> move-down",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ArrowUp" }), 4, 5).kind === "move-up",
+    "reorder: Alt+Up at bottom -> move-up",
+  );
+}
+
+{
+  // Modifier gate: Alt missing -> none.
+  expect(
+    resolveRuleReorderKey(reorderEvt({ altKey: false }), 2, 5).kind === "none",
+    "reorder: no Alt -> none",
+  );
+  // Extra modifiers disqualify.
+  expect(
+    resolveRuleReorderKey(reorderEvt({ metaKey: true }), 2, 5).kind === "none",
+    "reorder: Alt+Meta -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ ctrlKey: true }), 2, 5).kind === "none",
+    "reorder: Alt+Ctrl -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ shiftKey: true }), 2, 5).kind === "none",
+    "reorder: Alt+Shift -> none",
+  );
+}
+
+{
+  // Non-arrow keys -> none.
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "z" }), 2, 5).kind === "none",
+    "reorder: Alt+z -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ArrowLeft" }), 2, 5).kind === "none",
+    "reorder: Alt+Left -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "" }), 2, 5).kind === "none",
+    "reorder: empty key -> none",
+  );
+}
+
+{
+  // Invalid index / len -> none.
+  expect(
+    resolveRuleReorderKey(reorderEvt(), 5, 5).kind === "none",
+    "reorder: oor index -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt(), -1, 5).kind === "none",
+    "reorder: neg index -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt(), 1.5, 5).kind === "none",
+    "reorder: float index -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt(), 0, 0).kind === "none",
+    "reorder: empty chain -> none",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "ArrowDown" }), 0, 1).kind === "none",
+    "reorder: single-elem chain -> none (Down at only row)",
+  );
+}
+
+{
+  // The resolved move always composes cleanly with moveRuleToIndex.
+  const chain = [nrule("A"), nrule("B"), nrule("C"), nrule("D")];
+  const up = resolveRuleReorderKey(reorderEvt({ key: "ArrowUp" }), 3, 4);
+  if (up.kind === "move-up") {
+    expect(
+      names(moveRuleToIndex(chain, up.from, up.to).rules) === "A,B,D,C",
+      "reorder: move-up composes with moveRuleToIndex",
+    );
+  }
+  const down = resolveRuleReorderKey(reorderEvt({ key: "ArrowDown" }), 0, 4);
+  if (down.kind === "move-down") {
+    expect(
+      names(moveRuleToIndex(chain, down.from, down.to).rules) === "B,A,C,D",
+      "reorder: move-down composes with moveRuleToIndex",
+    );
+  }
+}
+
+{
+  // isReorderMove + RULE_REORDER_NONE singleton.
+  expect(isReorderMove(RULE_REORDER_NONE) === false, "isReorderMove: none false");
+  expect(
+    isReorderMove({ kind: "move-up", from: 2, to: 1 }) === true,
+    "isReorderMove: move-up true",
+  );
+  expect(
+    isReorderMove({ kind: "move-down", from: 0, to: 1 }) === true,
+    "isReorderMove: move-down true",
+  );
+  expect(
+    resolveRuleReorderKey(reorderEvt({ key: "z" }), 2, 5) === RULE_REORDER_NONE,
+    "reorder: none returns the shared singleton",
+  );
+}
+
+// Pin the intent shape.
+{
+  const intent: RuleReorderIntent = resolveRuleReorderKey(reorderEvt(), 2, 5);
+  expect(
+    intent.kind === "move-up" || intent.kind === "move-down" || intent.kind === "none",
+    "RuleReorderIntent: kind pinned",
+  );
 }
