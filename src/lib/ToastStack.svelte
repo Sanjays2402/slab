@@ -177,6 +177,10 @@
     </div>
   {/if}
   {#each view.rendered as t, i (t.id)}
+    <!-- The toast is an intentionally keyboard-focusable notification
+         (Alt+T focuses it, Escape dismisses) — a managed-focus group, so
+         the keydown listener on this role="group" div is deliberate. -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="toast {t.kind}"
       class:swiping={swipeId === t.id}
