@@ -1,13 +1,115 @@
 # Slab Cron State
 
-Last updated: 2026-06-24 21:05 PT by Cake (cron) — round-33 BATCH shipped (RECOVERY: a prior tick built+committed these 5 frontend slices locally at 02:12-02:50 PT today but CRASHED before gating/pushing/logging; origin was still at the round-32 log. This tick re-gated the orphaned batch clean and pushed it). Round 33 = 5 frontend/UX slices (158-162) making the round-32 cascade-jump popover fully keyboard-drivable (Cmd-Z cascade / Cmd-Shift-Z jump popover / Arrow+Enter row nav via a pure resolver + focus walker) PLUS a Relative/Absolute per-row timestamp toggle (localStorage-persisted) and a ring-health popover header. SHAs de87a9d, e0206f3, 429da78, db2319f, 9c065a3. Gates: pnpm check 0 errors/104 warnings (round-32 baseline preserved exactly), tsx hopper.test.ts 926/926 pass (round-32 baseline 759 +167), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-32 note follows -- round-32 BATCH shipped: 5 slices promoting round-31's "Step N of M" counter chip into a clickable per-step cascade-jump popover. compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan with {is_valid, skip_count, dropped_labels (newest-first), target_label, target_index} pure-data planner — invalid for empty/oor/target-equals-newest with label-echo for target=newest + valid newest-first walk via reverse range collecting labels + snake_case serde round-trip + 14 tests (slice 153); TS mirror computeUndoJumpPlan 1:1 + UndoJumpPlan snake_case wire-shape interface + describeUndoJumpPlan discriminated copy ("No jump available" / "Already the newest entry" / "Skip 1 revert to jump back to <label>" / "Skip N reverts to jump back to <label>") + canApplyUndoJump predicate + defensive NaN/negative/non-integer normalisation + 66 inline tests (slice 154); slab_hopper_compute_undo_jump_plan Tauri command wired into invoke handler + slabHopperComputeUndoJumpPlan async wrapper with browser-mode delegation + 45 wrapper-delegation tests pinning every UndoJumpPlan field through browser-mode path with real fix-it/fix-all labels and runtime-type pinning (slice 155); jumpToUndoEntry(ring, targetIndex) -> UndoRingJump {is_valid, ring, target, dropped} live-ring bridge trimming entries [0..=targetIndex] returning fresh array (input never mutated) with snapshot reference identity preserved for retained entries + summarizeRingForJump(ring) -> UndoEntrySummary[] mapping live ring to compact wire-shape for slice-154 planner + 66 inline tests including end-to-end summarize -> plan -> apply round-trip (slice 156); demo-able UI promoting cov-undo-chip from <span> to <button> with hover/focus/open states + cov-undo-chip-anchor relative wrapper + cov-undo-jump-popover 320-360px dark panel with per-row layout (Step N tag / label / relative timestamp via formatRelativeAge / per-state trailing affordance: Active target green badge for newest, Jump-here blue button with describeUndoJumpPlan tooltip for older ready, Stale amber badge with live reason, Noop muted badge) + applyUndoJump optimistic apply with rollback for both ring AND chain on failure + popover dismissal in Escape chain (newest most-recently-opened overlay, unwinds FIRST) + $effect auto-close when ring drains + ~155 lines new scoped CSS (slice 157). Gates result: cargo fmt clean (no changes needed after folding tiny slice-155 formatting drift), cargo clippy --lib -- -D warnings PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed (round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check 0 errors / 104 warnings (round-31 baseline preserved EXACTLY — zero new warnings from the chip-button conversion, popover markup, formatRelativeAge helper, the new $state/$effect blocks, or the ~155 lines of new CSS), tsx src/lib/hopper.test.ts 759 inline expects pass (round-31 baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
+Last updated: 2026-06-25 02:45 PT by Cake (cron) — round-34 BATCH shipped (5 frontend/UX slices, 163-167): the long-deferred (since round 26) Hopper rule reorder-by-drag, closing the #1 frontend candidate. Three tested pure-TS helper layers + two demo-able UI capstones. Slice 163 moveRuleToIndex/describeRuleMove final-index array-move primitive (81 tests); slice 164 dropEdgeFromOffset/resolveDropIndex/isNoopDrop drag geometry resolver with source-removal-shift off-by-one handling, validated by a 50-case independent marker-insertion oracle (153 tests); slice 165 resolveRuleReorderKey Alt+Arrow keyboard classifier (29 tests); slice 166 mouse drag-to-reorder UI (six-dot grab handle, live insertion indicator, dragged-row dim/lift); slice 167 keyboard reorder a11y capstone (Alt+Arrow move, focus-follow, aria-live announcements). SHAs af06a6c, 2ac3f3c, ea05f6c, 0e82822, b04bf73. Gates: tsx hopper.test.ts 1189/1189 pass (round-33 baseline 926 +263), pnpm check 0 errors/104 warnings (round-32/33 baseline preserved EXACTLY), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-33 note follows -- round-33 BATCH shipped (RECOVERY: a prior tick built+committed these 5 frontend slices locally at 02:12-02:50 PT today but CRASHED before gating/pushing/logging; origin was still at the round-32 log. This tick re-gated the orphaned batch clean and pushed it). Round 33 = 5 frontend/UX slices (158-162) making the round-32 cascade-jump popover fully keyboard-drivable (Cmd-Z cascade / Cmd-Shift-Z jump popover / Arrow+Enter row nav via a pure resolver + focus walker) PLUS a Relative/Absolute per-row timestamp toggle (localStorage-persisted) and a ring-health popover header. SHAs de87a9d, e0206f3, 429da78, db2319f, 9c065a3. Gates: pnpm check 0 errors/104 warnings (round-32 baseline preserved exactly), tsx hopper.test.ts 926/926 pass (round-32 baseline 759 +167), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-32 note follows -- round-32 BATCH shipped: 5 slices promoting round-31's "Step N of M" counter chip into a clickable per-step cascade-jump popover. compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan with {is_valid, skip_count, dropped_labels (newest-first), target_label, target_index} pure-data planner — invalid for empty/oor/target-equals-newest with label-echo for target=newest + valid newest-first walk via reverse range collecting labels + snake_case serde round-trip + 14 tests (slice 153); TS mirror computeUndoJumpPlan 1:1 + UndoJumpPlan snake_case wire-shape interface + describeUndoJumpPlan discriminated copy ("No jump available" / "Already the newest entry" / "Skip 1 revert to jump back to <label>" / "Skip N reverts to jump back to <label>") + canApplyUndoJump predicate + defensive NaN/negative/non-integer normalisation + 66 inline tests (slice 154); slab_hopper_compute_undo_jump_plan Tauri command wired into invoke handler + slabHopperComputeUndoJumpPlan async wrapper with browser-mode delegation + 45 wrapper-delegation tests pinning every UndoJumpPlan field through browser-mode path with real fix-it/fix-all labels and runtime-type pinning (slice 155); jumpToUndoEntry(ring, targetIndex) -> UndoRingJump {is_valid, ring, target, dropped} live-ring bridge trimming entries [0..=targetIndex] returning fresh array (input never mutated) with snapshot reference identity preserved for retained entries + summarizeRingForJump(ring) -> UndoEntrySummary[] mapping live ring to compact wire-shape for slice-154 planner + 66 inline tests including end-to-end summarize -> plan -> apply round-trip (slice 156); demo-able UI promoting cov-undo-chip from <span> to <button> with hover/focus/open states + cov-undo-chip-anchor relative wrapper + cov-undo-jump-popover 320-360px dark panel with per-row layout (Step N tag / label / relative timestamp via formatRelativeAge / per-state trailing affordance: Active target green badge for newest, Jump-here blue button with describeUndoJumpPlan tooltip for older ready, Stale amber badge with live reason, Noop muted badge) + applyUndoJump optimistic apply with rollback for both ring AND chain on failure + popover dismissal in Escape chain (newest most-recently-opened overlay, unwinds FIRST) + $effect auto-close when ring drains + ~155 lines new scoped CSS (slice 157). Gates result: cargo fmt clean (no changes needed after folding tiny slice-155 formatting drift), cargo clippy --lib -- -D warnings PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed (round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check 0 errors / 104 warnings (round-31 baseline preserved EXACTLY — zero new warnings from the chip-button conversion, popover markup, formatRelativeAge helper, the new $state/$effect blocks, or the ~155 lines of new CSS), tsx src/lib/hopper.test.ts 759 inline expects pass (round-31 baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `9c065a3` — "feat(hopper): Relative/Absolute timestamp toggle + ring-health header".
+Latest commit: `b04bf73` — "feat(hopper): keyboard reorder + screen-reader a11y for rule chain".
+
+### What round-34 (2026-06-25 02:45 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+shipping the long-deferred **Hopper rule reorder-by-drag** — the #1
+"Next FRONTEND candidate" since round 26 (six rounds deferred).
+Until this round a routing rule moved one position per up/down click;
+dragging rule #9 to position #2 took SEVEN clicks. Round 34 makes it
+one gesture (mouse drag) plus a full keyboard a11y path (Alt+Arrow).
+
+Two arcs in the same pure-frontend three-flavour cadence as round 33
+(TS helper -> TS helper -> UI): (A) three tested pure-TS helper
+layers establishing the move/geometry/keyboard contracts, then (B)
+two demo-able UI capstones (mouse drag, keyboard a11y) split as
+separate revertible commits because they're genuinely distinct
+capabilities (pointer vs. accessibility), not a forced split.
+
+- Slice 163: manual rule reorder primitive (af06a6c).
+  moveRuleToIndex(rules, from, to) -> RuleMoveResult with FINAL-index
+  semantics (`to` = where the rule lands in the RESULT array, not a
+  splice insertion point; move 0->2 in ABCD yields BCAD). Pure, never
+  mutates input. No-op returns the SAME array reference + moved:false
+  for empty / out-of-range / NaN / non-integer / from===to (matching
+  applyReorderProposal's reference-equality convention so the UI skips
+  persistence + announcement). describeRuleMove(name, result, total)
+  announcement copy ("Moved Catch-all to position 1 of 3"); empty for
+  no-op; blank-name fallback to "Rule N". 81 inline tests including a
+  5x5 length-preservation + permutation sweep.
+
+- Slice 164: drag drop-index resolver (2ac3f3c).
+  dropEdgeFromOffset(offsetY, rowHeight) -> DropEdge (top half
+  "before" / bottom half "after"; defensive on bad geometry).
+  resolveDropIndex(from, hoverIndex, edge, len) -> final resting
+  index, handling the LOAD-BEARING source-removal shift (a drop below
+  the source lands at gap-1 because moveRuleToIndex removes the source
+  first — the classic drag-reorder off-by-one). isNoopDrop(...) hides
+  the indicator over the dragged row's own flanking gaps. 153 inline
+  tests including an INDEPENDENT marker-insertion oracle cross-checked
+  against resolveDropIndex-composed-with-moveRuleToIndex for all 50
+  (from, hover, edge) combinations on a 5-rule chain.
+
+- Slice 165: keyboard reorder resolver (ea05f6c).
+  resolveRuleReorderKey(event, focusedIndex, len) -> RuleReorderIntent
+  (none / move-up / move-down). Pure classifier mirroring
+  resolveUndoShortcut's shape; Alt REQUIRED, Meta/Ctrl/Shift forbidden
+  (Alt+Arrow is the de-facto reorder convention; bare Arrow is browser
+  focus/scroll the cascade popover already claims). Boundary-aware:
+  move-up no-ops at index 0, move-down at the last row, returning
+  `none` so the press falls through. isReorderMove predicate +
+  RULE_REORDER_NONE singleton. 29 inline tests.
+
+- Slice 166: mouse drag-to-reorder UI (0e82822). Each rule row gets a
+  six-dot grab handle (draggable, grab/grabbing cursor) ahead of the
+  up/down buttons. dragover computes the drop edge + resolved index
+  live, rendering a glowing muted-blue insertion line in the correct
+  gap; isNoopDrop suppresses it over the dragged rule's own gaps. drop
+  commits through a shared commitReorder path (built on
+  moveRuleToIndex) that the up/down buttons now ALSO route through,
+  collapsing three hand-rolled swap implementations into one. Dragged
+  row dims to 0.4 + lifts with a shadow. Insertion-line + accent
+  reuse the round-29/30 rgba(110,165,255) palette.
+
+- Slice 167: keyboard reorder + a11y capstone (b04bf73). onHandleKeydown
+  routes Alt+Arrow through resolveRuleReorderKey then commitReorder
+  (now with an announce flag). After a move, focus follows the handle
+  to its new position (handleRefs + queueMicrotask) so the user can
+  chain Alt+Arrow to walk a rule across the chain. A visually-hidden
+  aria-live="polite" region announces each keyboard reorder via
+  describeRuleMove. The grab handle's aria-label documents both
+  gestures; tooltip shows the chord. The rule chain is now reorderable
+  THREE ways (buttons / drag / Alt+Arrow), all funneling through one
+  commitReorder + moveRuleToIndex path.
+
+Gates result: tsx src/lib/hopper.test.ts 1189 inline expects pass
+(round-33 baseline 926 + 81 slice-163 + 153 slice-164 + 29 slice-165
+= 1189; slices 166+167 are UI-only with no new TS-helper assertions),
+pnpm check 0 errors / 104 warnings (round-32/33 baseline preserved
+EXACTLY — zero new warnings from any slice; the 3 HopperRulesEditor
+warnings are all pre-existing), cargo fmt --all --check clean, zero
+Rust files changed so the round-32 lib baseline (clippy clean, 2620
+tests) carries forward unchanged (the full Tauri binary build is
+never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 34):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (array logic, drag geometry, keyboard UX, focus management,
+  screen-reader a11y). Zero backend.
+- Picked rule reorder-by-drag because it was the #1 deferred frontend
+  candidate (rounds 26-33), it's a structurally-clean 5-slice arc
+  (three pure helpers + two UI capstones), and it COMPLEMENTS the
+  rounds 30-33 cascade-undo work — a paralegal who reorders rules by
+  drag now also has cascade-undo + jump-to-step if the reorder was
+  wrong.
+- The 50-case independent oracle (slice 164) is the load-bearing test
+  choice: the source-removal off-by-one is the single hardest thing
+  to get right in drag-reorder, so rather than hand-assert a handful
+  of cases I cross-checked resolveDropIndex+moveRuleToIndex against a
+  from-scratch marker-insertion reference for every combination.
+- Split 166/167 into two commits (mouse vs. keyboard) rather than one
+  big UI commit because they're genuinely distinct capabilities and
+  the prompt wants independently-revertible slices — a future tick
+  could revert the keyboard path without losing drag, or vice versa.
 
 ### What round-33 (2026-06-24 — RECOVERED + pushed 21:05 PT, built 02:12-02:50 PT) just shipped
 
@@ -396,9 +498,10 @@ Refilled frontend-first per the override (backend/infra items
 deferred until the override block is removed). Ordered roughly by
 demo value:
 
-- Hopper rule reorder-by-drag (deferred since round 26; pure UI
-  drag interaction — grab handle, drop indicator, live reorder
-  preview, keyboard reorder via Alt+Arrow as a11y fallback).
+- ~~Hopper rule reorder-by-drag~~ — DONE round 34 (slices 163-167):
+  mouse drag + Alt+Arrow keyboard reorder, both through one
+  commitReorder + moveRuleToIndex path. The #1 deferred candidate
+  since round 26 is now shipped.
 - persisted undo ring across sessions UI (round 31 ring is
   ephemeral; surface a "restored N undo steps" banner on reopen).
 - drilldown row -> cross-surface filter (clicking a fall-through
@@ -427,7 +530,11 @@ demo value:
 - focus-trap + restore-focus polish for every popover/modal so Tab
   never escapes an open overlay (a11y).
 - reduced-motion media-query pass (the cov-export-toast-fade-in +
-  popover entrance animations should honour prefers-reduced-motion).
+  popover entrance animations + the new round-34 drag dim/lift
+  transitions should honour prefers-reduced-motion).
+- touch/pointer drag-reorder fallback (round 34 uses HTML5 drag-
+  and-drop which is mouse-only; a Pointer Events path would make
+  the rule chain reorderable on a trackpad-tap or touchscreen).
 
 
 ## Roadmap — round 32 (Hopper Cascade-Jump Popover) — ALL DONE
