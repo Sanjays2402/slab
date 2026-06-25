@@ -84,9 +84,11 @@
     describeCaptureTimestampMode,
     type CaptureTimestampMode,
     moveRuleToIndex,
+    describeRuleMove,
     dropEdgeFromOffset,
     resolveDropIndex,
     isNoopDrop,
+    resolveRuleReorderKey,
     type DropEdge,
     COVERAGE_FILTER_KINDS,
     PREDICATE_KINDS,
@@ -132,7 +134,7 @@
   let errorMsg = $state<string | null>(null);
 
   // -------------------------------------------------------------------
-  // Slice 166 — drag-to-reorder (round-34)
+  // Slice 166/167 — drag-to-reorder + keyboard reorder (round-34)
   // -------------------------------------------------------------------
   //
   // Until now a rule moved one position per up/down click; dragging
@@ -141,10 +143,12 @@
   // dropIndex is the slice-164-resolved FINAL resting index used to
   // render the insertion indicator; dropEdge tracks which edge of the
   // hovered row the pointer is nearer so the indicator sits in the
-  // right gap.
+  // right gap. reorderAnnounce feeds the aria-live region for the
+  // keyboard reorder path (slice 167).
   let dragFrom = $state<number | null>(null);
   let dropIndex = $state<number | null>(null);
   let dropEdge = $state<DropEdge>("before");
+  let reorderAnnounce = $state("");
 
   /** Files the preview pane evaluates against. Seeded from the
    *  watch's recent run log (so users see *their* files) plus a
@@ -1622,14 +1626,21 @@
     commitReorder(i, i + 1);
   }
 
-  /** Shared reorder commit path for the up/down buttons and drag-drop
-   *  (slice 166). Uses the slice-163 primitive so the no-op guard and
-   *  the persistence round-trip live in ONE place. Returns true iff
-   *  the chain actually moved. */
-  function commitReorder(from: number, to: number): boolean {
+  /** Shared reorder commit path for the up/down buttons (slice 167),
+   *  drag-drop (slice 166), and Alt+Arrow keyboard (slice 167). Uses
+   *  the slice-163 primitive so the no-op guard, the persistence
+   *  round-trip, and the aria-live announcement live in ONE place.
+   *  `announce` (default true) drives the keyboard path's screen-
+   *  reader feedback; the drag + button paths leave it harmless.
+   *  Returns true iff the chain actually moved. */
+  function commitReorder(from: number, to: number, announce = true): boolean {
+    const ruleName = rules[from]?.name ?? "";
     const result = moveRuleToIndex(rules, from, to);
     if (!result.moved) return false;
     rules = result.rules;
+    if (announce) {
+      reorderAnnounce = describeRuleMove(ruleName, result, rules.length);
+    }
     scheduleSave();
     return true;
   }
@@ -1689,6 +1700,42 @@
     dragFrom = null;
     dropIndex = null;
   }
+
+  // ── Slice 167 — keyboard reorder (Alt+ArrowUp / Alt+ArrowDown) ─────
+  //
+  // a11y fallback so the chain is reorderable without a mouse. Bound
+  // on each row's grab handle; resolveRuleReorderKey (slice 165)
+  // classifies the chord into a move intent, commitReorder applies it
+  // (announcing via aria-live), and focus follows the moved handle so
+  // a repeated Alt+Arrow keeps walking the same rule.
+  function onHandleKeydown(e: KeyboardEvent, i: number) {
+    const intent = resolveRuleReorderKey(
+      {
+        key: e.key,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+      },
+      i,
+      rules.length,
+    );
+    if (intent.kind === "none") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (commitReorder(intent.from, intent.to)) {
+      // Keep focus on the same rule's handle at its new position so
+      // the user can chain Alt+Arrow presses without re-focusing.
+      const target = intent.to;
+      queueMicrotask(() => {
+        handleRefs[target]?.focus();
+      });
+    }
+  }
+
+  /** Per-row grab-handle element refs, for focus-follow after a
+   *  keyboard reorder. */
+  let handleRefs = $state<(HTMLButtonElement | null)[]>([]);
 
   function setPredicateKind(i: number, kind: RulePredicate["kind"]) {
     rules[i].predicate = emptyPredicate(kind);
@@ -1770,6 +1817,10 @@
 
   <div class="split">
     <!-- ============== LEFT: rule chain ============== -->
+    <!-- Slice 167 — aria-live region announcing keyboard reorders to
+         screen readers ("Moved Catch-all to position 1 of 3"). Visually
+         hidden; polite so it doesn't interrupt the user mid-action. -->
+    <p class="sr-only" aria-live="polite" role="status">{reorderAnnounce}</p>
     <ol class="rules">
       {#if loading}
         <li class="empty"><span class="spinner" /> Loading rules…</li>
@@ -1799,11 +1850,13 @@
             <div class="rule-head">
               <button
                 class="grip"
-                aria-label="Drag to reorder {ruleNameAt(i)}"
-                title="Drag to reorder"
+                aria-label="Reorder {ruleNameAt(i)}. Drag to move, or press Alt with Arrow Up or Arrow Down."
+                title="Drag to reorder · Alt+↑/↓"
+                bind:this={handleRefs[i]}
                 draggable="true"
                 ondragstart={(e) => onRuleDragStart(e, i)}
                 ondragend={endRuleDrag}
+                onkeydown={(e) => onHandleKeydown(e, i)}
               >
                 <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true">
                   <circle cx="2.5" cy="3" r="1.2" />
@@ -2883,6 +2936,18 @@
   }
   .grip svg circle {
     fill: currentColor;
+  }
+  /* Visually-hidden but screen-reader-available (aria-live region). */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
   .reorder {
     display: flex;
