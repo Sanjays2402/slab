@@ -9,7 +9,14 @@
 // Renders via <ToastStack /> mounted once in +layout.svelte.
 
 import { writable } from "svelte/store";
-import { findCoalesceTarget } from "./toastStack";
+import {
+  findCoalesceTarget,
+  createToastTimer,
+  pauseToastTimer,
+  resumeToastTimer,
+  toastTimerRemaining,
+  type ToastTimer,
+} from "./toastStack";
 
 export type ToastKind = "success" | "error" | "info" | "warning";
 
@@ -41,6 +48,23 @@ export const toasts = writable<Toast[]>([]);
 
 let nextId = 1;
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
+// Pausable lifespan model per live toast (slice 4). The real setTimeout
+// above is (re)scheduled from this model's remaining time so a paused
+// toast — one the user is hovering to read — never dismisses underneath
+// them. Sticky toasts (duration 0) get no entry here.
+const timerModels = new Map<number, ToastTimer>();
+
+/** (Re)arm the real setTimeout for `id` from its model's remaining ms. */
+function armTimer(id: number): void {
+  const model = timerModels.get(id);
+  if (!model) return;
+  const existing = timers.get(id);
+  if (existing) clearTimeout(existing);
+  const remaining = toastTimerRemaining(model, Date.now());
+  if (!Number.isFinite(remaining)) return; // sticky
+  const t = setTimeout(() => dismiss(id), Math.max(0, remaining));
+  timers.set(id, t);
+}
 
 function push(kind: ToastKind, message: string, opts: NotifyOpts = {}): number {
   const duration = opts.duration ?? DEFAULT_DURATION[kind];
@@ -73,16 +97,40 @@ function push(kind: ToastKind, message: string, opts: NotifyOpts = {}): number {
     };
     return [...list, toast];
   });
+  // Reset the lifespan model to a fresh full run (covers both the new and
+  // the coalesced case — a repeat restarts the clock) then arm the timer.
   if (duration > 0) {
-    // Refresh the auto-dismiss timer for both the new and the coalesced
-    // case so a repeated toast extends its life rather than vanishing on
-    // the original toast's clock.
-    const existing = timers.get(mergedId);
-    if (existing) clearTimeout(existing);
-    const t = setTimeout(() => dismiss(mergedId), duration);
-    timers.set(mergedId, t);
+    timerModels.set(mergedId, createToastTimer(duration, Date.now()));
+    armTimer(mergedId);
   }
   return mergedId;
+}
+
+/**
+ * Pause a toast's auto-dismiss clock — called when the pointer enters it
+ * so a toast can't vanish mid-read. Banks the elapsed time; the bar's
+ * CSS animation pauses in lockstep via `:hover`. No-op for sticky toasts.
+ */
+export function pauseToast(id: number): void {
+  const model = timerModels.get(id);
+  if (!model) return;
+  timerModels.set(id, pauseToastTimer(model, Date.now()));
+  const existing = timers.get(id);
+  if (existing) {
+    clearTimeout(existing);
+    timers.delete(id);
+  }
+}
+
+/**
+ * Resume a paused toast's clock — called on pointer leave. Re-arms the
+ * real timer for the banked remaining time. No-op for sticky toasts.
+ */
+export function resumeToast(id: number): void {
+  const model = timerModels.get(id);
+  if (!model) return;
+  timerModels.set(id, resumeToastTimer(model, Date.now()));
+  armTimer(id);
 }
 
 export function dismiss(id: number): void {
@@ -91,12 +139,14 @@ export function dismiss(id: number): void {
     clearTimeout(t);
     timers.delete(id);
   }
+  timerModels.delete(id);
   toasts.update((list) => list.filter((x) => x.id !== id));
 }
 
 export function dismissAll(): void {
   timers.forEach((t) => clearTimeout(t));
   timers.clear();
+  timerModels.clear();
   toasts.set([]);
 }
 

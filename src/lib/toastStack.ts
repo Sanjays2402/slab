@@ -155,6 +155,102 @@ export function describeClearAll(count: number): string {
   return `Clear all ${Math.floor(count)}`;
 }
 
+// ─── Pausable lifespan timer (round-35 Slice 4) ─────────────────────
+
+/**
+ * A toast's auto-dismiss clock, modelled so it can be PAUSED (on hover)
+ * and resumed without losing or extending its remaining life. `notify.ts`
+ * keeps one of these per live toast and drives the real `setTimeout`
+ * from {@link toastTimerRemaining}; the depleting progress bar reads
+ * {@link toastTimerFraction}. Pure data — every transition returns a
+ * fresh object, never mutates.
+ *
+ * `duration <= 0` models a STICKY toast (no auto-dismiss, no bar):
+ * remaining is Infinity and the fraction pins at 1.
+ */
+export interface ToastTimer {
+  /** Total lifespan in ms. <= 0 means sticky (never expires). */
+  duration: number;
+  /** Ms banked to run. Equals duration at birth; frozen while paused. */
+  remaining: number;
+  /** Timestamp the current run segment began; -1 when paused. */
+  runningSince: number;
+}
+
+/** Sentinel for a paused timer's `runningSince`. */
+const TIMER_PAUSED = -1;
+
+/**
+ * Start a fresh, running timer. `remaining` seeds to the full duration
+ * and the clock begins counting from `now`.
+ */
+export function createToastTimer(duration: number, now: number): ToastTimer {
+  const dur = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  return { duration: dur, remaining: dur > 0 ? dur : Infinity, runningSince: now };
+}
+
+/**
+ * Pause a running timer: bank the elapsed time into `remaining` and stop
+ * the clock. Idempotent — pausing an already-paused (or sticky) timer
+ * returns it unchanged. Never banks a negative remainder.
+ */
+export function pauseToastTimer(timer: ToastTimer, now: number): ToastTimer {
+  if (timer.duration <= 0) return timer; // sticky: nothing to pause
+  if (timer.runningSince === TIMER_PAUSED) return timer; // already paused
+  const elapsed = now - timer.runningSince;
+  const remaining = Math.max(0, timer.remaining - Math.max(0, elapsed));
+  return { ...timer, remaining, runningSince: TIMER_PAUSED };
+}
+
+/**
+ * Resume a paused timer: restart the clock from `now` keeping the banked
+ * `remaining`. Idempotent — resuming an already-running (or sticky)
+ * timer returns it unchanged.
+ */
+export function resumeToastTimer(timer: ToastTimer, now: number): ToastTimer {
+  if (timer.duration <= 0) return timer; // sticky
+  if (timer.runningSince !== TIMER_PAUSED) return timer; // already running
+  return { ...timer, runningSince: now };
+}
+
+/**
+ * Milliseconds left before this timer fires. A paused timer reports its
+ * banked `remaining`; a running timer subtracts the elapsed segment
+ * (clamped at 0). Sticky timers report Infinity.
+ */
+export function toastTimerRemaining(timer: ToastTimer, now: number): number {
+  if (timer.duration <= 0) return Infinity;
+  if (timer.runningSince === TIMER_PAUSED) return timer.remaining;
+  const elapsed = Math.max(0, now - timer.runningSince);
+  return Math.max(0, timer.remaining - elapsed);
+}
+
+/**
+ * Fraction of life LEFT in `[0, 1]` — `1` full, `0` expired — for the
+ * depleting progress bar. Sticky timers pin at `1` (the UI hides the bar
+ * for them). Guards a zero/negative duration against divide-by-zero.
+ */
+export function toastTimerFraction(timer: ToastTimer, now: number): number {
+  if (timer.duration <= 0) return 1;
+  const remaining = toastTimerRemaining(timer, now);
+  if (!Number.isFinite(remaining)) return 1;
+  const f = remaining / timer.duration;
+  if (f <= 0) return 0;
+  if (f >= 1) return 1;
+  return f;
+}
+
+/** Whether a timer has fully depleted (running and out of time). */
+export function isToastTimerExpired(timer: ToastTimer, now: number): boolean {
+  return Number.isFinite(toastTimerRemaining(timer, now)) &&
+    toastTimerRemaining(timer, now) <= 0;
+}
+
+/** Whether a timer is currently paused (and not sticky). */
+export function isToastTimerPaused(timer: ToastTimer): boolean {
+  return timer.duration > 0 && timer.runningSince === TIMER_PAUSED;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

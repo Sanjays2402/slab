@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { toasts, dismiss, dismissAll, type Toast } from "$lib/notify";
+  import { toasts, dismiss, dismissAll, pauseToast, resumeToast, type Toast } from "$lib/notify";
   import {
     partitionToasts,
     describeToastOverflow,
@@ -50,6 +50,10 @@
     <div
       class="toast {t.kind}"
       transition:fly={{ x: 20, duration: 180 }}
+      onmouseenter={() => pauseToast(t.id)}
+      onmouseleave={() => resumeToast(t.id)}
+      onfocusin={() => pauseToast(t.id)}
+      onfocusout={() => resumeToast(t.id)}
     >
       <span class="icon">{icon(t.kind)}</span>
       <div class="body">
@@ -62,6 +66,18 @@
         {#if t.detail}<div class="detail">{t.detail}</div>{/if}
       </div>
       <button class="close" onclick={() => dismiss(t.id)} aria-label="Dismiss">×</button>
+      {#if t.duration > 0}
+        <!-- Lifespan bar: depletes over t.duration; pauses with the JS
+             timer on hover/focus via animation-play-state. Keyed on
+             count so a coalesced repeat restarts the sweep. -->
+        {#key t.count}
+          <span
+            class="lifespan"
+            style="animation-duration: {t.duration}ms"
+            aria-hidden="true"
+          ></span>
+        {/key}
+      {/if}
     </div>
   {/each}
 </div>
@@ -133,6 +149,8 @@
     color: var(--text);
     font-size: 13px;
     min-width: 260px;
+    position: relative;
+    overflow: hidden;
   }
   .toast.success {
     border-left-color: #3fc88c;
@@ -234,5 +252,53 @@
   .close:hover {
     color: var(--text);
     background: var(--bg-3);
+  }
+  .lifespan {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    width: 100%;
+    transform-origin: left center;
+    background: var(--accent);
+    opacity: 0.55;
+    animation-name: lifespan-deplete;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+    animation-iteration-count: 1;
+  }
+  /* Pause the sweep while the pointer/focus is on the toast — mirrors the
+     JS timer pause in notify.ts so the bar and the real clock stay in
+     lockstep. */
+  .toast:hover .lifespan,
+  .toast:focus-within .lifespan {
+    animation-play-state: paused;
+  }
+  .toast.success .lifespan {
+    background: #3fc88c;
+  }
+  .toast.error .lifespan {
+    background: #ff5d6c;
+  }
+  .toast.warning .lifespan {
+    background: #ffb648;
+  }
+  @keyframes lifespan-deplete {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+  /* Reduced motion: a depleting bar is informative, but the continuous
+     scaleX sweep is the kind of motion the setting targets. Keep the bar
+     visible (state) but freeze it static rather than animating. */
+  @media (prefers-reduced-motion: reduce) {
+    .lifespan {
+      animation: none;
+      transform: scaleX(1);
+      opacity: 0.3;
+    }
   }
 </style>
