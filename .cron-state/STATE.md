@@ -1,13 +1,120 @@
 # Slab Cron State
 
-Last updated: 2026-06-23 20:55 PT by Cake (cron) — round-32 BATCH shipped: 5 slices promoting round-31's "Step N of M" counter chip into a clickable per-step cascade-jump popover. compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan with {is_valid, skip_count, dropped_labels (newest-first), target_label, target_index} pure-data planner — invalid for empty/oor/target-equals-newest with label-echo for target=newest + valid newest-first walk via reverse range collecting labels + snake_case serde round-trip + 14 tests (slice 153); TS mirror computeUndoJumpPlan 1:1 + UndoJumpPlan snake_case wire-shape interface + describeUndoJumpPlan discriminated copy ("No jump available" / "Already the newest entry" / "Skip 1 revert to jump back to <label>" / "Skip N reverts to jump back to <label>") + canApplyUndoJump predicate + defensive NaN/negative/non-integer normalisation + 66 inline tests (slice 154); slab_hopper_compute_undo_jump_plan Tauri command wired into invoke handler + slabHopperComputeUndoJumpPlan async wrapper with browser-mode delegation + 45 wrapper-delegation tests pinning every UndoJumpPlan field through browser-mode path with real fix-it/fix-all labels and runtime-type pinning (slice 155); jumpToUndoEntry(ring, targetIndex) -> UndoRingJump {is_valid, ring, target, dropped} live-ring bridge trimming entries [0..=targetIndex] returning fresh array (input never mutated) with snapshot reference identity preserved for retained entries + summarizeRingForJump(ring) -> UndoEntrySummary[] mapping live ring to compact wire-shape for slice-154 planner + 66 inline tests including end-to-end summarize -> plan -> apply round-trip (slice 156); demo-able UI promoting cov-undo-chip from <span> to <button> with hover/focus/open states + cov-undo-chip-anchor relative wrapper + cov-undo-jump-popover 320-360px dark panel with per-row layout (Step N tag / label / relative timestamp via formatRelativeAge / per-state trailing affordance: Active target green badge for newest, Jump-here blue button with describeUndoJumpPlan tooltip for older ready, Stale amber badge with live reason, Noop muted badge) + applyUndoJump optimistic apply with rollback for both ring AND chain on failure + popover dismissal in Escape chain (newest most-recently-opened overlay, unwinds FIRST) + $effect auto-close when ring drains + ~155 lines new scoped CSS (slice 157). Gates result: cargo fmt clean (no changes needed after folding tiny slice-155 formatting drift), cargo clippy --lib -- -D warnings PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed (round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check 0 errors / 104 warnings (round-31 baseline preserved EXACTLY — zero new warnings from the chip-button conversion, popover markup, formatRelativeAge helper, the new $state/$effect blocks, or the ~155 lines of new CSS), tsx src/lib/hopper.test.ts 759 inline expects pass (round-31 baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
+Last updated: 2026-06-24 21:05 PT by Cake (cron) — round-33 BATCH shipped (RECOVERY: a prior tick built+committed these 5 frontend slices locally at 02:12-02:50 PT today but CRASHED before gating/pushing/logging; origin was still at the round-32 log. This tick re-gated the orphaned batch clean and pushed it). Round 33 = 5 frontend/UX slices (158-162) making the round-32 cascade-jump popover fully keyboard-drivable (Cmd-Z cascade / Cmd-Shift-Z jump popover / Arrow+Enter row nav via a pure resolver + focus walker) PLUS a Relative/Absolute per-row timestamp toggle (localStorage-persisted) and a ring-health popover header. SHAs de87a9d, e0206f3, 429da78, db2319f, 9c065a3. Gates: pnpm check 0 errors/104 warnings (round-32 baseline preserved exactly), tsx hopper.test.ts 926/926 pass (round-32 baseline 759 +167), cargo fmt clean, zero Rust changed (lib green baseline 2620 carries forward). PRIOR round-32 note follows -- round-32 BATCH shipped: 5 slices promoting round-31's "Step N of M" counter chip into a clickable per-step cascade-jump popover. compute_undo_jump_plan(entries, target_index) -> UndoJumpPlan with {is_valid, skip_count, dropped_labels (newest-first), target_label, target_index} pure-data planner — invalid for empty/oor/target-equals-newest with label-echo for target=newest + valid newest-first walk via reverse range collecting labels + snake_case serde round-trip + 14 tests (slice 153); TS mirror computeUndoJumpPlan 1:1 + UndoJumpPlan snake_case wire-shape interface + describeUndoJumpPlan discriminated copy ("No jump available" / "Already the newest entry" / "Skip 1 revert to jump back to <label>" / "Skip N reverts to jump back to <label>") + canApplyUndoJump predicate + defensive NaN/negative/non-integer normalisation + 66 inline tests (slice 154); slab_hopper_compute_undo_jump_plan Tauri command wired into invoke handler + slabHopperComputeUndoJumpPlan async wrapper with browser-mode delegation + 45 wrapper-delegation tests pinning every UndoJumpPlan field through browser-mode path with real fix-it/fix-all labels and runtime-type pinning (slice 155); jumpToUndoEntry(ring, targetIndex) -> UndoRingJump {is_valid, ring, target, dropped} live-ring bridge trimming entries [0..=targetIndex] returning fresh array (input never mutated) with snapshot reference identity preserved for retained entries + summarizeRingForJump(ring) -> UndoEntrySummary[] mapping live ring to compact wire-shape for slice-154 planner + 66 inline tests including end-to-end summarize -> plan -> apply round-trip (slice 156); demo-able UI promoting cov-undo-chip from <span> to <button> with hover/focus/open states + cov-undo-chip-anchor relative wrapper + cov-undo-jump-popover 320-360px dark panel with per-row layout (Step N tag / label / relative timestamp via formatRelativeAge / per-state trailing affordance: Active target green badge for newest, Jump-here blue button with describeUndoJumpPlan tooltip for older ready, Stale amber badge with live reason, Noop muted badge) + applyUndoJump optimistic apply with rollback for both ring AND chain on failure + popover dismissal in Escape chain (newest most-recently-opened overlay, unwinds FIRST) + $effect auto-close when ring drains + ~155 lines new scoped CSS (slice 157). Gates result: cargo fmt clean (no changes needed after folding tiny slice-155 formatting drift), cargo clippy --lib -- -D warnings PASSED CLEAN in 12.24s, cargo test --lib 2620 passed / 0 failed (round-31 baseline 2606 + 14 slice-153 tests = 2620), pnpm check 0 errors / 104 warnings (round-31 baseline preserved EXACTLY — zero new warnings from the chip-button conversion, popover markup, formatRelativeAge helper, the new $state/$effect blocks, or the ~155 lines of new CSS), tsx src/lib/hopper.test.ts 759 inline expects pass (round-31 baseline 582 + 66 slice-154 + 45 slice-155 + 66 slice-156 = 759).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `7f09329` — "feat(hopper): cascade-jump popover with per-step Jump-here buttons".
+Latest commit: `9c065a3` — "feat(hopper): Relative/Absolute timestamp toggle + ring-health header".
+
+### What round-33 (2026-06-24 — RECOVERED + pushed 21:05 PT, built 02:12-02:50 PT) just shipped
+
+RECOVERY NOTE: a prior cron tick today (commits timestamped
+02:12-02:50 PT) built and committed all five round-33 frontend
+slices locally on `main` but CRASHED before running the batch
+gate, pushing, or writing STATE.md / a session log. origin/main
+was still parked at `8793261` (the round-32 chore log) with five
+unpushed commits sitting locally. This 21:05 PT tick discovered the
+orphaned batch, RE-RAN the full quality gate clean (tsx hopper
+926/926, pnpm check 0 errors/104 warnings, cargo fmt clean, zero
+Rust touched so the round-32 lib baseline of 2620 carries forward
+unchanged), pushed `8793261..9c065a3` to origin, and is logging it
+now. No new code was written this tick — this was a recover-and-
+ship of already-built, now-verified frontend work. The +167 inline
+test delta (759 -> 926) and zero-new-warning svelte-check confirm
+the orphaned batch was complete and green; abandoning it to stack
+five more on top would have wasted ~2019 lines of tested UI work
+and left main two rounds behind local.
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+making round-32's cascade-jump popover fully keyboard-drivable and
+adding a cross-session timestamp toggle + ring-health header.
+
+- Slice 158: keyboard-shortcut resolver (de87a9d).
+  resolveUndoShortcut(event, context) -> UndoShortcutIntent pure
+  classifier (7 intents: cascade / open-popover / jump-oldest /
+  focus-prev / focus-next / activate / none). Platform-aware (Cmd
+  via metaKey on mac, Ctrl via ctrlKey elsewhere); Alt always
+  disqualifies (Alt-Cmd-Z is macOS system redo); wrong-primary
+  defers to system default. detectUndoShortcutPlatform,
+  describeUndoShortcutIntent, formatUndoShortcutChord
+  (display chords). 68 inline tests.
+
+- Slice 159: popover row builder + focus walker (e0206f3).
+  buildJumpableRows(ring, liveRules, now) -> JumpableRow[] derives
+  every per-row UI input once (ringIndex / stepNumber newest-first
+  / label / capturedAt / ageCopy / status / plan / isActiveTarget
+  / isFocusable). formatJumpableRowAge extracted from the inline
+  Svelte helper. nextFocusableJumpIndex(rows, current, direction)
+  walks skipping non-focusable rows, wraps at ends, single-row
+  stays focused. countFocusableJumpRows for header copy. 60 tests.
+
+- Slice 160: keyboard UI wiring (429da78). Wires 158's resolver +
+  159's rows into HopperRulesEditor so the popover is keyboard-
+  drivable end-to-end. Cmd-Z fires cascade Undo (no-ops to browser
+  default when ring empty / active stale-or-noop so the user keeps
+  text-input undo); Cmd-Shift-Z opens popover (>=2 entries) or, if
+  already open, jumps to oldest ready; Arrow Up/Down walk focus;
+  Enter/Space activate the focused Jump-here button; Esc still
+  closes. Per-row button bind:this + onfocus sync. New CSS:
+  .cov-undo-jump-row.focused (inset box-shadow ring), kbd-hint
+  footer with monospace key caps. Chip + active-target tooltips
+  suffix the platform chord so mouse users discover the shortcut.
+
+- Slice 161: absolute-timestamp formatter + ring-health (db2319f).
+  formatAbsoluteCapture(capturedAt, now) -> "Today HH:MM" /
+  "Yesterday HH:MM" / "MMM D, HH:MM" / "MMM D YYYY, HH:MM" cross-
+  session vocabulary (24h clock; calendar-day math not string
+  compare; NaN/Infinity -> empty). formatJumpableRowTimestamp
+  delegates by CaptureTimestampMode. summarizeRingHealth(rows) ->
+  RingHealthSummary {total, ready, stale, noop, focusable}.
+  describeRingHealth -> header copy ("3 of 5 undo steps jumpable
+  (2 stale)" etc, zero-count parentheticals skipped).
+  toggleCaptureTimestampMode + describeCaptureTimestampMode. The
+  +39 helper tests here plus the 60+68 from 158/159 net the
+  759 -> 926 total.
+
+- Slice 162: Relative/Absolute toggle UI capstone (9c065a3).
+  Replaces the static popover header with describeRingHealth copy
+  + a tiny Rel/Abs toggle pill. Per-row timestamp delegates to
+  formatJumpableRowTimestamp; .abs modifier switches to tabular
+  numerics for clean column alignment. Persists
+  `slab.hopper.cascadeJump.timestampMode` to localStorage (loaded
+  at init, written on toggle; defensive against missing/corrupt/
+  private-mode storage -> falls back to "relative" and silently
+  no-ops the write). ~60 lines new scoped CSS matching the round-
+  32 cov-undo-chip vocabulary.
+
+Gates result (re-run this tick on the orphaned batch): pnpm check
+0 errors / 104 warnings (round-32 baseline preserved EXACTLY —
+zero new warnings from any of the five slices), tsx
+src/lib/hopper.test.ts 926 inline expects pass (round-32 baseline
+759 + 68 slice-158 + 60 slice-159 + 39 slice-161 = 926; slices
+160 + 162 are UI-only with no new TS-helper assertions), cargo fmt
+--all --check clean, zero Rust files changed so the round-32 lib
+baseline (clippy clean, 2620 tests) carries forward unchanged (the
+full Tauri binary build is never run in a tick — it wedges the
+disk).
+
+PROCESS NOTES (round 33):
+- Frontend-focus override honoured: all five slices are TS/Svelte
+  UI work (keyboard UX, focus management, timestamp display,
+  accessibility via aria-labels + kbd hints). Zero backend.
+- Cadence shifted from the rounds 19-32 five-LAYER pattern
+  (Rust primitive -> TS mirror -> Tauri cmd -> bridge -> UI) to a
+  pure-frontend three-flavour pattern: pure TS helper -> more pure
+  TS helper -> demo-able UI, then repeat for the timestamp arc.
+  This is correct under the frontend override (no Rust unless a UI
+  feature truly needs it; none did).
+- The keyboard resolver is a PURE classifier (no DOM, no state) so
+  every branch is testable without JSDOM and the gesture
+  vocabulary lives in one documented place. Same rationale as the
+  round 30-32 pure-data primitives.
+
+Latest commit (pre-recovery, for reference): round-32 ended at
+`7f09329` with the round-32 chore log at `8793261`.
 
 ### What round-32 (2026-06-23 20:55 PT) just shipped
 
@@ -229,6 +336,99 @@ DESIGN NOTES:
   empty title. The $effect lets the popover hide cleanly
   alongside the chip when the ring goes empty for any
   reason.
+
+## Roadmap — round 33 (Keyboard-driven cascade-jump + timestamp toggle) — ALL DONE
+
+Round 33 batched FIVE FRONTEND/UX slices (per Sanjay's frontend-
+focus override) into one cron tick — RECOVERED this tick after a
+prior tick built+committed them locally (02:12-02:50 PT today) but
+crashed before gating/pushing/logging. Two cohesive arcs: (A)
+making round-32's cascade-jump popover fully keyboard-drivable
+(pure shortcut resolver -> popover row builder + focus walker ->
+demo-able keyboard UI), and (B) a cross-session timestamp toggle
+(absolute formatter + ring-health describer -> Relative/Absolute
+toggle UI with localStorage persistence). Pure-frontend three-
+flavour cadence (TS helper -> TS helper -> UI), no Rust.
+
+158. ~~**keyboard-shortcut resolver**~~ —
+     DONE (2026-06-24 02:12 PT, de87a9d). resolveUndoShortcut(
+     event, context) -> UndoShortcutIntent pure classifier (7
+     intents) + detectUndoShortcutPlatform +
+     describeUndoShortcutIntent + formatUndoShortcutChord.
+     Platform-aware, Alt-disqualifies, wrong-primary defers to
+     system default. 68 inline tests.
+159. ~~**popover row builder + focus walker**~~ —
+     DONE (2026-06-24 02:28 PT, e0206f3). buildJumpableRows(ring,
+     liveRules, now) -> JumpableRow[] + formatJumpableRowAge +
+     nextFocusableJumpIndex(rows, current, direction) skipping
+     non-focusable rows with wrap + countFocusableJumpRows.
+     60 inline tests.
+160. ~~**keyboard UI wiring**~~ —
+     DONE (2026-06-24 02:46 PT, 429da78). Wires 158+159 into
+     HopperRulesEditor: Cmd-Z cascade / Cmd-Shift-Z open-or-jump-
+     oldest / Arrow walk / Enter-Space activate / Esc close +
+     .cov-undo-jump-row.focused ring + kbd-hint footer + chord-
+     suffixed tooltips. UI-only (no new TS-helper tests).
+161. ~~**absolute-timestamp formatter + ring-health**~~ —
+     DONE (2026-06-24 02:49 PT, db2319f). formatAbsoluteCapture
+     (Today/Yesterday/same-year/diff-year) +
+     formatJumpableRowTimestamp + summarizeRingHealth ->
+     RingHealthSummary + describeRingHealth header copy +
+     toggleCaptureTimestampMode + describeCaptureTimestampMode.
+     39 inline tests (net total 926).
+162. ~~**Relative/Absolute toggle UI capstone**~~ —
+     DONE (2026-06-24 02:50 PT, 9c065a3). describeRingHealth
+     popover header + Rel/Abs toggle pill + per-row timestamp
+     delegation + .abs tabular-numeric variant + localStorage
+     persistence (slab.hopper.cascadeJump.timestampMode, defensive
+     fallback to "relative"). ~60 lines new scoped CSS. UI-only.
+
+     With round 33 done, the cascade-jump popover (round 32) is now
+     fully keyboard-drivable AND carries a cross-session timestamp
+     view — two of round-32's three "next candidate" items
+     (absolute-timestamp toggle + undo ring keyboard shortcut) are
+     now SHIPPED. Remaining frontend-first candidates roll into the
+     next-candidates list below.
+
+### Next FRONTEND candidates (frontend-focus override active)
+
+Refilled frontend-first per the override (backend/infra items
+deferred until the override block is removed). Ordered roughly by
+demo value:
+
+- Hopper rule reorder-by-drag (deferred since round 26; pure UI
+  drag interaction — grab handle, drop indicator, live reorder
+  preview, keyboard reorder via Alt+Arrow as a11y fallback).
+- persisted undo ring across sessions UI (round 31 ring is
+  ephemeral; surface a "restored N undo steps" banner on reopen).
+- drilldown row -> cross-surface filter (clicking a fall-through
+  filename in the coverage popover carries the query into the
+  document inspector with a visible filter chip).
+- histogram hover-tooltip on bar segments (per-segment count +
+  label on hover/focus, keyboard-reachable).
+- Beacon cache inspector polish (column sort by basename / model
+  facet, sort-direction caret, empty-state copy).
+- doc-detail metadata editor read surface (inline-editable title /
+  tags with optimistic save + rollback toast).
+- Loom-grade tagging explorer (tree/list toggle, filter-as-you-
+  type, multi-select with bulk-tag affordance).
+- per-plugin "Run prune now" affordance (deferred since round 25;
+  button + confirm popover + result toast).
+- empty/loading/skeleton-state pass across panels that still show
+  a bare spinner (Signet verify, Beacon cache, Quill queue).
+- command-palette / quick-action launcher (Cmd-K) for cross-panel
+  navigation — Raycast-grade.
+- keyboard-shortcut cheat-sheet overlay (? key) surfacing every
+  bound chord app-wide.
+- toast stacking + dismiss-all (currently single toast surface;
+  multiple rapid actions clobber each other).
+- responsive / narrow-window layout pass for the Hopper rules
+  editor + coverage popover (popover currently fixed 320-360px).
+- focus-trap + restore-focus polish for every popover/modal so Tab
+  never escapes an open overlay (a11y).
+- reduced-motion media-query pass (the cov-export-toast-fade-in +
+  popover entrance animations should honour prefers-reduced-motion).
+
 
 ## Roadmap — round 32 (Hopper Cascade-Jump Popover) — ALL DONE
 
