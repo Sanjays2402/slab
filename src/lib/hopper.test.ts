@@ -87,6 +87,10 @@ import {
   moveRuleToIndex,
   describeRuleMove,
   type RuleMoveResult,
+  dropEdgeFromOffset,
+  resolveDropIndex,
+  isNoopDrop,
+  type DropEdge,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -5678,4 +5682,121 @@ function names(rules: Rule[]): string {
       Array.isArray(res.rules),
     "RuleMoveResult: field types pinned",
   );
+}
+
+// ── Slice 164 — dropEdgeFromOffset / resolveDropIndex / isNoopDrop ────
+
+{
+  // dropEdgeFromOffset: top half -> before, bottom half -> after.
+  expect(dropEdgeFromOffset(0, 40) === "before", "edge: y=0 -> before");
+  expect(dropEdgeFromOffset(19, 40) === "before", "edge: y=19/40 -> before");
+  expect(dropEdgeFromOffset(20, 40) === "after", "edge: y=midpoint -> after");
+  expect(dropEdgeFromOffset(39, 40) === "after", "edge: y=39/40 -> after");
+}
+
+{
+  // dropEdgeFromOffset: defensive on bad geometry -> "before".
+  expect(dropEdgeFromOffset(10, 0) === "before", "edge: zero height -> before");
+  expect(dropEdgeFromOffset(10, -5) === "before", "edge: neg height -> before");
+  expect(dropEdgeFromOffset(NaN, 40) === "before", "edge: NaN offset -> before");
+  expect(
+    dropEdgeFromOffset(10, Infinity) === "before",
+    "edge: Infinity height -> before",
+  );
+}
+
+{
+  // resolveDropIndex: drag top to below a middle row.
+  // [A,B,C,D,E], drag A (0), hover C (2), after -> A lands at index 2.
+  expect(resolveDropIndex(0, 2, "after", 5) === 2, "resolve: 0 / hover2 after -> 2");
+  // hover C before -> A lands at index 1 (just before C).
+  expect(resolveDropIndex(0, 2, "before", 5) === 1, "resolve: 0 / hover2 before -> 1");
+}
+
+{
+  // resolveDropIndex: drag bottom up. [A,B,C,D,E], drag E (4).
+  expect(resolveDropIndex(4, 1, "before", 5) === 1, "resolve: 4 / hover1 before -> 1");
+  expect(resolveDropIndex(4, 1, "after", 5) === 2, "resolve: 4 / hover1 after -> 2");
+  expect(resolveDropIndex(4, 0, "before", 5) === 0, "resolve: 4 / hover0 before -> 0");
+}
+
+{
+  // resolveDropIndex: the four gaps flanking the source are all no-ops
+  // that resolve back to `from`. Source B (index 1) in a length-5 chain.
+  expect(resolveDropIndex(1, 1, "before", 5) === 1, "resolve: own top gap -> from");
+  expect(resolveDropIndex(1, 1, "after", 5) === 1, "resolve: own bottom gap -> from");
+  expect(resolveDropIndex(1, 0, "after", 5) === 1, "resolve: gap above (after A) -> from");
+  expect(resolveDropIndex(1, 2, "before", 5) === 1, "resolve: gap below (before C) -> from");
+}
+
+{
+  // resolveDropIndex: invalid inputs -> -1.
+  expect(resolveDropIndex(0, 0, "after", 0) === -1, "resolve: empty len -> -1");
+  expect(resolveDropIndex(5, 1, "before", 5) === -1, "resolve: oor from -> -1");
+  expect(resolveDropIndex(0, 9, "before", 5) === -1, "resolve: oor hover -> -1");
+  expect(resolveDropIndex(-1, 1, "before", 5) === -1, "resolve: neg from -> -1");
+  expect(resolveDropIndex(0, 1.5, "before", 5) === -1, "resolve: float hover -> -1");
+  expect(resolveDropIndex(NaN, 1, "before", 5) === -1, "resolve: NaN from -> -1");
+}
+
+{
+  // resolveDropIndex: result is always in range for valid inputs.
+  for (let from = 0; from < 6; from++) {
+    for (let hover = 0; hover < 6; hover++) {
+      for (const edge of ["before", "after"] as DropEdge[]) {
+        const r = resolveDropIndex(from, hover, edge, 6);
+        expect(r >= 0 && r <= 5, `resolve: ${from}/${hover}/${edge} in range`);
+      }
+    }
+  }
+}
+
+// Independent oracle: insert a marker into the ORIGINAL array at the
+// gap, remove the dragged item, swap the marker for the dragged item.
+// resolveDropIndex composed with moveRuleToIndex must agree with this
+// for every (from, hover, edge) combination.
+function oracleDrop(items: string[], from: number, hover: number, edge: DropEdge): string {
+  const G = edge === "after" ? hover + 1 : hover;
+  const withMarker = items.slice();
+  withMarker.splice(G, 0, "<<MARK>>");
+  const dragIdx = from >= G ? from + 1 : from;
+  const dragged = withMarker[dragIdx];
+  withMarker.splice(dragIdx, 1);
+  return withMarker.map((x) => (x === "<<MARK>>" ? dragged : x)).join(",");
+}
+
+{
+  const labels = ["A", "B", "C", "D", "E"];
+  const ruleChain = labels.map(nrule);
+  for (let from = 0; from < labels.length; from++) {
+    for (let hover = 0; hover < labels.length; hover++) {
+      for (const edge of ["before", "after"] as DropEdge[]) {
+        const finalIdx = resolveDropIndex(from, hover, edge, labels.length);
+        const moved = moveRuleToIndex(ruleChain, from, finalIdx);
+        const got = names(moved.rules);
+        const want = oracleDrop(labels, from, hover, edge);
+        expect(
+          got === want,
+          `resolve+move matches oracle: from=${from} hover=${hover} ${edge}`,
+        );
+      }
+    }
+  }
+}
+
+{
+  // isNoopDrop: the source's own flanking gaps are no-ops; a real
+  // target is not.
+  expect(isNoopDrop(1, 1, "before", 5) === true, "noop: own top gap");
+  expect(isNoopDrop(1, 1, "after", 5) === true, "noop: own bottom gap");
+  expect(isNoopDrop(1, 0, "after", 5) === true, "noop: gap above source");
+  expect(isNoopDrop(1, 2, "before", 5) === true, "noop: gap below source");
+  expect(isNoopDrop(1, 3, "after", 5) === false, "noop: real target is not noop");
+  expect(isNoopDrop(0, 4, "after", 5) === false, "noop: drag-to-end not noop");
+}
+
+{
+  // isNoopDrop: invalid inputs count as no-op (suppress the indicator).
+  expect(isNoopDrop(0, 0, "after", 0) === true, "noop: empty len");
+  expect(isNoopDrop(9, 1, "before", 5) === true, "noop: oor from");
 }

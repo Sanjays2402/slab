@@ -3616,3 +3616,86 @@ export function describeRuleMove(
   const name = ruleName.trim() || `Rule ${result.from + 1}`;
   return `Moved ${name} to position ${result.to + 1} of ${total}`;
 }
+
+// ─── Slice 164 — drag drop-index resolver (round-34) ─────────────────
+//
+// The geometry layer between a live drag gesture and slice 163's
+// moveRuleToIndex. During a drag the UI knows two things from the
+// dragover event: which row the pointer is over (`hoverIndex`) and
+// whether it's nearer that row's TOP or BOTTOM edge (the "drop
+// edge"). This slice converts (from, hoverIndex, edge) into the
+// FINAL resting index moveRuleToIndex consumes.
+//
+// The load-bearing subtlety is the source-removal shift. The drop is
+// conceptually "insert the dragged rule at gap G in the ORIGINAL
+// array", where:
+//     edge "before" -> G = hoverIndex
+//     edge "after"  -> G = hoverIndex + 1
+// But moveRuleToIndex removes the source FIRST, so when dropping
+// BELOW the source (G > from) every row after `from` has shifted
+// left by one and the final index is G - 1. When dropping at or
+// above the source the final index is just G. Getting this wrong
+// produces an off-by-one that lands the rule one slot from where
+// the user aimed — the classic drag-reorder bug.
+
+/** Which edge of a hovered row the pointer is nearer. "before" =>
+ *  drop in the gap ABOVE the row; "after" => the gap BELOW it. */
+export type DropEdge = "before" | "after";
+
+/** Classify the drop edge from the pointer's Y offset within a row's
+ *  bounding box. Top half => "before", bottom half (>= midpoint) =>
+ *  "after". Defensive: a non-finite / non-positive rowHeight falls
+ *  back to "before" (the safe gap-above default). */
+export function dropEdgeFromOffset(
+  offsetY: number,
+  rowHeight: number,
+): DropEdge {
+  if (!Number.isFinite(offsetY) || !Number.isFinite(rowHeight) || rowHeight <= 0) {
+    return "before";
+  }
+  return offsetY >= rowHeight / 2 ? "after" : "before";
+}
+
+/** Resolve a drag drop into the FINAL resting index for
+ *  moveRuleToIndex. Returns -1 for invalid inputs (empty chain,
+ *  out-of-range / NaN `from` or `hoverIndex`).
+ *
+ *  The returned index may equal `from` (a no-op drop — dropping a
+ *  rule back into its own gap); moveRuleToIndex handles that as a
+ *  no-op, and `isNoopDrop` lets the UI suppress the drop indicator
+ *  for it. Result is always in [0, len-1] for valid inputs. */
+export function resolveDropIndex(
+  from: number,
+  hoverIndex: number,
+  edge: DropEdge,
+  len: number,
+): number {
+  if (!Number.isInteger(len) || len <= 0) return -1;
+  const f = Number.isInteger(from) ? from : -1;
+  const h = Number.isInteger(hoverIndex) ? hoverIndex : -1;
+  if (f < 0 || f >= len || h < 0 || h >= len) return -1;
+  // Gap index in the ORIGINAL array (0..len).
+  const gap = edge === "after" ? h + 1 : h;
+  // Source-removal shift: dropping below the source pulls everything
+  // after `from` left by one.
+  const final = gap > f ? gap - 1 : gap;
+  // Clamp defensively — `gap` is bounded by len so this is a no-op in
+  // practice, but it pins the contract for a future caller.
+  return Math.max(0, Math.min(len - 1, final));
+}
+
+/** True iff the drop wouldn't change the chain order — either the
+ *  resolved index equals the source, or the inputs are invalid. The
+ *  UI uses this to HIDE the drop indicator when hovering the source
+ *  rule's own gap (the two gaps flanking the dragged row), so the
+ *  user never sees a misleading insertion line for a move that does
+ *  nothing. */
+export function isNoopDrop(
+  from: number,
+  hoverIndex: number,
+  edge: DropEdge,
+  len: number,
+): boolean {
+  const resolved = resolveDropIndex(from, hoverIndex, edge, len);
+  return resolved === -1 || resolved === from;
+}
