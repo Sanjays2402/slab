@@ -127,6 +127,34 @@ export function describeToastCount(count: number | undefined): string {
   return `x${Math.floor(count)}`;
 }
 
+// ─── Clear-all control (round-35 Slice 3) ───────────────────────────
+
+/**
+ * Minimum live toasts before the "Clear all" header is worth showing.
+ * One toast already has its own × button, so the bulk control only
+ * earns its row at two or more.
+ */
+export const TOAST_CLEAR_ALL_THRESHOLD = 2;
+
+/**
+ * Whether the clear-all header should render for `count` live toasts.
+ * Defensive against NaN / negative (a corrupt store length never forces
+ * the header on).
+ */
+export function shouldShowClearAll(count: number): boolean {
+  return Number.isFinite(count) && count >= TOAST_CLEAR_ALL_THRESHOLD;
+}
+
+/**
+ * Clear-all button copy: `"Clear all 3"` so the user knows exactly how
+ * many toasts the click dismisses. Empty string below the threshold so
+ * the UI can `{#if}` on a falsy value. Defensive against bad counts.
+ */
+export function describeClearAll(count: number): string {
+  if (!shouldShowClearAll(count)) return "";
+  return `Clear all ${Math.floor(count)}`;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

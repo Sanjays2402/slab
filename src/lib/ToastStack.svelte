@@ -1,6 +1,12 @@
 <script lang="ts">
-  import { toasts, dismiss, type Toast } from "$lib/notify";
-  import { partitionToasts, describeToastOverflow, describeToastCount } from "$lib/toastStack";
+  import { toasts, dismiss, dismissAll, type Toast } from "$lib/notify";
+  import {
+    partitionToasts,
+    describeToastOverflow,
+    describeToastCount,
+    describeClearAll,
+    shouldShowClearAll,
+  } from "$lib/toastStack";
   import { fly } from "svelte/transition";
 
   // Mount once near the root layout. Renders the newest few toasts in the
@@ -12,6 +18,10 @@
   // pill sits ABOVE the visible toasts (older = higher in the corner).
   const part = $derived(partitionToasts($toasts));
   const overflowCopy = $derived(describeToastOverflow(part.hiddenCount));
+  // Clear-all header (slice 3) tops the stack once 2+ toasts are live,
+  // wiring the bulk dismissAll the notify store has always exposed.
+  const showClearAll = $derived(shouldShowClearAll($toasts.length));
+  const clearAllCopy = $derived(describeClearAll($toasts.length));
 
   function icon(kind: Toast["kind"]): string {
     switch (kind) {
@@ -28,6 +38,11 @@
 </script>
 
 <div class="stack" role="region" aria-live="polite" aria-label="Notifications">
+  {#if showClearAll}
+    <div class="clear-all-row">
+      <button class="clear-all" onclick={() => dismissAll()}>{clearAllCopy}</button>
+    </div>
+  {/if}
   {#if overflowCopy}
     <div class="overflow-pill" aria-hidden="true">{overflowCopy}</div>
   {/if}
@@ -75,6 +90,34 @@
     border-radius: 999px;
     padding: 2px 10px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+  .clear-all-row {
+    pointer-events: auto;
+    align-self: flex-end;
+    display: flex;
+  }
+  .clear-all {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 11px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    transition:
+      color 120ms ease,
+      border-color 120ms ease;
+  }
+  .clear-all:hover {
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .clear-all:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .toast {
     pointer-events: auto;

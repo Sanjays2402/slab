@@ -13,6 +13,9 @@ import {
   toastCoalesceKey,
   findCoalesceTarget,
   describeToastCount,
+  TOAST_CLEAR_ALL_THRESHOLD,
+  shouldShowClearAll,
+  describeClearAll,
   type Toast,
 } from "./toastStack";
 
@@ -221,6 +224,25 @@ function ids(list: readonly Toast[]): string {
   expect(describeToastCount(undefined) === "", "count: undefined -> empty");
   expect(describeToastCount(NaN) === "", "count: NaN -> empty");
   expect(describeToastCount(3.9) === "x3", "count: fractional floors");
+}
+
+// ── shouldShowClearAll + describeClearAll ────────────────────────────
+
+{
+  expect(TOAST_CLEAR_ALL_THRESHOLD === 2, "clearAll: threshold is 2");
+  expect(shouldShowClearAll(0) === false, "clearAll: 0 -> hidden");
+  expect(shouldShowClearAll(1) === false, "clearAll: 1 -> hidden (single has own x)");
+  expect(shouldShowClearAll(2) === true, "clearAll: 2 -> shown");
+  expect(shouldShowClearAll(9) === true, "clearAll: 9 -> shown");
+  expect(shouldShowClearAll(-1) === false, "clearAll: negative -> hidden");
+  expect(shouldShowClearAll(NaN) === false, "clearAll: NaN -> hidden");
+}
+{
+  expect(describeClearAll(1) === "", "describeClearAll: below threshold -> empty");
+  expect(describeClearAll(2) === "Clear all 2", "describeClearAll: 2 -> Clear all 2");
+  expect(describeClearAll(12) === "Clear all 12", "describeClearAll: 12 -> Clear all 12");
+  expect(describeClearAll(NaN) === "", "describeClearAll: NaN -> empty");
+  expect(describeClearAll(3.5) === "Clear all 3", "describeClearAll: fractional floors");
 }
 
 // eslint-disable-next-line no-console
