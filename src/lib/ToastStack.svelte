@@ -1,10 +1,17 @@
 <script lang="ts">
   import { toasts, dismiss, type Toast } from "$lib/notify";
+  import { partitionToasts, describeToastOverflow } from "$lib/toastStack";
   import { fly } from "svelte/transition";
 
-  // Mount once near the root layout. Stacks up to 5 toasts in the
-  // bottom-right corner; older toasts get pushed down. Dismiss on
-  // click of × or via the auto-timer set by notify.ts.
+  // Mount once near the root layout. Renders the newest few toasts in the
+  // bottom-right corner; a burst beyond the cap collapses the oldest into
+  // a "+N more" pill (slice 1) so the stack never fills the viewport.
+  // Dismiss on click of × or via the auto-timer set by notify.ts.
+
+  // Newest TOAST_MAX_VISIBLE render; older collapse behind the pill. The
+  // pill sits ABOVE the visible toasts (older = higher in the corner).
+  const part = $derived(partitionToasts($toasts));
+  const overflowCopy = $derived(describeToastOverflow(part.hiddenCount));
 
   function icon(kind: Toast["kind"]): string {
     switch (kind) {
@@ -21,7 +28,10 @@
 </script>
 
 <div class="stack" role="region" aria-live="polite" aria-label="Notifications">
-  {#each $toasts as t (t.id)}
+  {#if overflowCopy}
+    <div class="overflow-pill" aria-hidden="true">{overflowCopy}</div>
+  {/if}
+  {#each part.visible as t (t.id)}
     <div
       class="toast {t.kind}"
       transition:fly={{ x: 20, duration: 180 }}
@@ -47,6 +57,19 @@
     gap: 8px;
     pointer-events: none;
     max-width: min(380px, calc(100vw - 32px));
+  }
+  .overflow-pill {
+    pointer-events: auto;
+    align-self: flex-end;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   }
   .toast {
     pointer-events: auto;
