@@ -10,6 +10,9 @@ import {
   TOAST_MAX_VISIBLE,
   partitionToasts,
   describeToastOverflow,
+  toastCoalesceKey,
+  findCoalesceTarget,
+  describeToastCount,
   type Toast,
 } from "./toastStack";
 
@@ -38,7 +41,19 @@ function toast(id: number): Toast {
     message: `msg ${id}`,
     duration: 4000,
     createdAt: 1000 + id,
+    count: 1,
   };
+}
+
+// Factory with explicit kind/message/detail for coalesce tests.
+function mk(
+  id: number,
+  kind: Toast["kind"],
+  message: string,
+  detail?: string,
+  count = 1,
+): Toast {
+  return { id, kind, message, detail, duration: 4000, createdAt: 1000 + id, count };
 }
 
 function ids(list: readonly Toast[]): string {
@@ -132,6 +147,80 @@ function ids(list: readonly Toast[]): string {
   expect(describeToastOverflow(-1) === "", "overflow: negative -> empty");
   expect(describeToastOverflow(NaN) === "", "overflow: NaN -> empty");
   expect(describeToastOverflow(2.7) === "+2 more", "overflow: fractional floors");
+}
+
+// ── toastCoalesceKey: identity + collision-safety ────────────────────
+
+{
+  expect(
+    toastCoalesceKey("error", "Render failed") === toastCoalesceKey("error", "Render failed"),
+    "coalesceKey: same kind+message -> equal",
+  );
+  expect(
+    toastCoalesceKey("error", "x") !== toastCoalesceKey("success", "x"),
+    "coalesceKey: different kind -> distinct",
+  );
+  expect(
+    toastCoalesceKey("info", "Saved", "to disk") !== toastCoalesceKey("info", "Saved", "to cloud"),
+    "coalesceKey: different detail -> distinct",
+  );
+  // undefined detail collapses to the same key as "" so notify.x("m") repeats coalesce.
+  expect(
+    toastCoalesceKey("info", "m") === toastCoalesceKey("info", "m", ""),
+    "coalesceKey: undefined detail == empty detail",
+  );
+  // Escaping defeats the classic "a|b"+"c" vs "a"+"b|c" boundary collision.
+  expect(
+    toastCoalesceKey("info", "a\nb", "c") !== toastCoalesceKey("info", "a", "b\nc"),
+    "coalesceKey: newline in message can't collide across the boundary",
+  );
+}
+
+// ── findCoalesceTarget ───────────────────────────────────────────────
+
+{
+  expect(findCoalesceTarget([], "info", "x") === null, "findCoalesce: empty -> null");
+}
+{
+  const list = [mk(1, "info", "A"), mk(2, "error", "B")];
+  expect(
+    findCoalesceTarget(list, "warning", "C") === null,
+    "findCoalesce: no match -> null",
+  );
+  const hit = findCoalesceTarget(list, "error", "B");
+  expect(hit !== null && hit.id === 2, "findCoalesce: matches kind+message");
+}
+{
+  // Two matching toasts: return the MOST RECENT (latest store order).
+  const list = [mk(1, "info", "Loading"), mk(2, "success", "Done"), mk(5, "info", "Loading")];
+  const hit = findCoalesceTarget(list, "info", "Loading");
+  expect(hit !== null && hit.id === 5, "findCoalesce: returns most-recent match");
+}
+{
+  // Detail participates in the match.
+  const list = [mk(1, "info", "Saved", "to disk")];
+  expect(findCoalesceTarget(list, "info", "Saved", "to cloud") === null, "findCoalesce: detail mismatch -> null");
+  const hit = findCoalesceTarget(list, "info", "Saved", "to disk");
+  expect(hit !== null && hit.id === 1, "findCoalesce: detail match -> hit");
+}
+{
+  // Purity: target lookup never mutates the list.
+  const list = [mk(1, "info", "A"), mk(2, "info", "A")];
+  const before = ids(list);
+  findCoalesceTarget(list, "info", "A");
+  expect(ids(list) === before, "findCoalesce: does not mutate input");
+}
+
+// ── describeToastCount ───────────────────────────────────────────────
+
+{
+  expect(describeToastCount(1) === "", "count: 1 -> empty (no badge for single)");
+  expect(describeToastCount(2) === "x2", "count: 2 -> x2");
+  expect(describeToastCount(17) === "x17", "count: 17 -> x17");
+  expect(describeToastCount(0) === "", "count: 0 -> empty");
+  expect(describeToastCount(undefined) === "", "count: undefined -> empty");
+  expect(describeToastCount(NaN) === "", "count: NaN -> empty");
+  expect(describeToastCount(3.9) === "x3", "count: fractional floors");
 }
 
 // eslint-disable-next-line no-console

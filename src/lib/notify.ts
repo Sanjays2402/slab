@@ -9,6 +9,7 @@
 // Renders via <ToastStack /> mounted once in +layout.svelte.
 
 import { writable } from "svelte/store";
+import { findCoalesceTarget } from "./toastStack";
 
 export type ToastKind = "success" | "error" | "info" | "warning";
 
@@ -19,6 +20,8 @@ export interface Toast {
   detail?: string;
   duration: number; // ms, 0 = sticky
   createdAt: number;
+  /** Repeat count. >1 when identical toasts coalesced; renders as "xN". */
+  count: number;
 }
 
 export interface NotifyOpts {
@@ -40,22 +43,46 @@ let nextId = 1;
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
 
 function push(kind: ToastKind, message: string, opts: NotifyOpts = {}): number {
-  const id = nextId++;
   const duration = opts.duration ?? DEFAULT_DURATION[kind];
-  const toast: Toast = {
-    id,
-    kind,
-    message,
-    detail: opts.detail,
-    duration,
-    createdAt: Date.now(),
-  };
-  toasts.update((list) => [...list, toast]);
+  let mergedId = -1;
+  toasts.update((list) => {
+    // Coalesce identical toasts: a button mashed N times, or a loop
+    // emitting the same line, becomes one toast with a "xN" badge that
+    // resurfaces to newest (moved to the end) with a refreshed timer.
+    const target = findCoalesceTarget(list, kind, message, opts.detail);
+    if (target) {
+      mergedId = target.id;
+      const bumped: Toast = {
+        ...target,
+        count: target.count + 1,
+        createdAt: Date.now(),
+        duration,
+      };
+      return [...list.filter((x) => x.id !== target.id), bumped];
+    }
+    const id = nextId++;
+    mergedId = id;
+    const toast: Toast = {
+      id,
+      kind,
+      message,
+      detail: opts.detail,
+      duration,
+      createdAt: Date.now(),
+      count: 1,
+    };
+    return [...list, toast];
+  });
   if (duration > 0) {
-    const t = setTimeout(() => dismiss(id), duration);
-    timers.set(id, t);
+    // Refresh the auto-dismiss timer for both the new and the coalesced
+    // case so a repeated toast extends its life rather than vanishing on
+    // the original toast's clock.
+    const existing = timers.get(mergedId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => dismiss(mergedId), duration);
+    timers.set(mergedId, t);
   }
-  return id;
+  return mergedId;
 }
 
 export function dismiss(id: number): void {

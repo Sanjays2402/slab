@@ -75,6 +75,58 @@ export function describeToastOverflow(hiddenCount: number): string {
   return `+${Math.floor(hiddenCount)} more`;
 }
 
+// ─── Duplicate coalescing (round-35 Slice 2) ────────────────────────
+
+/**
+ * The fields that make two toasts "the same notification". Kind +
+ * message + detail: a button mashed three times, or a loop emitting the
+ * same status line, should read as one toast with a `x3` badge rather
+ * than three identical rows. Two undefined details collapse to the same
+ * key as two empty-string details so `notify.error("x")` repeated still
+ * coalesces.
+ */
+export function toastCoalesceKey(
+  kind: ToastKind,
+  message: string,
+  detail?: string,
+): string {
+  // Newline can't appear in kind and is escaped here from message/detail
+  // so "a|b" + "c" never collides with "a" + "b|c".
+  const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+  return `${kind}\n${esc(message)}\n${esc(detail ?? "")}`;
+}
+
+/**
+ * Find a live toast that an incoming `{kind, message, detail}` should
+ * merge INTO, or `null` if none match. Returns the most-recent match
+ * (the toast nearest the corner / latest in store order) so a repeat
+ * resurfaces the freshest instance. Pure: reads, never mutates.
+ */
+export function findCoalesceTarget(
+  toasts: readonly Toast[],
+  kind: ToastKind,
+  message: string,
+  detail?: string,
+): Toast | null {
+  if (!Array.isArray(toasts) || toasts.length === 0) return null;
+  const key = toastCoalesceKey(kind, message, detail);
+  for (let i = toasts.length - 1; i >= 0; i--) {
+    const t = toasts[i];
+    if (toastCoalesceKey(t.kind, t.message, t.detail) === key) return t;
+  }
+  return null;
+}
+
+/**
+ * Count-badge copy: `"x3"` for a repeated toast, empty string for a
+ * single occurrence (count <= 1) or a bad count. Uses a plain "x" so
+ * the badge stays ASCII-safe in app chrome (no multiply glyph).
+ */
+export function describeToastCount(count: number | undefined): string {
+  if (count === undefined || !Number.isFinite(count) || count <= 1) return "";
+  return `x${Math.floor(count)}`;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

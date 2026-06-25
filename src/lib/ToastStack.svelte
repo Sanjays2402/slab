@@ -1,6 +1,6 @@
 <script lang="ts">
   import { toasts, dismiss, type Toast } from "$lib/notify";
-  import { partitionToasts, describeToastOverflow } from "$lib/toastStack";
+  import { partitionToasts, describeToastOverflow, describeToastCount } from "$lib/toastStack";
   import { fly } from "svelte/transition";
 
   // Mount once near the root layout. Renders the newest few toasts in the
@@ -38,7 +38,12 @@
     >
       <span class="icon">{icon(t.kind)}</span>
       <div class="body">
-        <div class="msg">{t.message}</div>
+        <div class="msg">
+          <span class="msg-text">{t.message}</span>
+          {#if describeToastCount(t.count)}
+            <span class="count" aria-label="repeated {t.count} times">{describeToastCount(t.count)}</span>
+          {/if}
+        </div>
         {#if t.detail}<div class="detail">{t.detail}</div>{/if}
       </div>
       <button class="close" onclick={() => dismiss(t.id)} aria-label="Dismiss">×</button>
@@ -135,6 +140,37 @@
     color: var(--text);
     line-height: 1.35;
     word-wrap: break-word;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .msg-text {
+    min-width: 0;
+    word-wrap: break-word;
+  }
+  .count {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: 999px;
+    background: var(--bg-3);
+    color: var(--text-3);
+    align-self: center;
+  }
+  .toast.success .count {
+    background: rgba(63, 200, 140, 0.18);
+    color: #3fc88c;
+  }
+  .toast.error .count {
+    background: rgba(255, 93, 108, 0.18);
+    color: #ff5d6c;
+  }
+  .toast.warning .count {
+    background: rgba(255, 182, 72, 0.18);
+    color: #ffb648;
   }
   .detail {
     font-size: 11px;
