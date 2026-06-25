@@ -13,9 +13,15 @@
     moveToastSwipe,
     toastSwipeShouldDismiss,
     toastSwipeOpacity,
+    resolveToastFocusHotkey,
+    resolveFocusedToastKey,
+    pickToastFocusIndex,
+    newestToastFocusIndex,
+    hasToastAction,
     type ToastSwipe,
   } from "$lib/toastStack";
   import { fly } from "svelte/transition";
+  import { onMount, tick } from "svelte";
 
   // Mount once near the root layout. Renders the newest few toasts in the
   // bottom-right corner; a burst beyond the cap collapses the oldest into
@@ -95,6 +101,53 @@
     if (swipeId !== id || !swipe) return "";
     return `transform: translateX(${swipeDx}px); opacity: ${toastSwipeOpacity(swipeDx)};`;
   }
+
+  // Keyboard focus + dismiss (slice 4). Alt+T jumps focus to the newest
+  // visible toast so a keyboard / screen-reader user can reach the stack
+  // without a mouse. While a toast row holds focus, Escape dismisses it
+  // (focus then slides to a sibling) and Enter/Space fires its action.
+  let toastEls = $state<Record<number, HTMLElement | null>>({});
+
+  function focusToastAt(index: number) {
+    if (index < 0) return;
+    const list = part.visible;
+    const t = list[index];
+    if (!t) return;
+    toastEls[t.id]?.focus();
+  }
+
+  async function onGlobalKeydown(e: KeyboardEvent) {
+    if (!resolveToastFocusHotkey(e)) return;
+    if (part.visible.length === 0) return;
+    e.preventDefault();
+    await tick();
+    focusToastAt(newestToastFocusIndex(part.visible.length));
+  }
+
+  async function onToastKeydown(e: KeyboardEvent, id: number, index: number) {
+    // Only handle keys when the toast ROW itself holds focus; if a child
+    // button (action / close) is focused, let its own handler win so we
+    // don't double-fire on Enter/Space.
+    if (e.target !== e.currentTarget) return;
+    const t = part.visible.find((x) => x.id === id);
+    const intent = resolveFocusedToastKey(e, t ? hasToastAction(t) : false);
+    if (intent === "none") return;
+    e.preventDefault();
+    if (intent === "action") {
+      runToastAction(id);
+      return;
+    }
+    // dismiss + move focus to the sibling that takes the freed slot.
+    const remaining = part.visible.length - 1;
+    dismiss(id);
+    await tick();
+    focusToastAt(pickToastFocusIndex(remaining, index));
+  }
+
+  onMount(() => {
+    window.addEventListener("keydown", onGlobalKeydown);
+    return () => window.removeEventListener("keydown", onGlobalKeydown);
+  });
 </script>
 
 <div class="stack" role="region" aria-label="Notifications">
@@ -106,18 +159,21 @@
   {#if overflowCopy}
     <div class="overflow-pill" aria-hidden="true">{overflowCopy}</div>
   {/if}
-  {#each part.visible as t (t.id)}
+  {#each part.visible as t, i (t.id)}
     <div
       class="toast {t.kind}"
       class:swiping={swipeId === t.id}
       role="group"
       aria-label="Notification"
+      tabindex="-1"
+      bind:this={toastEls[t.id]}
       transition:fly={{ x: 20, duration: 180 }}
       style={rowStyle(t.id)}
       onmouseenter={() => pauseToast(t.id)}
       onmouseleave={() => resumeToast(t.id)}
       onfocusin={() => pauseToast(t.id)}
       onfocusout={() => resumeToast(t.id)}
+      onkeydown={(e) => onToastKeydown(e, t.id, i)}
       onpointerdown={(e) => onPointerDown(e, t.id)}
       onpointermove={(e) => onPointerMove(e, t.id)}
       onpointerup={(e) => onPointerUp(e, t.id)}
@@ -262,6 +318,13 @@
     cursor: grabbing;
     transition: none;
     user-select: none;
+  }
+  /* Keyboard focus ring (slice 4): the row is focusable via Alt+T so it
+     needs a visible focus affordance distinct from the action/close
+     button rings. */
+  .toast:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   @media (prefers-reduced-motion: reduce) {
     .toast {

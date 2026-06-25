@@ -608,6 +608,77 @@ export function isLoadingToast(toast: Pick<Toast, "loading">): boolean {
   return toast.loading === true;
 }
 
+// ─── Keyboard focus + dismiss (round-36 Slice 4) ────────────────────
+
+/**
+ * Whether a keydown is the "focus the toasts" hotkey: Alt+T with no
+ * other primary modifier. Lets a keyboard / screen-reader user jump into
+ * the notification stack without reaching for the mouse (Sonner ships an
+ * equivalent hotkey). Case-insensitive on the key; Cmd/Ctrl disqualify
+ * so app-level Cmd shortcuts keep priority. Mirrors the pure-classifier
+ * shape of the round-33 resolveUndoShortcut.
+ */
+export interface ToastHotkeyEvent {
+  key: string;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
+export function resolveToastFocusHotkey(event: ToastHotkeyEvent): boolean {
+  if (!event || typeof event.key !== "string") return false;
+  if (event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  if (!event.altKey) return false;
+  return event.key.toLowerCase() === "t";
+}
+
+/** Intent for a keypress while a toast row itself holds focus. */
+export type FocusedToastIntent = "dismiss" | "action" | "none";
+
+/**
+ * Classify a keypress on a focused toast. Escape (or Delete/Backspace)
+ * dismisses it; Enter/Space triggers its action when it has one (the
+ * caller passes `hasAction`). Everything else falls through so Tab,
+ * arrows and typing behave normally. Pure: no DOM.
+ */
+export function resolveFocusedToastKey(
+  event: ToastHotkeyEvent,
+  hasAction: boolean,
+): FocusedToastIntent {
+  if (!event || typeof event.key !== "string") return "none";
+  if (event.ctrlKey || event.metaKey || event.altKey) return "none";
+  const key = event.key;
+  if (key === "Escape" || key === "Delete" || key === "Backspace") return "dismiss";
+  if (hasAction && (key === "Enter" || key === " " || key === "Spacebar")) return "action";
+  return "none";
+}
+
+/**
+ * After dismissing the toast at `dismissedIndex`, which index in the now
+ * one-shorter visible list should take focus? Prefer the toast that slid
+ * UP into the freed slot (same index), else the new last toast, else -1
+ * when the stack emptied (focus returns to the document). `remaining` is
+ * the post-dismiss count. Defensive against bad input.
+ */
+export function pickToastFocusIndex(remaining: number, dismissedIndex: number): number {
+  if (!Number.isFinite(remaining) || remaining <= 0) return -1;
+  const idx = Number.isFinite(dismissedIndex) ? Math.floor(dismissedIndex) : 0;
+  if (idx <= 0) return 0;
+  if (idx >= remaining) return remaining - 1;
+  return idx;
+}
+
+/**
+ * Index of the toast a focus-hotkey press should land on: the NEWEST
+ * visible toast (last in store order, nearest the corner) so the user
+ * lands on the freshest notification. -1 for an empty list.
+ */
+export function newestToastFocusIndex(count: number): number {
+  if (!Number.isFinite(count) || count <= 0) return -1;
+  return Math.floor(count) - 1;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

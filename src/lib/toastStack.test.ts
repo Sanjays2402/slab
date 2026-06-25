@@ -44,6 +44,10 @@ import {
   toastFulfilPatch,
   toastRejectPatch,
   isLoadingToast,
+  resolveToastFocusHotkey,
+  resolveFocusedToastKey,
+  pickToastFocusIndex,
+  newestToastFocusIndex,
   type Toast,
   type ToastAction,
   type ToastPromiseSpec,
@@ -699,6 +703,72 @@ function ids(list: readonly Toast[]): string {
   expect(isLoadingToast({ loading: true }) === true, "isLoading: true");
   expect(isLoadingToast({ loading: false }) === false, "isLoading: false");
   expect(isLoadingToast({}) === false, "isLoading: absent -> false");
+}
+
+// ── Keyboard focus + dismiss (round-36 Slice 4) ──────────────────────
+
+{
+  // resolveToastFocusHotkey: Alt+T, case-insensitive, no Cmd/Ctrl/Shift.
+  expect(resolveToastFocusHotkey({ key: "t", altKey: true }) === true, "hotkey: Alt+t -> true");
+  expect(resolveToastFocusHotkey({ key: "T", altKey: true }) === true, "hotkey: Alt+T (caps) -> true");
+  expect(resolveToastFocusHotkey({ key: "t", altKey: false }) === false, "hotkey: no Alt -> false");
+  expect(
+    resolveToastFocusHotkey({ key: "t", altKey: true, metaKey: true }) === false,
+    "hotkey: Alt+Cmd+t -> false (Cmd disqualifies)",
+  );
+  expect(
+    resolveToastFocusHotkey({ key: "t", altKey: true, ctrlKey: true }) === false,
+    "hotkey: Alt+Ctrl+t -> false",
+  );
+  expect(
+    resolveToastFocusHotkey({ key: "t", altKey: true, shiftKey: true }) === false,
+    "hotkey: Alt+Shift+t -> false",
+  );
+  expect(resolveToastFocusHotkey({ key: "k", altKey: true }) === false, "hotkey: wrong key -> false");
+  expect(
+    resolveToastFocusHotkey({ key: undefined as unknown as string, altKey: true }) === false,
+    "hotkey: bad key -> false",
+  );
+}
+
+{
+  // resolveFocusedToastKey: Escape/Delete/Backspace dismiss; Enter/Space
+  // act when there's an action; modifiers fall through.
+  expect(resolveFocusedToastKey({ key: "Escape" }, false) === "dismiss", "focusKey: Escape -> dismiss");
+  expect(resolveFocusedToastKey({ key: "Delete" }, false) === "dismiss", "focusKey: Delete -> dismiss");
+  expect(resolveFocusedToastKey({ key: "Backspace" }, true) === "dismiss", "focusKey: Backspace -> dismiss");
+  expect(resolveFocusedToastKey({ key: "Enter" }, true) === "action", "focusKey: Enter + action -> action");
+  expect(resolveFocusedToastKey({ key: " " }, true) === "action", "focusKey: Space + action -> action");
+  expect(resolveFocusedToastKey({ key: "Spacebar" }, true) === "action", "focusKey: legacy Spacebar -> action");
+  expect(resolveFocusedToastKey({ key: "Enter" }, false) === "none", "focusKey: Enter no action -> none");
+  expect(resolveFocusedToastKey({ key: "Tab" }, true) === "none", "focusKey: Tab -> none (falls through)");
+  expect(
+    resolveFocusedToastKey({ key: "Escape", metaKey: true }, false) === "none",
+    "focusKey: Cmd+Escape -> none (modifier disqualifies)",
+  );
+  expect(
+    resolveFocusedToastKey({ key: "Enter", altKey: true }, true) === "none",
+    "focusKey: Alt+Enter -> none",
+  );
+}
+
+{
+  // pickToastFocusIndex: where focus lands after a dismiss.
+  expect(pickToastFocusIndex(3, 1) === 1, "pickFocus: middle -> same index (sibling slides up)");
+  expect(pickToastFocusIndex(2, 0) === 0, "pickFocus: first dismissed -> 0");
+  expect(pickToastFocusIndex(2, 2) === 1, "pickFocus: last dismissed -> new last");
+  expect(pickToastFocusIndex(2, 5) === 1, "pickFocus: out-of-range high -> clamps to last");
+  expect(pickToastFocusIndex(0, 0) === -1, "pickFocus: emptied stack -> -1");
+  expect(pickToastFocusIndex(-1, 0) === -1, "pickFocus: bad remaining -> -1");
+  expect(pickToastFocusIndex(3, -2) === 0, "pickFocus: negative index -> 0");
+}
+
+{
+  // newestToastFocusIndex: last index, -1 for empty.
+  expect(newestToastFocusIndex(4) === 3, "newestFocus: 4 -> index 3");
+  expect(newestToastFocusIndex(1) === 0, "newestFocus: 1 -> index 0");
+  expect(newestToastFocusIndex(0) === -1, "newestFocus: empty -> -1");
+  expect(newestToastFocusIndex(NaN) === -1, "newestFocus: NaN -> -1");
 }
 
 // eslint-disable-next-line no-console
