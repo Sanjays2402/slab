@@ -6,6 +6,8 @@
     describeToastCount,
     describeClearAll,
     shouldShowClearAll,
+    splitToastsByPoliteness,
+    announceToast,
   } from "$lib/toastStack";
   import { fly } from "svelte/transition";
 
@@ -22,6 +24,11 @@
   // wiring the bulk dismissAll the notify store has always exposed.
   const showClearAll = $derived(shouldShowClearAll($toasts.length));
   const clearAllCopy = $derived(describeClearAll($toasts.length));
+  // a11y (slice 5): the visual stack reorders + coalesces toasts, a poor
+  // live region. Mirror every toast into one of two dedicated hidden
+  // regions by politeness — errors/warnings assertive, the rest polite —
+  // so screen readers announce each exactly once at the right urgency.
+  const announce = $derived(splitToastsByPoliteness($toasts));
 
   function icon(kind: Toast["kind"]): string {
     switch (kind) {
@@ -37,7 +44,7 @@
   }
 </script>
 
-<div class="stack" role="region" aria-live="polite" aria-label="Notifications">
+<div class="stack" role="region" aria-label="Notifications">
   {#if showClearAll}
     <div class="clear-all-row">
       <button class="clear-all" onclick={() => dismissAll()}>{clearAllCopy}</button>
@@ -49,14 +56,16 @@
   {#each part.visible as t (t.id)}
     <div
       class="toast {t.kind}"
+      role="group"
+      aria-label="Notification"
       transition:fly={{ x: 20, duration: 180 }}
       onmouseenter={() => pauseToast(t.id)}
       onmouseleave={() => resumeToast(t.id)}
       onfocusin={() => pauseToast(t.id)}
       onfocusout={() => resumeToast(t.id)}
     >
-      <span class="icon">{icon(t.kind)}</span>
-      <div class="body">
+      <span class="icon" aria-hidden="true">{icon(t.kind)}</span>
+      <div class="body" aria-hidden="true">
         <div class="msg">
           <span class="msg-text">{t.message}</span>
           {#if describeToastCount(t.count)}
@@ -65,7 +74,7 @@
         </div>
         {#if t.detail}<div class="detail">{t.detail}</div>{/if}
       </div>
-      <button class="close" onclick={() => dismiss(t.id)} aria-label="Dismiss">×</button>
+      <button class="close" onclick={() => dismiss(t.id)} aria-label="Dismiss notification: {t.message}">×</button>
       {#if t.duration > 0}
         <!-- Lifespan bar: depletes over t.duration; pauses with the JS
              timer on hover/focus via animation-play-state. Keyed on
@@ -79,6 +88,26 @@
         {/key}
       {/if}
     </div>
+  {/each}
+</div>
+
+<!-- Dedicated screen-reader announcers (slice 5). The visual stack
+     above is aria-hidden at the content level (its body text is
+     decorative-for-SR because it reorders/coalesces); these two regions
+     carry the spoken text instead. Errors/warnings go assertive
+     (interrupt), success/info polite. Each toast announced once. -->
+<div class="sr-only" role="alert" aria-live="assertive" aria-atomic="false">
+  {#each announce.assertive as t (t.id)}
+    {#key t.count}
+      <p>{announceToast(t.kind, t.message, t.detail, t.count)}</p>
+    {/key}
+  {/each}
+</div>
+<div class="sr-only" role="status" aria-live="polite" aria-atomic="false">
+  {#each announce.polite as t (t.id)}
+    {#key t.count}
+      <p>{announceToast(t.kind, t.message, t.detail, t.count)}</p>
+    {/key}
   {/each}
 </div>
 

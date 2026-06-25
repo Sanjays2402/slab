@@ -23,6 +23,10 @@ import {
   toastTimerFraction,
   isToastTimerExpired,
   isToastTimerPaused,
+  toastPoliteness,
+  toastKindLabel,
+  announceToast,
+  splitToastsByPoliteness,
   type Toast,
 } from "./toastStack";
 
@@ -353,6 +357,95 @@ function ids(list: readonly Toast[]): string {
   expect(isToastTimerExpired(t, 2000) === true, "expired: past end true");
   const paused = pauseToastTimer(t, 400); // 600 banked, frozen
   expect(isToastTimerExpired(paused, 99999) === false, "expired: paused with life left never expires");
+}
+
+// ── toastPoliteness + toastKindLabel ─────────────────────────────────
+
+{
+  expect(toastPoliteness("error") === "assertive", "politeness: error -> assertive");
+  expect(toastPoliteness("warning") === "assertive", "politeness: warning -> assertive");
+  expect(toastPoliteness("success") === "polite", "politeness: success -> polite");
+  expect(toastPoliteness("info") === "polite", "politeness: info -> polite");
+}
+{
+  expect(toastKindLabel("success") === "Success", "kindLabel: success");
+  expect(toastKindLabel("error") === "Error", "kindLabel: error");
+  expect(toastKindLabel("warning") === "Warning", "kindLabel: warning");
+  expect(toastKindLabel("info") === "Notice", "kindLabel: info -> Notice");
+}
+
+// ── announceToast ────────────────────────────────────────────────────
+
+{
+  expect(
+    announceToast("error", "Render failed") === "Error: Render failed",
+    "announce: severity prefix",
+  );
+  expect(
+    announceToast("success", "Saved") === "Success: Saved",
+    "announce: success prefix",
+  );
+  expect(
+    announceToast("error", "Render failed", "Disk full") === "Error: Render failed. Disk full",
+    "announce: detail appended after period",
+  );
+  // Blank/whitespace detail is skipped.
+  expect(
+    announceToast("info", "Hi", "   ") === "Notice: Hi",
+    "announce: blank detail skipped",
+  );
+  expect(
+    announceToast("info", "Hi", undefined) === "Notice: Hi",
+    "announce: undefined detail skipped",
+  );
+  // Repeat suffix only for count > 1.
+  expect(
+    announceToast("warning", "Slow", undefined, 1) === "Warning: Slow",
+    "announce: count 1 -> no repeat suffix",
+  );
+  expect(
+    announceToast("warning", "Slow", undefined, 3) === "Warning: Slow (repeated 3 times)",
+    "announce: count 3 -> repeat suffix",
+  );
+  expect(
+    announceToast("error", "X", "Y", 2) === "Error: X. Y (repeated 2 times)",
+    "announce: detail + repeat together",
+  );
+  expect(
+    announceToast("info", "X", undefined, NaN) === "Notice: X",
+    "announce: NaN count -> no suffix",
+  );
+}
+
+// ── splitToastsByPoliteness ──────────────────────────────────────────
+
+{
+  const list = [
+    mk(1, "success", "A"),
+    mk(2, "error", "B"),
+    mk(3, "info", "C"),
+    mk(4, "warning", "D"),
+  ];
+  const s = splitToastsByPoliteness(list);
+  expect(ids(s.assertive) === "2,4", "split: error+warning -> assertive");
+  expect(ids(s.polite) === "1,3", "split: success+info -> polite");
+  // Every toast lands in exactly one bucket.
+  expect(
+    s.assertive.length + s.polite.length === list.length,
+    "split: partition is total (no toast dropped or duplicated)",
+  );
+}
+{
+  const s = splitToastsByPoliteness([]);
+  expect(s.assertive.length === 0 && s.polite.length === 0, "split: empty -> empty buckets");
+}
+{
+  // Purity: input order preserved within each bucket, input not mutated.
+  const list = [mk(5, "error", "E"), mk(6, "error", "F")];
+  const before = ids(list);
+  const s = splitToastsByPoliteness(list);
+  expect(ids(s.assertive) === "5,6", "split: preserves store order within bucket");
+  expect(ids(list) === before, "split: does not mutate input");
 }
 
 // eslint-disable-next-line no-console

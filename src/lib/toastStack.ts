@@ -251,6 +251,87 @@ export function isToastTimerPaused(timer: ToastTimer): boolean {
   return timer.duration > 0 && timer.runningSince === TIMER_PAUSED;
 }
 
+// ─── Screen-reader announcements (round-35 Slice 5) ─────────────────
+
+/**
+ * ARIA live-region politeness for a toast kind. Errors and warnings
+ * interrupt (`assertive`) because they report a failure the user needs
+ * to know NOW; success/info wait their turn (`polite`) so they don't
+ * stomp on whatever the user is doing.
+ */
+export type ToastPoliteness = "assertive" | "polite";
+
+export function toastPoliteness(kind: ToastKind): ToastPoliteness {
+  return kind === "error" || kind === "warning" ? "assertive" : "polite";
+}
+
+/**
+ * Spoken prefix for a toast kind so a screen-reader user hears the
+ * SEVERITY, not just the message body ("Error: Render failed" rather
+ * than a bare "Render failed" indistinguishable from a success).
+ */
+export function toastKindLabel(kind: ToastKind): string {
+  switch (kind) {
+    case "success":
+      return "Success";
+    case "error":
+      return "Error";
+    case "warning":
+      return "Warning";
+    default:
+      return "Notice";
+  }
+}
+
+/**
+ * Compose the full spoken string for a toast: `"Error: Render failed.
+ * Disk full"` plus a `"(repeated 3 times)"` suffix when coalesced and a
+ * trailing period so consecutive announcements don't run together. The
+ * detail is appended after the message; an absent/blank detail is
+ * skipped. Count <= 1 adds no repeat suffix.
+ */
+export function announceToast(
+  kind: ToastKind,
+  message: string,
+  detail?: string,
+  count = 1,
+): string {
+  const parts = [`${toastKindLabel(kind)}: ${message}`];
+  const trimmedDetail = (detail ?? "").trim();
+  if (trimmedDetail) parts.push(trimmedDetail);
+  let out = parts.join(". ");
+  if (Number.isFinite(count) && count > 1) {
+    out += ` (repeated ${Math.floor(count)} times)`;
+  }
+  return out;
+}
+
+/**
+ * Pick the toasts to route to the ASSERTIVE vs POLITE live region. The
+ * visual stack reorders + coalesces toasts, which makes it a poor live
+ * region directly; instead the UI mirrors each toast into one of two
+ * dedicated hidden regions by politeness so screen readers announce
+ * every toast exactly once at the right urgency. Pure: never mutates.
+ */
+export interface ToastAnnounceSplit {
+  assertive: Toast[];
+  polite: Toast[];
+}
+
+export function splitToastsByPoliteness(
+  toasts: readonly Toast[],
+): ToastAnnounceSplit {
+  const assertive: Toast[] = [];
+  const polite: Toast[] = [];
+  if (Array.isArray(toasts)) {
+    for (const t of toasts) {
+      if (toastPoliteness(t.kind) === "assertive") assertive.push(t);
+      else polite.push(t);
+    }
+  }
+  return { assertive, polite };
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };
