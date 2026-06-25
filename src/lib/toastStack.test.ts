@@ -32,6 +32,13 @@ import {
   clampToastActionLabel,
   hasToastAction,
   toastActionDismisses,
+  TOAST_SWIPE_DISMISS_PX,
+  TOAST_SWIPE_FLICK_VELOCITY,
+  createToastSwipe,
+  moveToastSwipe,
+  toastSwipeVelocity,
+  toastSwipeShouldDismiss,
+  toastSwipeOpacity,
   type Toast,
   type ToastAction,
 } from "./toastStack";
@@ -534,6 +541,77 @@ function ids(list: readonly Toast[]): string {
       false,
     "actionDismisses: opt-out action does not dismiss",
   );
+}
+
+// ── Swipe / drag-to-dismiss (round-36 Slice 2) ───────────────────────
+
+{
+  // createToastSwipe seeds a zero-offset drag.
+  const s = createToastSwipe(100, 1000);
+  expect(s.startX === 100 && s.dx === 0, "swipe: created at startX, dx 0");
+  expect(s.startTime === 1000 && s.lastTime === 1000, "swipe: timestamps seeded");
+}
+
+{
+  // moveToastSwipe: rightward accumulates, leftward clamps to 0.
+  const s = createToastSwipe(100, 0);
+  const right = moveToastSwipe(s, 150, 50);
+  expect(right.dx === 50, "swipe: rightward drag accumulates dx");
+  expect(right.lastTime === 50, "swipe: move updates lastTime");
+  const left = moveToastSwipe(s, 40, 50);
+  expect(left.dx === 0, "swipe: leftward clamps to 0 (can't drag off edge)");
+  // Purity: original untouched.
+  expect(s.dx === 0, "swipe: move does not mutate input");
+  expect(right !== s, "swipe: move returns fresh object");
+}
+
+{
+  // toastSwipeVelocity: px/ms over the gesture.
+  const s = { startX: 0, startTime: 0, dx: 100, lastTime: 200 };
+  expect(toastSwipeVelocity(s) === 0.5, "swipe: velocity = dx/dt");
+  // Zero / negative dt guarded.
+  expect(toastSwipeVelocity({ startX: 0, startTime: 5, dx: 50, lastTime: 5 }) === 0, "swipe: zero dt -> 0");
+  expect(toastSwipeVelocity({ startX: 0, startTime: 10, dx: 50, lastTime: 5 }) === 0, "swipe: negative dt -> 0");
+}
+
+{
+  // toastSwipeShouldDismiss: distance threshold OR flick velocity.
+  // Past distance threshold, slow.
+  const far = { startX: 0, startTime: 0, dx: TOAST_SWIPE_DISMISS_PX + 5, lastTime: 5000 };
+  expect(toastSwipeShouldDismiss(far) === true, "swipe: past distance -> dismiss");
+  // Below distance, slow -> snap back.
+  const near = { startX: 0, startTime: 0, dx: 40, lastTime: 5000 };
+  expect(toastSwipeShouldDismiss(near) === false, "swipe: short + slow -> keep");
+  // Below distance but fast flick -> dismiss (40px in 50ms = 0.8px/ms).
+  const flick = { startX: 0, startTime: 0, dx: 40, lastTime: 50 };
+  expect(
+    toastSwipeVelocity(flick) >= TOAST_SWIPE_FLICK_VELOCITY,
+    "swipe: flick velocity above threshold (sanity)",
+  );
+  expect(toastSwipeShouldDismiss(flick) === true, "swipe: fast flick -> dismiss below distance");
+  // A fast micro-jitter (<16px) does NOT dismiss even if velocity is high.
+  const jitter = { startX: 0, startTime: 0, dx: 8, lastTime: 1 };
+  expect(toastSwipeShouldDismiss(jitter) === false, "swipe: sub-16px jitter never dismisses");
+  // Custom threshold honoured; bad threshold falls back to default.
+  expect(
+    toastSwipeShouldDismiss({ startX: 0, startTime: 0, dx: 30, lastTime: 9999 }, 20) === true,
+    "swipe: custom threshold honoured",
+  );
+  expect(
+    toastSwipeShouldDismiss(far, NaN) === true,
+    "swipe: NaN threshold falls back to default",
+  );
+}
+
+{
+  // toastSwipeOpacity: 1 at rest, fades toward 0.25 floor.
+  expect(toastSwipeOpacity(0) === 1, "swipeOpacity: no travel -> 1");
+  expect(toastSwipeOpacity(-50) === 1, "swipeOpacity: leftward treated as 0 -> 1");
+  expect(toastSwipeOpacity(TOAST_SWIPE_DISMISS_PX) === 0.25, "swipeOpacity: at threshold -> 0.25 floor");
+  expect(toastSwipeOpacity(9999) === 0.25, "swipeOpacity: beyond threshold clamps at 0.25");
+  const mid = toastSwipeOpacity(TOAST_SWIPE_DISMISS_PX / 2);
+  expect(mid > 0.25 && mid < 1, "swipeOpacity: mid-drag between floor and 1");
+  expect(toastSwipeOpacity(NaN) === 1, "swipeOpacity: NaN -> 1");
 }
 
 // eslint-disable-next-line no-console

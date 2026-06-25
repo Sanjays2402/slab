@@ -406,6 +406,104 @@ export function toastActionDismisses(toast: Pick<Toast, "action">): boolean {
   return a !== null && a.dismissOnClick === true;
 }
 
+// ─── Swipe / drag-to-dismiss (round-36 Slice 2) ─────────────────────
+
+/**
+ * Live state of a pointer-drag on a toast. The stack sits bottom-RIGHT,
+ * so a drag toward the right edge (positive dx) flicks the toast away;
+ * a small drag snaps back. Pure data — `notify.ts` / `ToastStack.svelte`
+ * own the real Pointer Events; this models the geometry + decision so
+ * the threshold / opacity / dismiss-direction math is unit-testable
+ * without a DOM. Same "pure core, thin imperative shell" split as the
+ * round-34 drag-reorder geometry.
+ */
+export interface ToastSwipe {
+  /** Pointer X where the drag began. */
+  startX: number;
+  /** Timestamp the drag began (for flick-velocity). */
+  startTime: number;
+  /** Current horizontal offset from start, in px. Negative = leftward. */
+  dx: number;
+  /** Timestamp of the most recent move (for flick-velocity). */
+  lastTime: number;
+}
+
+/**
+ * Past this many px of rightward drag, releasing dismisses the toast.
+ * Below it the toast snaps back. A toast is ~260-380px wide, so 80px is
+ * a deliberate gesture without needing to drag the whole card off-screen.
+ */
+export const TOAST_SWIPE_DISMISS_PX = 80;
+
+/**
+ * A fast flick past this speed (px/ms) dismisses even below the distance
+ * threshold — matching the iOS / Sonner "flick it away" feel. ~0.5px/ms
+ * = 500px/s, brisk but not twitchy.
+ */
+export const TOAST_SWIPE_FLICK_VELOCITY = 0.5;
+
+/** Begin a drag at `startX` / `now`. */
+export function createToastSwipe(startX: number, now: number): ToastSwipe {
+  return { startX, startTime: now, dx: 0, lastTime: now };
+}
+
+/**
+ * Advance the drag to pointer `x` at `now`. Only RIGHTWARD travel (toward
+ * the corner) accumulates; leftward is clamped to 0 so the toast can't be
+ * dragged away from its edge and left floating. Pure: fresh object.
+ */
+export function moveToastSwipe(swipe: ToastSwipe, x: number, now: number): ToastSwipe {
+  if (!swipe) return swipe;
+  const raw = x - swipe.startX;
+  const dx = raw > 0 ? raw : 0;
+  return { ...swipe, dx, lastTime: now };
+}
+
+/** Average drag speed in px/ms over the gesture's lifetime (>= 0). */
+export function toastSwipeVelocity(swipe: ToastSwipe): number {
+  if (!swipe) return 0;
+  const dt = swipe.lastTime - swipe.startTime;
+  if (dt <= 0) return 0;
+  return Math.max(0, swipe.dx) / dt;
+}
+
+/**
+ * On pointer-release, should the toast be dismissed? True when it was
+ * dragged past {@link TOAST_SWIPE_DISMISS_PX} OR flicked faster than
+ * {@link TOAST_SWIPE_FLICK_VELOCITY} (with at least a token 16px of
+ * travel so a fast tap-without-drag doesn't dismiss).
+ */
+export function toastSwipeShouldDismiss(
+  swipe: ToastSwipe,
+  thresholdPx: number = TOAST_SWIPE_DISMISS_PX,
+): boolean {
+  if (!swipe) return false;
+  const dist = Math.max(0, swipe.dx);
+  const threshold =
+    Number.isFinite(thresholdPx) && thresholdPx > 0 ? thresholdPx : TOAST_SWIPE_DISMISS_PX;
+  if (dist >= threshold) return true;
+  return dist >= 16 && toastSwipeVelocity(swipe) >= TOAST_SWIPE_FLICK_VELOCITY;
+}
+
+/**
+ * Opacity `[0.25, 1]` for the dragged toast — fades toward (but never to)
+ * transparent as it approaches the dismiss threshold so the user sees the
+ * gesture "taking". Pinned at 1 before any travel; floored at 0.25 so a
+ * mid-drag toast stays legible if it snaps back. Defensive on bad input.
+ */
+export function toastSwipeOpacity(
+  dx: number,
+  thresholdPx: number = TOAST_SWIPE_DISMISS_PX,
+): number {
+  const dist = Number.isFinite(dx) && dx > 0 ? dx : 0;
+  const threshold =
+    Number.isFinite(thresholdPx) && thresholdPx > 0 ? thresholdPx : TOAST_SWIPE_DISMISS_PX;
+  const faded = 1 - (dist / threshold) * 0.75;
+  if (faded <= 0.25) return 0.25;
+  if (faded >= 1) return 1;
+  return faded;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

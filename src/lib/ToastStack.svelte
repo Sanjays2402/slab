@@ -9,6 +9,11 @@
     splitToastsByPoliteness,
     announceToast,
     normalizeToastAction,
+    createToastSwipe,
+    moveToastSwipe,
+    toastSwipeShouldDismiss,
+    toastSwipeOpacity,
+    type ToastSwipe,
   } from "$lib/toastStack";
   import { fly } from "svelte/transition";
 
@@ -43,6 +48,53 @@
         return "i";
     }
   }
+
+  // Swipe / drag-to-dismiss (slice 2). One active drag at a time; we track
+  // the toast id + pure ToastSwipe model and translate the row by its dx
+  // (fading via toastSwipeOpacity). On release a past-threshold / flicked
+  // drag dismisses, otherwise the row snaps back. Pointer Events so it
+  // works for mouse, trackpad and touch; capture keeps move/up events
+  // flowing even if the pointer leaves the toast.
+  let swipeId = $state<number | null>(null);
+  let swipe = $state<ToastSwipe | null>(null);
+
+  function onPointerDown(e: PointerEvent, id: number) {
+    // Primary button / touch / pen only; ignore the action & close buttons
+    // (let their own click fire) by checking the event target.
+    if (e.button !== 0) return;
+    const el = e.target as HTMLElement | null;
+    if (el && el.closest("button")) return;
+    swipeId = id;
+    swipe = createToastSwipe(e.clientX, e.timeStamp);
+    // Pause the auto-dismiss while the user is interacting.
+    pauseToast(id);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+
+  function onPointerMove(e: PointerEvent, id: number) {
+    if (swipeId !== id || !swipe) return;
+    swipe = moveToastSwipe(swipe, e.clientX, e.timeStamp);
+  }
+
+  function endSwipe(id: number) {
+    if (swipeId !== id || !swipe) return;
+    const shouldDismiss = toastSwipeShouldDismiss(swipe);
+    swipeId = null;
+    swipe = null;
+    if (shouldDismiss) dismiss(id);
+    else resumeToast(id);
+  }
+
+  function onPointerUp(e: PointerEvent, id: number) {
+    endSwipe(id);
+  }
+
+  // Live transform/opacity for the row currently being dragged.
+  const swipeDx = $derived(swipe ? swipe.dx : 0);
+  function rowStyle(id: number): string {
+    if (swipeId !== id || !swipe) return "";
+    return `transform: translateX(${swipeDx}px); opacity: ${toastSwipeOpacity(swipeDx)};`;
+  }
 </script>
 
 <div class="stack" role="region" aria-label="Notifications">
@@ -57,13 +109,19 @@
   {#each part.visible as t (t.id)}
     <div
       class="toast {t.kind}"
+      class:swiping={swipeId === t.id}
       role="group"
       aria-label="Notification"
       transition:fly={{ x: 20, duration: 180 }}
+      style={rowStyle(t.id)}
       onmouseenter={() => pauseToast(t.id)}
       onmouseleave={() => resumeToast(t.id)}
       onfocusin={() => pauseToast(t.id)}
       onfocusout={() => resumeToast(t.id)}
+      onpointerdown={(e) => onPointerDown(e, t.id)}
+      onpointermove={(e) => onPointerMove(e, t.id)}
+      onpointerup={(e) => onPointerUp(e, t.id)}
+      onpointercancel={() => endSwipe(t.id)}
     >
       <span class="icon" aria-hidden="true">{icon(t.kind)}</span>
       <div class="body" aria-hidden="true">
@@ -188,6 +246,23 @@
     min-width: 260px;
     position: relative;
     overflow: hidden;
+    touch-action: pan-y;
+    cursor: grab;
+    /* Snap-back glide when a sub-threshold swipe is released. Suppressed
+       mid-drag (.swiping) so the row tracks the pointer 1:1. */
+    transition:
+      transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 200ms ease;
+  }
+  .toast.swiping {
+    cursor: grabbing;
+    transition: none;
+    user-select: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .toast {
+      transition: none;
+    }
   }
   .toast.success {
     border-left-color: #3fc88c;
