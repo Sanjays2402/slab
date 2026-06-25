@@ -504,6 +504,110 @@ export function toastSwipeOpacity(
   return faded;
 }
 
+// ─── Promise / loading lifecycle (round-36 Slice 3) ─────────────────
+
+/**
+ * A message that can be a fixed string OR a function of the resolved /
+ * rejected value — so `notify.promise` can render "Saved 3 files" from
+ * the promise's result, or "Upload failed: <err>" from the rejection.
+ */
+export type ToastMessageSpec<T> = string | ((value: T) => string);
+
+/**
+ * The three messages a promise toast cycles through: while pending, on
+ * fulfilment, and on rejection. `loading` is a plain string (no value
+ * yet); `success`/`error` may be functions of the settled value.
+ */
+export interface ToastPromiseSpec<T> {
+  loading: string;
+  success: ToastMessageSpec<T>;
+  error: ToastMessageSpec<unknown>;
+}
+
+/**
+ * Resolve a {@link ToastMessageSpec} against a settled value. A function
+ * spec is invoked with the value; a string spec passes through. A thrown
+ * formatter or a non-string return degrades to `fallback` so a bad
+ * message function can never crash the toast that reports an error.
+ */
+export function resolveToastMessage<T>(
+  spec: ToastMessageSpec<T>,
+  value: T,
+  fallback = "",
+): string {
+  if (typeof spec === "function") {
+    try {
+      const out = (spec as (v: T) => string)(value);
+      return typeof out === "string" ? out : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return typeof spec === "string" ? spec : fallback;
+}
+
+/**
+ * Best-effort human string for a rejection reason, for the default
+ * error-message fallback: an `Error`'s message, a plain string, else a
+ * generic "Something went wrong". Never throws.
+ */
+export function describeToastError(reason: unknown): string {
+  if (reason instanceof Error && reason.message) return reason.message;
+  if (typeof reason === "string" && reason.trim()) return reason.trim();
+  return "Something went wrong";
+}
+
+/**
+ * The fields to patch onto a loading toast when its promise FULFILS:
+ * flip to success, swap in the resolved message, stop loading, and apply
+ * the settled auto-dismiss duration (loading toasts are sticky). Pure —
+ * returns a patch object the store applies.
+ */
+export interface ToastSettlePatch {
+  kind: ToastKind;
+  message: string;
+  loading: false;
+  duration: number;
+  detail?: string;
+}
+
+export function toastFulfilPatch<T>(
+  spec: ToastPromiseSpec<T>,
+  value: T,
+  duration: number,
+): ToastSettlePatch {
+  return {
+    kind: "success",
+    message: resolveToastMessage(spec.success, value, "Done"),
+    loading: false,
+    duration,
+  };
+}
+
+/**
+ * The patch for a REJECTED promise: flip to error, render the error
+ * message (falling back through {@link describeToastError}), stop
+ * loading, apply the settled duration.
+ */
+export function toastRejectPatch<T>(
+  spec: ToastPromiseSpec<T>,
+  reason: unknown,
+  duration: number,
+): ToastSettlePatch {
+  const fallback = describeToastError(reason);
+  return {
+    kind: "error",
+    message: resolveToastMessage(spec.error, reason, fallback) || fallback,
+    loading: false,
+    duration,
+  };
+}
+
+/** Whether a toast is in the pending/loading state (renders a spinner). */
+export function isLoadingToast(toast: Pick<Toast, "loading">): boolean {
+  return toast.loading === true;
+}
+
 // Re-export the kind union so consumers can import everything toast-shaped
 // from one module without reaching into notify.ts for a type.
 export type { Toast, ToastKind };

@@ -8,7 +8,7 @@
 //
 // Renders via <ToastStack /> mounted once in +layout.svelte.
 
-import { writable } from "svelte/store";
+import { writable, get } from "svelte/store";
 import {
   findCoalesceTarget,
   createToastTimer,
@@ -16,8 +16,11 @@ import {
   resumeToastTimer,
   toastTimerRemaining,
   normalizeToastAction,
+  toastFulfilPatch,
+  toastRejectPatch,
   type ToastTimer,
   type ToastAction,
+  type ToastPromiseSpec,
 } from "./toastStack";
 
 export type ToastKind = "success" | "error" | "info" | "warning";
@@ -33,6 +36,8 @@ export interface Toast {
   count: number;
   /** Optional inline action button (e.g. "Undo" / "Retry"). */
   action?: ToastAction;
+  /** True while a promise toast is pending (renders a spinner). */
+  loading?: boolean;
 }
 
 export interface NotifyOpts {
@@ -177,14 +182,9 @@ export function dismissAll(): void {
  * the Svelte template.
  */
 export function runToastAction(id: number): void {
-  let toRun: ToastAction | null = null;
-  toasts.update((list) => {
-    const t = list.find((x) => x.id === id);
-    toRun = t ? normalizeToastAction(t.action) : null;
-    return list;
-  });
-  if (!toRun) return;
-  const action: ToastAction = toRun;
+  const current = get(toasts).find((x) => x.id === id);
+  const action = current ? normalizeToastAction(current.action) : null;
+  if (!action) return;
   try {
     action.onClick();
   } finally {
@@ -192,11 +192,89 @@ export function runToastAction(id: number): void {
   }
 }
 
+/**
+ * Push a STICKY loading toast (info kind, spinner, no auto-dismiss) and
+ * return its id. Used as the pending state of {@link promise}; can also
+ * be driven manually and settled with {@link settleToast}.
+ */
+function pushLoading(message: string, detail?: string): number {
+  const id = nextId++;
+  const toast: Toast = {
+    id,
+    kind: "info",
+    message,
+    detail,
+    duration: 0, // sticky until the promise settles
+    createdAt: Date.now(),
+    count: 1,
+    loading: true,
+  };
+  toasts.update((list) => [...list, toast]);
+  return id;
+}
+
+/**
+ * Transition a live loading toast to its settled state in place (kind +
+ * message flip, spinner off, fresh auto-dismiss timer) so the user sees
+ * one toast morph "Saving… -> Saved" rather than two stacking. No-op if
+ * the id is gone (user dismissed it mid-flight).
+ */
+function settleToast(
+  id: number,
+  patch: { kind: ToastKind; message: string; duration: number; detail?: string },
+): void {
+  let found = false;
+  toasts.update((list) =>
+    list.map((t) => {
+      if (t.id !== id) return t;
+      found = true;
+      return {
+        ...t,
+        kind: patch.kind,
+        message: patch.message,
+        detail: patch.detail ?? t.detail,
+        duration: patch.duration,
+        loading: false,
+        createdAt: Date.now(),
+      };
+    }),
+  );
+  if (!found) return;
+  if (patch.duration > 0) {
+    timerModels.set(id, createToastTimer(patch.duration, Date.now()));
+    armTimer(id);
+  }
+}
+
+/**
+ * Sonner-style promise toast: show a loading toast while `input` settles,
+ * then morph it to success or error in place. `input` may be a promise or
+ * a function returning one (so the work starts lazily here). Returns the
+ * original promise so callers can still await/catch it. The success/error
+ * messages may be plain strings or functions of the settled value.
+ */
+function promise<T>(
+  input: Promise<T> | (() => Promise<T>),
+  spec: ToastPromiseSpec<T>,
+  opts: { successDuration?: number; errorDuration?: number } = {},
+): Promise<T> {
+  const p = typeof input === "function" ? input() : input;
+  const id = pushLoading(spec.loading);
+  const successMs = opts.successDuration ?? DEFAULT_DURATION.success;
+  const errorMs = opts.errorDuration ?? DEFAULT_DURATION.error;
+  p.then(
+    (value) => settleToast(id, toastFulfilPatch(spec, value, successMs)),
+    (reason) => settleToast(id, toastRejectPatch(spec, reason, errorMs)),
+  );
+  return p;
+}
+
 export const notify = {
   success: (message: string, opts?: NotifyOpts) => push("success", message, opts),
   error: (message: string, opts?: NotifyOpts) => push("error", message, opts),
   info: (message: string, opts?: NotifyOpts) => push("info", message, opts),
   warning: (message: string, opts?: NotifyOpts) => push("warning", message, opts),
+  promise,
 };
 
-export type { ToastAction };
+export type { ToastAction, ToastPromiseSpec };

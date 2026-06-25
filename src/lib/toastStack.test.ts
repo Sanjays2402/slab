@@ -39,8 +39,14 @@ import {
   toastSwipeVelocity,
   toastSwipeShouldDismiss,
   toastSwipeOpacity,
+  resolveToastMessage,
+  describeToastError,
+  toastFulfilPatch,
+  toastRejectPatch,
+  isLoadingToast,
   type Toast,
   type ToastAction,
+  type ToastPromiseSpec,
 } from "./toastStack";
 
 let passed = 0;
@@ -612,6 +618,87 @@ function ids(list: readonly Toast[]): string {
   const mid = toastSwipeOpacity(TOAST_SWIPE_DISMISS_PX / 2);
   expect(mid > 0.25 && mid < 1, "swipeOpacity: mid-drag between floor and 1");
   expect(toastSwipeOpacity(NaN) === 1, "swipeOpacity: NaN -> 1");
+}
+
+// ── Promise / loading lifecycle (round-36 Slice 3) ───────────────────
+
+{
+  // resolveToastMessage: string passes through, function gets the value.
+  expect(resolveToastMessage("Saved", 5) === "Saved", "resolveMsg: string spec");
+  expect(
+    resolveToastMessage((n: number) => `Saved ${n} files`, 3) === "Saved 3 files",
+    "resolveMsg: function spec sees value",
+  );
+  // A throwing / non-string formatter degrades to fallback.
+  expect(
+    resolveToastMessage(() => {
+      throw new Error("boom");
+    }, 0, "fb") === "fb",
+    "resolveMsg: throwing formatter -> fallback",
+  );
+  expect(
+    resolveToastMessage((() => 42) as unknown as (v: number) => string, 0, "fb") === "fb",
+    "resolveMsg: non-string return -> fallback",
+  );
+  expect(
+    resolveToastMessage(null as unknown as string, 0, "fb") === "fb",
+    "resolveMsg: non-string/func spec -> fallback",
+  );
+}
+
+{
+  // describeToastError: Error message / string / generic.
+  expect(describeToastError(new Error("disk full")) === "disk full", "describeErr: Error message");
+  expect(describeToastError("nope") === "nope", "describeErr: plain string");
+  expect(describeToastError("  trimmed  ") === "trimmed", "describeErr: trims string");
+  expect(describeToastError(new Error("")) === "Something went wrong", "describeErr: empty Error -> generic");
+  expect(describeToastError(undefined) === "Something went wrong", "describeErr: undefined -> generic");
+  expect(describeToastError({ weird: 1 }) === "Something went wrong", "describeErr: object -> generic");
+}
+
+{
+  // toastFulfilPatch: success kind, resolved message, loading off.
+  const spec: ToastPromiseSpec<number> = {
+    loading: "Saving…",
+    success: (n) => `Saved ${n}`,
+    error: "Failed",
+  };
+  const patch = toastFulfilPatch(spec, 4, 3000);
+  expect(patch.kind === "success", "fulfil: kind success");
+  expect(patch.message === "Saved 4", "fulfil: resolved message from value");
+  expect(patch.loading === false, "fulfil: loading off");
+  expect(patch.duration === 3000, "fulfil: applies settled duration");
+  // String success spec.
+  const patch2 = toastFulfilPatch({ loading: "L", success: "Done", error: "E" }, 0, 1000);
+  expect(patch2.message === "Done", "fulfil: string success spec");
+}
+
+{
+  // toastRejectPatch: error kind, error message, fallback to reason.
+  const spec: ToastPromiseSpec<number> = {
+    loading: "Uploading…",
+    success: "Uploaded",
+    error: (e) => `Upload failed: ${describeToastError(e)}`,
+  };
+  const patch = toastRejectPatch(spec, new Error("timeout"), 8000);
+  expect(patch.kind === "error", "reject: kind error");
+  expect(patch.message === "Upload failed: timeout", "reject: error formatter sees reason");
+  expect(patch.loading === false, "reject: loading off");
+  expect(patch.duration === 8000, "reject: applies settled duration");
+  // A formatter that returns blank falls back to describeToastError.
+  const blank = toastRejectPatch(
+    { loading: "L", success: "S", error: () => "" },
+    new Error("real reason"),
+    5000,
+  );
+  expect(blank.message === "real reason", "reject: blank formatter -> describeToastError fallback");
+}
+
+{
+  // isLoadingToast reads the loading flag.
+  expect(isLoadingToast({ loading: true }) === true, "isLoading: true");
+  expect(isLoadingToast({ loading: false }) === false, "isLoading: false");
+  expect(isLoadingToast({}) === false, "isLoading: absent -> false");
 }
 
 // eslint-disable-next-line no-console

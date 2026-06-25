@@ -123,7 +123,11 @@
       onpointerup={(e) => onPointerUp(e, t.id)}
       onpointercancel={() => endSwipe(t.id)}
     >
-      <span class="icon" aria-hidden="true">{icon(t.kind)}</span>
+      {#if t.loading}
+        <span class="spinner" aria-hidden="true"></span>
+      {:else}
+        <span class="icon" aria-hidden="true">{icon(t.kind)}</span>
+      {/if}
       <div class="body" aria-hidden="true">
         <div class="msg">
           <span class="msg-text">{t.message}</span>
@@ -289,6 +293,33 @@
     background: var(--bg-3);
     color: var(--text);
     margin-top: 1px;
+  }
+  /* Loading spinner (slice 3): same footprint as .icon so the row doesn't
+     reflow when a promise toast morphs spinner -> check/cross. */
+  .spinner {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    margin-top: 1px;
+    box-sizing: border-box;
+    border: 2px solid var(--bg-3);
+    border-top-color: var(--accent);
+    animation: toast-spin 0.7s linear infinite;
+  }
+  @keyframes toast-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  /* Reduced motion: a spinning ring is exactly the kind of continuous
+     motion the setting targets. Show a static dashed ring instead. */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+      border-style: dashed;
+      border-top-color: var(--accent);
+    }
   }
   .toast.success .icon {
     background: rgba(63, 200, 140, 0.18);
