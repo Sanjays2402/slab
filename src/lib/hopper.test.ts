@@ -84,6 +84,9 @@ import {
   describeCaptureTimestampMode,
   type CaptureTimestampMode,
   type RingHealthSummary,
+  moveRuleToIndex,
+  describeRuleMove,
+  type RuleMoveResult,
 } from "./hopper";
 
 function expect(cond: boolean, label: string): void {
@@ -5497,5 +5500,182 @@ function makeHealthRow(
   expect(
     describeCaptureTimestampMode("absolute") === "Absolute time",
     "describe: absolute copy",
+  );
+}
+
+// ── Slice 163 — moveRuleToIndex / describeRuleMove (round-34) ─────────
+
+/** Minimal rule by name; the reorder primitive only inspects array
+ *  position + name, so a trivial predicate/action suffices. */
+function nrule(name: string): Rule {
+  return {
+    name,
+    predicate: { kind: "always" },
+    action: { recipe_id: null, output_dir: null, rename_pattern: null },
+  };
+}
+
+/** Names of a rule chain, for terse order assertions. */
+function names(rules: Rule[]): string {
+  return rules.map((r) => r.name).join(",");
+}
+
+{
+  // moveRuleToIndex: final-index semantics — move 0 -> 2 in ABCD = BCAD.
+  const before = [nrule("A"), nrule("B"), nrule("C"), nrule("D")];
+  const res = moveRuleToIndex(before, 0, 2);
+  expect(res.moved === true, "move: 0->2 moved=true");
+  expect(names(res.rules) === "B,C,A,D", "move: 0->2 yields B,C,A,D");
+  expect(res.from === 0 && res.to === 2, "move: 0->2 echoes from/to");
+  expect(names(before) === "A,B,C,D", "move: input not mutated");
+}
+
+{
+  // moveRuleToIndex: move last -> first.
+  const before = [nrule("A"), nrule("B"), nrule("C"), nrule("D")];
+  const res = moveRuleToIndex(before, 3, 0);
+  expect(names(res.rules) === "D,A,B,C", "move: 3->0 yields D,A,B,C");
+}
+
+{
+  // moveRuleToIndex: move middle up one (keyboard move-up shape).
+  const before = [nrule("A"), nrule("B"), nrule("C")];
+  const res = moveRuleToIndex(before, 2, 1);
+  expect(names(res.rules) === "A,C,B", "move: 2->1 yields A,C,B");
+}
+
+{
+  // moveRuleToIndex: move middle down one (keyboard move-down shape).
+  const before = [nrule("A"), nrule("B"), nrule("C")];
+  const res = moveRuleToIndex(before, 0, 1);
+  expect(names(res.rules) === "B,A,C", "move: 0->1 yields B,A,C");
+}
+
+{
+  // moveRuleToIndex: from === to is a no-op returning SAME reference.
+  const before = [nrule("A"), nrule("B"), nrule("C")];
+  const res = moveRuleToIndex(before, 1, 1);
+  expect(res.moved === false, "move: from===to moved=false");
+  expect(res.rules === before, "move: from===to returns same ref");
+  expect(res.from === 1 && res.to === 1, "move: from===to echoes indices");
+}
+
+{
+  // moveRuleToIndex: out-of-range from -> no-op, from normalised to -1.
+  const before = [nrule("A"), nrule("B")];
+  const res = moveRuleToIndex(before, 5, 0);
+  expect(res.moved === false, "move: oor-from moved=false");
+  expect(res.rules === before, "move: oor-from same ref");
+  expect(res.from === -1, "move: oor-from normalised to -1");
+  expect(res.to === 0, "move: oor-from keeps valid to");
+}
+
+{
+  // moveRuleToIndex: out-of-range to -> no-op, to normalised to -1.
+  const before = [nrule("A"), nrule("B")];
+  const res = moveRuleToIndex(before, 0, 9);
+  expect(res.moved === false, "move: oor-to moved=false");
+  expect(res.to === -1, "move: oor-to normalised to -1");
+}
+
+{
+  // moveRuleToIndex: negative from -> no-op.
+  const before = [nrule("A"), nrule("B")];
+  const res = moveRuleToIndex(before, -1, 1);
+  expect(res.moved === false, "move: negative-from no-op");
+  expect(res.from === -1, "move: negative-from -1");
+}
+
+{
+  // moveRuleToIndex: NaN / non-integer indices -> no-op (defensive).
+  const before = [nrule("A"), nrule("B"), nrule("C")];
+  expect(moveRuleToIndex(before, NaN, 1).moved === false, "move: NaN-from no-op");
+  expect(moveRuleToIndex(before, 1, NaN).moved === false, "move: NaN-to no-op");
+  expect(moveRuleToIndex(before, 1.5, 0).moved === false, "move: float-from no-op");
+  expect(moveRuleToIndex(before, 0, 2.7).moved === false, "move: float-to no-op");
+}
+
+{
+  // moveRuleToIndex: empty chain -> no-op with -1/-1.
+  const res = moveRuleToIndex([], 0, 0);
+  expect(res.moved === false, "move: empty no-op");
+  expect(res.from === -1 && res.to === -1, "move: empty -1/-1");
+}
+
+{
+  // moveRuleToIndex: single-element chain -> only valid move is 0->0 (no-op).
+  const before = [nrule("Solo")];
+  const res = moveRuleToIndex(before, 0, 0);
+  expect(res.moved === false, "move: single-elem no-op");
+  expect(res.rules === before, "move: single-elem same ref");
+}
+
+{
+  // moveRuleToIndex: length preserved + permutation for every valid move.
+  const before = [nrule("A"), nrule("B"), nrule("C"), nrule("D"), nrule("E")];
+  for (let f = 0; f < before.length; f++) {
+    for (let t = 0; t < before.length; t++) {
+      const res = moveRuleToIndex(before, f, t);
+      expect(
+        res.rules.length === before.length,
+        `move: ${f}->${t} preserves length`,
+      );
+      const sortedBefore = before.map((r) => r.name).sort().join(",");
+      const sortedAfter = res.rules.map((r) => r.name).sort().join(",");
+      expect(
+        sortedBefore === sortedAfter,
+        `move: ${f}->${t} is a permutation`,
+      );
+    }
+  }
+}
+
+{
+  // describeRuleMove: a real move reads naturally with 1-based positions.
+  const before = [nrule("Tax"), nrule("Invoices"), nrule("Catch-all")];
+  const res = moveRuleToIndex(before, 2, 0);
+  expect(
+    describeRuleMove("Catch-all", res, before.length) ===
+      "Moved Catch-all to position 1 of 3",
+    "describeRuleMove: real move copy",
+  );
+}
+
+{
+  // describeRuleMove: no-op move -> empty string (suppress announcement).
+  const before = [nrule("A"), nrule("B")];
+  const res = moveRuleToIndex(before, 0, 0);
+  expect(describeRuleMove("A", res, 2) === "", "describeRuleMove: no-op empty");
+}
+
+{
+  // describeRuleMove: blank name falls back to "Rule N" using 1-based from.
+  const before = [nrule("A"), nrule("B"), nrule("C")];
+  const res = moveRuleToIndex(before, 1, 2);
+  expect(
+    describeRuleMove("   ", res, 3) === "Moved Rule 2 to position 3 of 3",
+    "describeRuleMove: blank-name fallback",
+  );
+}
+
+{
+  // describeRuleMove: down-move announces the destination position.
+  const before = [nrule("First"), nrule("Second"), nrule("Third")];
+  const res = moveRuleToIndex(before, 0, 2);
+  expect(
+    describeRuleMove("First", res, 3) === "Moved First to position 3 of 3",
+    "describeRuleMove: down-move copy",
+  );
+}
+
+// Pin the RuleMoveResult shape so a refactor can't silently drop a field.
+{
+  const res: RuleMoveResult = moveRuleToIndex([nrule("A"), nrule("B")], 0, 1);
+  expect(
+    typeof res.moved === "boolean" &&
+      typeof res.from === "number" &&
+      typeof res.to === "number" &&
+      Array.isArray(res.rules),
+    "RuleMoveResult: field types pinned",
   );
 }

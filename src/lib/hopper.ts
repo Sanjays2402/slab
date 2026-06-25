@@ -3528,3 +3528,91 @@ export function describeCaptureTimestampMode(
 ): string {
   return mode === "absolute" ? "Absolute time" : "Relative time";
 }
+
+// ─── Slice 163 — manual rule reorder primitive (round-34) ────────────
+//
+// Until now the rule chain could only be reordered one position at a
+// time via the per-row up/down arrows (moveUp / moveDown in
+// HopperRulesEditor): dragging rule #9 to position #2 took SEVEN
+// clicks. Round 34 adds drag-to-reorder (mouse) plus Alt+Arrow
+// keyboard reorder (a11y). This slice is the load-bearing pure
+// array-move primitive both the drag handler and the keyboard
+// handler compose on top of.
+//
+// The contract is deliberately "final-index" semantics: `to` is the
+// index the moved rule ends up at in the RESULT array (0..len-1),
+// NOT a raw splice insertion point. That keeps the keyboard path
+// trivial (move-up => to = from-1) and gives the drag path one
+// well-defined target to resolve to (slice 164's resolveDropIndex
+// converts a hover-row + edge into this final index).
+
+/** Result of a manual rule move. `moved` is the load-bearing signal
+ *  the UI checks to decide whether to persist + announce: a no-op
+ *  move returns the ORIGINAL `rules` reference (=== check, same
+ *  convention as applyReorderProposal) with `moved: false`, so the
+ *  Svelte caller can skip the slabHopperSetRules round-trip and the
+ *  aria-live announcement entirely. */
+export interface RuleMoveResult {
+  /** The reordered chain. Identical reference to the input when the
+   *  move was a no-op (out-of-range / NaN / from === to). */
+  rules: Rule[];
+  /** True iff the chain actually changed. */
+  moved: boolean;
+  /** Source index, echoed back (normalised; -1 when the input index
+   *  was invalid). */
+  from: number;
+  /** Destination index in the RESULT array, echoed back (normalised;
+   *  -1 when invalid). */
+  to: number;
+}
+
+/** Move the rule at `from` so it lands at index `to` in the result.
+ *
+ *  Pure — never mutates the input array. `to` is the FINAL resting
+ *  index (0..len-1), not a splice insertion point: moving rule 0 to
+ *  `to = 2` in [A,B,C,D] yields [B,C,A,D] (A ends up at index 2).
+ *
+ *  No-op (returns the SAME array reference, moved:false) when:
+ *    - `rules` is empty,
+ *    - `from` or `to` is non-integer / NaN / out of [0,len),
+ *    - `from === to`.
+ *  The reference-equality no-op lets the UI skip persistence + the
+ *  reorder announcement, matching applyReorderProposal's convention. */
+export function moveRuleToIndex(
+  rules: Rule[],
+  from: number,
+  to: number,
+): RuleMoveResult {
+  const len = rules.length;
+  const f = Number.isInteger(from) ? from : -1;
+  const t = Number.isInteger(to) ? to : -1;
+  if (len === 0 || f < 0 || f >= len || t < 0 || t >= len || f === t) {
+    return {
+      rules,
+      moved: false,
+      from: f >= 0 && f < len ? f : -1,
+      to: t >= 0 && t < len ? t : -1,
+    };
+  }
+  const next = rules.slice();
+  const [item] = next.splice(f, 1);
+  next.splice(t, 0, item);
+  return { rules: next, moved: true, from: f, to: t };
+}
+
+/** Human-facing announcement copy for a completed rule move, for the
+ *  keyboard reorder path's aria-live region + the drag-drop toast.
+ *
+ *  Returns "" for a no-op move (the caller suppresses the
+ *  announcement entirely rather than reading a spurious "no change"
+ *  to a screen-reader user). Positions are 1-based for display;
+ *  falls back to "Rule N" when the rule has no name. */
+export function describeRuleMove(
+  ruleName: string,
+  result: RuleMoveResult,
+  total: number,
+): string {
+  if (!result.moved) return "";
+  const name = ruleName.trim() || `Rule ${result.from + 1}`;
+  return `Moved ${name} to position ${result.to + 1} of ${total}`;
+}
