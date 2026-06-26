@@ -277,3 +277,112 @@ export function reconcileModelFacet(
   if (!Array.isArray(models)) return null;
   return models.includes(active) ? active : null;
 }
+
+// --- Slice 4: selection impact + context-aware footer ------------------
+//
+// Forgetting cache entries is destructive: it drops every embedding
+// chunk for those PDFs, and re-indexing them later costs real time. The
+// bulk bar said only "N selected / Forget N" -- no sense of the true
+// blast radius. This adds an impact summary (how many chunks/pages a
+// forget would actually drop) so the cost is visible BEFORE the click,
+// plus a context-aware footer line describing the current view (what's
+// shown, what's filtered, what's selected) the same way the command
+// palette footer narrates its state.
+
+/** Aggregate footprint of a set of indexed PDFs. */
+export interface BeaconImpact {
+  pdfs: number;
+  chunks: number;
+  pages: number;
+}
+
+/**
+ * Sum the footprint (pdfs / chunks / pages) of every row in `pdfs` whose
+ * `pdf_hash` is in `hashes`. Used to show the real cost of a bulk forget
+ * ("12 PDFs · 3,418 chunks · 240 pages dropped") before the user
+ * commits. Unknown hashes are ignored; a null list/set -> all zeros.
+ */
+export function summarizeSelection<T extends BeaconPdfLike>(
+  pdfs: readonly T[],
+  hashes: ReadonlySet<string>,
+): BeaconImpact {
+  const zero: BeaconImpact = { pdfs: 0, chunks: 0, pages: 0 };
+  if (!Array.isArray(pdfs) || !hashes || typeof hashes.has !== "function") {
+    return zero;
+  }
+  let nPdfs = 0;
+  let chunks = 0;
+  let pages = 0;
+  for (const p of pdfs) {
+    if (!p || !hashes.has(p.pdf_hash)) continue;
+    nPdfs++;
+    chunks += p.chunks ?? 0;
+    pages += p.pages ?? 0;
+  }
+  return { pdfs: nPdfs, chunks, pages };
+}
+
+/**
+ * Compose a one-line "N PDFs · N chunks · N pages" impact string,
+ * pluralized + thousands-grouped. Zero-valued fields drop out so a
+ * selection with no pages reads "3 PDFs · 40 chunks", and an empty
+ * impact reads "Nothing selected". Pure (locale grouping via
+ * toLocaleString).
+ */
+export function describeImpact(impact: BeaconImpact): string {
+  if (!impact || impact.pdfs <= 0) return "Nothing selected";
+  const parts: string[] = [
+    `${impact.pdfs.toLocaleString()} PDF${impact.pdfs === 1 ? "" : "s"}`,
+  ];
+  if (impact.chunks > 0) {
+    parts.push(`${impact.chunks.toLocaleString()} chunk${impact.chunks === 1 ? "" : "s"}`);
+  }
+  if (impact.pages > 0) {
+    parts.push(`${impact.pages.toLocaleString()} page${impact.pages === 1 ? "" : "s"}`);
+  }
+  return parts.join(" \u00b7 ");
+}
+
+/** The live state the footer narrates. */
+export interface BeaconViewState {
+  /** Rows currently shown (after facet + search). */
+  shown: number;
+  /** Total rows in the index. */
+  total: number;
+  /** Active model facet, or null. */
+  modelFacet: string | null;
+  /** Trimmed search query (""=none). */
+  query: string;
+  /** Number of selected rows. */
+  selected: number;
+}
+
+/**
+ * Narrate the current view for the footer: how many rows are shown vs
+ * total, which filters are narrowing, and the selection count. Mirrors
+ * the command palette's `describePaletteCount` "context-aware footer"
+ * style. Pure; returns a single human line.
+ */
+export function describeBeaconView(state: BeaconViewState): string {
+  const total = Math.max(0, state?.total ?? 0);
+  const shown = Math.max(0, Math.min(total, state?.shown ?? 0));
+  const sel = Math.max(0, state?.selected ?? 0);
+  const facet = state?.modelFacet ?? null;
+  const query = (state?.query ?? "").trim();
+
+  if (total === 0) return "No PDFs indexed";
+
+  const filtering = !!facet || query.length > 0;
+  let base: string;
+  if (filtering) {
+    base = `${shown.toLocaleString()} of ${total.toLocaleString()} PDF${total === 1 ? "" : "s"}`;
+    const narrows: string[] = [];
+    if (facet) narrows.push(facet);
+    if (query) narrows.push(`\u201c${query}\u201d`);
+    base += ` matching ${narrows.join(" + ")}`;
+  } else {
+    base = `${total.toLocaleString()} PDF${total === 1 ? "" : "s"}`;
+  }
+  if (sel > 0) base += ` \u00b7 ${sel.toLocaleString()} selected`;
+  return base;
+}

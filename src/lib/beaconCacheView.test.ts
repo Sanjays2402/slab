@@ -16,6 +16,9 @@ import {
   beaconSortLabel,
   filterByModel,
   reconcileModelFacet,
+  summarizeSelection,
+  describeImpact,
+  describeBeaconView,
   BEACON_SORT_FIELDS,
   type BeaconPdfLike,
   type BeaconSort,
@@ -305,6 +308,99 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   expect(reconcileModelFacet("x", []) === null, "reconcile: empty model list clears any facet");
   // @ts-expect-error null tolerance
   expect(reconcileModelFacet("x", null) === null, "reconcile: null model list clears facet");
+}
+
+// --- summarizeSelection ----------------------------------------------
+{
+  const rows = [
+    pdf({ pdf_hash: "a", chunks: 10, pages: 4 }),
+    pdf({ pdf_hash: "b", chunks: 25, pages: 8 }),
+    pdf({ pdf_hash: "c", chunks: 7, pages: 2 }),
+  ];
+  const some = summarizeSelection(rows, new Set(["a", "c"]));
+  expect(some.pdfs === 2, "impact: counts selected PDFs");
+  expect(some.chunks === 17, "impact: sums chunks of the selection (10+7)");
+  expect(some.pages === 6, "impact: sums pages of the selection (4+2)");
+  // Unknown hashes ignored.
+  const withGhost = summarizeSelection(rows, new Set(["a", "ghost"]));
+  expect(withGhost.pdfs === 1 && withGhost.chunks === 10, "impact: unknown hash ignored");
+  // Empty selection -> all zeros.
+  const none = summarizeSelection(rows, new Set());
+  expect(none.pdfs === 0 && none.chunks === 0 && none.pages === 0, "impact: empty set -> zeros");
+  // Defensive.
+  // @ts-expect-error null tolerance
+  expect(summarizeSelection(null, new Set(["a"])).pdfs === 0, "impact: null list -> zeros");
+  // @ts-expect-error null tolerance
+  expect(summarizeSelection(rows, null).pdfs === 0, "impact: null set -> zeros");
+}
+
+// --- describeImpact --------------------------------------------------
+{
+  expect(
+    describeImpact({ pdfs: 12, chunks: 3418, pages: 240 }) === "12 PDFs \u00b7 3,418 chunks \u00b7 240 pages",
+    "describeImpact: full line, pluralized + grouped",
+  );
+  expect(
+    describeImpact({ pdfs: 1, chunks: 1, pages: 1 }) === "1 PDF \u00b7 1 chunk \u00b7 1 page",
+    "describeImpact: singular forms",
+  );
+  expect(
+    describeImpact({ pdfs: 3, chunks: 40, pages: 0 }) === "3 PDFs \u00b7 40 chunks",
+    "describeImpact: zero pages drops out",
+  );
+  expect(
+    describeImpact({ pdfs: 2, chunks: 0, pages: 0 }) === "2 PDFs",
+    "describeImpact: only PDFs when chunks+pages zero",
+  );
+  expect(describeImpact({ pdfs: 0, chunks: 0, pages: 0 }) === "Nothing selected", "describeImpact: empty");
+}
+
+// --- describeBeaconView ----------------------------------------------
+{
+  // Empty index.
+  expect(
+    describeBeaconView({ shown: 0, total: 0, modelFacet: null, query: "", selected: 0 }) === "No PDFs indexed",
+    "view: empty index",
+  );
+  // Unfiltered.
+  expect(
+    describeBeaconView({ shown: 50, total: 50, modelFacet: null, query: "", selected: 0 }) === "50 PDFs",
+    "view: unfiltered total",
+  );
+  expect(
+    describeBeaconView({ shown: 1, total: 1, modelFacet: null, query: "", selected: 0 }) === "1 PDF",
+    "view: singular total",
+  );
+  // Search only.
+  expect(
+    describeBeaconView({ shown: 3, total: 50, modelFacet: null, query: "tax", selected: 0 }) ===
+      "3 of 50 PDFs matching \u201ctax\u201d",
+    "view: search narrows with quoted query",
+  );
+  // Facet only.
+  expect(
+    describeBeaconView({ shown: 20, total: 50, modelFacet: "nomic-embed-text", query: "", selected: 0 }) ===
+      "20 of 50 PDFs matching nomic-embed-text",
+    "view: facet narrows with model name",
+  );
+  // Facet + search combined.
+  expect(
+    describeBeaconView({ shown: 2, total: 50, modelFacet: "mxbai", query: "tax", selected: 0 }) ===
+      "2 of 50 PDFs matching mxbai + \u201ctax\u201d",
+    "view: facet + search combined",
+  );
+  // Selection appended.
+  expect(
+    describeBeaconView({ shown: 50, total: 50, modelFacet: null, query: "", selected: 4 }) ===
+      "50 PDFs \u00b7 4 selected",
+    "view: selection count appended",
+  );
+  // Defensive clamping: shown can't exceed total; negatives floored.
+  expect(
+    describeBeaconView({ shown: 999, total: 10, modelFacet: "m", query: "", selected: -3 }) ===
+      "10 of 10 PDFs matching m",
+    "view: shown clamps to total, negative selection floored away",
+  );
 }
 
 // eslint-disable-next-line no-console

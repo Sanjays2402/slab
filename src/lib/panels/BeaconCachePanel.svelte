@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, summarizeSelection, describeImpact, describeBeaconView, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
@@ -100,6 +100,20 @@
     sortIndexedPdfs(searchHits.map((h) => h.record), sort),
   );
   const matchedCount = $derived(sortedPdfs.length);
+
+  /** Slice 4: real footprint of the current selection (chunks/pages dropped). */
+  const selectionImpact = $derived(summarizeSelection(pdfs, selected));
+  const impactLabel = $derived(describeImpact(selectionImpact));
+  /** Slice 4: context-aware footer line narrating the current view. */
+  const viewSummary = $derived(
+    describeBeaconView({
+      shown: matchedCount,
+      total: totalPdfs,
+      modelFacet,
+      query: search,
+      selected: selectedCount,
+    }),
+  );
 
   function setSort(field: BeaconSortField) {
     sort = cycleBeaconSort(sort, field);
@@ -542,11 +556,25 @@
             {/each}
           </ul>
         {/if}
+
+        {#if pdfs.length > 0}
+          <div class="bc-footer">
+            <span class="bc-footer-summary">{viewSummary}</span>
+            {#if selectedCount > 0}
+              <span class="bc-footer-impact" title="Total footprint of the current selection">
+                Selection: {impactLabel}
+              </span>
+            {/if}
+          </div>
+        {/if}
       </section>
 
       {#if selectedCount > 0}
         <div class="bc-bulk-bar">
-          <span class="tabular">{selectedCount} selected</span>
+          <div class="bc-bulk-info">
+            <span class="tabular">{selectedCount} selected</span>
+            <span class="bc-bulk-impact tabular">drops {impactLabel}</span>
+          </div>
           <button
             class="bc-btn bc-btn-danger"
             onclick={forgetSelected}
@@ -1067,6 +1095,39 @@
     font-size: 12px;
     z-index: 4;
     animation: bc-pop-in 160ms ease-out;
+  }
+  .bc-bulk-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.3;
+  }
+  .bc-bulk-impact {
+    font-size: 10px;
+    opacity: 0.6;
+  }
+
+  .bc-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, white 6%, transparent);
+    font-size: 11px;
+    opacity: 0.7;
+  }
+  .bc-footer-summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .bc-footer-impact {
+    flex-shrink: 0;
+    color: #79c0ff;
+    font-variant-numeric: tabular-nums;
   }
 
   .bc-toast {
