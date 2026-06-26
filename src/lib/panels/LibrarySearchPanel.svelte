@@ -48,6 +48,8 @@
     refineSearchHits,
     sortSearchGroups,
     searchSortLabel,
+    summarizeSearchResults,
+    pageSpread,
     SEARCH_SORT_MODES,
     type SearchSortMode,
     type SearchGroupLike,
@@ -238,6 +240,21 @@
   let sortMode = $state<SearchSortMode>("relevance");
   const groups = $derived(
     sortSearchGroups(rawGroups as SearchGroupLike<SearchHit>[], sortMode) as DocGroup[],
+  );
+
+  // ---- Slice 5 (Atlas III): result summary footer ----
+  // A context-aware footer that narrates the live result view (matches
+  // shown vs total, the refine term, and the active sort) the way the
+  // command palette and beacon inspector footers do. Replaces the static
+  // index-size footer with something that tracks the current query.
+  const resultSummary = $derived(
+    summarizeSearchResults({
+      shown: refinedHits.length,
+      docs: groups.length,
+      total: hits.length,
+      refine,
+      sortMode,
+    }),
   );
 
   // ---- Slice 1 (Atlas III): keyboard navigation through results ----
@@ -659,6 +676,11 @@
           <header class="group-header">
             <h3 class="doc-title">{g.title}</h3>
             <span class="doc-path" title={g.path}>{g.path}</span>
+            {#if pageSpread(g.hits)}
+              <span class="page-spread" title="Pages with a match">
+                {pageSpread(g.hits)}
+              </span>
+            {/if}
             <span class="hit-count"
               >{g.hits.length} hit{g.hits.length === 1 ? "" : "s"}</span
             >
@@ -690,7 +712,12 @@
       {/each}
     {/if}
   </div>
-  {#if indexStats && (indexStats.docs > 0 || indexStats.pages > 0)}
+  {#if resultSummary}
+    <footer class="index-footer result-footer" aria-live="polite">
+      <span class="footer-dot" aria-hidden="true">●</span>
+      <span>{resultSummary}</span>
+    </footer>
+  {:else if indexStats && (indexStats.docs > 0 || indexStats.pages > 0)}
     <footer
       class="index-footer"
       aria-label="Indexed library size"
@@ -1113,6 +1140,20 @@
     padding: 1px 8px;
     border-radius: 999px;
     background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+  }
+
+  /* Slice 5: per-group page-spread badge — the page range a document's
+     matches span, shown in the group header. Monospace + accent-tinted
+     so it reads as a precise locator, not chrome. */
+  .page-spread {
+    flex-shrink: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    color: var(--accent, #4a72ff);
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--accent-fade, rgba(74, 114, 255, 0.1));
+    font-variant-numeric: tabular-nums;
   }
 
   .hit-list {

@@ -22,6 +22,8 @@ import {
   sortSearchGroups,
   searchSortLabel,
   describeSortMode,
+  summarizeSearchResults,
+  pageSpread,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -423,6 +425,61 @@ const group = (
 
   // @ts-expect-error — garbage
   expect(sortSearchGroups(null, "relevance").length === 0, "sort: null -> []");
+}
+
+// =====================================================================
+// Slice 5 — summary footer + page spread
+// =====================================================================
+
+// --- summarizeSearchResults ---
+{
+  expect(
+    summarizeSearchResults({ shown: 0, docs: 0, total: 0, refine: "", sortMode: "relevance" }) === "",
+    "summary: no results -> ''",
+  );
+  const s1 = summarizeSearchResults({ shown: 12, docs: 3, total: 12, refine: "", sortMode: "relevance" });
+  expect(s1 === "12 matches across 3 documents", "summary: plain count");
+  const s2 = summarizeSearchResults({ shown: 1, docs: 1, total: 1, refine: "", sortMode: "relevance" });
+  expect(s2 === "1 match across 1 document", "summary: singular pluralization");
+  const s3 = summarizeSearchResults({ shown: 4, docs: 2, total: 12, refine: "term", sortMode: "relevance" });
+  expect(
+    s3.includes("4 of 12 matches") && s3.includes("refined") && s3.includes("term"),
+    "summary: refine shows 'N of M' + refine term",
+  );
+  const s4 = summarizeSearchResults({ shown: 8, docs: 3, total: 8, refine: "", sortMode: "matches" });
+  expect(s4.includes("by match count"), "summary: non-default sort named");
+  const s5 = summarizeSearchResults({ shown: 8, docs: 3, total: 8, refine: "", sortMode: "relevance" });
+  expect(!s5.includes("by "), "summary: default sort not named");
+  // shown clamps to total defensively.
+  const s6 = summarizeSearchResults({ shown: 99, docs: 1, total: 5, refine: "", sortMode: "relevance" });
+  expect(s6.startsWith("5 matches"), "summary: shown clamps to total");
+}
+
+// --- pageSpread ---
+{
+  expect(pageSpread([hit({ pageIndex: 3 })]) === "p. 4", "spread: single page (0-based -> 1-based)");
+  expect(
+    pageSpread([hit({ pageIndex: 2 }), hit({ pageIndex: 46 })]) === "pp. 3\u201347",
+    "spread: min-max range",
+  );
+  // Unsorted input still yields min..max.
+  expect(
+    pageSpread([hit({ pageIndex: 46 }), hit({ pageIndex: 2 }), hit({ pageIndex: 10 })]) === "pp. 3\u201347",
+    "spread: unsorted hits -> correct min-max",
+  );
+  // All on the same page collapse to "p. N".
+  expect(
+    pageSpread([hit({ pageIndex: 5 }), hit({ pageIndex: 5 })]) === "p. 6",
+    "spread: same page collapses",
+  );
+  expect(pageSpread([]) === "", "spread: empty -> ''");
+  // @ts-expect-error — garbage
+  expect(pageSpread(null) === "", "spread: null -> ''");
+  // Non-finite pageIndex is skipped.
+  expect(
+    pageSpread([hit({ pageIndex: NaN as never }), hit({ pageIndex: 7 })]) === "p. 8",
+    "spread: skips non-finite pageIndex",
+  );
 }
 
 // eslint-disable-next-line no-console

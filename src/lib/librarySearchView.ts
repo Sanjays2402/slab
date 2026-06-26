@@ -553,3 +553,76 @@ export function sortSearchGroups<T extends SearchHitLike>(
   });
   return indexed.map((x) => x.g);
 }
+
+// --- Slice 5: result summary footer + page-spread badges -------------
+//
+// The panel told you "N matches across M documents" only in a header
+// line that vanished under a refine, and a group's hits gave no sense of
+// WHERE in the document they landed. This adds a context-aware footer
+// that narrates the live view (shown-vs-total, refine, sort) the way the
+// command palette and beacon inspector footers do, plus a per-group
+// page-spread badge ("pp. 3-47") so you can see a document's match range
+// at a glance.
+
+/** The live state the results footer narrates. */
+export interface SearchSummaryState {
+  /** Hits shown after refine. */
+  shown: number;
+  /** Distinct documents shown after refine. */
+  docs: number;
+  /** Total hits before refine (so refine can read "4 of 12"). */
+  total: number;
+  /** Trimmed refine string ("" = none). */
+  refine: string;
+  /** Active sort mode. */
+  sortMode: SearchSortMode;
+}
+
+/**
+ * Narrate the current result view for the footer: how many matches
+ * across how many documents, whether a refine is narrowing them, and
+ * (when not the default) which sort is applied. Mirrors the palette's
+ * `describePaletteCount` / beacon's `describeBeaconView` style. Returns
+ * "" when there is nothing to summarize (no results). Pure.
+ */
+export function summarizeSearchResults(state: SearchSummaryState): string {
+  const total = Math.max(0, state?.total ?? 0);
+  const shown = Math.max(0, Math.min(total, state?.shown ?? 0));
+  const docs = Math.max(0, state?.docs ?? 0);
+  const refine = (state?.refine ?? "").trim();
+  const mode = state?.sortMode ?? "relevance";
+
+  if (total === 0) return "";
+
+  let base: string;
+  if (refine && shown !== total) {
+    base = `${shown.toLocaleString()} of ${total.toLocaleString()} match${total === 1 ? "" : "es"}`;
+  } else {
+    base = `${shown.toLocaleString()} match${shown === 1 ? "" : "es"}`;
+  }
+  base += ` across ${docs.toLocaleString()} document${docs === 1 ? "" : "s"}`;
+  if (refine) base += ` \u00b7 refined \u201C${refine}\u201D`;
+  if (mode !== "relevance") base += ` \u00b7 by ${describeSortMode(mode)}`;
+  return base;
+}
+
+/**
+ * The page range a document's hits span, 1-based, for a compact badge.
+ * One distinct page -> "p. 4"; a spread -> "pp. 3\u201347" (min\u2013max).
+ * Tolerates 0-based `pageIndex` (the wire shape), unsorted hits, and a
+ * null/empty list (-> ""). Pure.
+ */
+export function pageSpread(hits: readonly SearchHitLike[]): string {
+  if (!Array.isArray(hits) || hits.length === 0) return "";
+  let min = Infinity;
+  let max = -Infinity;
+  for (const h of hits) {
+    if (!h || !Number.isFinite(h.pageIndex)) continue;
+    const p = h.pageIndex + 1; // 0-based -> 1-based
+    if (p < min) min = p;
+    if (p > max) max = p;
+  }
+  if (!Number.isFinite(min)) return "";
+  if (min === max) return `p. ${min}`;
+  return `pp. ${min}\u2013${max}`;
+}
