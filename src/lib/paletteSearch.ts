@@ -582,3 +582,89 @@ function dedupeIds(ids: string[], limit: number): string[] {
   return out;
 }
 
+// --- Typed scope sigils (Lumen II Slice 2) ---------------------------
+//
+// Power users live in VSCode's ⌘P, where a leading sigil scopes the
+// search: ">" runs commands, "@" jumps to symbols, "#" searches workspace
+// symbols. The Slab palette mixes files, panel switches, appearance, and
+// commands into one flat list — so a leading sigil that narrows the list
+// to one CLASS of result lets a user who knows what they want skip the
+// noise: "@invoice" only files, "#dark" only themes, ">redact" only
+// commands (excluding file navigation, like VSCode).
+//
+// Pure parse + membership predicate; the Svelte shell renders a scope
+// pill and feeds the stripped `term` to the existing scorer.
+
+export type PaletteScope = "all" | "commands" | "files" | "appearance";
+
+/** Decomposition of a raw query into an optional scope + the search term. */
+export interface PaletteScopeParse {
+  scope: PaletteScope;
+  /** Query with the leading sigil stripped + trimmed. */
+  term: string;
+  /** The sigil that triggered the scope, or "" when unscoped. */
+  sigil: string;
+}
+
+/** Leading-character -> scope. Mirrors VSCode's ⌘P vocabulary. */
+export const PALETTE_SCOPE_SIGILS: Readonly<Record<string, PaletteScope>> = {
+  ">": "commands",
+  "@": "files",
+  "#": "appearance",
+};
+
+/** Groups (from CommandPalette's `group` field) that represent files. */
+const FILE_GROUPS: ReadonlySet<string> = new Set(["Pinned", "Recent", "Recent files"]);
+
+/**
+ * Parse a raw palette query. A leading sigil (after optional whitespace)
+ * selects a scope and is stripped from the returned `term`; anything else
+ * is the unscoped "all" search. Pure; tolerant of null/empty.
+ */
+export function parsePaletteScope(query: string): PaletteScopeParse {
+  const raw = query ?? "";
+  const lead = raw.replace(/^\s+/, "");
+  const first = lead.charAt(0);
+  const scope = PALETTE_SCOPE_SIGILS[first];
+  if (scope) {
+    return { scope, term: lead.slice(1).trim(), sigil: first };
+  }
+  return { scope: "all", term: raw.trim(), sigil: "" };
+}
+
+/**
+ * Whether an entry in `group` belongs to `scope`. "all" matches
+ * everything; "files" matches the file groups; "appearance" matches the
+ * Appearance group; "commands" matches everything that ISN'T a file
+ * (VSCode's ">" excludes file navigation — appearance toggles are still
+ * commands).
+ */
+export function entryMatchesScope(group: string, scope: PaletteScope): boolean {
+  switch (scope) {
+    case "files":
+      return FILE_GROUPS.has(group);
+    case "appearance":
+      return group === "Appearance";
+    case "commands":
+      return !FILE_GROUPS.has(group);
+    case "all":
+    default:
+      return true;
+  }
+}
+
+/** Human label for a scope (for the input pill); "" for the unscoped case. */
+export function describePaletteScope(scope: PaletteScope): string {
+  switch (scope) {
+    case "commands":
+      return "Commands";
+    case "files":
+      return "Files";
+    case "appearance":
+      return "Appearance";
+    case "all":
+    default:
+      return "";
+  }
+}
+

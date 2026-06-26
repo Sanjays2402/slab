@@ -18,6 +18,9 @@
     nextPaletteIndex,
     paletteKeymapId,
     suggestPaletteFallback,
+    parsePaletteScope,
+    entryMatchesScope,
+    describePaletteScope,
     type PaletteRange,
     type PaletteFallback,
   } from "$lib/paletteSearch";
@@ -729,14 +732,25 @@
   // so the render pass doesn't re-score.
   let titleRangeCache = new Map<string, PaletteRange[]>();
 
+  // Lumen II Slice 2: typed scope sigils. A leading ">", "@", or "#"
+  // narrows the list to commands / files / appearance (VSCode ⌘P style)
+  // and the rest of the query becomes the search term. Parsed once here so
+  // both the filter and the input pill read the same decomposition.
+  let scopeParse = $derived(parsePaletteScope(query));
+
   let filtered = $derived.by(() => {
     titleRangeCache = new Map();
-    if (!query.trim()) {
-      // Empty-query view: MRU floats to top, in MRU order.
-      // Actions not in MRU keep their natural order after.
+    const { scope, term } = scopeParse;
+    // Apply the scope filter first; "all" passes everything through.
+    const inScope =
+      scope === "all" ? actions : actions.filter((a) => entryMatchesScope(a.group, scope));
+
+    if (!term.trim()) {
+      // Empty term (blank query, or a bare sigil): MRU floats to top, in
+      // MRU order. Actions not in MRU keep their natural order after.
       const recent: Action[] = [];
       const rest: Action[] = [];
-      for (const a of actions) {
+      for (const a of inScope) {
         if (a.id in mru) recent.push(a);
         else rest.push(a);
       }
@@ -747,8 +761,8 @@
       const overflow = recent.slice(6);
       return [...top, ...overflow, ...rest];
     }
-    const q = query.trim();
-    const scored = actions
+    const q = term.trim();
+    const scored = inScope
       .map((a: Action) => {
         const r = scorePaletteEntry(q, { title: a.title, keywords: a.keywords });
         if (r.score > 0) titleRangeCache.set(a.id, r.titleRanges);
@@ -784,12 +798,13 @@
     return prettyBindingFor(kid as ActionId);
   }
 
-  // Group preserving filtered order. When query is empty AND there are MRU
-  // entries, the first N items get pulled into a synthetic "Recently used"
-  // group so the user sees their muscle-memory commands first.
+  // Group preserving filtered order. When the term is empty AND there are
+  // MRU entries, the first N items get pulled into a synthetic "Recently
+  // used" group so the user sees their muscle-memory commands first. Uses
+  // the scoped term so a bare ">" / "@" / "#" still shows the MRU header.
   let grouped = $derived.by(() => {
     const map = new Map<string, Action[]>();
-    const showMruHeader = !query.trim() && Object.keys(mru).length > 0;
+    const showMruHeader = !scopeParse.term.trim() && Object.keys(mru).length > 0;
     let mruShown = 0;
     const mruCap = 6;
     for (const a of filtered) {
@@ -818,12 +833,17 @@
   // The actual rows are resolved back to live Action objects (by id) so
   // Enter/click runs the real handler. Computed only when filtered is empty.
   let fallback = $derived.by<PaletteFallback>(() => {
-    if (filtered.length > 0 || !query.trim()) {
+    if (filtered.length > 0 || !scopeParse.term.trim()) {
       return { kind: "none", relaxed: "", ids: [] };
     }
+    // Search within the active scope so a scoped miss suggests scoped rows.
+    const inScope =
+      scopeParse.scope === "all"
+        ? actions
+        : actions.filter((a) => entryMatchesScope(a.group, scopeParse.scope));
     return suggestPaletteFallback(
-      query,
-      actions.map((a) => ({ id: a.id, title: a.title, keywords: a.keywords })),
+      scopeParse.term,
+      inScope.map((a) => ({ id: a.id, title: a.title, keywords: a.keywords })),
     );
   });
 
@@ -911,10 +931,15 @@
   <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
     <div class="palette-input-row">
       <span class="palette-kbd-leading">⌘K</span>
+      {#if scopeParse.scope !== "all"}
+        <span class="palette-scope-pill" aria-label={`Scoped to ${describePaletteScope(scopeParse.scope)}`}>
+          {describePaletteScope(scopeParse.scope)}
+        </span>
+      {/if}
       <input
         bind:this={inputEl}
         bind:value={query}
-        placeholder="Jump to anything…"
+        placeholder={scopeParse.scope === "all" ? "Jump to anything…  (> commands, @ files, # appearance)" : "Filter…"}
         aria-label="Command palette search"
         autocomplete="off"
         spellcheck="false"
@@ -926,10 +951,10 @@
         {#if fallbackActions.length > 0}
           <div class="palette-fallback-note">
             {#if fallback.kind === "typo"}
-              No matches for “{query}”. Showing results for
+              No matches for “{scopeParse.term}”. Showing results for
               <span class="palette-fallback-relax">{fallback.relaxed}</span>
             {:else}
-              No matches for “{query}”. Try one of these
+              No matches for “{scopeParse.term}”. Try one of these
             {/if}
           </div>
           <div class="palette-group-label">
@@ -951,7 +976,7 @@
             </button>
           {/each}
         {:else}
-          <div class="palette-empty">No matches for “{query}”</div>
+          <div class="palette-empty">No matches for “{scopeParse.term}”</div>
         {/if}
       {:else}
         {#each grouped as [group, items] (group)}
@@ -1038,6 +1063,20 @@
     padding: 3px 6px;
     border-radius: 4px;
     letter-spacing: 0.5px;
+  }
+  /* Lumen II Slice 2: typed-scope pill. When a leading sigil scopes the
+     search (> commands, @ files, # appearance) this accent chip replaces
+     the implicit "all" so the active class is unmistakable. */
+  .palette-scope-pill {
+    font-size: 11px;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    font-weight: 600;
   }
   .palette-close {
     background: var(--bg-3);

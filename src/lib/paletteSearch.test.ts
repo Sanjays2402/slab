@@ -20,6 +20,9 @@ import {
   recordFrecency,
   paletteKeymapId,
   suggestPaletteFallback,
+  parsePaletteScope,
+  entryMatchesScope,
+  describePaletteScope,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -513,6 +516,77 @@ function pick(text: string, ranges: PaletteRange[]): string {
   ]) as PaletteFallbackEntry[];
   suggestPaletteFallback("readerr", frozen);
   expect(frozen.length === 1, "fallback: input array not mutated");
+}
+
+// --- Lumen II Slice 2: typed scope sigils ---------------------------
+{
+  // Parse: each sigil selects its scope and strips the leading char.
+  const cmd = parsePaletteScope(">redact");
+  expect(cmd.scope === "commands", "scope: '>' -> commands");
+  expect(cmd.term === "redact", "scope: '>' strips the sigil from the term");
+  expect(cmd.sigil === ">", "scope: '>' sigil recorded");
+
+  const file = parsePaletteScope("@invoice");
+  expect(file.scope === "files", "scope: '@' -> files");
+  expect(file.term === "invoice", "scope: '@' term stripped");
+
+  const appr = parsePaletteScope("#dark");
+  expect(appr.scope === "appearance", "scope: '#' -> appearance");
+  expect(appr.term === "dark", "scope: '#' term stripped");
+
+  // Leading whitespace before the sigil is tolerated.
+  const ws = parsePaletteScope("  >compress");
+  expect(ws.scope === "commands", "scope: leading whitespace before sigil ok");
+  expect(ws.term === "compress", "scope: whitespace + sigil strips to term");
+
+  // Space after the sigil is trimmed.
+  const spaced = parsePaletteScope("> redact");
+  expect(spaced.term === "redact", "scope: space after sigil trimmed");
+
+  // Bare sigil -> empty term (shows the whole scoped class).
+  const bare = parsePaletteScope(">");
+  expect(bare.scope === "commands" && bare.term === "", "scope: bare sigil -> empty term");
+
+  // No sigil -> all, term is the trimmed raw query.
+  const plain = parsePaletteScope("  reader ");
+  expect(plain.scope === "all", "scope: no sigil -> all");
+  expect(plain.term === "reader", "scope: unscoped term trimmed");
+  expect(plain.sigil === "", "scope: unscoped sigil empty");
+
+  // Sigil only counts when LEADING — mid-query '#' is literal text.
+  const mid = parsePaletteScope("page #3");
+  expect(mid.scope === "all", "scope: non-leading sigil is literal");
+  expect(mid.term === "page #3", "scope: literal sigil kept in term");
+
+  // Degenerate.
+  expect(parsePaletteScope("").scope === "all", "scope: empty -> all");
+  expect(parsePaletteScope("").term === "", "scope: empty -> empty term");
+
+  // Membership: files scope.
+  expect(entryMatchesScope("Recent files", "files"), "scope: Recent files in files scope");
+  expect(entryMatchesScope("Pinned", "files"), "scope: Pinned in files scope");
+  expect(!entryMatchesScope("Appearance", "files"), "scope: Appearance not in files scope");
+
+  // Membership: appearance scope.
+  expect(entryMatchesScope("Appearance", "appearance"), "scope: Appearance in appearance scope");
+  expect(!entryMatchesScope("Panels", "appearance"), "scope: Panels not in appearance scope");
+
+  // Membership: commands scope excludes files (VSCode '>' semantics) but
+  // includes appearance + panels + everything non-file.
+  expect(entryMatchesScope("Panels", "commands"), "scope: Panels in commands scope");
+  expect(entryMatchesScope("Appearance", "commands"), "scope: Appearance counts as a command");
+  expect(!entryMatchesScope("Recent files", "commands"), "scope: files excluded from commands");
+  expect(!entryMatchesScope("Pinned", "commands"), "scope: pinned files excluded from commands");
+
+  // "all" matches everything.
+  expect(entryMatchesScope("Recent files", "all"), "scope: all includes files");
+  expect(entryMatchesScope("Appearance", "all"), "scope: all includes appearance");
+
+  // Labels.
+  expect(describePaletteScope("commands") === "Commands", "scope: commands label");
+  expect(describePaletteScope("files") === "Files", "scope: files label");
+  expect(describePaletteScope("appearance") === "Appearance", "scope: appearance label");
+  expect(describePaletteScope("all") === "", "scope: all has no pill label");
 }
 
 // eslint-disable-next-line no-console
