@@ -1,13 +1,113 @@
 # Slab Cron State
 
-Last updated: 2026-06-25 22:30 PT by Cake (cron) — round-38 BATCH shipped (5 frontend/UX slices) CONTINUING the round-37 Command Palette into its POWER-USER layer ("Lumen II"). Round 37 took the palette's search CORE to Raycast grade (tested scoring, highlight, nav, frecency, chords); round 38 ships the five next-highest palette roadmap items as a cohesive arc, all backed by the same tested pure core src/lib/paletteSearch.ts (253 inline tests, up from 123). Slice 1 empty-state fallback (suggestPaletteFallback: relax the query by trimming trailing chars to a 2-char floor + rescore -> "did you mean" the closest shorter prefix; else curated present STARTER commands -> palette is never a dead end; CommandPalette resolves suggested ids back to live Actions so Enter runs the real handler); slice 2 typed scope sigils (parsePaletteScope: leading > / @ / # scopes to commands / files / appearance VSCode-style, strips sigil to term, bare sigil keeps MRU header, non-leading sigil stays literal; entryMatchesScope membership, commands excludes files; accent scope pill in input row); slice 3 Cmd/Ctrl+Arrow group-jump (classifyPaletteGroupNav claims the modifier chord per-row nav left free; groupStartIndices -> flat heads; nextGroupIndex two-stage prev = section-top-then-prev-section, next drops to last row in last group; wired ahead of the modifier bail); slice 4 reading-progress chip on recent rows (recentReadingProgress: lastPage/totalPages -> thin accent track + "p.12/80 · 15%" or "Finished"; clamps, pageCount fallback, empty summary falls back to plain subtitle); slice 5 context-aware footer (describePaletteCount pluralised live count + paletteActionVerb Open/Switch to/Apply/Run tracking the selected row).
+Last updated: 2026-06-26 03:35 PT by Cake (cron) — round-39 BATCH shipped (5 frontend/UX slices) PIVOTING off the 3-round palette streak (rounds 37-38) to the **"?" keyboard cheat-sheet overlay** ("Lexicon"). The ShortcutsOverlay was a ~120-row hand-maintained literal array that silently DRIFTED from the live keymap (rebinds invisible, new actions never appeared) and had no search, no keyboard nav, no conflict detection. Round 39 rebuilds it on a new tested pure core src/lib/shortcutsOverlay.ts (95 inline tests). Slice 1 live-keymap grouping (buildShortcutGroups drives bindable rows straight off keymapView; curated rank-then-alpha order can never drop a section; "custom" pill on rebound rows; reduces hand-maintained part to a few genuinely-unbindable info hints); slice 2 filter-as-you-type (filterShortcutGroups reuses the tested palette scorePaletteField so label highlight + matching is the SAME engine as Cmd+K; matches on label/keys/group-title; autofocus, Esc-clears-then-closes, shown/total count, empty state); slice 3 keyboard nav (flattenShortcutRows -> one index space; reuses classifyPaletteNav + nextPaletteIndex; accent focus ring + scroll-into-view); slice 4 conflict detection (canonicalizeBinding modifier-order-independent + alias-normalized; detectShortcutConflicts surfaces the REAL library.search/forms.open Mod+Shift+F collision; amber banner + per-row "conflict" pill); slice 5 copy-as-text (formatShortcutsText column-aligned export, filter-aware, clipboard + toast).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `0b55b9c` — "feat(palette): context-aware footer with live count + dynamic Enter verb".
+Latest commit: `36bfac2` — "feat(shortcuts): copy the cheat-sheet as aligned plain text".
+
+### What round-39 (2026-06-26 03:35 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+PIVOTING off the 3-round Command Palette streak (rounds 37-38, now
+power-user-complete) to the **"?" keyboard cheat-sheet overlay**
+("Lexicon") — the explicit "keyboard-shortcut cheat-sheet overlay (?
+key)" roadmap candidate and a natural continuation of the keyboard-UX
+theme. The ShortcutsOverlay existed but was a ~120-row hand-maintained
+literal array that silently DRIFTED from the real keymap (a user rebind
+was invisible until someone edited the array; a newly-registered action
+never appeared), with no search, no keyboard nav, no conflict detection.
+
+New pure module `src/lib/shortcutsOverlay.ts` (95 inline tests, zero
+DOM/store deps) backs all five capabilities — same pure-core/thin-shell
+discipline as paletteSearch.ts and toastStack.ts. Reuses the tested
+palette core (scorePaletteField, splitHighlight, classifyPaletteNav,
+nextPaletteIndex) so there is NO second fuzzy/nav implementation to drift.
+
+- Slice 1: live-keymap-driven grouping (92a5d4f). buildShortcutGroups
+  drives bindable rows straight off the keymapView store; groups order
+  by a curated SHORTCUT_GROUP_ORDER rank then alphabetically so a future
+  keymap group appears (at the end) instead of being silently dropped;
+  override rows get a "custom" pill; header shows a live row count. The
+  hand-maintained part shrinks to a small INFO_HINTS set of genuinely
+  un-bindable hints (Esc, reader scroll, Theater pen tools, Discovery/
+  Stack panel chords). 30 tests.
+
+- Slice 2: filter-as-you-type (b0648c1). filterShortcutGroups reuses the
+  ⌘K palette scorePaletteField so label highlight ranges + matching are
+  the SAME engine; a row matches on label (live <mark> via splitHighlight),
+  canonical key text ("shift"/"esc" find by keys), or group title
+  (surfaces the whole section). Autofocus input; Esc clears an active
+  filter before closing; header shows shown/total; one-click empty-state
+  reset; stable in-group order. 17 tests.
+
+- Slice 3: keyboard navigation (1b87b92). flattenShortcutRows collapses
+  the grouped model into one index space (tagging group title +
+  first-of-section so the 2-column layout is preserved) and drives the
+  cursor with the same tested palette nav core (classifyPaletteNav +
+  nextPaletteIndex): arrows wrap, Home/End leap, PageUp/Down page.
+  Focused row gets an accent ring + scrolls into view; cursor snaps to
+  the first match on each new query; modifier chords fall through. 10 tests.
+
+- Slice 4: conflict detection (48ba0e9). canonicalizeBinding normalizes
+  a chord (lowercase, modifier-order-independent, Cmd==Mod/Option==Alt
+  aliases, dup-mod collapse, literal "+" key); detectShortcutConflicts
+  surfaces the REAL shipping collision (library.search + forms.open both
+  default Mod+Shift+F) plus any other; conflictingActionIds gives a fast
+  per-row flag. Static info hints excluded (panel-local, intentionally
+  non-unique). Amber header banner (count) + per-row "conflict" pill,
+  both #ffb648 matching the toast warning severity. 24 tests.
+
+- Slice 5: copy-as-text capstone (36bfac2). formatShortcutsText pads the
+  keys column to the widest key string sheet-wide so every label aligns,
+  prints sections with blank-line separators, takes a resolveKeys
+  callback so per-platform glyph formatting (prettyBinding) stays in the
+  component while alignment stays pure + DOM-free. Header "Copy" button
+  is filter-aware (exports only shown rows, titles with the filter term),
+  disables when empty, flips to "copied" for 1.6s, fires success/error
+  toast (same clipboard pattern as the command palette). 14 tests.
+
+Gates result: tsx src/lib/shortcutsOverlay.test.ts 95/95 pass (new
+suite: 30+17+10+24+14 = 95), tsx src/lib/paletteSearch.test.ts 253/253
+unchanged, tsx src/lib/toastStack.test.ts 254/254 unchanged, tsx
+src/lib/hopper.test.ts 1189/1189 unchanged, pnpm check 0 errors / 104
+warnings (rounds 32-38 baseline preserved EXACTLY — zero new warnings
+from any slice; the new <input>/<mark>/<button>/conflict-banner all
+clean), cargo fmt unaffected (ZERO Rust files changed so the round-32
+lib baseline — clippy clean, 2620 tests — carries forward unchanged; the
+full Tauri binary build is never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 39):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (keymap grouping, filter scoring, flat-nav index math, conflict
+  canonicalization, text export). Zero backend.
+- DELIBERATE PIVOT off the Command Palette. Rounds 37-38 took the ⌘K
+  palette from a tested search core to a full power-user layer (scope
+  sigils, group-jump, frecency, footer) — it's power-user-complete. The
+  "?" cheat sheet was the obvious next keyboard surface: it's the
+  explicit roadmap candidate, every user can hit "?", and it was a
+  genuine weak point (a hand-maintained array drifting from the real
+  keymap, with a SHIPPING conflict it couldn't surface).
+- Reuse over reinvention: the new module imports the tested palette core
+  (scorePaletteField for filter+highlight, classifyPaletteNav/
+  nextPaletteIndex for nav) rather than rolling a second fuzzy/nav
+  engine — the same discipline that kept toastStack and paletteSearch
+  from duplicating logic.
+- Same pure-core/thin-shell split: every decision (grouping/order,
+  filter match, flat-nav index, conflict canonicalization, text
+  alignment) is a pure function in shortcutsOverlay.ts unit-tested
+  without a DOM; ShortcutsOverlay.svelte owns the imperative edges
+  (keymap store, keydown, clipboard, scroll).
+- Held the 104-warning svelte-check baseline EXACTLY across all five
+  slices — no new warnings, no inflation, per the standing discipline.
+- Caught + fixed the one real svelte-check error early (Array.isArray
+  widening the generic flatten callback to any[]) by restructuring to a
+  typed indexed loop, before final gating — never pushed red.
+
+
 
 ### What round-38 (2026-06-25 22:30 PT) just shipped
 
@@ -989,9 +1089,16 @@ demo value:
   notify.promise for the spinner->done morph).
 - empty/loading/skeleton-state pass across panels that still show
   a bare spinner (Signet verify, Beacon cache, Quill queue).
-- keyboard-shortcut cheat-sheet overlay (? key) surfacing every
-  bound chord app-wide (now including Alt+T toast focus + the palette
-  page-nav keys).
+- ~~keyboard-shortcut cheat-sheet overlay (? key)~~ — DONE round 39
+  (92a5d4f..36bfac2): the ShortcutsOverlay was a ~120-row hand-maintained
+  literal array drifting from the live keymap. Rebuilt on a tested pure
+  core src/lib/shortcutsOverlay.ts (95 tests): live-keymap grouping
+  (buildShortcutGroups), filter-as-you-type (filterShortcutGroups reusing
+  the palette scorer), keyboard nav (flattenShortcutRows + palette nav
+  core), conflict detection (canonicalizeBinding + detectShortcutConflicts
+  surfacing the real library.search/forms.open Mod+Shift+F collision),
+  copy-as-text (formatShortcutsText). "custom"/"conflict" pills, amber
+  conflict banner. Now including Alt+T toast focus + palette page-nav keys.
 - configurable toast position (top/bottom x left/right corner via a
   settings store; the stack is hard-pinned bottom-right today).
 - responsive / narrow-window layout pass for the Hopper rules
