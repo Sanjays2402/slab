@@ -1,13 +1,115 @@
 # Slab Cron State
 
-Last updated: 2026-06-25 17:55 PT by Cake (cron) — round-37 BATCH shipped (5 frontend/UX slices) PIVOTING off the 2-round toast subsystem to the **Command Palette (Cmd+K)** — the explicit "Raycast-grade" roadmap item and the single highest-visibility surface in the app. The palette ranked actions with an untested inline fuzzyScore that emitted no match positions and flattened the visible title + hidden keywords into one string. Round 37 takes it to Raycast/Linear grade: a new tested pure core src/lib/paletteSearch.ts (123 inline tests) backs all five slices. Slice 1 search core (scorePaletteField three-tier prefix>>substring>subsequence with match ranges + shortness nudge; scorePaletteEntry ranks on max(title, keyword) but only returns TITLE ranges; splitHighlight/normalizeRanges defensive segment splitter, replacing the inline fuzzyScore); slice 2 live accent highlight of matched title chars via real <mark> elements (no {@html}); slice 3 Raycast-grade nav (classifyPaletteNav + nextPaletteIndex: wrapping arrows, Home/End, PageUp/PageDown clamped, scroll-into-view); slice 4 frecency ranking (recencyWeight steep buckets + frecencyScore (1+ln count)*recency + rankFrecency + recordFrecency, migrating cmdMru.ts from legacy string[] MRU to {id,count,lastUsedAt}[] frecency store with backward-compat read); slice 5 inline shortcut-chord hints (paletteKeymapId pure mapper palette-row -> keymap ActionId, rendered as platform-correct key-caps via prettyBindingFor, live-reacting to rebinds).
+Last updated: 2026-06-25 22:30 PT by Cake (cron) — round-38 BATCH shipped (5 frontend/UX slices) CONTINUING the round-37 Command Palette into its POWER-USER layer ("Lumen II"). Round 37 took the palette's search CORE to Raycast grade (tested scoring, highlight, nav, frecency, chords); round 38 ships the five next-highest palette roadmap items as a cohesive arc, all backed by the same tested pure core src/lib/paletteSearch.ts (253 inline tests, up from 123). Slice 1 empty-state fallback (suggestPaletteFallback: relax the query by trimming trailing chars to a 2-char floor + rescore -> "did you mean" the closest shorter prefix; else curated present STARTER commands -> palette is never a dead end; CommandPalette resolves suggested ids back to live Actions so Enter runs the real handler); slice 2 typed scope sigils (parsePaletteScope: leading > / @ / # scopes to commands / files / appearance VSCode-style, strips sigil to term, bare sigil keeps MRU header, non-leading sigil stays literal; entryMatchesScope membership, commands excludes files; accent scope pill in input row); slice 3 Cmd/Ctrl+Arrow group-jump (classifyPaletteGroupNav claims the modifier chord per-row nav left free; groupStartIndices -> flat heads; nextGroupIndex two-stage prev = section-top-then-prev-section, next drops to last row in last group; wired ahead of the modifier bail); slice 4 reading-progress chip on recent rows (recentReadingProgress: lastPage/totalPages -> thin accent track + "p.12/80 · 15%" or "Finished"; clamps, pageCount fallback, empty summary falls back to plain subtitle); slice 5 context-aware footer (describePaletteCount pluralised live count + paletteActionVerb Open/Switch to/Apply/Run tracking the selected row).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `a084b11` — "feat(palette): inline keyboard-shortcut chord hints on rows".
+Latest commit: `0b55b9c` — "feat(palette): context-aware footer with live count + dynamic Enter verb".
+
+### What round-38 (2026-06-25 22:30 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+CONTINUING the round-37 Command Palette into its POWER-USER layer
+("Lumen II"). Round 37 took the palette's search CORE to Raycast/
+Linear grade (tested scoring + match ranges, live highlight, wrapping
+nav, frecency, chord hints). Round 38 ships the five next-highest
+palette roadmap items — the explicit "palette empty-state polish",
+"section-jump / group collapse", and "recent-doc progress chip"
+candidates plus two adjacent power-user wins (VSCode scope sigils,
+context-aware footer) — as one cohesive arc.
+
+All five slices grow the same pure src/lib/paletteSearch.ts module
+(253 inline tests, up from round-37's 123: +19 +33 +25 +27 +26) —
+same pure-core/thin-shell discipline as toastStack.ts and the Hopper
+helpers. Zero backend; zero Rust touched.
+
+- Slice 1: empty-state did-you-mean + suggested-actions (1bda63b).
+  suggestPaletteFallback(query, entries) relaxes a no-match query by
+  trimming trailing chars down to a 2-char floor and rescoring against
+  the same scorePaletteEntry contract: the first shorter prefix that
+  matches yields a "typo" suggestion (catches the fat-fingered extra
+  char + trailing-noise multi-word, "redact pls" -> "redact"); if
+  nothing relaxes it offers the present STARTER ids (home, library
+  search, keymap, shortcuts) in priority order, skipping absent ones.
+  CommandPalette resolves the ids back to live Action objects so
+  Enter/click runs the real handler, rendering a tinted recovery note.
+  19 tests.
+
+- Slice 2: typed scope sigils > @ # (8ed626b). parsePaletteScope
+  decomposes a raw query into {scope, term, sigil}: a leading ">"
+  scopes to commands, "@" to files, "#" to appearance (VSCode ⌘P
+  vocabulary), stripping the sigil to the search term; tolerates
+  leading whitespace, a bare sigil (shows the whole scoped class with
+  the MRU header intact), and treats a non-leading sigil as literal
+  text. entryMatchesScope maps a row's group to scope membership
+  (commands EXCLUDES files, matching VSCode's ">"). CommandPalette
+  filters by scope before scoring the stripped term, renders an accent
+  scope pill in the input row, and advertises the sigils in the
+  placeholder. 33 tests.
+
+- Slice 3: Cmd/Ctrl+Arrow group-jump (d617b79). classifyPaletteGroupNav
+  claims the modifier+Arrow chord the per-row nav (Lumen Slice 3)
+  deliberately left free (Alt/Shift disqualify). groupStartIndices
+  turns the rendered group sizes into flat head offsets onto the
+  `selected` index space; nextGroupIndex resolves the target with a
+  two-stage prev (first press jumps to the current section's top, then
+  to the previous section) and a next that drops to the final row when
+  already in the last group, so the chord is never a dead press. Wired
+  into onKey AHEAD of the modifier bail, scroll-into-view on each jump,
+  footer advertises the chord. 25 tests.
+
+- Slice 4: reading-progress chip on recent rows (41a06f3).
+  recentReadingProgress(file) turns the recent store's lastPage /
+  totalPages into a Raycast-grade chip: a thin accent progress track
+  plus "p.12/80 · 15%", or a muted "Finished" pill once the last page
+  is reached. lastPage clamps into [1, total], totalPages wins over
+  pageCount as the total, and any missing/garbage data yields an empty
+  summary so the row falls back to its plain subtitle (which now drops
+  the redundant page count when the chip shows it). aria-label for SR.
+  27 tests.
+
+- Slice 5: context-aware footer (0b55b9c). describePaletteCount renders
+  the live result count with correct pluralisation ("No results" / "1
+  result" / "N results"); paletteActionVerb maps the selected row to
+  what Return will do — "Open" a file/window, "Switch to" a panel/home,
+  "Apply" a theme/accent/density, "Run" any command (panel-window read
+  as Open, not a panel switch). The footer shows the count on the left
+  and key hints on the right, the select hint's verb tracking the
+  highlighted row so the user sees the action before committing.
+  26 tests.
+
+Gates result: tsx src/lib/paletteSearch.test.ts 253/253 pass (round-37
+baseline 123 + 19+33+25+27+26 = 253), tsx src/lib/toastStack.test.ts
+254/254 unchanged, tsx src/lib/hopper.test.ts 1189/1189 unchanged,
+pnpm check 0 errors / 104 warnings (rounds 32-37 baseline preserved
+EXACTLY — zero new warnings from any slice), cargo fmt --all --check
+clean, ZERO Rust files changed so the round-32 lib baseline (clippy
+clean, 2620 tests) carries forward unchanged (the full Tauri binary
+build is never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 38):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (relax-rescore, scope parse + membership, group-jump index math,
+  reading-progress derivation, footer copy). Zero backend.
+- DELIBERATE CONTINUATION, not a pivot. Round 37 built the palette
+  search CORE; round 38 ships the POWER-USER layer the roadmap teed up.
+  The three explicitly-listed "Next FRONTEND candidates" under the
+  palette (empty-state polish, section-jump, recent-doc progress chip)
+  are all shipped here, plus two adjacent power-user wins (VSCode scope
+  sigils, context-aware footer).
+- Same pure-core/thin-shell split: every decision (fallback relaxation,
+  scope parse/membership, group-jump math, progress derivation, footer
+  copy) is a pure function in paletteSearch.ts unit-tested without a
+  DOM; CommandPalette.svelte owns the imperative edges (input binding,
+  keydown handler, scroll, render).
+- Held the 104-warning svelte-check baseline EXACTLY across all five
+  slices — no new warnings, no inflation, per the standing discipline.
+- The group-jump index math reuses the insight that `grouped` preserves
+  filtered order, so group sizes accumulate 1:1 onto the flat `selected`
+  index space — no separate index bookkeeping needed.
 
 ### What round-37 (2026-06-25 17:55 PT) just shipped
 
@@ -850,11 +952,26 @@ demo value:
   123 tests. The palette is now Raycast/Linear grade.
 - palette: empty-state "no matches" polish + suggested-actions when a
   query returns nothing (e.g. "Try: theme, redact, search library").
+  ~~DONE round 38 (1bda63b)~~: suggestPaletteFallback relax-rescores to
+  a "did you mean" shorter prefix, else offers present STARTER commands;
+  CommandPalette resolves ids back to live Actions.
 - palette: section-jump / group collapse for very long result lists
   (the action catalog is 100+ entries; a keyboard group-skip would
-  speed power-user navigation).
+  speed power-user navigation). ~~DONE round 38 (d617b79)~~: Cmd/Ctrl+
+  Arrow leaps between section heads (classifyPaletteGroupNav +
+  groupStartIndices + nextGroupIndex two-stage prev). Group COLLAPSE
+  (click a header to fold a section) is still open if wanted later.
 - palette: recent-files thumbnails / richer recent-doc rows (page
-  count, last-read progress chip) in the empty-query view.
+  count, last-read progress chip) in the empty-query view. ~~progress
+  chip DONE round 38 (41a06f3)~~: recentReadingProgress -> accent track
+  + "p.12/80 · 15%" / "Finished". Thumbnails (getRecentThumb data URLs
+  already stored) still open as a richer follow-up.
+- ~~palette: VSCode-style typed scope sigils~~ — DONE round 38 (8ed626b):
+  leading > / @ / # scopes to commands / files / appearance, accent
+  scope pill, MRU header preserved on a bare sigil.
+- ~~palette: context-aware footer~~ — DONE round 38 (0b55b9c): live
+  pluralised result count + Enter-verb (Open/Switch to/Apply/Run)
+  tracking the selected row.
 - drilldown row -> cross-surface filter (clicking a fall-through
   filename in the coverage popover carries the query into the
   document inspector with a visible filter chip).
