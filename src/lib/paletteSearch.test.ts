@@ -19,8 +19,10 @@ import {
   rankFrecency,
   recordFrecency,
   paletteKeymapId,
+  suggestPaletteFallback,
   type PaletteRange,
   type FrecencyRecord,
+  type PaletteFallbackEntry,
 } from "./paletteSearch";
 
 let passed = 0;
@@ -435,6 +437,82 @@ function pick(text: string, ranges: PaletteRange[]): string {
     if (id !== null && !VALID_KEYMAP_IDS.has(id)) allValid = false;
   }
   expect(allValid, "keymap: every mapped target is a real keymap ActionId (no typos)");
+}
+
+// --- Lumen II Slice 1: empty-state fallback -------------------------
+{
+  const entries = [
+    { id: "panel:reader", title: "Reader", keywords: "read pdf view" },
+    { id: "panel:redact", title: "Redact", keywords: "redact remove black" },
+    { id: "home:open", title: "Go to Recents Home", keywords: "home" },
+    { id: "library:search", title: "Search library", keywords: "find" },
+    { id: "settings:keymap", title: "Customize keyboard shortcuts", keywords: "keys" },
+    { id: "help:shortcuts", title: "Keyboard shortcuts", keywords: "help" },
+  ];
+
+  // Fat-fingered an extra char: "readerr" relaxes to "reader" then matches.
+  const typo = suggestPaletteFallback("readerr", entries);
+  expect(typo.kind === "typo", "fallback: extra-char typo -> typo kind");
+  expect(typo.relaxed.length < "readerr".length, "fallback: relaxed query is strictly shorter");
+  expect(typo.ids.includes("panel:reader"), "fallback: typo surfaces the intended row");
+
+  // Trailing-noise multi-word relaxes through the first word.
+  const multi = suggestPaletteFallback("redact pls", entries);
+  expect(multi.kind === "typo", "fallback: trailing noise -> typo kind");
+  expect(multi.ids.includes("panel:redact"), "fallback: 'redact pls' suggests Redact");
+
+  // Total miss -> curated starters that are present, in priority order.
+  const starter = suggestPaletteFallback("zzzzzz", entries);
+  expect(starter.kind === "starter", "fallback: total miss -> starter kind");
+  expect(starter.relaxed === "", "fallback: starter has no relaxed query");
+  expect(starter.ids[0] === "home:open", "fallback: starters in priority order (home first)");
+  expect(
+    starter.ids.every((id) => entries.some((e) => e.id === id)),
+    "fallback: every starter id is present in the entry list",
+  );
+
+  // Absent starters are skipped rather than rendered dead.
+  const sparse = suggestPaletteFallback("zzzzzz", [
+    { id: "library:search", title: "Search library" },
+  ]);
+  expect(sparse.kind === "starter", "fallback: sparse list still offers present starters");
+  expect(
+    sparse.ids.length === 1 && sparse.ids[0] === "library:search",
+    "fallback: only the present starter is offered",
+  );
+
+  // No starters present at all -> none.
+  const noneKind = suggestPaletteFallback("zzzzzz", [
+    { id: "theme:dark", title: "Theme: Dark" },
+  ]);
+  expect(noneKind.kind === "none", "fallback: no present starters -> none");
+
+  // Degenerate inputs -> none, never throws.
+  expect(suggestPaletteFallback("", entries).kind === "none", "fallback: empty query -> none");
+  expect(suggestPaletteFallback("   ", entries).kind === "none", "fallback: blank query -> none");
+  expect(suggestPaletteFallback("xx", []).kind === "none", "fallback: empty entry list -> none");
+
+  // 1-char queries don't relax below the floor (would match too much).
+  const single = suggestPaletteFallback("r", entries);
+  expect(single.kind !== "typo" || single.relaxed.length >= 2, "fallback: no sub-2-char relax");
+
+  // Cap is honoured + ids de-duplicated.
+  const dupEntries = [
+    { id: "a", title: "Reader one" },
+    { id: "a", title: "Reader one dup" },
+    { id: "b", title: "Reader two" },
+    { id: "c", title: "Reader three" },
+  ];
+  const capped = suggestPaletteFallback("readerz", dupEntries, 2);
+  expect(capped.ids.length <= 2, "fallback: respects the limit cap");
+  expect(new Set(capped.ids).size === capped.ids.length, "fallback: ids de-duplicated");
+
+  // Pure: inputs not mutated.
+  const frozen = Object.freeze([
+    Object.freeze({ id: "panel:reader", title: "Reader" }),
+  ]) as PaletteFallbackEntry[];
+  suggestPaletteFallback("readerr", frozen);
+  expect(frozen.length === 1, "fallback: input array not mutated");
 }
 
 // eslint-disable-next-line no-console

@@ -482,3 +482,103 @@ export function paletteKeymapId(paletteActionId: string): string | null {
   return PALETTE_KEYMAP_IDS[paletteActionId] ?? null;
 }
 
+// --- Empty-state fallback (Lumen II Slice 1) -------------------------
+//
+// When a query matches nothing, a bare "No matches" is a dead end. Raycast
+// instead either offers a typo-corrected "did you mean" (the closest
+// SHORTER query that does match — catches the very common "typed one char
+// too many / fat-fingered the end" case) or, failing that, a curated set
+// of high-value STARTER commands so the user always has a next move.
+//
+// This is a pure relax-and-rescore over the same `scorePaletteEntry`
+// contract: no DOM, no store. The caller invokes it only when the real
+// filter came back empty, then renders the returned ids as live rows.
+
+/** A searchable entry carrying its stable id (so the fallback can name it). */
+export interface PaletteFallbackEntry extends PaletteSearchable {
+  id: string;
+  group?: string;
+}
+
+/** Outcome of an empty-result fallback. */
+export interface PaletteFallback {
+  /**
+   * "typo"    — a strictly-shorter relaxed query matched; `relaxed` holds it.
+   * "starter" — nothing relaxed matched; `ids` are curated starter commands.
+   * "none"    — nothing to offer (empty query, or no starters present).
+   */
+  kind: "typo" | "starter" | "none";
+  /** The relaxed query that produced the typo matches; "" otherwise. */
+  relaxed: string;
+  /** Suggested entry ids, best first, de-duplicated, capped to the limit. */
+  ids: string[];
+}
+
+/**
+ * Curated high-value commands offered when even relaxation finds nothing.
+ * Filtered against the entries actually present, so a missing one is just
+ * skipped (never renders a dead row). Order = offer priority.
+ */
+export const STARTER_SUGGESTION_IDS: readonly string[] = [
+  "home:open",
+  "library:search",
+  "settings:keymap",
+  "help:shortcuts",
+];
+
+/** Shortest prefix we'll relax to — a 1-char query matches too much to help. */
+const FALLBACK_MIN_PREFIX = 2;
+
+/**
+ * Suggest a fallback for a query that matched nothing. Tries progressively
+ * shorter PREFIXES of the (trimmed) query down to FALLBACK_MIN_PREFIX chars;
+ * the first prefix that scores any entries yields a "typo" suggestion with
+ * the top `limit` ids. (A multi-word query naturally relaxes through its
+ * first word, so "redact pls" -> "redact".) If no prefix matches, returns
+ * the present STARTER ids. Pure; never mutates inputs.
+ */
+export function suggestPaletteFallback(
+  query: string,
+  entries: PaletteFallbackEntry[],
+  limit: number = 6,
+): PaletteFallback {
+  const q = (query ?? "").trim();
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 6;
+  const list = Array.isArray(entries) ? entries : [];
+  if (!q || list.length === 0) {
+    return { kind: "none", relaxed: "", ids: [] };
+  }
+
+  // Relax by trimming trailing chars: the input already failed to match,
+  // so start strictly shorter and walk down to the minimum useful prefix.
+  for (let k = q.length - 1; k >= FALLBACK_MIN_PREFIX; k--) {
+    const prefix = q.slice(0, k);
+    const scored = list
+      .map((e) => ({ id: e.id, score: scorePaletteEntry(prefix, e).score }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    if (scored.length > 0) {
+      return { kind: "typo", relaxed: prefix, ids: dedupeIds(scored.map((x) => x.id), cap) };
+    }
+  }
+
+  // Nothing relaxed — offer the curated starters that are actually present.
+  const present = new Set(list.map((e) => e.id));
+  const starters = STARTER_SUGGESTION_IDS.filter((id) => present.has(id));
+  if (starters.length === 0) return { kind: "none", relaxed: "", ids: [] };
+  return { kind: "starter", relaxed: "", ids: dedupeIds(starters, cap) };
+}
+
+/** First-seen de-dupe of an id list, capped to `limit`. */
+function dedupeIds(ids: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+

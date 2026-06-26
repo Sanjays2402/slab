@@ -17,7 +17,9 @@
     classifyPaletteNav,
     nextPaletteIndex,
     paletteKeymapId,
+    suggestPaletteFallback,
     type PaletteRange,
+    type PaletteFallback,
   } from "$lib/paletteSearch";
   import { prettyBindingFor, keymapView, type ActionId } from "$lib/keymap";
   import { get } from "svelte/store";
@@ -809,6 +811,41 @@
     if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
   });
 
+  // Lumen II Slice 1: empty-state fallback. When the live filter comes back
+  // empty for a non-blank query, offer either a typo-corrected "did you
+  // mean" (the closest shorter prefix that matches) or, failing that, a
+  // curated set of starter commands — so the palette is never a dead end.
+  // The actual rows are resolved back to live Action objects (by id) so
+  // Enter/click runs the real handler. Computed only when filtered is empty.
+  let fallback = $derived.by<PaletteFallback>(() => {
+    if (filtered.length > 0 || !query.trim()) {
+      return { kind: "none", relaxed: "", ids: [] };
+    }
+    return suggestPaletteFallback(
+      query,
+      actions.map((a) => ({ id: a.id, title: a.title, keywords: a.keywords })),
+    );
+  });
+
+  /** Resolve fallback ids back to live Action objects, dropping any miss. */
+  let fallbackActions = $derived.by<Action[]>(() => {
+    if (fallback.kind === "none") return [];
+    const byId = new Map(actions.map((a) => [a.id, a] as const));
+    const out: Action[] = [];
+    for (const id of fallback.ids) {
+      const a = byId.get(id);
+      if (a) out.push(a);
+    }
+    return out;
+  });
+
+  /** Run a fallback row directly (records MRU + closes, like runSelected). */
+  function runFallback(a: Action) {
+    if (a.id !== "settings:clear-mru") recordMru(a.id);
+    onClose();
+    queueMicrotask(() => a.run());
+  }
+
   // True when the most recent activation (Enter or click) held Cmd/Ctrl.
   // Recent-file palette entries read this to decide between reuse-active-tab
   // (default) and open-in-new-tab (Cmd/Ctrl held). Cleared on every run.
@@ -886,7 +923,36 @@
     </div>
     <div class="palette-list" bind:this={listEl}>
       {#if filtered.length === 0}
-        <div class="palette-empty">No matches for “{query}”</div>
+        {#if fallbackActions.length > 0}
+          <div class="palette-fallback-note">
+            {#if fallback.kind === "typo"}
+              No matches for “{query}”. Showing results for
+              <span class="palette-fallback-relax">{fallback.relaxed}</span>
+            {:else}
+              No matches for “{query}”. Try one of these
+            {/if}
+          </div>
+          <div class="palette-group-label">
+            {fallback.kind === "typo" ? "Did you mean" : "Suggested"}
+          </div>
+          {#each fallbackActions as a (a.id)}
+            <button
+              class="palette-item"
+              onclick={(e: MouseEvent) => {
+                lastActivationNewTab = e.metaKey || e.ctrlKey;
+                runFallback(a);
+              }}
+            >
+              <span class="palette-icon">{a.icon}</span>
+              <span class="palette-text">
+                <span class="palette-title">{a.title}</span>
+                {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
+              </span>
+            </button>
+          {/each}
+        {:else}
+          <div class="palette-empty">No matches for “{query}”</div>
+        {/if}
       {:else}
         {#each grouped as [group, items] (group)}
           <div class="palette-group-label">{group}</div>
@@ -993,6 +1059,19 @@
     text-align: center;
     color: var(--text-3);
     font-size: 13px;
+  }
+  /* Lumen II Slice 1: empty-state fallback ("did you mean" / suggested).
+     The note reads as a gentle recovery line above the offered rows; the
+     relaxed query is tinted with the accent so the correction is legible. */
+  .palette-fallback-note {
+    padding: 14px 14px 6px;
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .palette-fallback-relax {
+    color: var(--accent);
+    font-weight: 600;
   }
   .palette-group-label {
     padding: 8px 12px 4px;
