@@ -43,6 +43,8 @@
     flatSearchHitCount,
     nextSearchCursor,
     clampSearchCursor,
+    interpretSearchQuery,
+    describeQueryInterpretation,
     type SearchGroupLike,
   } from "$lib/librarySearchView";
 
@@ -225,6 +227,30 @@
   const flatHits = $derived(flattenSearchHits(groups as SearchGroupLike<SearchHit>[]));
   const flatCount = $derived(flatSearchHitCount(groups as SearchGroupLike<SearchHit>[]));
 
+  // ---- Slice 2 (Atlas III): live query-interpretation preview ----
+  // Mirror the FTS backend's lexer so the user can SEE how their query
+  // will be matched — which word is a prefix, what's a phrase, what's
+  // excluded, and the "only exclusions returns nothing" trap. Recomputes
+  // on every keystroke off the raw (untrimmed) query.
+  const interp = $derived(interpretSearchQuery(query));
+  const interpAria = $derived(describeQueryInterpretation(interp));
+
+  /** Tooltip explaining a token chip's match behaviour. */
+  function tokenHint(kind: string): string {
+    switch (kind) {
+      case "prefix":
+        return "Prefix match — matches words that START with this";
+      case "term":
+        return "Exact word match";
+      case "phrase":
+        return "Phrase — these words must appear together, in order";
+      case "exclude":
+        return "Excluded — pages containing this are dropped";
+      default:
+        return "";
+    }
+  }
+
   /** The flat index of the first hit in a given group (for cursor-ring math). */
   function groupFlatStart(groupIndex: number): number {
     let n = 0;
@@ -379,6 +405,33 @@
         >
       {/if}
     </div>
+    {#if !interp.empty && interp.tokens.length > 0}
+      <div
+        class="interp"
+        class:warn={interp.noAnchor}
+        aria-label={interpAria}
+        title={interpAria}
+      >
+        {#if interp.noAnchor}
+          <span class="interp-warn-icon" aria-hidden="true">!</span>
+          <span class="interp-warn-text"
+            >Only exclusions — add a word to search for</span
+          >
+        {:else}
+          <span class="interp-lead" aria-hidden="true">Matching</span>
+          {#each interp.tokens as t, ti (`${t.kind}-${t.text}-${ti}`)}
+            <span class="interp-chip interp-{t.kind}" title={tokenHint(t.kind)}>
+              {#if t.kind === "exclude"}<span class="interp-minus" aria-hidden="true"
+                  >−</span
+                >{/if}<span class="interp-text">{t.text}</span>
+              {#if t.kind === "prefix"}<span class="interp-glob" aria-hidden="true"
+                  >*</span
+                >{/if}
+            </span>
+          {/each}
+        {/if}
+      </div>
+    {/if}
     {#if folders.length > 1}
       <div class="scope-row">
         <label class="scope-label" for="search-scope">Scope</label>
@@ -699,6 +752,89 @@
     text-align: left;
   }
 
+  /* Slice 2: live query-interpretation strip — mirrors how the FTS
+     backend will lex the query into prefix / exact / phrase / exclude
+     tokens, so the user can see what's actually being searched. */
+  .interp {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .interp-lead {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-muted, #999);
+    font-weight: 600;
+    font-size: 10px;
+  }
+  .interp-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+    color: var(--fg, #222);
+    font-size: 11px;
+    cursor: default;
+    max-width: 240px;
+  }
+  .interp-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Prefix: accent-tinted, with a trailing glob glyph. */
+  .interp-prefix {
+    border-color: var(--accent, #4a72ff);
+    background: var(--accent-fade, rgba(74, 114, 255, 0.12));
+    color: var(--accent, #4a72ff);
+    font-weight: 600;
+  }
+  .interp-glob {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    opacity: 0.7;
+  }
+  /* Phrase: quoted feel via a subtle italic. */
+  .interp-phrase {
+    font-style: italic;
+  }
+  /* Exclude: muted strike-through with a leading minus. */
+  .interp-exclude {
+    color: var(--fg-muted, #999);
+    text-decoration: line-through;
+    text-decoration-color: var(--fg-muted, #bbb);
+  }
+  .interp-minus {
+    font-weight: 700;
+    text-decoration: none;
+    display: inline-block;
+  }
+  /* No-anchor warning: amber, matching the toast warning severity. */
+  .interp.warn {
+    color: #b7791f;
+  }
+  .interp-warn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #ffb648;
+    color: #1a1a1a;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .interp-warn-text {
+    font-weight: 500;
+  }
+
   .results {
     flex: 1;
     overflow-y: auto;
@@ -1002,6 +1138,10 @@
     .snippet :global(mark) {
       background: var(--mark-bg, #6b5e1f);
       color: #fff;
+    }
+    .interp-chip {
+      background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
+      color: var(--fg, #ddd);
     }
   }
 </style>

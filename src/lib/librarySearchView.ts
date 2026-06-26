@@ -187,3 +187,223 @@ export function clampSearchCursor(current: number, count: number): number {
   const last = count - 1;
   return Math.min(last, Math.floor(current));
 }
+
+// --- Slice 2: live query-interpretation preview ----------------------
+//
+// FTS5 has its own query grammar (phrases, exclusions, prefix-globs) and
+// the backend lexes the raw input into well-formed tokens before MATCH.
+// Most of that is invisible: the user can't tell that the last word is
+// prefix-matched, that "quotes" mean an adjacent-phrase, that a leading
+// `-word` excludes, or — critically — that a query of ONLY exclusions
+// returns nothing. This renders a live, truthful preview of how the
+// query WILL be interpreted, by mirroring the exact lexer in
+// `src-tauri/src/pdf/library/search.rs` (tokenize + build_match_expr).
+//
+// Keeping this a faithful port (not an approximation) is the whole
+// point: the chips must match what the engine actually does, or they'd
+// mislead. The Rust tests in search.rs are the ground truth this mirrors.
+
+/** How one parsed query token will be matched. */
+export type SearchTokenKind = "term" | "prefix" | "phrase" | "exclude";
+
+/** One interpreted query token, ready to render as a chip. */
+export interface SearchToken {
+  kind: SearchTokenKind;
+  /** Scrubbed display text (no quotes / operators). */
+  text: string;
+}
+
+/** The full interpretation of a raw query string. */
+export interface QueryInterpretation {
+  tokens: SearchToken[];
+  /**
+   * True when the query has positive intent but NO positive anchor —
+   * i.e. it parsed to only exclusions (`-draft`), which FTS5 can't run,
+   * so the backend deliberately returns an empty result. Worth warning
+   * the user about so an empty list doesn't look like a bug.
+   */
+  noAnchor: boolean;
+  /** True when the input is blank / whitespace (nothing to interpret). */
+  empty: boolean;
+}
+
+// Internal lexer token, mirroring the Rust `Tok` enum.
+type RawTok =
+  | { t: "bare"; w: string }
+  | { t: "phrase"; w: string }
+  | { t: "exclude"; w: string };
+
+const FTS_WORD_STRIP = new Set(['"', "^", "*", "-", ":", "(", ")"]);
+// Phrases keep `-` (a phrase can contain a hyphen) but drop the rest.
+const FTS_PHRASE_STRIP = new Set(['"', "^", "*", ":", "(", ")"]);
+
+/** Mirror of Rust `scrub_word`: strip every FTS5 metacharacter. */
+function scrubWord(w: string): string {
+  let out = "";
+  for (const c of w) if (!FTS_WORD_STRIP.has(c)) out += c;
+  return out;
+}
+
+/** Mirror of Rust `scrub_phrase`: strip operators, collapse whitespace. */
+function scrubPhrase(p: string): string {
+  let kept = "";
+  for (const c of p) if (!FTS_PHRASE_STRIP.has(c)) kept += c;
+  return kept.split(/\s+/).filter(Boolean).join(" ");
+}
+
+const QUOTE_CHARS = new Set(['"', "\u201C", "\u201D"]);
+
+/**
+ * Lex raw user input into bare / phrase / exclude tokens. Faithful port
+ * of `tokenize` in search.rs: curly + straight quotes open phrases, a
+ * leading `-` (only at a token start) flips the next bare/phrase into an
+ * exclusion, a lone `-` is dropped, an empty `""` cancels a pending
+ * exclusion. Internal hyphens (`co-op`) survive into a bare word, where
+ * scrubWord strips them to `coop` — matching the backend exactly.
+ */
+function tokenizeQuery(query: string): RawTok[] {
+  const out: RawTok[] = [];
+  const chars = Array.from(query ?? "");
+  let buf = "";
+  let pendingNeg = false;
+  let i = 0;
+
+  while (i < chars.length) {
+    const c = chars[i];
+    if (QUOTE_CHARS.has(c)) {
+      // Flush any bare-word accumulator as its own token first.
+      if (buf.length > 0) {
+        const w = scrubWord(buf);
+        if (w.length > 0) {
+          if (pendingNeg) {
+            out.push({ t: "exclude", w });
+            pendingNeg = false;
+          } else {
+            out.push({ t: "bare", w });
+          }
+        }
+        buf = "";
+      }
+      // Read until the matching close-quote OR end of input.
+      let phrase = "";
+      i++;
+      while (i < chars.length && !QUOTE_CHARS.has(chars[i])) {
+        phrase += chars[i];
+        i++;
+      }
+      if (i < chars.length) i++; // consume the closing quote
+      const cleaned = scrubPhrase(phrase);
+      if (cleaned.length > 0) {
+        if (pendingNeg) {
+          out.push({ t: "exclude", w: cleaned });
+          pendingNeg = false;
+        } else {
+          out.push({ t: "phrase", w: cleaned });
+        }
+      } else {
+        // Empty `""` cancels a pending exclusion — the user clearly
+        // didn't mean to exclude nothing.
+        pendingNeg = false;
+      }
+      continue;
+    }
+    if (/\s/.test(c)) {
+      if (buf.length > 0) {
+        const w = scrubWord(buf);
+        if (w.length > 0) {
+          out.push(pendingNeg ? { t: "exclude", w } : { t: "bare", w });
+        }
+        buf = "";
+      }
+      pendingNeg = false;
+      i++;
+      continue;
+    }
+    if (c === "-" && buf.length === 0 && !pendingNeg) {
+      pendingNeg = true;
+      i++;
+      continue;
+    }
+    buf += c;
+    i++;
+  }
+  if (buf.length > 0) {
+    const w = scrubWord(buf);
+    if (w.length > 0) {
+      out.push(pendingNeg ? { t: "exclude", w } : { t: "bare", w });
+    }
+  }
+  return out;
+}
+
+/**
+ * Interpret a raw query the way the FTS backend will. Mirrors
+ * `build_match_expr`: the LAST bare token becomes a prefix match
+ * (`term*`), every other bare token is an exact word, phrases match
+ * adjacent words, and `-term` excludes. A query that parses to only
+ * exclusions has no positive anchor (`noAnchor`) and returns nothing.
+ * A blank query is `empty` with no tokens. Pure + DOM-free.
+ */
+export function interpretSearchQuery(query: string): QueryInterpretation {
+  const raw = tokenizeQuery(query ?? "");
+  if (raw.length === 0) {
+    return { tokens: [], noAnchor: false, empty: true };
+  }
+  const hasPositive = raw.some((t) => t.t === "bare" || t.t === "phrase");
+  // Index of the LAST bare token — it alone gets the prefix glob.
+  let lastBare = -1;
+  for (let k = 0; k < raw.length; k++) if (raw[k].t === "bare") lastBare = k;
+
+  const tokens: SearchToken[] = raw.map((t, k) => {
+    if (t.t === "phrase") return { kind: "phrase", text: t.w };
+    if (t.t === "exclude") return { kind: "exclude", text: t.w };
+    // bare
+    return { kind: k === lastBare ? "prefix" : "term", text: t.w };
+  });
+
+  return { tokens, noAnchor: !hasPositive, empty: false };
+}
+
+/**
+ * One-line, screen-reader-friendly narration of an interpretation, e.g.
+ * `Matching "contract" as a prefix, the phrase "force majeure", excluding
+ * "draft"`. Empty input -> "". A no-anchor query explains why it returns
+ * nothing. Pure.
+ */
+export function describeQueryInterpretation(interp: QueryInterpretation): string {
+  if (!interp || interp.empty || interp.tokens.length === 0) return "";
+  if (interp.noAnchor) {
+    return "Only exclusions — add a word to search for, or this returns nothing.";
+  }
+  const positives: string[] = [];
+  const negatives: string[] = [];
+  for (const t of interp.tokens) {
+    switch (t.kind) {
+      case "prefix":
+        positives.push(`\u201C${t.text}\u201D as a prefix`);
+        break;
+      case "term":
+        positives.push(`\u201C${t.text}\u201D`);
+        break;
+      case "phrase":
+        positives.push(`the phrase \u201C${t.text}\u201D`);
+        break;
+      case "exclude":
+        negatives.push(`\u201C${t.text}\u201D`);
+        break;
+    }
+  }
+  let s = "";
+  if (positives.length > 0) s += `Matching ${joinList(positives)}`;
+  if (negatives.length > 0) {
+    s += `${s ? ", excluding" : "Excluding"} ${joinList(negatives)}`;
+  }
+  return s;
+}
+
+/** Join a list with commas + a trailing "and" (Oxford-free, UI copy). */
+function joinList(parts: string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
