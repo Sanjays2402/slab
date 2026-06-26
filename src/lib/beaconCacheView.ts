@@ -117,3 +117,122 @@ export function searchIndexedPdfs<T extends BeaconPdfLike>(
   }
   return out;
 }
+
+// --- Slice 2: multi-field sort + direction -----------------------------
+//
+// Round-7 shipped a fixed 3-button toggle (newest / oldest / chunks)
+// with the direction baked into each button. That can't sort by name or
+// model, and "newest vs oldest" is really one field (indexed_at) with
+// two directions wearing two buttons. This generalizes to a proper
+// column model: pick a FIELD, pick a DIRECTION, with a caret showing
+// which way. Clicking the active column flips direction; clicking a new
+// column switches to it at that field's natural default direction.
+
+/** A sortable column of the indexed-PDF table. */
+export type BeaconSortField = "name" | "model" | "chunks" | "pages" | "indexed";
+
+/** Sort direction. */
+export type BeaconSortDir = "asc" | "desc";
+
+/** The full sort state: which column, which way. */
+export interface BeaconSort {
+  field: BeaconSortField;
+  dir: BeaconSortDir;
+}
+
+/** Every sortable field, in display order (drives the header buttons). */
+export const BEACON_SORT_FIELDS: readonly BeaconSortField[] = [
+  "name",
+  "model",
+  "chunks",
+  "pages",
+  "indexed",
+];
+
+/** Human label for a sort field (header button text). */
+export function beaconSortLabel(field: BeaconSortField): string {
+  switch (field) {
+    case "name":
+      return "Name";
+    case "model":
+      return "Model";
+    case "chunks":
+      return "Chunks";
+    case "pages":
+      return "Pages";
+    case "indexed":
+      return "Indexed";
+    default:
+      return field;
+  }
+}
+
+/**
+ * The natural default direction when a user FIRST selects a column.
+ * Text fields read best A->Z (asc); count/recency fields read best
+ * biggest/newest first (desc) — the same convention Finder/Linear use.
+ */
+export function beaconDefaultDir(field: BeaconSortField): BeaconSortDir {
+  return field === "name" || field === "model" ? "asc" : "desc";
+}
+
+/**
+ * Resolve the next sort state when a column header is clicked. Clicking
+ * the ACTIVE column flips its direction; clicking a DIFFERENT column
+ * switches to it at that field's natural default direction. Pure.
+ */
+export function cycleBeaconSort(
+  current: BeaconSort,
+  clicked: BeaconSortField,
+): BeaconSort {
+  if (current.field === clicked) {
+    return { field: clicked, dir: current.dir === "asc" ? "desc" : "asc" };
+  }
+  return { field: clicked, dir: beaconDefaultDir(clicked) };
+}
+
+/**
+ * Sort `pdfs` by the given sort state, returning a NEW array (input is
+ * never mutated). Every comparison falls back to a stable `pdf_hash`
+ * tie-break so equal rows keep a deterministic order across renders.
+ * Name sorts case-insensitively on the basename; model on embed_model;
+ * chunks/pages/indexed numerically. A null/garbage list -> [].
+ */
+export function sortIndexedPdfs<T extends BeaconPdfLike>(
+  pdfs: readonly T[],
+  sort: BeaconSort,
+): T[] {
+  if (!Array.isArray(pdfs)) return [];
+  const out = pdfs.slice();
+  const sign = sort.dir === "asc" ? 1 : -1;
+  out.sort((a, b) => {
+    let primary = 0;
+    switch (sort.field) {
+      case "name":
+        primary = beaconBasename(a.pdf_path).localeCompare(
+          beaconBasename(b.pdf_path),
+          undefined,
+          { sensitivity: "base", numeric: true },
+        );
+        break;
+      case "model":
+        primary = (a.embed_model ?? "").localeCompare(b.embed_model ?? "", undefined, {
+          sensitivity: "base",
+        });
+        break;
+      case "chunks":
+        primary = (a.chunks ?? 0) - (b.chunks ?? 0);
+        break;
+      case "pages":
+        primary = (a.pages ?? 0) - (b.pages ?? 0);
+        break;
+      case "indexed":
+        primary = (a.indexed_at ?? 0) - (b.indexed_at ?? 0);
+        break;
+    }
+    if (primary !== 0) return sign * primary;
+    // Stable, direction-independent tie-break so equal rows never jitter.
+    return a.pdf_hash.localeCompare(b.pdf_hash);
+  });
+  return out;
+}

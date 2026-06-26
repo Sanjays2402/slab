@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
@@ -68,9 +68,8 @@
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Column-sort key for the main table. */
-  type SortKey = "newest" | "oldest" | "chunks";
-  let sortKey = $state<SortKey>("newest");
+  /** Slice 2: multi-field column sort (field + direction). */
+  let sort = $state<BeaconSort>({ field: "indexed", dir: "desc" });
 
   /** Slice 1: filter-as-you-type query over the indexed-PDF table. */
   let search = $state("");
@@ -92,30 +91,14 @@
   const matchedCount = $derived(searchHits.length);
   const isFiltering = $derived(search.trim().length > 0);
 
-  const sortedPdfs = $derived.by(() => {
-    const out = searchHits.map((h) => h.record);
-    switch (sortKey) {
-      case "newest":
-        out.sort(
-          (a, b) =>
-            b.indexed_at - a.indexed_at || a.pdf_hash.localeCompare(b.pdf_hash),
-        );
-        break;
-      case "oldest":
-        out.sort(
-          (a, b) =>
-            a.indexed_at - b.indexed_at || a.pdf_hash.localeCompare(b.pdf_hash),
-        );
-        break;
-      case "chunks":
-        out.sort(
-          (a, b) =>
-            b.chunks - a.chunks || a.pdf_hash.localeCompare(b.pdf_hash),
-        );
-        break;
-    }
-    return out;
-  });
+  /** Search subset, sorted by the active column. */
+  const sortedPdfs = $derived(
+    sortIndexedPdfs(searchHits.map((h) => h.record), sort),
+  );
+
+  function setSort(field: BeaconSortField) {
+    sort = cycleBeaconSort(sort, field);
+  }
 
   function showToast(msg: string) {
     toast = msg;
@@ -399,22 +382,21 @@
           <h3>
             Indexed PDFs · {#if isFiltering}{matchedCount} of {totalPdfs}{:else}{totalPdfs}{/if}
           </h3>
-          <div class="bc-sort">
-            <button
-              class="bc-sort-btn"
-              class:active={sortKey === "newest"}
-              onclick={() => (sortKey = "newest")}
-            >Newest</button>
-            <button
-              class="bc-sort-btn"
-              class:active={sortKey === "oldest"}
-              onclick={() => (sortKey = "oldest")}
-            >Oldest</button>
-            <button
-              class="bc-sort-btn"
-              class:active={sortKey === "chunks"}
-              onclick={() => (sortKey = "chunks")}
-            >Chunks</button>
+          <div class="bc-sort" role="group" aria-label="Sort indexed PDFs">
+            {#each BEACON_SORT_FIELDS as field (field)}
+              <button
+                class="bc-sort-btn"
+                class:active={sort.field === field}
+                onclick={() => setSort(field)}
+                aria-pressed={sort.field === field}
+                title={`Sort by ${beaconSortLabel(field)}${sort.field === field ? (sort.dir === "asc" ? " (ascending)" : " (descending)") : ""}`}
+              >
+                {beaconSortLabel(field)}
+                {#if sort.field === field}
+                  <span class="bc-caret" aria-hidden="true">{sort.dir === "asc" ? "\u2191" : "\u2193"}</span>
+                {/if}
+              </button>
+            {/each}
           </div>
         </div>
 
@@ -762,6 +744,11 @@
     background: color-mix(in srgb, #79c0ff 22%, transparent);
     color: #c5e0ff;
     opacity: 1;
+  }
+  .bc-caret {
+    margin-left: 3px;
+    font-size: 10px;
+    opacity: 0.85;
   }
 
   .bc-search {

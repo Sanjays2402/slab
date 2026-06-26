@@ -10,7 +10,13 @@
 import {
   beaconBasename,
   searchIndexedPdfs,
+  sortIndexedPdfs,
+  cycleBeaconSort,
+  beaconDefaultDir,
+  beaconSortLabel,
+  BEACON_SORT_FIELDS,
   type BeaconPdfLike,
+  type BeaconSort,
 } from "./beaconCacheView";
 
 let passed = 0;
@@ -145,6 +151,114 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   // A null row in the list is skipped, not thrown on.
   const dirty = [pdf({ pdf_path: "/a/keep.pdf" }), null as unknown as BeaconPdfLike];
   expect(searchIndexedPdfs(dirty, "keep").length === 1, "search: skips null rows");
+}
+
+// --- beaconSortLabel + fields + defaults -----------------------------
+{
+  expect(BEACON_SORT_FIELDS.length === 5, "sort: five sortable fields");
+  expect(
+    new Set(BEACON_SORT_FIELDS).size === BEACON_SORT_FIELDS.length,
+    "sort: field list has no duplicates",
+  );
+  expect(beaconSortLabel("name") === "Name", "sort: name label");
+  expect(beaconSortLabel("indexed") === "Indexed", "sort: indexed label");
+  expect(beaconDefaultDir("name") === "asc", "sort: name defaults A->Z");
+  expect(beaconDefaultDir("model") === "asc", "sort: model defaults A->Z");
+  expect(beaconDefaultDir("chunks") === "desc", "sort: chunks defaults biggest-first");
+  expect(beaconDefaultDir("pages") === "desc", "sort: pages defaults biggest-first");
+  expect(beaconDefaultDir("indexed") === "desc", "sort: indexed defaults newest-first");
+}
+
+// --- cycleBeaconSort: flip vs switch ---------------------------------
+{
+  const start: BeaconSort = { field: "indexed", dir: "desc" };
+  // Click the active column -> flip direction.
+  const flipped = cycleBeaconSort(start, "indexed");
+  expect(
+    flipped.field === "indexed" && flipped.dir === "asc",
+    "cycle: clicking active column flips direction",
+  );
+  const flippedBack = cycleBeaconSort(flipped, "indexed");
+  expect(flippedBack.dir === "desc", "cycle: flips back on second click");
+  // Click a different column -> switch at its natural default.
+  const switched = cycleBeaconSort(start, "name");
+  expect(
+    switched.field === "name" && switched.dir === "asc",
+    "cycle: switching column uses that field's default direction",
+  );
+  const toChunks = cycleBeaconSort(start, "chunks");
+  expect(toChunks.dir === "desc", "cycle: switching to chunks defaults desc");
+}
+
+// --- sortIndexedPdfs: name (case-insensitive, numeric-aware) ---------
+{
+  const rows = [
+    pdf({ pdf_path: "/x/banana.pdf", pdf_hash: "h1" }),
+    pdf({ pdf_path: "/x/Apple.pdf", pdf_hash: "h2" }),
+    pdf({ pdf_path: "/x/cherry.pdf", pdf_hash: "h3" }),
+  ];
+  const asc = sortIndexedPdfs(rows, { field: "name", dir: "asc" });
+  expect(
+    asc.map((r) => beaconBasename(r.pdf_path)).join(",") === "Apple.pdf,banana.pdf,cherry.pdf",
+    "sort: name asc is case-insensitive A->Z",
+  );
+  const desc = sortIndexedPdfs(rows, { field: "name", dir: "desc" });
+  expect(
+    beaconBasename(desc[0].pdf_path) === "cherry.pdf",
+    "sort: name desc reverses",
+  );
+  // Numeric-aware: file2 before file10.
+  const nums = [
+    pdf({ pdf_path: "/x/file10.pdf", pdf_hash: "n10" }),
+    pdf({ pdf_path: "/x/file2.pdf", pdf_hash: "n2" }),
+  ];
+  const numAsc = sortIndexedPdfs(nums, { field: "name", dir: "asc" });
+  expect(
+    beaconBasename(numAsc[0].pdf_path) === "file2.pdf",
+    "sort: name asc is numeric-aware (file2 < file10)",
+  );
+}
+
+// --- sortIndexedPdfs: numeric fields + tie-break ---------------------
+{
+  const rows = [
+    pdf({ chunks: 5, pages: 3, indexed_at: 100, pdf_hash: "a" }),
+    pdf({ chunks: 20, pages: 1, indexed_at: 300, pdf_hash: "b" }),
+    pdf({ chunks: 12, pages: 9, indexed_at: 200, pdf_hash: "c" }),
+  ];
+  expect(
+    sortIndexedPdfs(rows, { field: "chunks", dir: "desc" }).map((r) => r.chunks).join() === "20,12,5",
+    "sort: chunks desc",
+  );
+  expect(
+    sortIndexedPdfs(rows, { field: "pages", dir: "asc" }).map((r) => r.pages).join() === "1,3,9",
+    "sort: pages asc",
+  );
+  expect(
+    sortIndexedPdfs(rows, { field: "indexed", dir: "desc" }).map((r) => r.indexed_at).join() === "300,200,100",
+    "sort: indexed desc (newest first)",
+  );
+  // Stable tie-break: equal chunks -> ascending hash regardless of dir.
+  const tied = [
+    pdf({ chunks: 7, pdf_hash: "zzz" }),
+    pdf({ chunks: 7, pdf_hash: "aaa" }),
+  ];
+  const tiedDesc = sortIndexedPdfs(tied, { field: "chunks", dir: "desc" });
+  expect(
+    tiedDesc[0].pdf_hash === "aaa" && tiedDesc[1].pdf_hash === "zzz",
+    "sort: equal rows break ties by ascending hash (stable, dir-independent)",
+  );
+}
+
+// --- sortIndexedPdfs: purity + defensive -----------------------------
+{
+  const rows = [pdf({ chunks: 2 }), pdf({ chunks: 9 })];
+  const snapshot = rows.map((r) => r.chunks).join();
+  sortIndexedPdfs(rows, { field: "chunks", dir: "desc" });
+  expect(rows.map((r) => r.chunks).join() === snapshot, "sort: input array not mutated");
+  // @ts-expect-error null tolerance
+  expect(sortIndexedPdfs(null, { field: "name", dir: "asc" }).length === 0, "sort: null -> []");
+  expect(sortIndexedPdfs([], { field: "name", dir: "asc" }).length === 0, "sort: empty -> []");
 }
 
 // eslint-disable-next-line no-console
