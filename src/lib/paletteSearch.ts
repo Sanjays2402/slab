@@ -668,3 +668,104 @@ export function describePaletteScope(scope: PaletteScope): string {
   }
 }
 
+// --- Group-jump navigation (Lumen II Slice 3) ------------------------
+//
+// The action catalog is 100+ entries across a dozen labelled groups
+// (Panels, Forms, Appearance, Library, Stack, Theater…). Arrowing one
+// row at a time across that is slow; macOS Finder / Linear / Raycast all
+// let you leap by SECTION. Slab's palette already owns bare arrows for
+// per-row movement (Lumen Slice 3), so the natural chord for section
+// jumps is Cmd/Ctrl+Arrow — currently unclaimed (the onKey handler bails
+// on any modifier). This pure core resolves the chord + the target index.
+
+/** Minimal shape the group-nav classifier reads off a KeyboardEvent. */
+export interface PaletteGroupNavEvent {
+  key: string;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
+}
+
+export type PaletteGroupNavIntent = "group-next" | "group-prev";
+
+/**
+ * Classify a keypress into a group-jump intent, or null. Cmd (mac) or
+ * Ctrl (win/linux) + ArrowUp/Down — matching the palette's existing
+ * meta-or-ctrl equivalence. Alt or Shift disqualify so other chords stay
+ * free.
+ */
+export function classifyPaletteGroupNav(ev: PaletteGroupNavEvent): PaletteGroupNavIntent | null {
+  if (ev.altKey || ev.shiftKey) return null;
+  if (!(ev.metaKey || ev.ctrlKey)) return null;
+  if (ev.key === "ArrowDown") return "group-next";
+  if (ev.key === "ArrowUp") return "group-prev";
+  return null;
+}
+
+/**
+ * Flat start index of each group, given the groups' item counts in order.
+ * `[3, 2, 4]` -> `[0, 3, 5]`. Non-finite/negative sizes count as 0.
+ */
+export function groupStartIndices(sizes: number[]): number[] {
+  const out: number[] = [];
+  let acc = 0;
+  if (!Array.isArray(sizes)) return out;
+  for (const s of sizes) {
+    out.push(acc);
+    acc += Number.isFinite(s) && s > 0 ? Math.floor(s) : 0;
+  }
+  return out;
+}
+
+/** Sorted, de-duplicated, in-range group heads (always anchored at 0). */
+function normalizeHeads(starts: number[], count: number): number[] {
+  const set = new Set<number>([0]);
+  if (Array.isArray(starts)) {
+    for (const s of starts) {
+      if (Number.isFinite(s) && s >= 0 && s < count) set.add(Math.floor(s));
+    }
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/**
+ * Resolve the cursor index for a group-jump over `count` rows whose group
+ * heads are at `starts`. `current` is clamped into range first.
+ *
+ *   group-next: head of the next group; if already in the LAST group,
+ *               drop to the very last row (so Cmd+Down always advances).
+ *   group-prev: if below the current group's head, leap UP to that head
+ *               (first press = top of section); if already at the head,
+ *               leap to the previous group's head; clamps at row 0.
+ *
+ * This two-stage prev mirrors editors' "jump to section top, then to the
+ * previous section" — discoverable and never a dead press. Pure.
+ */
+export function nextGroupIndex(
+  starts: number[],
+  current: number,
+  intent: PaletteGroupNavIntent,
+  count: number,
+): number {
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  const last = count - 1;
+  const cur = Number.isFinite(current) ? Math.max(0, Math.min(last, Math.floor(current))) : 0;
+  const heads = normalizeHeads(starts, count);
+
+  // Index of the group containing `cur` = last head <= cur.
+  let gi = 0;
+  for (let i = 0; i < heads.length; i++) {
+    if (heads[i] <= cur) gi = i;
+    else break;
+  }
+
+  if (intent === "group-next") {
+    return gi < heads.length - 1 ? heads[gi + 1] : last;
+  }
+  // group-prev
+  const head = heads[gi];
+  if (cur > head) return head;
+  return gi > 0 ? heads[gi - 1] : 0;
+}
+

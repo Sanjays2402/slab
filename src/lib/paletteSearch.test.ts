@@ -23,6 +23,9 @@ import {
   parsePaletteScope,
   entryMatchesScope,
   describePaletteScope,
+  classifyPaletteGroupNav,
+  groupStartIndices,
+  nextGroupIndex,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -587,6 +590,80 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(describePaletteScope("files") === "Files", "scope: files label");
   expect(describePaletteScope("appearance") === "Appearance", "scope: appearance label");
   expect(describePaletteScope("all") === "", "scope: all has no pill label");
+}
+
+// --- Lumen II Slice 3: group-jump navigation ------------------------
+{
+  // Classifier: Cmd/Ctrl + Arrow only.
+  expect(
+    classifyPaletteGroupNav({ key: "ArrowDown", metaKey: true }) === "group-next",
+    "groupnav: Cmd+Down -> group-next",
+  );
+  expect(
+    classifyPaletteGroupNav({ key: "ArrowUp", ctrlKey: true }) === "group-prev",
+    "groupnav: Ctrl+Up -> group-prev",
+  );
+  expect(
+    classifyPaletteGroupNav({ key: "ArrowDown" }) === null,
+    "groupnav: bare Arrow is NOT a group jump (per-row nav owns it)",
+  );
+  expect(
+    classifyPaletteGroupNav({ key: "ArrowDown", metaKey: true, altKey: true }) === null,
+    "groupnav: Alt disqualifies",
+  );
+  expect(
+    classifyPaletteGroupNav({ key: "ArrowDown", metaKey: true, shiftKey: true }) === null,
+    "groupnav: Shift disqualifies",
+  );
+  expect(
+    classifyPaletteGroupNav({ key: "Home", metaKey: true }) === null,
+    "groupnav: non-arrow key -> null",
+  );
+
+  // groupStartIndices: running offsets.
+  expect(
+    JSON.stringify(groupStartIndices([3, 2, 4])) === JSON.stringify([0, 3, 5]),
+    "groupnav: start indices are running offsets",
+  );
+  expect(
+    JSON.stringify(groupStartIndices([])) === JSON.stringify([]),
+    "groupnav: empty sizes -> empty starts",
+  );
+  expect(
+    JSON.stringify(groupStartIndices([1, -2, 3])) === JSON.stringify([0, 1, 1]),
+    "groupnav: negative size counts as 0",
+  );
+
+  // 3 groups of sizes [3,2,4] -> heads [0,3,5], 9 rows (last index 8).
+  const starts = groupStartIndices([3, 2, 4]);
+  const N = 9;
+
+  // group-next from inside group 0 -> head of group 1.
+  expect(nextGroupIndex(starts, 0, "group-next", N) === 3, "groupnav: next from g0 head -> 3");
+  expect(nextGroupIndex(starts, 1, "group-next", N) === 3, "groupnav: next from mid-g0 -> 3");
+  expect(nextGroupIndex(starts, 3, "group-next", N) === 5, "groupnav: next from g1 head -> 5");
+  // group-next from the LAST group drops to the final row.
+  expect(nextGroupIndex(starts, 5, "group-next", N) === 8, "groupnav: next in last group -> last row");
+  expect(nextGroupIndex(starts, 7, "group-next", N) === 8, "groupnav: next from mid-last -> last row");
+  expect(nextGroupIndex(starts, 8, "group-next", N) === 8, "groupnav: next at last row stays");
+
+  // group-prev two-stage: below head -> head; at head -> previous head.
+  expect(nextGroupIndex(starts, 7, "group-prev", N) === 5, "groupnav: prev from mid-g2 -> g2 head");
+  expect(nextGroupIndex(starts, 5, "group-prev", N) === 3, "groupnav: prev at g2 head -> g1 head");
+  expect(nextGroupIndex(starts, 3, "group-prev", N) === 0, "groupnav: prev at g1 head -> g0 head");
+  expect(nextGroupIndex(starts, 2, "group-prev", N) === 0, "groupnav: prev from mid-g0 -> 0");
+  expect(nextGroupIndex(starts, 0, "group-prev", N) === 0, "groupnav: prev at row 0 stays");
+
+  // Defensive: empty list, stale/NaN current, unsorted/out-of-range heads.
+  expect(nextGroupIndex(starts, 0, "group-next", 0) === 0, "groupnav: empty list -> 0");
+  expect(nextGroupIndex(starts, 99, "group-next", N) === 8, "groupnav: stale current clamps");
+  expect(nextGroupIndex(starts, NaN, "group-prev", N) === 0, "groupnav: NaN current -> 0");
+  expect(
+    nextGroupIndex([5, 0, 3, 999], 4, "group-prev", N) === 3,
+    "groupnav: out-of-range + unsorted heads normalized (4 -> 3)",
+  );
+  // A heads array missing the 0 anchor still works (0 always added).
+  expect(nextGroupIndex([3, 5], 1, "group-prev", N) === 0, "groupnav: 0 head always present");
 }
 
 // eslint-disable-next-line no-console

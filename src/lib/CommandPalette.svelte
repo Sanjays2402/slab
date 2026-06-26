@@ -21,6 +21,9 @@
     parsePaletteScope,
     entryMatchesScope,
     describePaletteScope,
+    classifyPaletteGroupNav,
+    groupStartIndices,
+    nextGroupIndex,
     type PaletteRange,
     type PaletteFallback,
   } from "$lib/paletteSearch";
@@ -821,6 +824,12 @@
     return Array.from(map.entries());
   });
 
+  // Lumen II Slice 3: flat start index of each rendered group, so
+  // Cmd/Ctrl+Arrow can leap the cursor between section heads. `grouped`
+  // preserves filtered order, so group sizes accumulate 1:1 onto the flat
+  // `filtered` index space the `selected` cursor lives in.
+  let groupStarts = $derived(groupStartIndices(grouped.map(([, items]) => items.length)));
+
   // Clamp selection when filter shrinks list
   $effect(() => {
     if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
@@ -892,6 +901,16 @@
       e.preventDefault();
       lastActivationNewTab = e.metaKey || e.ctrlKey;
       runSelected();
+      return;
+    }
+    // Lumen II Slice 3: Cmd/Ctrl+Arrow leaps the cursor between section
+    // heads (Linear/Finder-style group jump) over the big action catalog.
+    // Checked BEFORE the modifier bail so the chord isn't swallowed.
+    const groupIntent = classifyPaletteGroupNav(e);
+    if (groupIntent) {
+      e.preventDefault();
+      selected = nextGroupIndex(groupStarts, selected, groupIntent, filtered.length);
+      scrollSelectedIntoView();
       return;
     }
     // Lumen Slice 3: Raycast-grade list movement. Arrows wrap at the
@@ -1007,6 +1026,7 @@
     </div>
     <div class="palette-footer">
       <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span><kbd>⌘</kbd><kbd>↑</kbd><kbd>↓</kbd> section</span>
       <span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>
       <span><kbd>↵</kbd> select</span>
       <span><kbd>esc</kbd> close</span>
