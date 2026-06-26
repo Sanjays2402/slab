@@ -866,7 +866,7 @@
             >
               <span class="palette-icon">{a.icon}</span>
               <span class="palette-text">
-                <span class="palette-title">{a.title}</span>
+                <span class="palette-title">{#each titleSegments(a) as seg}{#if seg.hit}<mark class="palette-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
                 {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
               </span>
               {#if idx === selected}<span class="palette-enter">↵</span>{/if}
@@ -997,6 +997,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Lumen Slice 2: live query highlight on the matched title chars.
+     Reset the browser's yellow <mark> default and tint with the accent
+     so the matched substring reads as "this is why it ranked". */
+  .palette-hl {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    border-radius: 2px;
+    padding: 0 0.5px;
+    font-weight: 600;
+  }
+  .palette-item.active .palette-hl {
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
   }
   .palette-subtitle {
     font-size: 11px;
