@@ -11,6 +11,11 @@
   import { applyPluginTheme } from "$lib/pluginThemes";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { notify } from "$lib/notify";
+  import {
+    scorePaletteEntry,
+    splitHighlight,
+    type PaletteRange,
+  } from "$lib/paletteSearch";
   import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
@@ -709,33 +714,16 @@
     return out;
   });
 
-  // Lightweight fuzzy match: every character of the query must appear in order
-  // in the haystack. Score = (matched / haystack.length), with bonus for
-  // prefix and contiguous matches.
-  function fuzzyScore(q: string, hay: string): number {
-    if (!q) return 1;
-    const Q = q.toLowerCase();
-    const H = hay.toLowerCase();
-    if (H.startsWith(Q)) return 2 + 1 / H.length;
-    if (H.includes(Q)) return 1.5 + 1 / H.length;
-    let qi = 0;
-    let lastIdx = -1;
-    let contiguous = 0;
-    let bestContiguous = 0;
-    for (let hi = 0; hi < H.length && qi < Q.length; hi++) {
-      if (H[hi] === Q[qi]) {
-        if (hi === lastIdx + 1) contiguous++;
-        else contiguous = 1;
-        bestContiguous = Math.max(bestContiguous, contiguous);
-        lastIdx = hi;
-        qi++;
-      }
-    }
-    if (qi < Q.length) return 0;
-    return 1 + bestContiguous / Q.length + 0.1 / H.length;
-  }
+  // Lumen Slice 1: scoring moved to the tested pure core in
+  // `$lib/paletteSearch`. `scorePaletteEntry` ranks each action on the
+  // higher of its (weighted) title and keyword scores and returns the
+  // character ranges that matched the *title* — consumed by Slice 2's
+  // live highlighting. Ranges for the current query are memoised here
+  // so the render pass doesn't re-score.
+  let titleRangeCache = new Map<string, PaletteRange[]>();
 
   let filtered = $derived.by(() => {
+    titleRangeCache = new Map();
     if (!query.trim()) {
       // Empty-query view: MRU floats to top, in MRU order.
       // Actions not in MRU keep their natural order after.
@@ -754,7 +742,11 @@
     }
     const q = query.trim();
     const scored = actions
-      .map((a) => ({ a, score: fuzzyScore(q, `${a.title} ${a.keywords ?? ""}`) }))
+      .map((a: Action) => {
+        const r = scorePaletteEntry(q, { title: a.title, keywords: a.keywords });
+        if (r.score > 0) titleRangeCache.set(a.id, r.titleRanges);
+        return { a, score: r.score };
+      })
       .filter((x) => x.score > 0)
       .sort((a, b) => {
         // Primary: fuzzy score. Tie-breaker: MRU rank (lower = more recent).
@@ -765,6 +757,11 @@
       });
     return scored.map((x) => x.a);
   });
+
+  /** Title split into highlight segments for the current query. */
+  function titleSegments(a: Action) {
+    return splitHighlight(a.title, titleRangeCache.get(a.id) ?? []);
+  }
 
   // Group preserving filtered order. When query is empty AND there are MRU
   // entries, the first N items get pulled into a synthetic "Recently used"
