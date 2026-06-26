@@ -14,6 +14,8 @@ import {
   cycleBeaconSort,
   beaconDefaultDir,
   beaconSortLabel,
+  filterByModel,
+  reconcileModelFacet,
   BEACON_SORT_FIELDS,
   type BeaconPdfLike,
   type BeaconSort,
@@ -259,6 +261,50 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   // @ts-expect-error null tolerance
   expect(sortIndexedPdfs(null, { field: "name", dir: "asc" }).length === 0, "sort: null -> []");
   expect(sortIndexedPdfs([], { field: "name", dir: "asc" }).length === 0, "sort: empty -> []");
+}
+
+// --- filterByModel ---------------------------------------------------
+{
+  const rows = [
+    pdf({ pdf_hash: "a", embed_model: "nomic-embed-text" }),
+    pdf({ pdf_hash: "b", embed_model: "mxbai-embed-large" }),
+    pdf({ pdf_hash: "c", embed_model: "nomic-embed-text" }),
+  ];
+  const nomic = filterByModel(rows, "nomic-embed-text");
+  expect(nomic.length === 2, "facet: filters to the chosen model");
+  expect(
+    nomic.every((r) => r.embed_model === "nomic-embed-text"),
+    "facet: every kept row matches the model",
+  );
+  const mxbai = filterByModel(rows, "mxbai-embed-large");
+  expect(mxbai.length === 1 && mxbai[0].pdf_hash === "b", "facet: other model isolates one row");
+  // No facet -> passthrough (new array, not the same ref).
+  const all = filterByModel(rows, null);
+  expect(all.length === 3, "facet: null model passes all rows");
+  expect(all !== rows, "facet: passthrough returns a new array, not the input ref");
+  expect(filterByModel(rows, "").length === 3, "facet: empty model passes all rows");
+  // Unknown model -> empty.
+  expect(filterByModel(rows, "ghost-model").length === 0, "facet: unknown model -> empty");
+  // Defensive.
+  // @ts-expect-error null tolerance
+  expect(filterByModel(null, "x").length === 0, "facet: null list -> []");
+}
+
+// --- reconcileModelFacet ---------------------------------------------
+{
+  const models = ["nomic-embed-text", "mxbai-embed-large"];
+  expect(
+    reconcileModelFacet("nomic-embed-text", models) === "nomic-embed-text",
+    "reconcile: a live facet is kept",
+  );
+  expect(
+    reconcileModelFacet("removed-model", models) === null,
+    "reconcile: a facet whose model vanished clears to null",
+  );
+  expect(reconcileModelFacet(null, models) === null, "reconcile: no facet stays null");
+  expect(reconcileModelFacet("x", []) === null, "reconcile: empty model list clears any facet");
+  // @ts-expect-error null tolerance
+  expect(reconcileModelFacet("x", null) === null, "reconcile: null model list clears facet");
 }
 
 // eslint-disable-next-line no-console

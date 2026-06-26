@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
@@ -75,6 +75,9 @@
   let search = $state("");
   let searchEl = $state<HTMLInputElement | null>(null);
 
+  /** Slice 3: active model facet (one embed_model) or null for "all". */
+  let modelFacet = $state<string | null>(null);
+
   const totalPdfs = $derived(pdfs.length);
   const totalChunks = $derived(
     pdfs.reduce((acc, p) => acc + p.chunks, 0),
@@ -82,22 +85,28 @@
   const isMixedModel = $derived(buckets.length > 1);
   const selectedCount = $derived(selected.size);
 
-  /** Rows surviving the search, each with basename highlight ranges. */
-  const searchHits = $derived(searchIndexedPdfs(pdfs, search));
+  /** Rows after the model facet (slice 3) then the search (slice 1). */
+  const facetedPdfs = $derived(filterByModel(pdfs, modelFacet));
+  const searchHits = $derived(searchIndexedPdfs(facetedPdfs, search));
   /** hash -> highlight ranges, so the row template can paint the match. */
   const nameRangesByHash = $derived(
     new Map(searchHits.map((h) => [h.record.pdf_hash, h.nameRanges])),
   );
-  const matchedCount = $derived(searchHits.length);
-  const isFiltering = $derived(search.trim().length > 0);
+  /** True when any filter (search text OR model facet) is narrowing. */
+  const isFiltering = $derived(search.trim().length > 0 || modelFacet !== null);
 
-  /** Search subset, sorted by the active column. */
+  /** Faceted + searched subset, sorted by the active column. */
   const sortedPdfs = $derived(
     sortIndexedPdfs(searchHits.map((h) => h.record), sort),
   );
+  const matchedCount = $derived(sortedPdfs.length);
 
   function setSort(field: BeaconSortField) {
     sort = cycleBeaconSort(sort, field);
+  }
+
+  function toggleModelFacet(model: string) {
+    modelFacet = modelFacet === model ? null : model;
   }
 
   function showToast(msg: string) {
@@ -148,6 +157,12 @@
       pdfs = list;
       buckets = modelBuckets;
       stale = staleRows;
+      // Drop a model facet whose model no longer exists (its last PDF was
+      // forgotten) so the table can't strand on an empty faceted view.
+      modelFacet = reconcileModelFacet(
+        modelFacet,
+        modelBuckets.map((b) => b.embed_model),
+      );
       // Prune selection to what's still visible.
       const visibleHashes = new Set(list.map((p) => p.pdf_hash));
       const next = new Set<string>();
@@ -329,12 +344,24 @@
           <div class="bc-tile-label">chunks stored</div>
         </div>
         {#each buckets as b (b.embed_model)}
-          <div class="bc-tile bc-tile-model">
+          <button
+            type="button"
+            class="bc-tile bc-tile-model bc-tile-facet"
+            class:active={modelFacet === b.embed_model}
+            onclick={() => toggleModelFacet(b.embed_model)}
+            aria-pressed={modelFacet === b.embed_model}
+            title={modelFacet === b.embed_model
+              ? `Showing only ${b.embed_model} — click to clear`
+              : `Show only ${b.embed_model}`}
+          >
             <div class="bc-tile-num tabular">{b.chunks.toLocaleString()}</div>
             <div class="bc-tile-label" title={b.embed_model}>
               {b.embed_model} · {b.pdfs} PDF{b.pdfs === 1 ? "" : "s"}
             </div>
-          </div>
+            {#if modelFacet === b.embed_model}
+              <span class="bc-tile-facet-pill">Filtering</span>
+            {/if}
+          </button>
         {/each}
       </section>
 
@@ -443,8 +470,21 @@
           </div>
         {:else if sortedPdfs.length === 0}
           <div class="bc-empty">
-            No PDFs match <span class="bc-empty-q">“{search.trim()}”</span>.
-            <button class="bc-link" onclick={() => (search = "")}>Clear filter</button>
+            {#if search.trim() && modelFacet}
+              No <span class="bc-empty-q">{modelFacet}</span> PDFs match
+              <span class="bc-empty-q">“{search.trim()}”</span>.
+            {:else if search.trim()}
+              No PDFs match <span class="bc-empty-q">“{search.trim()}”</span>.
+            {:else}
+              No PDFs indexed under <span class="bc-empty-q">{modelFacet}</span>.
+            {/if}
+            <button
+              class="bc-link"
+              onclick={() => {
+                search = "";
+                modelFacet = null;
+              }}
+            >Clear filters</button>
           </div>
         {:else}
           <div class="bc-select-bar">
@@ -664,6 +704,39 @@
   .bc-tile-model {
     border-color: color-mix(in srgb, #79c0ff 22%, transparent);
     background: color-mix(in srgb, #79c0ff 6%, transparent);
+  }
+  .bc-tile-facet {
+    position: relative;
+    appearance: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    transition: background 120ms, border-color 120ms, transform 80ms;
+  }
+  .bc-tile-facet:hover {
+    background: color-mix(in srgb, #79c0ff 12%, transparent);
+    border-color: color-mix(in srgb, #79c0ff 38%, transparent);
+  }
+  .bc-tile-facet:active {
+    transform: translateY(1px);
+  }
+  .bc-tile-facet.active {
+    background: color-mix(in srgb, #79c0ff 22%, transparent);
+    border-color: color-mix(in srgb, #79c0ff 60%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #79c0ff 40%, transparent);
+  }
+  .bc-tile-facet-pill {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, #79c0ff 30%, transparent);
+    color: #d6e9ff;
   }
   .bc-tile-num {
     font-size: 20px;

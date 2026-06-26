@@ -236,3 +236,44 @@ export function sortIndexedPdfs<T extends BeaconPdfLike>(
   });
   return out;
 }
+
+// --- Slice 3: model-facet filter ---------------------------------------
+//
+// The dashboard renders one tile per embed_model and a "mixed-model
+// index" warning when there's more than one -- but the tiles were inert
+// read-outs and the warning ("forget one bucket to reclaim space") gave
+// no way to SEE which PDFs belonged to which model. This turns the tiles
+// into a facet: click a model tile to filter the table to just that
+// model's rows, click again (or clear) to drop the facet. Now the
+// dead-weight bucket in a mixed index is one click from inspection.
+
+/**
+ * Filter `pdfs` to rows whose `embed_model` exactly matches `model`. A
+ * null/empty model (no facet) passes every row through unchanged. The
+ * returned array is always a new array (never the input reference) so
+ * callers can treat it as an immutable derivation. Null list -> [].
+ */
+export function filterByModel<T extends BeaconPdfLike>(
+  pdfs: readonly T[],
+  model: string | null,
+): T[] {
+  if (!Array.isArray(pdfs)) return [];
+  if (!model) return pdfs.slice();
+  return pdfs.filter((p) => p && p.embed_model === model);
+}
+
+/**
+ * Reconcile an active facet against the live model list. If the faceted
+ * model no longer exists (its last PDF was forgotten, or a refresh
+ * dropped it), the facet is stale and must clear so the table doesn't
+ * silently show zero rows with no way back. Returns the model to keep,
+ * or null to drop the facet. Pure; tolerant of a null/garbage list.
+ */
+export function reconcileModelFacet(
+  active: string | null,
+  models: readonly string[],
+): string | null {
+  if (!active) return null;
+  if (!Array.isArray(models)) return null;
+  return models.includes(active) ? active : null;
+}
