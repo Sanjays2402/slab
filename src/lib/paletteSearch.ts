@@ -839,3 +839,55 @@ export function recentReadingProgress(file: RecentProgressInput): RecentProgress
   return { hasProgress: true, fraction, percent, page, total, finished, label };
 }
 
+// --- Context-aware footer (Lumen II Slice 5) -------------------------
+//
+// Raycast/Linear give the palette footer a live pulse: the result count
+// ("12 results") and an Enter hint whose VERB matches the selected row —
+// "Open" for a file, "Switch to" for a panel, "Apply" for a theme, "Run"
+// for everything else. That micro-feedback tells the user what Return is
+// about to do before they commit. Pure: derives both strings from the
+// selected row's id + group and the result count.
+
+/** The few fields the footer hint reads off the selected row. */
+export interface PaletteFooterRow {
+  id: string;
+  group?: string;
+}
+
+/** Pluralised result-count label ("No results" / "1 result" / "N results"). */
+export function describePaletteCount(count: number): string {
+  const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+  if (n === 0) return "No results";
+  if (n === 1) return "1 result";
+  return `${n} results`;
+}
+
+/**
+ * Verb describing what Enter does on the selected row, by id prefix /
+ * group. "Open" (files + windows), "Switch to" (panel/home navigation),
+ * "Apply" (appearance), "Run" (everything else, incl. plugin commands).
+ * Returns "" when there's no selected row. Pure.
+ */
+export function paletteActionVerb(row: PaletteFooterRow | null | undefined): string {
+  if (!row || !row.id) return "";
+  const id = row.id;
+  const group = row.group ?? "";
+  if (id.startsWith("recent:") || group === "Recent files" || group === "Pinned" || group === "Recent") {
+    return "Open";
+  }
+  if (id.startsWith("panel-window:")) return "Open";
+  if (
+    id.startsWith("panel:") ||
+    id.startsWith("home:") ||
+    id === "library:search" ||
+    group === "Panels" ||
+    group === "Home"
+  ) {
+    return "Switch to";
+  }
+  if (id.startsWith("theme:") || id.startsWith("plugin-theme:") || id.startsWith("accent:") || id.startsWith("density:") || group === "Appearance") {
+    return "Apply";
+  }
+  return "Run";
+}
+

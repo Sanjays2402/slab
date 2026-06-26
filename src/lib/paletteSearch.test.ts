@@ -27,6 +27,8 @@ import {
   groupStartIndices,
   nextGroupIndex,
   recentReadingProgress,
+  describePaletteCount,
+  paletteActionVerb,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -739,6 +741,50 @@ function pick(text: string, ranges: PaletteRange[]): string {
   const f = recentReadingProgress({ lastPage: 40, totalPages: 80 });
   expect(f.fraction >= 0 && f.fraction <= 1, "progress: fraction in [0,1]");
   expect(f.percent === 50, "progress: 40/80 -> 50%");
+}
+
+// --- Lumen II Slice 5: context-aware footer -------------------------
+{
+  // Count pluralisation.
+  expect(describePaletteCount(0) === "No results", "footer: 0 -> No results");
+  expect(describePaletteCount(1) === "1 result", "footer: 1 -> 1 result (singular)");
+  expect(describePaletteCount(2) === "2 results", "footer: 2 -> 2 results");
+  expect(describePaletteCount(42) === "42 results", "footer: 42 results");
+  expect(describePaletteCount(-5) === "No results", "footer: negative -> No results");
+  expect(describePaletteCount(NaN) === "No results", "footer: NaN -> No results");
+  expect(describePaletteCount(3.9) === "3 results", "footer: fractional floored");
+
+  // Verb by id prefix / group.
+  expect(paletteActionVerb({ id: "recent:/a.pdf", group: "Recent files" }) === "Open", "footer: recent -> Open");
+  expect(paletteActionVerb({ id: "recent:/b.pdf", group: "Pinned" }) === "Open", "footer: pinned -> Open");
+  expect(paletteActionVerb({ id: "panel-window:reader", group: "Windows" }) === "Open", "footer: new window -> Open");
+
+  expect(paletteActionVerb({ id: "panel:reader", group: "Panels" }) === "Switch to", "footer: panel -> Switch to");
+  expect(paletteActionVerb({ id: "home:open", group: "Home" }) === "Switch to", "footer: home -> Switch to");
+  expect(paletteActionVerb({ id: "library:search", group: "Library" }) === "Switch to", "footer: library search -> Switch to");
+  expect(paletteActionVerb({ id: "panel:forms:batch", group: "Forms" }) === "Switch to", "footer: forms subtab -> Switch to");
+
+  expect(paletteActionVerb({ id: "theme:dark", group: "Appearance" }) === "Apply", "footer: theme -> Apply");
+  expect(paletteActionVerb({ id: "accent:blue", group: "Appearance" }) === "Apply", "footer: accent -> Apply");
+  expect(paletteActionVerb({ id: "density:compact", group: "Appearance" }) === "Apply", "footer: density -> Apply");
+  expect(paletteActionVerb({ id: "plugin-theme:x:y", group: "Appearance" }) === "Apply", "footer: plugin theme -> Apply");
+
+  expect(paletteActionVerb({ id: "stack:compare", group: "Stack" }) === "Run", "footer: command -> Run");
+  expect(paletteActionVerb({ id: "plugin-cmd:x:y", group: "Plugin commands" }) === "Run", "footer: plugin cmd -> Run");
+  expect(paletteActionVerb({ id: "help:shortcuts", group: "Help" }) === "Run", "footer: help -> Run");
+
+  // panel-window beats the panel: prefix (more specific, an Open not a switch).
+  expect(
+    paletteActionVerb({ id: "panel-window:reader" }) === "Open",
+    "footer: panel-window not misread as panel switch",
+  );
+
+  // Degenerate.
+  expect(paletteActionVerb(null) === "", "footer: null row -> empty verb");
+  expect(paletteActionVerb(undefined) === "", "footer: undefined row -> empty verb");
+  expect(paletteActionVerb({ id: "" }) === "", "footer: empty id -> empty verb");
+  // Unknown id with no group falls back to Run.
+  expect(paletteActionVerb({ id: "mystery:thing" }) === "Run", "footer: unknown -> Run fallback");
 }
 
 // eslint-disable-next-line no-console

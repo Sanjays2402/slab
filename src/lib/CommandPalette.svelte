@@ -25,6 +25,8 @@
     groupStartIndices,
     nextGroupIndex,
     recentReadingProgress,
+    describePaletteCount,
+    paletteActionVerb,
     type PaletteRange,
     type PaletteFallback,
     type RecentProgress,
@@ -837,6 +839,13 @@
   // `filtered` index space the `selected` cursor lives in.
   let groupStarts = $derived(groupStartIndices(grouped.map(([, items]) => items.length)));
 
+  // Lumen II Slice 5: context-aware footer. The count pulses with the live
+  // result list, and the Enter hint's verb tracks the selected row ("Open"
+  // a file, "Switch to" a panel, "Apply" a theme, "Run" a command) so the
+  // user sees what Return will do before committing.
+  let resultCountLabel = $derived(describePaletteCount(filtered.length));
+  let enterVerb = $derived(paletteActionVerb(filtered[selected] ?? null));
+
   // Clamp selection when filter shrinks list
   $effect(() => {
     if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
@@ -1046,11 +1055,14 @@
       {/if}
     </div>
     <div class="palette-footer">
-      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-      <span><kbd>⌘</kbd><kbd>↑</kbd><kbd>↓</kbd> section</span>
-      <span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>
-      <span><kbd>↵</kbd> select</span>
-      <span><kbd>esc</kbd> close</span>
+      <span class="palette-footer-count">{resultCountLabel}</span>
+      <span class="palette-footer-keys">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>⌘</kbd><kbd>↑</kbd><kbd>↓</kbd> section</span>
+        <span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>
+        <span><kbd>↵</kbd> {enterVerb || "select"}</span>
+        <span><kbd>esc</kbd> close</span>
+      </span>
     </div>
   </div>
 {/if}
@@ -1285,6 +1297,19 @@
     color: var(--text-3);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    align-items: center;
+  }
+  /* Lumen II Slice 5: result count on the left, key hints on the right. */
+  .palette-footer-count {
+    flex-shrink: 0;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .palette-footer-keys {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+    align-items: center;
   }
   .palette-footer kbd {
     background: var(--bg-3);
