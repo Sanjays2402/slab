@@ -1,13 +1,126 @@
 # Slab Cron State
 
-Last updated: 2026-06-26 08:15 PT by Cake (cron) — round-40 BATCH shipped (5 frontend/UX slices) PIVOTING off the 3-round keyboard-UX streak (rounds 37-39: palette + cheat-sheet) to the **Beacon Cache Inspector** ("Atlas II") — the explicit roadmap item ("column sort by basename / model facet, sort-direction caret, empty-state copy"), a high-visibility inspector that had ZERO pure-core tests. The round-7 panel was a flat, unsearchable table with a fixed 3-button sort toggle, inert model tiles, and a one-line empty state. Round 40 takes it to Linear/Raycast grade on a new tested pure core src/lib/beaconCacheView.ts (112 inline tests). Slice 1 filter-as-you-type (searchIndexedPdfs reuses the tested palette scorePaletteField; highlighted basename + silent folder/model/hash match; "N of M" count, Esc-clears, no-match empty state); slice 2 multi-field column sort (cycleBeaconSort flip-vs-switch, beaconDefaultDir per-field default, sortIndexedPdfs name case-insensitive+numeric-aware with stable hash tie-break, up/down caret); slice 3 clickable model facet (filterByModel + reconcileModelFacet makes the mixed-model dead-weight bucket one click from inspection, ANDs with search, auto-clears stale facet on refresh); slice 4 impact-aware bulk bar + context footer (summarizeSelection real chunks/pages dropped, describeImpact, describeBeaconView narrates shown-vs-total + filters + selection like the palette footer); slice 5 keyboard nav (classifyBeaconTableKey reuses classifyPaletteNav+nextPaletteIndex; arrows/Home/End/PageUp-Down + Space-select + Enter-forget + a-select-all + Esc-clear; cursor ring + scroll-into-view + clampBeaconCursor; discoverable keycap hint). PRIOR (round 39): "?" cheat-sheet overlay ("Lexicon") on tested core shortcutsOverlay.ts (95 tests) — live-keymap grouping, filter, keyboard nav, conflict detection, copy-as-text.
+Last updated: 2026-06-26 14:30 PT by Cake (cron) — round-41 BATCH shipped (5 frontend/UX slices) PIVOTING off the round-40 Beacon Cache Inspector ("Atlas II") to the **Library Search panel** ("Atlas III") — Cmd+Shift+F, the single highest-visibility surface in the app. It shipped as a flat, mouse-only results list with ZERO pure-core tests: no keyboard path through the grouped hits, no sense of how the FTS engine would interpret the query, no way to narrow a large result set without re-running the search, no sort control, no live summary. Round 41 takes it to Raycast/Linear grade on a new tested pure core src/lib/librarySearchView.ts (127 inline tests) reusing the palette scorer/nav core (NO second engine). Slice 1 keyboard nav (flattenSearchHits collapses grouped hits into one flat cursor space; classifySearchResultKey -> move/open/clear reusing classifyPaletteNav+nextPaletteIndex; accent cursor ring + scroll-into-view; mouse hover syncs cursor); slice 2 live query-interpretation chips (interpretSearchQuery is a FAITHFUL port of the Rust FTS lexer in search.rs tokenize/build_match_expr — last bare word = prefix, quotes = phrase, -term excludes, only-exclusions = noAnchor returns nothing; accent prefix chip + glob glyph, italic phrase, struck-through exclude, amber no-anchor warning); slice 3 in-results refine (refineSearchHits narrows already-returned hits client-side via scorePaletteField on snippet/title/basename, no round-trip; sticky refine bar, refined-empty state, resets on fresh search); slice 4 sort modes (sortSearchGroups relevance/document/matches, stable, numeric-aware; Linear segmented control); slice 5 summary footer + page-spread badge (summarizeSearchResults narrates shown-vs-total + refine + sort like the palette footer; pageSpread -> "pp. 3-47" per group). PRIOR (round 40): Beacon Cache Inspector ("Atlas II") on beaconCacheView.ts (112 tests) — filter/sort/model-facet/impact-bar/keyboard-nav.
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
-**Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
-src-tauri/tauri.conf.json, Cargo.lock.
+**Version: 3.39.0** in package.json/Cargo.toml/tauri.conf.json/Cargo.lock.
+Internal module labels use the repo's logical-release naming ("Atlas III"
+= v3.41.0) which runs ahead of the package version; NOT bumped this round
+(zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `1d527de` — "feat(beacon-cache): keyboard navigation through the indexed-PDF table".
+Latest commit: `ac81a2e` — "feat(library-search): result summary footer + per-group page-spread badge".
+
+### What round-41 (2026-06-26 14:30 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+PIVOTING off the round-40 Beacon Cache Inspector ("Atlas II") to the
+**Library Search panel** ("Atlas III") — Cmd+Shift+F, the single
+highest-visibility surface in the app. The panel shipped as a flat,
+mouse-only results list (type -> hits grouped by document -> click to
+open) with several real weak points and ZERO pure-core tests: no
+keyboard path through the grouped hits, no sense of how the FTS engine
+would interpret the query (its prefix/phrase/exclude grammar is
+invisible), no way to narrow a large result set without re-running the
+FTS search (which re-ranks + loses your place), no sort control, and a
+summary line that vanished the moment you scrolled.
+
+New pure DOM-free module `src/lib/librarySearchView.ts` (127 inline
+tests) backs all five capabilities — same pure-core/thin-shell
+discipline as paletteSearch.ts / beaconCacheView.ts / shortcutsOverlay.ts
+/ toastStack.ts. Reuses the tested palette core (scorePaletteField for
+refine, classifyPaletteNav/nextPaletteIndex for nav) so there is NO
+second fuzzy/nav engine to drift.
+
+- Slice 1: keyboard navigation (5ccec44). flattenSearchHits collapses
+  the grouped render into one flat cursor index space, each entry tagged
+  with its (group, hit) coordinates; classifySearchResultKey maps a bare
+  keypress -> move/open/clear (any Cmd/Ctrl/Alt disqualifies so app
+  chords win); arrows wrap, Home/End leap, PageUp/Down page (palette nav
+  core); Enter opens the focused hit, Escape clears. Accent cursor ring +
+  scrollIntoView; mouse hover syncs the cursor. 45 tests.
+
+- Slice 2: live query-interpretation chips (a915522). interpretSearchQuery
+  is a FAITHFUL TS port of the Rust FTS lexer in
+  src-tauri/src/pdf/library/search.rs (tokenize + build_match_expr) — not
+  an approximation, so the chips match what the engine actually does:
+  curly+straight quotes open phrases, a leading - flips the next token to
+  an exclusion, mid-word hyphens scrub to one word (co-op->coop),
+  unterminated quotes run to EOI, the LAST bare token alone becomes a
+  prefix, and only-exclusions sets noAnchor (the backend returns nothing).
+  describeQueryInterpretation gives an SR narration. UI: accent prefix
+  chip + glob glyph, italic phrase chip, struck-through exclude chip with
+  a leading minus, amber no-anchor warning banner (toast-warning
+  severity). 37 tests.
+
+- Slice 3: in-results refine (fa329dd). refineSearchHits narrows the
+  ALREADY-RETURNED hits client-side via scorePaletteField on the hit's
+  snippet text / document title / basename — instant, no round-trip,
+  preserves arrival (relevance) order. stripSnippetMarks removes the
+  server <mark> wrapping (+ decodes amp/lt/gt) so the refine matches the
+  human-readable text, never the markup. Sticky refine bar with clear
+  button; dedicated refined-empty state with one-click reset; refine
+  resets on every fresh search so a stale term can't hide a new query's
+  rows. The window keydown handler now distinguishes search box / refine
+  box / focused row so Enter/Escape/Home/End keep their owner (Up/Down
+  drive the cursor from anywhere). 14 tests.
+
+- Slice 4: sort modes (73c3508). sortSearchGroups returns a NEW array
+  (never mutates): relevance preserves bm25 arrival order, document sorts
+  title A->Z (case-insensitive + numeric-aware, Doc2<Doc10), matches
+  sorts by hit count biggest-first; every non-relevance comparison falls
+  back to arrival index as a stable tie-break. cycleSearchSort /
+  searchSortLabel / describeSortMode round out the surface. Linear/Raycast
+  segmented pill in the refine bar; sorted groups feed the same flat
+  cursor space so Slice-1 nav follows the eye. 17 tests.
+
+- Slice 5: summary footer + page-spread badge (ac81a2e).
+  summarizeSearchResults narrates the live view (matches shown vs total,
+  "N of M" under a refine, the refine term, the active sort when not
+  default) in an aria-live footer, mirroring the palette/beacon footer
+  style; replaces the static index-size footer while results show (it
+  returns when the query clears). pageSpread gives each group header a
+  compact locator badge ("p. 4" / "pp. 3-47") from the hits' 0-based
+  pageIndex, tolerant of unsorted hits + garbage. 14 tests.
+
+Gates result: tsx librarySearchView.test.ts 127/127 pass
+(45+37+14+17+14), paletteSearch 253/253 / beaconCacheView 112/112 /
+shortcutsOverlay 95/95 / toastStack 254/254 / hopper 1189/1189 ALL
+unchanged (the shared palette core I reuse is provably intact), pnpm
+check 0 errors / 104 warnings (rounds 32-40 baseline preserved EXACTLY —
+zero new warnings from the new cursor list / interp chips / refine bar /
+sort control / footer / spread badge), cargo fmt --all --check clean,
+ZERO Rust files changed so the round-32 lib baseline (clippy clean, 2620
+tests) carries forward unchanged (the full Tauri binary build is never
+run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 41):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (flat-nav math, FTS-lexer mirror, refine scoring, sort, footer
+  copy + page-spread). Zero backend.
+- DELIBERATE PIVOT off the Beacon Cache Inspector. Rounds 37-40 power-
+  user-completed the palette, cheat-sheet, and beacon inspector; the
+  Library Search panel was the obvious next subsystem — the single
+  highest-visibility surface (every user hits Cmd+Shift+F), genuinely
+  weak (flat, mouse-only, FTS grammar invisible, no refine/sort/summary),
+  and the last major search surface with zero pure-core tests.
+- Reuse over reinvention: imports the tested palette core
+  (scorePaletteField, classifyPaletteNav/nextPaletteIndex) — no second
+  fuzzy/nav engine. The 253-test palette suite is unchanged, proving
+  reuse didn't perturb the shared core.
+- Slice 2 is a FAITHFUL port, not an approximation: the chips would
+  mislead if they didn't match the engine, so interpretSearchQuery
+  mirrors search.rs tokenize/build_match_expr exactly (read the Rust
+  source + its tests as ground truth before writing the TS).
+- Same pure-core/thin-shell split: every decision (flat-nav index,
+  lexer, refine match, sort, footer/spread copy) is a pure function in
+  librarySearchView.ts unit-tested without a DOM; LibrarySearchPanel.svelte
+  owns the imperative edges (Tauri search, keydown, scroll, render).
+- Held the 104-warning svelte-check baseline EXACTLY — the new cursor
+  list, interp chips, sticky refine bar, segmented control, footer, and
+  page-spread badge all passed a11y with no new warning (window-level key
+  handler, aria-current/aria-pressed/aria-live, no static-element
+  interaction).
 
 ### What round-40 (2026-06-26 08:15 PT) just shipped
 
@@ -1108,6 +1221,53 @@ flavour cadence (TS helper -> TS helper -> UI), no Rust.
 Refilled frontend-first per the override (backend/infra items
 deferred until the override block is removed). Ordered roughly by
 demo value:
+
+- ~~Library Search panel to Raycast/Linear grade ("Atlas III")~~ — DONE
+  round 41 (5ccec44..ac81a2e): new tested pure core
+  src/lib/librarySearchView.ts (127 tests) reusing the palette
+  scorer/nav. Keyboard nav through grouped hits (flattenSearchHits +
+  classifySearchResultKey), live FTS query-interpretation chips
+  (interpretSearchQuery faithful-ports search.rs tokenize/build_match_expr),
+  in-results client-side refine (refineSearchHits, no round-trip),
+  3-mode sort (sortSearchGroups relevance/document/matches), summary
+  footer + per-group page-spread badge (summarizeSearchResults /
+  pageSpread). Still open as follow-ups: highlight the refine term
+  inside snippets (live <mark> over the server snippet); a "jump to
+  next/prev document group" chord (Cmd+Down already free); recent-search
+  chips keyboard-navigable.
+- Library Search: snippet refine-highlight — when an in-results refine
+  is active, paint a second-color <mark> over the refine term inside
+  each snippet (the server <mark> is the FTS match; a distinct tint for
+  the client refine would show WHY a row survived). Reuse splitHighlight
+  + the refine scorer's ranges.
+- Reader find-in-page overlay to palette grade (Cmd+F inside a PDF):
+  the in-document find currently has no match-count / next-prev cursor /
+  keyboard cycle the way the library search now does — a parallel
+  treatment on a tested pure core.
+- persisted undo ring across sessions UI (round 31 ring is
+  ephemeral; surface a "restored N undo steps" banner on reopen).
+- palette: recent-files thumbnails (getRecentThumb data URLs already
+  stored) — a richer empty-query view follow-up (progress chip shipped
+  round 38).
+- palette: group COLLAPSE (click a section header to fold it) — the
+  group-jump chord shipped round 38; collapse is the remaining half.
+- drilldown row -> cross-surface filter (clicking a fall-through
+  filename in the coverage popover carries the query into the
+  document inspector with a visible filter chip).
+- histogram hover-tooltip on bar segments (per-segment count +
+  label on hover/focus, keyboard-reachable).
+- doc-detail metadata editor read surface (inline-editable title /
+  tags with optimistic save + rollback toast — now that toast actions
+  + promise toasts exist, the rollback/undo affordance is trivial).
+- Loom-grade tagging explorer (tree/list toggle, filter-as-you-
+  type, multi-select with bulk-tag affordance).
+- per-plugin "Run prune now" affordance (deferred since round 25;
+  button + confirm popover + result toast — wire the result through
+  notify.promise for the spinner->done morph).
+- empty/loading/skeleton-state pass across panels that still show
+  a bare spinner (Signet verify, Beacon cache, Quill queue).
+- Beacon Cache Inspector follow-ups (round 40): column COLLAPSE /
+  thumbnails still open if wanted later.
 
 - ~~Hopper rule reorder-by-drag~~ — DONE round 34 (slices 163-167):
   mouse drag + Alt+Arrow keyboard reorder, both through one
