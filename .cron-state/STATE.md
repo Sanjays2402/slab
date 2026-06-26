@@ -1,13 +1,113 @@
 # Slab Cron State
 
-Last updated: 2026-06-25 12:46 PT by Cake (cron) — round-36 BATCH shipped (5 frontend/UX slices) CONTINUING the round-35 toast/notification subsystem, taking it to full SONNER PARITY. Round 35 built the stack plumbing (overflow/coalesce/clear-all/lifespan-bar/SR-announcer); round 36 adds the interaction layer the roadmap flagged as "the natural next step now that the stack/timer/a11y plumbing is in place". Five demo-able capabilities, all backed by new pure helpers in src/lib/toastStack.ts (254 inline tests, up from 128). Slice 1 inline action button (NotifyOpts.action {label,onClick,dismissOnClick?}; normalizeToastAction validates non-blank label + callable handler else null, clamps label to 24ch; a toast with an action defaults STICKY; runToastAction centralizes run-then-conditional-dismiss; button adopts severity accent — green Undo on success, red Retry on error); slice 2 swipe/drag-to-dismiss (pure ToastSwipe geometry: rightward-clamped dx + flick velocity; toastSwipeShouldDismiss fires past 80px OR 0.5px/ms flick with a 16px jitter floor; toastSwipeOpacity fades toward 0.25; Pointer Events with capture, grab/grabbing cursor, cubic-bezier snap-back suppressed mid-drag + under reduced-motion); slice 3 promise lifecycle (notify.promise(work,{loading,success,error}) shows a sticky spinner toast then morphs the SAME row in place to success/error; success/error may be strings OR functions of the settled value; resolveToastMessage degrades on throw/non-string, describeToastError extracts Error.message; CSS ring spinner shares .icon footprint so no reflow on morph, static dashed reduced-motion fallback); slice 4 keyboard focus+dismiss (Alt+T focuses newest toast; Escape/Delete/Backspace dismiss with focus sliding to the sibling via pickToastFocusIndex; Enter/Space fire the action; resolveToastFocusHotkey + resolveFocusedToastKey pure classifiers; toast rows tabindex=-1 with focus-ring); slice 5 expandable overflow (round-35's dead "+N more" pill is now a real toggle revealing all collapsed toasts / "Show less"; resolveToastStackView folds partition+expand into one render plan, countToastOverflow gives a stable beyond-cap count, $effect auto-collapses when overflow drains). SHAs d12b37b, 65925b1, a7cc8fd, 6521a74, f1a828b (+ 4af8ff5 a11y-ignore fixup). Gates: tsx toastStack.test.ts 254/254 pass, tsx hopper.test.ts 1189/1189 unchanged, pnpm check 0 errors/104 warnings (round-32..35 baseline preserved EXACTLY — slice-4's role=group keydown tripped one a11y warning, scoped a single svelte-ignore matching house style to hold 104), cargo fmt --all --check clean, ZERO Rust changed (lib green baseline 2620 carries forward).
+Last updated: 2026-06-25 17:55 PT by Cake (cron) — round-37 BATCH shipped (5 frontend/UX slices) PIVOTING off the 2-round toast subsystem to the **Command Palette (Cmd+K)** — the explicit "Raycast-grade" roadmap item and the single highest-visibility surface in the app. The palette ranked actions with an untested inline fuzzyScore that emitted no match positions and flattened the visible title + hidden keywords into one string. Round 37 takes it to Raycast/Linear grade: a new tested pure core src/lib/paletteSearch.ts (123 inline tests) backs all five slices. Slice 1 search core (scorePaletteField three-tier prefix>>substring>subsequence with match ranges + shortness nudge; scorePaletteEntry ranks on max(title, keyword) but only returns TITLE ranges; splitHighlight/normalizeRanges defensive segment splitter, replacing the inline fuzzyScore); slice 2 live accent highlight of matched title chars via real <mark> elements (no {@html}); slice 3 Raycast-grade nav (classifyPaletteNav + nextPaletteIndex: wrapping arrows, Home/End, PageUp/PageDown clamped, scroll-into-view); slice 4 frecency ranking (recencyWeight steep buckets + frecencyScore (1+ln count)*recency + rankFrecency + recordFrecency, migrating cmdMru.ts from legacy string[] MRU to {id,count,lastUsedAt}[] frecency store with backward-compat read); slice 5 inline shortcut-chord hints (paletteKeymapId pure mapper palette-row -> keymap ActionId, rendered as platform-correct key-caps via prettyBindingFor, live-reacting to rebinds).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `4af8ff5` — "chore(toast): scope a11y-ignore for the keyboard-focusable toast row".
+Latest commit: `a084b11` — "feat(palette): inline keyboard-shortcut chord hints on rows".
+
+### What round-37 (2026-06-25 17:55 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+PIVOTING off the 2-round toast subsystem (rounds 35-36, now
+feature-complete vs Sonner) to the **Command Palette (Cmd+K)** — the
+explicit "Raycast-grade" roadmap candidate and the highest-visibility
+surface in the app. The palette ranked actions with a hand-rolled
+inline `fuzzyScore(q, hay)` that had no tests, emitted no match
+positions, and flattened the visible title + hidden keyword bag into
+one string so a keyword subsequence could outrank a real title prefix.
+Round 37 takes it to Raycast/Linear grade.
+
+New pure module `src/lib/paletteSearch.ts` (123 inline tests, zero
+DOM/store deps) backs all five capabilities — same pure-core/thin-shell
+discipline as toastStack.ts and the Hopper helpers.
+
+- Slice 1: tested search core (c2fd06b). scorePaletteField(query,
+  haystack) -> {score, ranges}: three decisive tiers (prefix >>
+  boundary-substring > substring > subsequence) + a sub-1 shortness
+  nudge so "Sign" edges out "Signet batch" without crossing a tier.
+  Returns matched character ranges (the piece the UI needs to
+  highlight). scorePaletteEntry ranks on max(weighted title, weighted
+  keyword) but only ever returns TITLE ranges, so a row matched on a
+  hidden keyword surfaces at the right rank without confusing marks on
+  its title. splitHighlight + normalizeRanges: defensive segment
+  splitter (clamps/sorts/merges) whose output always reconstructs the
+  input verbatim. Replaces the inline fuzzyScore in CommandPalette.
+  53 tests.
+
+- Slice 2: live accent highlight (941ebf5). Renders the matched title
+  substring with real <mark> elements driven by Slice 1's
+  titleSegments() (no {@html}). Matched chars get an accent tint +
+  accent-mix background that deepens on the active row — the Raycast
+  "this is why it ranked" affordance. Keyword-only matches highlight
+  nothing. UI-only.
+
+- Slice 3: Raycast-grade keyboard nav (673f22f). classifyPaletteNav
+  (Arrow/Home/End/PageUp/PageDown -> intent | null) + nextPaletteIndex
+  (arrows WRAP at the ends, Home/End leap to extremes, paging clamps by
+  PALETTE_PAGE_JUMP=8 without wrapping, stale/NaN current clamped before
+  stepping). Wired into onKey (modifiers fall through for future
+  chords); active row kept visible via scrollIntoView({block:"nearest"})
+  on every move; footer advertises the page keys. 26 tests.
+
+- Slice 4: frecency ranking (6a2856e). recencyWeight (steep bucket
+  multiplier 1000->8 across 5min/1h/1d/1w/1mo so recency dominates) *
+  (1 + ln(count)) frequency term — log-tempered so heavy use breaks
+  ties without swamping recency. rankFrecency -> id->rank map;
+  recordFrecency pure bump/insert with capacity eviction that never
+  drops the just-touched record or mutates input. Migrates cmdMru.ts
+  from the legacy newest-first string[] (slab.cmd.mru.v1) to a
+  {id,count,lastUsedAt}[] store (slab.cmd.frecency.v2), reading the old
+  list once and migrating it forward with order preserved so existing
+  users keep their ordering on first launch. recordMru/mruRanks/
+  clearMru keep their signatures; palette unchanged. 28 tests.
+
+- Slice 5: inline shortcut-chord hints (a084b11). paletteKeymapId pure
+  table maps a palette row (panel:hopper, home:open, panel:forms:batch,
+  theater:open, library:search, help:shortcuts, ...) to the keymap
+  ActionId whose binding it triggers; dependency-free so the pure core
+  never imports the keymap store. A guard test asserts every mapped
+  target is a real keymap.ts ActionId so the table can't drift into a
+  blank chord. CommandPalette renders the resolved chord as a muted
+  key-cap (platform-correct Cmd glyphs via prettyBindingFor),
+  brightening on the active row; subscribes to keymapView so a live
+  rebind reflects immediately. 15 tests.
+
+Gates result: tsx src/lib/paletteSearch.test.ts 123/123 pass (new
+suite: 53+26+28+15 = 122 + 1 integration), tsx src/lib/toastStack.test.ts
+254/254 unchanged, tsx src/lib/hopper.test.ts 1189/1189 unchanged,
+pnpm check 0 errors / 104 warnings (rounds 32-36 baseline preserved
+EXACTLY — zero new warnings from any slice), cargo fmt --all --check
+clean, ZERO Rust files changed so the round-32 lib baseline (clippy
+clean, 2620 tests) carries forward unchanged (the full Tauri binary
+build is never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 37):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (scoring/highlight, keyboard nav, frecency math, keymap mapping).
+  Zero backend.
+- DELIBERATE PIVOT off the toast subsystem. Rounds 35-36 took the toast
+  system to full Sonner parity (overflow/coalesce/clear-all/lifespan/
+  a11y + action/swipe/promise/keyboard/expand) — it's feature-complete.
+  The Command Palette was the obvious next subsystem: it's the explicit
+  "command-palette / quick-action launcher (Cmd-K) — Raycast-grade"
+  roadmap candidate, it's the single highest-visibility surface (every
+  user hits Cmd+K), and its scoring was a genuine weak point (untested
+  inline fuzzyScore, no highlights, flat title+keyword string).
+- Same pure-core/thin-shell split as toastStack: every scoring, range,
+  nav, frecency, and keymap decision is a pure function in
+  paletteSearch.ts unit-tested without a DOM; CommandPalette.svelte +
+  cmdMru.ts own the imperative edges (localStorage, scroll, keymap
+  store subscription).
+- Held the 104-warning svelte-check baseline EXACTLY across all five
+  slices — no new warnings, no inflation, per the standing discipline.
+- The cmdMru migration is backward-compatible by design: a user who
+  upgrades mid-session keeps their muscle-memory MRU order (legacy
+  string[] read once, written forward to the frecency store) rather
+  than starting from an empty history.
 
 ### What round-36 (2026-06-25 12:46 PT) just shipped
 
@@ -741,6 +841,20 @@ demo value:
   StackView). The toast system is now feature-complete vs Sonner/Linear.
 - persisted undo ring across sessions UI (round 31 ring is
   ephemeral; surface a "restored N undo steps" banner on reopen).
+- ~~command-palette / quick-action launcher (Cmd-K) — Raycast-grade~~ —
+  DONE round 37 (c2fd06b..a084b11): tested search core with match
+  ranges replacing inline fuzzyScore, live <mark> title highlight,
+  wrapping arrows + Home/End + PageUp/Down with scroll-into-view,
+  frecency ranking (freq x recency, migrated cmdMru store), inline
+  keyboard-chord hints on rows. New pure src/lib/paletteSearch.ts,
+  123 tests. The palette is now Raycast/Linear grade.
+- palette: empty-state "no matches" polish + suggested-actions when a
+  query returns nothing (e.g. "Try: theme, redact, search library").
+- palette: section-jump / group collapse for very long result lists
+  (the action catalog is 100+ entries; a keyboard group-skip would
+  speed power-user navigation).
+- palette: recent-files thumbnails / richer recent-doc rows (page
+  count, last-read progress chip) in the empty-query view.
 - drilldown row -> cross-surface filter (clicking a fall-through
   filename in the coverage popover carries the query into the
   document inspector with a visible filter chip).
@@ -758,10 +872,9 @@ demo value:
   notify.promise for the spinner->done morph).
 - empty/loading/skeleton-state pass across panels that still show
   a bare spinner (Signet verify, Beacon cache, Quill queue).
-- command-palette / quick-action launcher (Cmd-K) for cross-panel
-  navigation — Raycast-grade.
 - keyboard-shortcut cheat-sheet overlay (? key) surfacing every
-  bound chord app-wide (now including Alt+T toast focus).
+  bound chord app-wide (now including Alt+T toast focus + the palette
+  page-nav keys).
 - configurable toast position (top/bottom x left/right corner via a
   settings store; the stack is hard-pinned bottom-right today).
 - responsive / narrow-window layout pass for the Hopper rules
