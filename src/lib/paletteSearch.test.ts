@@ -18,6 +18,7 @@ import {
   frecencyScore,
   rankFrecency,
   recordFrecency,
+  paletteKeymapId,
   type PaletteRange,
   type FrecencyRecord,
 } from "./paletteSearch";
@@ -383,6 +384,57 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(out.length === 3, "record: capped to limit");
   expect(out.some((r) => r.id === "brand-new"), "record: just-touched record retained");
   expect(!out.some((r) => r.id === "evict"), "record: lowest-frecency evicted");
+}
+
+// --- paletteKeymapId: palette row -> keymap action id ---------------
+{
+  // Known mappings resolve.
+  expect(paletteKeymapId("panel:hopper") === "hopper.open", "keymap: panel:hopper -> hopper.open");
+  expect(paletteKeymapId("home:open") === "home.open", "keymap: home:open -> home.open");
+  expect(paletteKeymapId("home:continue") === "home.continue", "keymap: home:continue -> home.continue");
+  expect(paletteKeymapId("library:search") === "library.search", "keymap: library:search -> library.search");
+  expect(paletteKeymapId("theater:open") === "theater.start", "keymap: theater:open -> theater.start");
+  expect(paletteKeymapId("panel:theater") === "theater.start", "keymap: panel:theater -> theater.start");
+  expect(paletteKeymapId("panel:forms:batch") === "quill.batch", "keymap: forms batch sub-tab -> quill.batch");
+  expect(paletteKeymapId("forms:tour") === "quill.tour", "keymap: forms:tour -> quill.tour");
+  expect(paletteKeymapId("help:shortcuts") === "shortcuts.show", "keymap: help:shortcuts -> shortcuts.show");
+
+  // Unmapped rows (themes, accents, recents, plugin cmds) -> null.
+  expect(paletteKeymapId("theme:dark") === null, "keymap: theme row -> null");
+  expect(paletteKeymapId("accent:blue") === null, "keymap: accent row -> null");
+  expect(paletteKeymapId("recent:/foo.pdf") === null, "keymap: recent file -> null");
+  expect(paletteKeymapId("plugin-cmd:x:y") === null, "keymap: plugin cmd -> null");
+  expect(paletteKeymapId("") === null, "keymap: empty id -> null");
+  expect(paletteKeymapId("panel:reader") === null, "keymap: reader has no global chord -> null");
+}
+
+{
+  // Every mapped keymap id must be one of the real keymap.ts ActionIds —
+  // a typo here would silently render a blank chord. This list mirrors
+  // the ActionId union in src/lib/keymap.ts.
+  const VALID_KEYMAP_IDS = new Set([
+    "palette.open", "shortcuts.show", "tabs.new", "tabs.close", "tabs.next",
+    "tabs.prev", "tabs.goto1", "tabs.goto2", "tabs.goto3", "tabs.goto4",
+    "tabs.goto5", "tabs.goto6", "tabs.goto7", "tabs.goto8", "tabs.goto9",
+    "find.open", "zoom.in", "zoom.out", "beacon.send", "library.search",
+    "theater.start", "theater.next", "theater.prev", "theater.blackout",
+    "theater.ink", "theater.exit", "bedrock.open", "press.open", "forms.open",
+    "quill.batch", "quill.designer", "quill.autodetect", "quill.smartfill",
+    "quill.tour", "atelier.open", "hopper.open", "home.open", "home.continue",
+  ]);
+  const sampleRows = [
+    "panel:bedrock", "panel:press", "panel:forms", "panel:atelier",
+    "panel:hopper", "panel:theater", "theater:open", "home:open",
+    "home:continue", "library:search", "help:shortcuts", "panel:forms:batch",
+    "panel:forms:design", "panel:forms:detect", "panel:forms:smartfill",
+    "forms:tour",
+  ];
+  let allValid = true;
+  for (const row of sampleRows) {
+    const id = paletteKeymapId(row);
+    if (id !== null && !VALID_KEYMAP_IDS.has(id)) allValid = false;
+  }
+  expect(allValid, "keymap: every mapped target is a real keymap ActionId (no typos)");
 }
 
 // eslint-disable-next-line no-console

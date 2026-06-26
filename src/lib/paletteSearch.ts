@@ -438,3 +438,47 @@ export function recordFrecency(
   return keep;
 }
 
+// --- Shortcut chord hints (Lumen Slice 5) ----------------------------
+//
+// Raycast prints the bound keyboard shortcut on each palette row that
+// has one, so users learn the chord as they mouse. Slab already has a
+// full keymap (keymap.ts ActionId -> binding), but the palette never
+// surfaced it on rows. This pure table maps a palette ACTION id (e.g.
+// "panel:hopper", "home:open", "panel:forms:batch") to the keymap action
+// id whose binding it triggers — or null when the row has no global
+// chord. Kept dependency-free (returns a plain string) so the pure core
+// never imports the keymap store; the Svelte shell casts the result to
+// ActionId and calls prettyBindingFor().
+
+const PALETTE_KEYMAP_IDS: Record<string, string> = {
+  // Panel switches that have a dedicated global chord.
+  "panel:bedrock": "bedrock.open",
+  "panel:press": "press.open",
+  "panel:forms": "forms.open",
+  "panel:atelier": "atelier.open",
+  "panel:hopper": "hopper.open",
+  "panel:theater": "theater.start",
+  // Standalone palette commands.
+  "theater:open": "theater.start",
+  "home:open": "home.open",
+  "home:continue": "home.continue",
+  "library:search": "library.search",
+  "help:shortcuts": "shortcuts.show",
+  // Forms sub-tabs (Quill hub) — each its own chord.
+  "panel:forms:batch": "quill.batch",
+  "panel:forms:design": "quill.designer",
+  "panel:forms:detect": "quill.autodetect",
+  "panel:forms:smartfill": "quill.smartfill",
+  "forms:tour": "quill.tour",
+};
+
+/**
+ * The keymap action id whose global shortcut this palette row triggers,
+ * or null if the row has no bound chord. Pure lookup — the caller resolves
+ * the id to a printable chord via the keymap store.
+ */
+export function paletteKeymapId(paletteActionId: string): string | null {
+  if (!paletteActionId) return null;
+  return PALETTE_KEYMAP_IDS[paletteActionId] ?? null;
+}
+

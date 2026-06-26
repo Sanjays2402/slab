@@ -16,8 +16,10 @@
     splitHighlight,
     classifyPaletteNav,
     nextPaletteIndex,
+    paletteKeymapId,
     type PaletteRange,
   } from "$lib/paletteSearch";
+  import { prettyBindingFor, keymapView, type ActionId } from "$lib/keymap";
   import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
@@ -766,6 +768,20 @@
     return splitHighlight(a.title, titleRangeCache.get(a.id) ?? []);
   }
 
+  // Lumen Slice 5: the bound keyboard chord for a row (Raycast-style hint
+  // that teaches the shortcut while you mouse). Resolves the palette
+  // action id -> keymap action id -> pretty chord for the active
+  // platform. `keymapTick` re-reads when the keymap store changes so a
+  // rebind reflects live. Empty string when the row has no global chord.
+  let keymapTick = $state(0);
+  const unsubKeymap = keymapView.subscribe(() => keymapTick++);
+  function rowChord(a: Action): string {
+    void keymapTick; // establish reactive dependency
+    const kid = paletteKeymapId(a.id);
+    if (!kid) return "";
+    return prettyBindingFor(kid as ActionId);
+  }
+
   // Group preserving filtered order. When query is empty AND there are MRU
   // entries, the first N items get pulled into a synthetic "Recently used"
   // group so the user sees their muscle-memory commands first.
@@ -849,6 +865,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     unsubPlugins();
+    unsubKeymap();
   });
 </script>
 
@@ -875,6 +892,7 @@
           <div class="palette-group-label">{group}</div>
           {#each items as a (a.id)}
             {@const idx = filtered.indexOf(a)}
+            {@const chord = rowChord(a)}
             <button
               class="palette-item"
               class:active={idx === selected}
@@ -889,6 +907,7 @@
                 <span class="palette-title">{#each titleSegments(a) as seg}{#if seg.hit}<mark class="palette-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
                 {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
               </span>
+              {#if chord}<span class="palette-chord" aria-label={`Shortcut ${chord}`}>{chord}</span>{/if}
               {#if idx === selected}<span class="palette-enter">↵</span>{/if}
             </button>
           {/each}
@@ -1042,6 +1061,25 @@
   .palette-enter {
     font-size: 12px;
     color: var(--accent);
+  }
+  /* Lumen Slice 5: bound-shortcut hint on the right of a row. Monospace
+     key-cap styling matching the footer kbd vocabulary; muted by default,
+     brightening on the active row so it reads without shouting. */
+  .palette-chord {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .palette-item.active .palette-chord {
+    color: var(--text-2);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
   }
   .palette-footer {
     display: flex;
