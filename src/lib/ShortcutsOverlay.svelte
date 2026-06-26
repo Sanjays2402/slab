@@ -6,6 +6,8 @@
     countShortcutRows,
     filterShortcutGroups,
     flattenShortcutRows,
+    conflictingActionIds,
+    detectShortcutConflicts,
     type ShortcutInfoSpec,
     type ShortcutRow,
     type FilteredShortcutRow,
@@ -106,6 +108,13 @@
   let shownRows = $derived(countShortcutRows(groups));
   let isFiltering = $derived(query.trim().length > 0);
 
+  // Lexicon Slice 4: conflict detection. Computed over the FULL keymap
+  // (baseGroups, not the filtered view) so the count is honest even while
+  // a filter is active. `conflictIds` flags each colliding row inline;
+  // `conflicts` drives a header warning banner the user can act on.
+  let conflictIds = $derived(conflictingActionIds(baseGroups));
+  let conflicts = $derived(detectShortcutConflicts(baseGroups));
+
   // Lexicon Slice 3: keyboard navigation. The grouped model flattens to
   // a single index space (`flat`) so arrows walk across section
   // boundaries as one list. Arrow/Home/End/PageUp/PageDown are resolved
@@ -205,6 +214,15 @@
         <button class="clear" onclick={() => (query = "")} title="Clear filter (Esc)">clear</button>
       {/if}
     </div>
+    {#if conflicts.length > 0}
+      <div class="conflict-banner" role="status">
+        <span class="conflict-dot" aria-hidden="true"></span>
+        <span>
+          {conflicts.length === 1 ? "1 shortcut conflict" : `${conflicts.length} shortcut conflicts`}
+          — two actions share a key. Rebind one in Settings → Keyboard shortcuts.
+        </span>
+      </div>
+    {/if}
     <div class="grid">
       {#if groups.length === 0}
         <div class="empty">
@@ -238,6 +256,7 @@
                       {row.label}
                     {/if}
                     {#if row.isOverride}<span class="custom" title="Rebound from default">custom</span>{/if}
+                    {#if row.actionId && conflictIds.has(row.actionId)}<span class="conflict" title="Another action shares this key">conflict</span>{/if}
                   </span>
                 </li>
               {/each}
@@ -447,6 +466,33 @@
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     border-radius: 3px;
     padding: 1px 4px;
+  }
+  .conflict {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #ffb648;
+    background: color-mix(in srgb, #ffb648 16%, transparent);
+    border: 1px solid color-mix(in srgb, #ffb648 36%, transparent);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+  .conflict-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    font-size: 11px;
+    color: var(--text-2);
+    background: color-mix(in srgb, #ffb648 10%, var(--bg));
+    border-bottom: 1px solid color-mix(in srgb, #ffb648 28%, var(--border));
+  }
+  .conflict-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ffb648;
+    flex-shrink: 0;
   }
   kbd {
     display: inline-block;

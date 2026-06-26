@@ -315,3 +315,113 @@ export function flattenShortcutRows<R extends ShortcutRow>(
   }
   return out;
 }
+
+// --- Conflict detection (Lexicon Slice 4) ----------------------------
+//
+// Two actions bound to the SAME chord is a real, shipping bug — e.g.
+// `library.search` and `forms.open` both default to Mod+Shift+F, so the
+// second handler can shadow the first. A pro cheat sheet (VSCode,
+// Raycast) flags these so the user knows WHY a key "doesn't work" and
+// can rebind one. We compute conflicts over the live bindable rows by
+// canonicalizing each binding (case-insensitive, modifier-order-
+// independent) and grouping action ids that collide.
+//
+// Only keymap-bindable rows participate — the static info hints
+// (Esc, scroll keys) are intentionally non-unique panel-local chords and
+// would produce noise. Empty/blank bindings are ignored.
+
+/** A set of 2+ actions that share one chord. */
+export interface ShortcutConflict {
+  /** Canonical chord they collide on (e.g. "mod+shift+f"). */
+  canonical: string;
+  /** Action ids sharing the chord, in first-seen order. */
+  actionIds: string[];
+}
+
+/**
+ * Canonicalize a binding string so "Mod+Shift+F", "shift+mod+f", and
+ * "MOD+SHIFT+F" all compare equal: lowercase, split on "+", sort the
+ * modifier tokens, keep the final key last. Tolerates the literal "+"
+ * key ("Mod++") and a bare key. Blank -> "".
+ */
+export function canonicalizeBinding(binding: string): string {
+  const s = (binding ?? "").trim().toLowerCase();
+  if (!s) return "";
+  // Split into [...modifiers, key], preserving a trailing literal "+".
+  let tokens: string[];
+  if (s.endsWith("++")) {
+    tokens = s.slice(0, -2).split("+");
+    tokens.push("+");
+  } else if (s === "+") {
+    tokens = ["+"];
+  } else {
+    tokens = s.split("+");
+  }
+  tokens = tokens.map((t) => t.trim()).filter((t) => t.length > 0);
+  if (tokens.length === 0) return "";
+  const key = tokens[tokens.length - 1];
+  const mods = tokens.slice(0, -1);
+  // Normalize modifier aliases so option==alt, control==ctrl, command==mod.
+  const normMod = (m: string): string => {
+    switch (m) {
+      case "option":
+      case "opt":
+        return "alt";
+      case "control":
+        return "ctrl";
+      case "command":
+      case "cmd":
+      case "meta":
+        return "mod";
+      default:
+        return m;
+    }
+  };
+  const sortedMods = [...new Set(mods.map(normMod))].sort();
+  return [...sortedMods, key].join("+");
+}
+
+/**
+ * Find every chord shared by 2+ bindable actions across the grouped
+ * model. Returns one entry per colliding chord (with the action ids),
+ * ordered by first appearance. Static info rows and blank bindings are
+ * ignored. Pure; null/garbage groups -> [].
+ */
+export function detectShortcutConflicts(groups: ShortcutGroup[]): ShortcutConflict[] {
+  if (!Array.isArray(groups)) return [];
+  const byChord = new Map<string, string[]>();
+  const order: string[] = [];
+  for (const g of groups) {
+    if (!g || !Array.isArray(g.rows)) continue;
+    for (const r of g.rows) {
+      if (!r || !r.actionId) continue; // info rows excluded
+      const canonical = canonicalizeBinding(r.binding);
+      if (!canonical) continue;
+      let ids = byChord.get(canonical);
+      if (!ids) {
+        ids = [];
+        byChord.set(canonical, ids);
+        order.push(canonical);
+      }
+      if (!ids.includes(r.actionId)) ids.push(r.actionId);
+    }
+  }
+  const out: ShortcutConflict[] = [];
+  for (const canonical of order) {
+    const actionIds = byChord.get(canonical)!;
+    if (actionIds.length >= 2) out.push({ canonical, actionIds });
+  }
+  return out;
+}
+
+/**
+ * Build a fast lookup: action id -> true when that action is part of a
+ * conflict. The overlay uses this to flag each colliding row inline.
+ */
+export function conflictingActionIds(groups: ShortcutGroup[]): Set<string> {
+  const out = new Set<string>();
+  for (const c of detectShortcutConflicts(groups)) {
+    for (const id of c.actionIds) out.add(id);
+  }
+  return out;
+}

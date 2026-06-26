@@ -12,6 +12,9 @@ import {
   countShortcutRows,
   filterShortcutGroups,
   flattenShortcutRows,
+  canonicalizeBinding,
+  detectShortcutConflicts,
+  conflictingActionIds,
   SHORTCUT_GROUP_ORDER,
   type ShortcutActionLike,
   type ShortcutInfoSpec,
@@ -331,6 +334,125 @@ const act = (
     { title: "Good", rows: buildShortcutGroups([act("a.a", "Global", "X")])[0].rows },
   ]);
   expect(mixed.length === 1 && mixed[0].groupTitle === "Good", "flatten: garbage group skipped");
+}
+
+// --- canonicalizeBinding --------------------------------------------
+{
+  expect(
+    canonicalizeBinding("Mod+Shift+F") === canonicalizeBinding("shift+mod+f"),
+    "canonical: modifier order does not matter",
+  );
+  expect(
+    canonicalizeBinding("MOD+K") === canonicalizeBinding("mod+k"),
+    "canonical: case-insensitive",
+  );
+  expect(canonicalizeBinding("Mod+Shift+F") === "mod+shift+f", "canonical: sorted mods + key");
+  expect(canonicalizeBinding("Mod++") === "mod++", "canonical: literal + key tolerated");
+  expect(canonicalizeBinding("+") === "+", "canonical: bare + key");
+  expect(canonicalizeBinding("Escape") === "escape", "canonical: bare key");
+  expect(canonicalizeBinding("") === "", "canonical: blank -> empty");
+  expect(canonicalizeBinding("  ") === "", "canonical: whitespace -> empty");
+  // Modifier aliases normalize.
+  expect(
+    canonicalizeBinding("Cmd+K") === canonicalizeBinding("Mod+K"),
+    "canonical: Cmd == Mod",
+  );
+  expect(
+    canonicalizeBinding("Option+A") === canonicalizeBinding("Alt+A"),
+    "canonical: Option == Alt",
+  );
+  // Duplicate modifiers collapse.
+  expect(canonicalizeBinding("Mod+Mod+K") === "mod+k", "canonical: duplicate mods collapse");
+}
+
+// --- detectShortcutConflicts: the real Mod+Shift+F collision ---------
+{
+  // This mirrors the shipping keymap: library.search and forms.open
+  // both default to Mod+Shift+F.
+  const groups = buildShortcutGroups([
+    act("library.search", "Library", "Mod+Shift+F"),
+    act("forms.open", "Forms", "Mod+Shift+F"),
+    act("palette.open", "Global", "Mod+K"),
+  ]);
+  const conflicts = detectShortcutConflicts(groups);
+  expect(conflicts.length === 1, "conflict: one colliding chord found");
+  expect(conflicts[0].canonical === "mod+shift+f", "conflict: canonical chord reported");
+  expect(
+    conflicts[0].actionIds.length === 2 &&
+      conflicts[0].actionIds.includes("library.search") &&
+      conflicts[0].actionIds.includes("forms.open"),
+    "conflict: both colliding action ids listed",
+  );
+}
+
+// --- detectShortcutConflicts: order-independent collision -----------
+{
+  const groups = buildShortcutGroups([
+    act("a.x", "Global", "Mod+Shift+P"),
+    act("b.y", "Tabs", "Shift+Mod+P"), // same chord, different spelling
+  ]);
+  const conflicts = detectShortcutConflicts(groups);
+  expect(conflicts.length === 1, "conflict: order-independent chords still collide");
+  expect(conflicts[0].actionIds.length === 2, "conflict: both ids captured");
+}
+
+// --- detectShortcutConflicts: no false positives --------------------
+{
+  const groups = buildShortcutGroups(
+    [
+      act("a.x", "Global", "Mod+K"),
+      act("b.y", "Tabs", "Mod+T"),
+      act("c.z", "Reading", "Mod+F"),
+    ],
+    // Info rows share no-mod single keys (B, W) but must NOT be flagged.
+    [
+      { group: "Theater", label: "Blackout", keys: ["B"] },
+      { group: "Theater", label: "Whiteboard", keys: ["W"] },
+    ],
+  );
+  expect(detectShortcutConflicts(groups).length === 0, "conflict: distinct chords -> no conflict");
+  // Same action id appearing once per chord is not a self-conflict.
+  const single = buildShortcutGroups([act("solo.id", "Global", "Mod+J")]);
+  expect(detectShortcutConflicts(single).length === 0, "conflict: a lone binding is not a conflict");
+}
+
+// --- detectShortcutConflicts: info rows excluded --------------------
+{
+  // A bindable action AND an info hint on the same literal chord must
+  // NOT conflict (info rows are panel-local and excluded).
+  const groups = buildShortcutGroups(
+    [act("bedrock.open", "Archive", "Mod+Shift+B")],
+    [{ group: "Discovery", label: "Bates", keys: ["Mod", "Shift", "B"] }],
+  );
+  expect(
+    detectShortcutConflicts(groups).length === 0,
+    "conflict: info row never collides with a bindable action",
+  );
+}
+
+// --- conflictingActionIds -------------------------------------------
+{
+  const groups = buildShortcutGroups([
+    act("library.search", "Library", "Mod+Shift+F"),
+    act("forms.open", "Forms", "Mod+Shift+F"),
+    act("palette.open", "Global", "Mod+K"),
+  ]);
+  const ids = conflictingActionIds(groups);
+  expect(ids.has("library.search") && ids.has("forms.open"), "conflictIds: both colliders present");
+  expect(!ids.has("palette.open"), "conflictIds: non-colliding action absent");
+  expect(conflictingActionIds(buildShortcutGroups([])).size === 0, "conflictIds: empty -> empty set");
+}
+
+// --- detectShortcutConflicts: defensive ------------------------------
+{
+  // @ts-expect-error null tolerance
+  expect(detectShortcutConflicts(null).length === 0, "conflict: null groups -> empty");
+  // Blank bindings ignored (never collide on "").
+  const blanks = buildShortcutGroups([
+    { id: "a", label: "A", group: "Global", binding: "" },
+    { id: "b", label: "B", group: "Global", binding: "" },
+  ]);
+  expect(detectShortcutConflicts(blanks).length === 0, "conflict: blank bindings ignored");
 }
 
 // eslint-disable-next-line no-console
