@@ -19,6 +19,9 @@ import {
   summarizeSelection,
   describeImpact,
   describeBeaconView,
+  classifyBeaconTableKey,
+  nextBeaconCursor,
+  clampBeaconCursor,
   BEACON_SORT_FIELDS,
   type BeaconPdfLike,
   type BeaconSort,
@@ -401,6 +404,60 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
       "10 of 10 PDFs matching m",
     "view: shown clamps to total, negative selection floored away",
   );
+}
+
+// --- classifyBeaconTableKey ------------------------------------------
+{
+  // Navigation keys defer to the palette classifier.
+  const down = classifyBeaconTableKey({ key: "ArrowDown" });
+  expect(down?.kind === "move" && down.intent === "next", "key: ArrowDown -> move next");
+  const up = classifyBeaconTableKey({ key: "ArrowUp" });
+  expect(up?.kind === "move" && up.intent === "prev", "key: ArrowUp -> move prev");
+  const home = classifyBeaconTableKey({ key: "Home" });
+  expect(home?.kind === "move" && home.intent === "first", "key: Home -> move first");
+  const pgdn = classifyBeaconTableKey({ key: "PageDown" });
+  expect(pgdn?.kind === "move" && pgdn.intent === "page-down", "key: PageDown -> move page-down");
+  // Action keys.
+  expect(classifyBeaconTableKey({ key: " " })?.kind === "toggle", "key: Space -> toggle");
+  expect(classifyBeaconTableKey({ key: "Spacebar" })?.kind === "toggle", "key: legacy Spacebar -> toggle");
+  expect(classifyBeaconTableKey({ key: "Enter" })?.kind === "forget", "key: Enter -> forget");
+  expect(classifyBeaconTableKey({ key: "a" })?.kind === "select-all", "key: a -> select-all");
+  expect(classifyBeaconTableKey({ key: "A" })?.kind === "select-all", "key: A -> select-all");
+  expect(classifyBeaconTableKey({ key: "Escape" })?.kind === "clear", "key: Escape -> clear");
+  // Non-table keys fall through.
+  expect(classifyBeaconTableKey({ key: "x" }) === null, "key: plain letter -> null (falls to search)");
+  // Modifiers disqualify so app/OS chords keep priority.
+  expect(classifyBeaconTableKey({ key: "a", metaKey: true }) === null, "key: Cmd+a -> null");
+  expect(classifyBeaconTableKey({ key: "ArrowDown", ctrlKey: true }) === null, "key: Ctrl+Down -> null");
+  expect(classifyBeaconTableKey({ key: "Enter", altKey: true }) === null, "key: Alt+Enter -> null");
+  // @ts-expect-error null tolerance
+  expect(classifyBeaconTableKey(null) === null, "key: null event -> null");
+}
+
+// --- nextBeaconCursor (adapter over palette nav) ---------------------
+{
+  // Wrapping arrows.
+  expect(nextBeaconCursor("next", 4, 5) === 0, "cursor: next wraps past the end to 0");
+  expect(nextBeaconCursor("prev", 0, 5) === 4, "cursor: prev wraps before the start to last");
+  expect(nextBeaconCursor("next", 1, 5) === 2, "cursor: next steps forward");
+  // Home/End.
+  expect(nextBeaconCursor("first", 3, 5) === 0, "cursor: first -> 0");
+  expect(nextBeaconCursor("last", 1, 5) === 4, "cursor: last -> last index");
+  // Paging clamps (no wrap).
+  expect(nextBeaconCursor("page-down", 0, 5) === 4, "cursor: page-down clamps to last");
+  expect(nextBeaconCursor("page-up", 4, 5) === 0, "cursor: page-up clamps to 0");
+  // Empty list.
+  expect(nextBeaconCursor("next", 0, 0) === 0, "cursor: empty list -> 0");
+}
+
+// --- clampBeaconCursor -----------------------------------------------
+{
+  expect(clampBeaconCursor(40, 10) === 9, "clamp: out-of-range cursor snaps to last");
+  expect(clampBeaconCursor(3, 10) === 3, "clamp: in-range cursor preserved");
+  expect(clampBeaconCursor(5, 0) === 0, "clamp: empty list -> 0");
+  expect(clampBeaconCursor(-2, 10) === 0, "clamp: negative cursor floored to 0");
+  expect(clampBeaconCursor(NaN, 10) === 0, "clamp: NaN cursor -> 0");
+  expect(clampBeaconCursor(2.9, 10) === 2, "clamp: fractional cursor floored");
 }
 
 // eslint-disable-next-line no-console

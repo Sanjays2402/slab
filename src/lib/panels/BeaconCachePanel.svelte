@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, summarizeSelection, describeImpact, describeBeaconView, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
@@ -121,6 +121,83 @@
 
   function toggleModelFacet(model: string) {
     modelFacet = modelFacet === model ? null : model;
+  }
+
+  /** Slice 5: keyboard cursor index into the visible (sorted) rows. */
+  let cursor = $state(0);
+  let rowEls = $state<Array<HTMLLIElement | null>>([]);
+  /** True once the list has keyboard focus (drives the cursor ring). */
+  let listFocused = $state(false);
+
+  // Keep the cursor in range as the filtered/sorted list grows or
+  // shrinks so it can never point past the end after a search/facet change.
+  $effect(() => {
+    void sortedPdfs.length;
+    cursor = clampBeaconCursor(cursor, sortedPdfs.length);
+  });
+
+  function scrollCursorIntoView() {
+    queueMicrotask(() => {
+      rowEls[cursor]?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  /** Slice 5: drive the table from the keyboard (arrows / Space / Enter).
+      Returns true when it consumed the event so the caller can skip the
+      panel-close path. Bails when focus is in the search box or on a
+      button/checkbox so typing and native control activation still work. */
+  function handleTableKey(e: KeyboardEvent): boolean {
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "SELECT") {
+      return false;
+    }
+    const action = classifyBeaconTableKey(e);
+    if (!action) return false;
+    const rows = sortedPdfs;
+    switch (action.kind) {
+      case "move": {
+        if (rows.length === 0) return false;
+        e.preventDefault();
+        listFocused = true;
+        cursor = nextBeaconCursor(action.intent, cursor, rows.length);
+        scrollCursorIntoView();
+        return true;
+      }
+      case "toggle": {
+        const row = rows[cursor];
+        if (!row) return false;
+        e.preventDefault();
+        listFocused = true;
+        toggleOne(row.pdf_hash);
+        return true;
+      }
+      case "forget": {
+        const row = rows[cursor];
+        if (!row || forgettingHash) return false;
+        e.preventDefault();
+        forgetOne(row);
+        return true;
+      }
+      case "select-all": {
+        if (rows.length === 0) return false;
+        e.preventDefault();
+        listFocused = true;
+        selectAllVisible();
+        return true;
+      }
+      case "clear": {
+        // Esc clears the selection if any (consuming the event so the
+        // panel stays open); with nothing selected it falls through.
+        if (selectedCount > 0) {
+          e.preventDefault();
+          clearSelection();
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
   }
 
   function showToast(msg: string) {
@@ -286,6 +363,9 @@
 
   function handleKey(e: KeyboardEvent) {
     if (!open) return;
+    // Slice 5: let the keyboard table claim arrows / Space / Enter / a /
+    // Esc-to-clear first. If it consumed the event, stop here.
+    if (handleTableKey(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
@@ -306,6 +386,12 @@
 
   $effect(() => {
     if (open) refresh();
+    else {
+      // Reset the keyboard cursor when the panel closes so a reopen
+      // starts at the top without a stale focus ring.
+      cursor = 0;
+      listFocused = false;
+    }
   });
 </script>
 
@@ -511,12 +597,17 @@
               <span class="bc-sep">·</span>
               <span class="bc-sel-count tabular">{selectedCount} selected</span>
             {/if}
+            <span class="bc-kbd-hint" aria-hidden="true">
+              <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Space</kbd> select · <kbd>↵</kbd> forget
+            </span>
           </div>
           <ul class="bc-pdf-list" role="list">
-            {#each sortedPdfs as p (p.pdf_hash)}
+            {#each sortedPdfs as p, i (p.pdf_hash)}
               <li
+                bind:this={rowEls[i]}
                 class="bc-row"
                 class:selected={selected.has(p.pdf_hash)}
+                class:cursor={listFocused && i === cursor}
                 role="listitem"
               >
                 <label class="bc-row-check">
@@ -975,6 +1066,24 @@
   .bc-link:hover { opacity: 1; }
   .bc-sep { opacity: 0.4; }
   .bc-sel-count { color: #79c0ff; }
+  .bc-kbd-hint {
+    margin-left: auto;
+    opacity: 0.4;
+    font-size: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+  .bc-kbd-hint kbd {
+    font-family: inherit;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, white 16%, transparent);
+    background: color-mix(in srgb, white 6%, transparent);
+    line-height: 1.4;
+  }
   .bc-pdf-list {
     list-style: none;
     margin: 0;
@@ -1002,6 +1111,10 @@
   .bc-row.selected {
     background: color-mix(in srgb, #79c0ff 12%, transparent);
     border-color: color-mix(in srgb, #79c0ff 30%, transparent);
+  }
+  .bc-row.cursor {
+    border-color: color-mix(in srgb, #79c0ff 70%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #79c0ff 55%, transparent);
   }
   .bc-row-check {
     display: flex;

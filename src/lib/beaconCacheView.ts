@@ -18,6 +18,11 @@
 // the command palette and the "?" cheat sheet.
 
 import { scorePaletteField, type PaletteRange } from "./paletteSearch";
+import {
+  classifyPaletteNav,
+  nextPaletteIndex,
+  type PaletteNavIntent,
+} from "./paletteSearch";
 
 /**
  * The fields the view-core reads off an indexed PDF row. Mirrors
@@ -385,4 +390,91 @@ export function describeBeaconView(state: BeaconViewState): string {
   }
   if (sel > 0) base += ` \u00b7 ${sel.toLocaleString()} selected`;
   return base;
+}
+
+// --- Slice 5: keyboard navigation + actions ----------------------------
+//
+// The inspector was mouse-only: you could search and sort, but reaching
+// a row, selecting it, or forgetting it all needed the pointer. This
+// adds Raycast-grade keyboard control to the table -- arrow to move a
+// cursor (wrapping, Home/End, PageUp/Down), Space to toggle selection,
+// Enter to forget the focused row, "a" to select-all-visible -- so the
+// whole flow (filter -> arrow -> Space -> Enter) is keyboard-driven.
+//
+// The arrow/Home/End/paging math REUSES the tested palette nav core
+// (classifyPaletteNav + nextPaletteIndex) rather than rolling a second
+// implementation, exactly as the "?" cheat-sheet overlay does. Only the
+// action keys (Space/Enter/a) are classified here.
+
+/** What a keypress over the table should do. */
+export type BeaconTableAction =
+  | { kind: "move"; intent: PaletteNavIntent }
+  | { kind: "toggle" }
+  | { kind: "forget" }
+  | { kind: "select-all" }
+  | { kind: "clear" }
+  | null;
+
+/** Minimal keyboard-event shape the table classifier reads. */
+export interface BeaconKeyEvent {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+}
+
+/**
+ * Classify a keypress over the indexed-PDF table into an action, or null
+ * if it isn't a table key (so typing in the search box falls through).
+ * Any modifier (Cmd/Ctrl/Alt) disqualifies the key so app/OS chords keep
+ * priority -- the table owns only bare presses. Navigation keys defer to
+ * the tested palette classifier so wrap/paging behaviour is identical.
+ */
+export function classifyBeaconTableKey(ev: BeaconKeyEvent): BeaconTableAction {
+  if (!ev) return null;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return null;
+
+  const nav = classifyPaletteNav({ key: ev.key });
+  if (nav) return { kind: "move", intent: nav };
+
+  switch (ev.key) {
+    case " ":
+    case "Spacebar": // legacy key name
+      return { kind: "toggle" };
+    case "Enter":
+      return { kind: "forget" };
+    case "a":
+    case "A":
+      return { kind: "select-all" };
+    case "Escape":
+      return { kind: "clear" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve the next cursor index for a move over `count` rows. Thin
+ * adapter over the tested `nextPaletteIndex` so the table and palette
+ * share one wrap/clamp/paging contract. Empty list -> 0.
+ */
+export function nextBeaconCursor(
+  intent: PaletteNavIntent,
+  current: number,
+  count: number,
+): number {
+  return nextPaletteIndex(intent, current, count);
+}
+
+/**
+ * Clamp a stored cursor index into a freshly-(re)filtered list. After a
+ * search/sort/facet change the row count shrinks or the order moves, so
+ * a cursor parked at index 40 must snap back into range. Returns 0 for
+ * an empty list, never a negative or out-of-bounds index.
+ */
+export function clampBeaconCursor(current: number, count: number): number {
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  if (!Number.isFinite(current) || current < 0) return 0;
+  const last = count - 1;
+  return Math.min(last, Math.floor(current));
 }
