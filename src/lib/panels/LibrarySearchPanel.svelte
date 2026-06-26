@@ -37,6 +37,14 @@
     type SearchHit,
   } from "$lib/library";
   import { basename } from "$lib/types";
+  import {
+    classifySearchResultKey,
+    flattenSearchHits,
+    flatSearchHitCount,
+    nextSearchCursor,
+    clampSearchCursor,
+    type SearchGroupLike,
+  } from "$lib/librarySearchView";
 
   let query = $state("");
   let hits = $state<SearchHit[]>([]);
@@ -205,6 +213,71 @@
     return Array.from(map.values());
   });
 
+  // ---- Slice 1 (Atlas III): keyboard navigation through results ----
+  // A flat cursor walks every hit across the grouped render. The arrow /
+  // Home/End / paging math reuses the tested palette nav core via
+  // librarySearchView so behaviour matches ⌘K and the beacon inspector.
+  /** Active cursor row in the flat hit space, -1 = none parked. */
+  let cursor = $state(-1);
+  /** Bound <button> refs for each flat hit, for scroll-into-view + focus. */
+  let hitEls = $state<(HTMLButtonElement | null)[]>([]);
+  /** Every hit flattened into one cursor index space, in render order. */
+  const flatHits = $derived(flattenSearchHits(groups as SearchGroupLike<SearchHit>[]));
+  const flatCount = $derived(flatSearchHitCount(groups as SearchGroupLike<SearchHit>[]));
+
+  /** The flat index of the first hit in a given group (for cursor-ring math). */
+  function groupFlatStart(groupIndex: number): number {
+    let n = 0;
+    for (let i = 0; i < groupIndex; i++) n += groups[i].hits.length;
+    return n;
+  }
+
+  // Re-clamp the cursor whenever the result set changes (new search,
+  // scope switch). A parked cursor past the new end snaps back into range;
+  // an empty list parks it at -1 (no ring) rather than 0.
+  $effect(() => {
+    void flatCount;
+    if (flatCount === 0) {
+      cursor = -1;
+    } else if (cursor >= flatCount) {
+      cursor = clampSearchCursor(cursor, flatCount);
+    }
+  });
+
+  function moveCursor(intent: Parameters<typeof nextSearchCursor>[0]): void {
+    if (flatCount === 0) return;
+    const start = cursor < 0 ? 0 : cursor;
+    cursor = intent === "first" || intent === "last" || cursor >= 0
+      ? nextSearchCursor(intent, start, flatCount)
+      : start; // first arrow press lands on row 0 without skipping it
+    const el = hitEls[cursor];
+    el?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Window-level keydown: drive the results cursor when the list has hits. */
+  function onResultsKey(e: KeyboardEvent): void {
+    // Only when there are results to walk; let the input own typing.
+    if (flatCount === 0) return;
+    const action = classifySearchResultKey(e);
+    if (!action) return;
+    if (action.kind === "move") {
+      e.preventDefault();
+      moveCursor(action.intent);
+    } else if (action.kind === "open") {
+      if (cursor >= 0 && cursor < flatHits.length) {
+        e.preventDefault();
+        openHit(flatHits[cursor].hit);
+      }
+    } else if (action.kind === "clear") {
+      // Esc clears the cursor first; a second Esc (handled by onKey on the
+      // input) clears the query. Only act if a cursor is parked.
+      if (cursor >= 0) {
+        e.preventDefault();
+        cursor = -1;
+      }
+    }
+  }
+
   onMount(() => {
     inputEl?.focus();
     void refreshRecents();
@@ -264,6 +337,8 @@
     };
   });
 </script>
+
+<svelte:window on:keydown={onResultsKey} />
 
 <section class="search-panel">
   <header class="search-header">
@@ -424,7 +499,7 @@
         </p>
       </div>
     {:else}
-      {#each groups as g (g.docId)}
+      {#each groups as g, gi (g.docId)}
         <article class="group">
           <header class="group-header">
             <h3 class="doc-title">{g.title}</h3>
@@ -435,11 +510,19 @@
           </header>
           <ul class="hit-list">
             {#each g.hits as h, i (`${h.docId}-${h.pageIndex}-${i}`)}
+              {@const flat = groupFlatStart(gi) + i}
               <li class="hit">
                 <button
+                  bind:this={hitEls[flat]}
                   type="button"
                   class="hit-btn"
-                  onclick={() => openHit(h)}
+                  class:cursor={flat === cursor}
+                  aria-current={flat === cursor ? "true" : undefined}
+                  onclick={() => {
+                    cursor = flat;
+                    openHit(h);
+                  }}
+                  onmouseenter={() => (cursor = flat)}
                   title="Open at page {h.pageIndex + 1}"
                 >
                   <span class="page-badge">p. {h.pageIndex + 1}</span>
@@ -715,6 +798,14 @@
   .hit-btn:hover {
     background: var(--bg-hover, rgba(74, 114, 255, 0.06));
     border-color: var(--accent, #4a72ff);
+  }
+  /* Slice 1: keyboard cursor ring — the focused result row as the arrow
+     keys walk the flattened hit list. Mirrors the palette/beacon accent
+     ring so the affordance is consistent across surfaces. */
+  .hit-btn.cursor {
+    background: var(--bg-hover, rgba(74, 114, 255, 0.08));
+    border-color: var(--accent, #4a72ff);
+    box-shadow: 0 0 0 2px var(--accent-fade, rgba(74, 114, 255, 0.2));
   }
 
   .page-badge {
