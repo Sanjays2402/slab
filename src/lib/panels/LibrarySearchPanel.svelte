@@ -45,6 +45,7 @@
     clampSearchCursor,
     interpretSearchQuery,
     describeQueryInterpretation,
+    refineSearchHits,
     type SearchGroupLike,
   } from "$lib/librarySearchView";
 
@@ -104,6 +105,9 @@
       if (trimmed !== query.trim()) return;
       hits = res;
       lastQuery = trimmed;
+      // A fresh result set starts unrefined — a stale refine from the
+      // previous query would silently hide rows of the new one.
+      refine = "";
       // The backend writes to library_search_log inside `search()`; refresh
       // the chip strip so the just-run query bubbles to the head (or its
       // dedup-window update bumps an existing chip's resultCount).
@@ -197,9 +201,16 @@
     title: string;
     hits: SearchHit[];
   }
+  // ---- Slice 3 (Atlas III): in-results refine ----
+  // Narrow the already-returned hits client-side, instantly, without a
+  // round-trip to the FTS index — so a broad query's wall of results can
+  // be cut down without losing your scroll position or re-ranking.
+  let refine = $state("");
+  let refineEl = $state<HTMLInputElement | null>(null);
+  const refinedHits = $derived(refineSearchHits(hits, refine));
   const groups: DocGroup[] = $derived.by(() => {
     const map = new Map<number, DocGroup>();
-    for (const h of hits) {
+    for (const h of refinedHits) {
       let g = map.get(h.docId);
       if (!g) {
         g = {
@@ -280,23 +291,49 @@
     el?.scrollIntoView({ block: "nearest" });
   }
 
+  /** Which text input (if any) currently owns the keypress. */
+  function keyTarget(e: KeyboardEvent): "search" | "refine" | null {
+    const t = e.target as HTMLElement | null;
+    if (t === inputEl) return "search";
+    if (t === refineEl) return "refine";
+    return null;
+  }
+
   /** Window-level keydown: drive the results cursor when the list has hits. */
   function onResultsKey(e: KeyboardEvent): void {
-    // Only when there are results to walk; let the input own typing.
+    // Only when there are results to walk; let the inputs own typing.
     if (flatCount === 0) return;
     const action = classifySearchResultKey(e);
     if (!action) return;
+    const where = keyTarget(e);
     if (action.kind === "move") {
+      // Up/Down drive the cursor from anywhere (incl. the search / refine
+      // boxes, Raycast-style). Inside a text box, leave Home/End/PageUp/
+      // Down to their normal caret meaning; on a focused row, all nav
+      // keys work.
+      if (where && action.intent !== "next" && action.intent !== "prev") return;
       e.preventDefault();
       moveCursor(action.intent);
     } else if (action.kind === "open") {
+      // Enter in the search box belongs to runSearch; elsewhere it opens
+      // the focused hit.
+      if (where === "search") return;
       if (cursor >= 0 && cursor < flatHits.length) {
         e.preventDefault();
         openHit(flatHits[cursor].hit);
       }
     } else if (action.kind === "clear") {
-      // Esc clears the cursor first; a second Esc (handled by onKey on the
-      // input) clears the query. Only act if a cursor is parked.
+      // Escape ownership: the search box clears the query (its own
+      // handler), the refine box clears the refine, otherwise a parked
+      // cursor clears itself.
+      if (where === "search") return;
+      if (where === "refine") {
+        if (refine) {
+          e.preventDefault();
+          refine = "";
+        }
+        return;
+      }
       if (cursor >= 0) {
         e.preventDefault();
         cursor = -1;
@@ -552,6 +589,43 @@
         </p>
       </div>
     {:else}
+      <div class="refine-bar">
+        <span class="refine-icon" aria-hidden="true">⌕</span>
+        <input
+          bind:this={refineEl}
+          bind:value={refine}
+          class="refine-input"
+          type="text"
+          placeholder="Refine these results…"
+          aria-label="Refine results"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        {#if refine}
+          <button
+            type="button"
+            class="refine-clear"
+            aria-label="Clear refine"
+            onclick={() => {
+              refine = "";
+              refineEl?.focus();
+            }}>×</button
+          >
+        {/if}
+      </div>
+      {#if groups.length === 0}
+        <div class="state empty refine-empty">
+          <h2>No results match "{refine}"</h2>
+          <p>
+            {hits.length.toLocaleString()} match{hits.length === 1 ? "" : "es"} for
+            <strong>"{lastQuery}"</strong>, but none also contain
+            <strong>"{refine}"</strong>. Clear the refine to see them all.
+          </p>
+          <button type="button" class="refine-reset" onclick={() => (refine = "")}
+            >Clear refine</button
+          >
+        </div>
+      {/if}
       {#each groups as g, gi (g.docId)}
         <article class="group">
           <header class="group-header">
@@ -839,6 +913,77 @@
     flex: 1;
     overflow-y: auto;
     padding: 16px 32px 32px;
+  }
+
+  /* Slice 3: in-results refine bar — pinned at the top of the result
+     list, narrows the already-returned hits client-side with no
+     round-trip. Sticky so it stays reachable while scrolling a long
+     result set. */
+  .refine-bar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -16px -32px 16px;
+    padding: 10px 32px;
+    background: var(--bg-app, #fafafa);
+    border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+  }
+  .refine-icon {
+    font-size: 13px;
+    color: var(--fg-muted, #999);
+    pointer-events: none;
+  }
+  .refine-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 13px;
+    color: var(--fg, #111);
+    outline: none;
+    padding: 2px 0;
+  }
+  .refine-input::placeholder {
+    color: var(--fg-muted, #999);
+  }
+  .refine-clear {
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted, #888);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .refine-clear:hover {
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    color: var(--fg, #111);
+  }
+  .refine-empty {
+    margin: 24px auto;
+  }
+  .refine-reset {
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 14px;
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+    border-radius: 7px;
+    background: var(--bg-panel, #fff);
+    color: var(--fg, #111);
+    cursor: pointer;
+    transition: border-color 80ms, background 80ms;
+  }
+  .refine-reset:hover {
+    border-color: var(--accent, #4a72ff);
+    background: var(--bg-hover, rgba(74, 114, 255, 0.06));
   }
 
   /* Status footer pinned to the bottom of the panel — never scrolls with
@@ -1141,6 +1286,16 @@
     }
     .interp-chip {
       background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
+      color: var(--fg, #ddd);
+    }
+    .refine-bar {
+      background: var(--bg-app, #1a1a1a);
+    }
+    .refine-input {
+      color: var(--fg, #eee);
+    }
+    .refine-reset {
+      background: var(--bg-panel, #222);
       color: var(--fg, #ddd);
     }
   }

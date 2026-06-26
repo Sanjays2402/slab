@@ -21,6 +21,7 @@
 // and the Beacon cache inspector.
 
 import {
+  scorePaletteField,
   classifyPaletteNav,
   nextPaletteIndex,
   type PaletteNavIntent,
@@ -406,4 +407,57 @@ function joinList(parts: string[]): string {
   if (parts.length <= 1) return parts.join("");
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+// --- Slice 3: in-results refine filter -------------------------------
+//
+// A broad query ("contract") can return hundreds of hits across dozens
+// of docs. Re-running the FTS search with more words changes the ranking
+// and loses your place. Instead, this narrows the ALREADY-RETURNED hits
+// client-side, instantly, with no round-trip — type "termination" in the
+// refine box and only hits whose snippet, document title, or filename
+// contain that survive. Reuses the tested palette scorer so matching +
+// ranking feel identical to ⌘K and the other surfaces.
+
+/**
+ * Strip `<mark>`/`</mark>` (and any stray tags) out of a server snippet
+ * so the refine match runs against the human-readable text, not markup.
+ * Also decodes the handful of entities the snippet pipeline emits.
+ */
+export function stripSnippetMarks(snippet: string): string {
+  if (!snippet) return "";
+  return snippet
+    .replace(/<\/?mark>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+/**
+ * Narrow `hits` to those matching `refine`, preserving the input order
+ * (relevance is already baked into arrival order; refine only decides
+ * membership). A blank refine passes every hit through unchanged. A hit
+ * matches if `refine` scores against its snippet text, document title,
+ * OR basename — the same "any visible field" contract the palette uses.
+ * A null/garbage list -> [].
+ */
+export function refineSearchHits<T extends SearchHitLike>(
+  hits: readonly T[],
+  refine: string,
+): T[] {
+  if (!Array.isArray(hits)) return [];
+  const q = (refine ?? "").trim();
+  if (!q) return hits.slice();
+  return hits.filter((h) => {
+    if (!h) return false;
+    const snippet = stripSnippetMarks(h.snippet);
+    const title = h.title ?? "";
+    const name = searchBasename(h.path);
+    const best = Math.max(
+      scorePaletteField(q, snippet).score,
+      scorePaletteField(q, title).score,
+      scorePaletteField(q, name).score,
+    );
+    return best > 0;
+  });
 }

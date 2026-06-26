@@ -16,6 +16,8 @@ import {
   clampSearchCursor,
   interpretSearchQuery,
   describeQueryInterpretation,
+  stripSnippetMarks,
+  refineSearchHits,
   type SearchHitLike,
   type SearchGroupLike,
 } from "./librarySearchView";
@@ -297,6 +299,52 @@ const group = (
   // Oxford-style list join with 3 positives.
   const d5 = describeQueryInterpretation(interpretSearchQuery("alpha beta gamma"));
   expect(d5.includes(", and "), "describe: 3-item list uses ', and'");
+}
+
+// =====================================================================
+// Slice 3 — in-results refine
+// =====================================================================
+
+// --- stripSnippetMarks ---
+{
+  expect(stripSnippetMarks("a <mark>b</mark> c") === "a b c", "strip: removes mark tags");
+  expect(stripSnippetMarks("x &amp; y") === "x & y", "strip: decodes &amp;");
+  expect(stripSnippetMarks("a &lt;b&gt; c") === "a <b> c", "strip: decodes lt/gt");
+  expect(stripSnippetMarks("") === "", "strip: empty -> ''");
+  expect(stripSnippetMarks("plain text") === "plain text", "strip: passthrough");
+}
+
+// --- refineSearchHits ---
+{
+  const hits = [
+    hit({ docId: 1, title: "Lease Agreement", path: "/d/lease.pdf", snippet: "the <mark>termination</mark> clause" }),
+    hit({ docId: 2, title: "Invoice", path: "/d/invoice.pdf", snippet: "amount <mark>due</mark> on receipt" }),
+    hit({ docId: 3, title: "NDA", path: "/d/secret-nda.pdf", snippet: "<mark>confidential</mark> information" }),
+  ];
+  // Blank refine passes all through.
+  expect(refineSearchHits(hits, "").length === 3, "refine: blank passes all");
+  expect(refineSearchHits(hits, "   ").length === 3, "refine: whitespace passes all");
+  // Match on snippet text.
+  const r1 = refineSearchHits(hits, "termination");
+  expect(r1.length === 1 && r1[0].docId === 1, "refine: matches snippet text");
+  // Match on title.
+  const r2 = refineSearchHits(hits, "invoice");
+  expect(r2.length === 1 && r2[0].docId === 2, "refine: matches document title");
+  // Match on basename (not the folder).
+  const r3 = refineSearchHits(hits, "nda");
+  expect(r3.length === 1 && r3[0].docId === 3, "refine: matches basename");
+  // No match -> empty.
+  expect(refineSearchHits(hits, "zzzznotpresent").length === 0, "refine: no match -> []");
+  // Order preserved (membership only).
+  const r4 = refineSearchHits(hits, "e");
+  expect(
+    r4.length >= 2 && r4[0].docId <= r4[r4.length - 1].docId,
+    "refine: preserves input order",
+  );
+  // The `<mark>` markup itself is never matchable (stripped first).
+  expect(refineSearchHits(hits, "mark").length === 0, "refine: snippet markup not matchable");
+  // @ts-expect-error — garbage
+  expect(refineSearchHits(null, "x").length === 0, "refine: null list -> []");
 }
 
 // eslint-disable-next-line no-console
