@@ -1,13 +1,106 @@
 # Slab Cron State
 
-Last updated: 2026-06-26 03:35 PT by Cake (cron) — round-39 BATCH shipped (5 frontend/UX slices) PIVOTING off the 3-round palette streak (rounds 37-38) to the **"?" keyboard cheat-sheet overlay** ("Lexicon"). The ShortcutsOverlay was a ~120-row hand-maintained literal array that silently DRIFTED from the live keymap (rebinds invisible, new actions never appeared) and had no search, no keyboard nav, no conflict detection. Round 39 rebuilds it on a new tested pure core src/lib/shortcutsOverlay.ts (95 inline tests). Slice 1 live-keymap grouping (buildShortcutGroups drives bindable rows straight off keymapView; curated rank-then-alpha order can never drop a section; "custom" pill on rebound rows; reduces hand-maintained part to a few genuinely-unbindable info hints); slice 2 filter-as-you-type (filterShortcutGroups reuses the tested palette scorePaletteField so label highlight + matching is the SAME engine as Cmd+K; matches on label/keys/group-title; autofocus, Esc-clears-then-closes, shown/total count, empty state); slice 3 keyboard nav (flattenShortcutRows -> one index space; reuses classifyPaletteNav + nextPaletteIndex; accent focus ring + scroll-into-view); slice 4 conflict detection (canonicalizeBinding modifier-order-independent + alias-normalized; detectShortcutConflicts surfaces the REAL library.search/forms.open Mod+Shift+F collision; amber banner + per-row "conflict" pill); slice 5 copy-as-text (formatShortcutsText column-aligned export, filter-aware, clipboard + toast).
+Last updated: 2026-06-26 08:15 PT by Cake (cron) — round-40 BATCH shipped (5 frontend/UX slices) PIVOTING off the 3-round keyboard-UX streak (rounds 37-39: palette + cheat-sheet) to the **Beacon Cache Inspector** ("Atlas II") — the explicit roadmap item ("column sort by basename / model facet, sort-direction caret, empty-state copy"), a high-visibility inspector that had ZERO pure-core tests. The round-7 panel was a flat, unsearchable table with a fixed 3-button sort toggle, inert model tiles, and a one-line empty state. Round 40 takes it to Linear/Raycast grade on a new tested pure core src/lib/beaconCacheView.ts (112 inline tests). Slice 1 filter-as-you-type (searchIndexedPdfs reuses the tested palette scorePaletteField; highlighted basename + silent folder/model/hash match; "N of M" count, Esc-clears, no-match empty state); slice 2 multi-field column sort (cycleBeaconSort flip-vs-switch, beaconDefaultDir per-field default, sortIndexedPdfs name case-insensitive+numeric-aware with stable hash tie-break, up/down caret); slice 3 clickable model facet (filterByModel + reconcileModelFacet makes the mixed-model dead-weight bucket one click from inspection, ANDs with search, auto-clears stale facet on refresh); slice 4 impact-aware bulk bar + context footer (summarizeSelection real chunks/pages dropped, describeImpact, describeBeaconView narrates shown-vs-total + filters + selection like the palette footer); slice 5 keyboard nav (classifyBeaconTableKey reuses classifyPaletteNav+nextPaletteIndex; arrows/Home/End/PageUp-Down + Space-select + Enter-forget + a-select-all + Esc-clear; cursor ring + scroll-into-view + clampBeaconCursor; discoverable keycap hint). PRIOR (round 39): "?" cheat-sheet overlay ("Lexicon") on tested core shortcutsOverlay.ts (95 tests) — live-keymap grouping, filter, keyboard nav, conflict detection, copy-as-text.
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** — already bumped in package.json, src-tauri/Cargo.toml,
 src-tauri/tauri.conf.json, Cargo.lock.
 
-Latest commit: `36bfac2` — "feat(shortcuts): copy the cheat-sheet as aligned plain text".
+Latest commit: `1d527de` — "feat(beacon-cache): keyboard navigation through the indexed-PDF table".
+
+### What round-40 (2026-06-26 08:15 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override)
+PIVOTING off the 3-round keyboard-UX streak (rounds 37-39: Command
+Palette -> "?" cheat-sheet) to the **Beacon Cache Inspector**
+("Atlas II"). The inspector (round-7 "Atlas Beacon-Cache") was the
+explicit roadmap candidate ("Beacon cache inspector polish — column
+sort by basename / model facet, sort-direction caret, empty-state
+copy"), a high-visibility modal every Beacon user reaches, and a
+genuine weak point: a flat, UNSEARCHABLE table (a 10k-PDF index was a
+wall of rows), a fixed 3-button sort toggle (no name/model sort, no
+direction control), inert read-only model tiles (the "mixed-model"
+warning told you to forget a bucket but gave no way to SEE which PDFs
+were in it), a one-line empty state, and mouse-only interaction — with
+ZERO pure-core tests.
+
+New pure DOM-free module `src/lib/beaconCacheView.ts` (112 inline
+tests) backs all five capabilities — same pure-core/thin-shell
+discipline as paletteSearch.ts / shortcutsOverlay.ts / toastStack.ts.
+Reuses the tested palette core (scorePaletteField for search+highlight,
+classifyPaletteNav/nextPaletteIndex for keyboard nav) so there is NO
+second fuzzy/nav engine to drift.
+
+- Slice 1: filter-as-you-type search (2b255c5). searchIndexedPdfs
+  reuses the palette scorePaletteField so ranking + highlight behave
+  exactly like Cmd+K and the "?" sheet; a row matches on its basename
+  (live <mark> via splitHighlight), or silently on full path (folder),
+  embed model, or content hash; a basename hit outranks a same-tier
+  folder/model/hash hit. "N of M" count while filtering; Esc/Clear
+  resets; new no-match empty state. 27 tests.
+
+- Slice 2: multi-field column sort + caret (9ab4f0a). Replaced the
+  fixed Newest/Oldest/Chunks toggle with a column model (Name / Model /
+  Chunks / Pages / Indexed x asc/desc). cycleBeaconSort flips the active
+  column or switches at the field's natural default (beaconDefaultDir);
+  sortIndexedPdfs returns a new array (never mutates), name sorts
+  case-insensitive + numeric-aware (file2 < file10), stable
+  direction-independent pdf_hash tie-break; up/down caret. 23 tests.
+
+- Slice 3: clickable model facet (433b8a8). Turned inert model tiles
+  into a facet — click to filter to one embed_model (accent ring +
+  "Filtering" pill), click again to clear. The dead-weight bucket in a
+  mixed index is one click from inspection -> select-all -> forget.
+  filterByModel (exact match, null passthrough) + reconcileModelFacet
+  wired into refresh so a vanished-model facet auto-clears; ANDs with
+  search; filter-aware empty state + one Clear-filters reset. 13 tests.
+
+- Slice 4: impact-aware bulk bar + context footer (2a3b192).
+  summarizeSelection sums the real footprint (pdfs/chunks/pages) of the
+  selected hashes against the full list so the bar reads "drops 12
+  PDFs - 3,418 chunks - 240 pages" BEFORE the click; describeImpact
+  composes the pluralized + grouped line dropping zero fields;
+  describeBeaconView narrates the live view (shown-vs-total + facet/
+  query + selection) in a new footer, mirroring the palette footer.
+  20 tests.
+
+- Slice 5: keyboard navigation capstone (1d527de). classifyBeaconTableKey
+  reuses classifyPaletteNav+nextPaletteIndex (arrows wrap, Home/End,
+  PageUp/Down) plus Space-toggle, Enter-forget-focused, a-select-all,
+  Esc-clear-selection. Cursor ring + scrollIntoView; clampBeaconCursor
+  snaps a parked cursor back when the list shrinks; modifier chords +
+  focus in the search box/buttons fall through. Cursor resets on close;
+  muted keycap hint. Whole flow (filter -> arrow -> Space -> Enter) is
+  keyboard-driven. 29 tests.
+
+Gates result: tsx beaconCacheView.test.ts 112/112 pass (27+23+13+20+29),
+paletteSearch 253/253 / shortcutsOverlay 95/95 / toastStack 254/254 /
+hopper 1189/1189 ALL unchanged (the shared palette core I reuse is
+provably intact), pnpm check 0 errors / 104 warnings (rounds 32-39
+baseline preserved EXACTLY — zero new warnings from the new <input>/
+<mark>/button-tile/cursor-list), cargo fmt --all --check clean, ZERO
+Rust files changed so the round-32 lib baseline (clippy clean, 2620
+tests) carries forward unchanged (the full Tauri binary build is never
+run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 40):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work. Zero backend.
+- DELIBERATE PIVOT off the 3-round keyboard-UX streak (37-39, now
+  power-user-complete). The Beacon Cache Inspector was the obvious next
+  subsystem: explicit roadmap candidate, high-visibility modal, the LAST
+  major panel with zero pure-core tests + several real weak points.
+- Reuse over reinvention: imports the tested palette core (scorePalette
+  Field, classifyPaletteNav/nextPaletteIndex) — no second fuzzy/nav
+  engine. The 253-test palette suite is unchanged, proving reuse didn't
+  perturb the shared core.
+- Same pure-core/thin-shell split: every decision is a pure function in
+  beaconCacheView.ts unit-tested without a DOM; BeaconCachePanel.svelte
+  owns the imperative edges (Tauri calls, keydown, scroll, clipboard).
+- Held the 104-warning svelte-check baseline EXACTLY — the clickable
+  model-tile button + keyboard cursor list both passed a11y with no new
+  warning (window-level key handler, no static-element interaction).
 
 ### What round-39 (2026-06-26 03:35 PT) just shipped
 
@@ -1077,8 +1170,19 @@ demo value:
   document inspector with a visible filter chip).
 - histogram hover-tooltip on bar segments (per-segment count +
   label on hover/focus, keyboard-reachable).
-- Beacon cache inspector polish (column sort by basename / model
-  facet, sort-direction caret, empty-state copy).
+- ~~Beacon cache inspector polish (column sort by basename / model
+  facet, sort-direction caret, empty-state copy)~~ — DONE round 40
+  (2b255c5..1d527de): new tested pure core src/lib/beaconCacheView.ts
+  (112 tests) reusing the palette scorer/nav. Filter-as-you-type
+  (searchIndexedPdfs, highlighted basename + silent folder/model/hash);
+  multi-field sort with direction caret (cycleBeaconSort + sortIndexedPdfs,
+  name case-insensitive+numeric, stable tie-break); clickable model
+  facet (filterByModel + reconcileModelFacet, makes the mixed-model
+  dead-weight bucket inspectable); impact-aware bulk bar + context
+  footer (summarizeSelection/describeImpact/describeBeaconView);
+  keyboard nav (classifyBeaconTableKey, arrows/Space/Enter/a/Esc, cursor
+  ring + clampBeaconCursor). Column COLLAPSE / thumbnails still open if
+  wanted later.
 - doc-detail metadata editor read surface (inline-editable title /
   tags with optimistic save + rollback toast — now that toast actions
   + promise toasts exist, the rollback/undo affordance is trivial).
