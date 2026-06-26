@@ -24,8 +24,10 @@
     classifyPaletteGroupNav,
     groupStartIndices,
     nextGroupIndex,
+    recentReadingProgress,
     type PaletteRange,
     type PaletteFallback,
+    type RecentProgress,
   } from "$lib/paletteSearch";
   import { prettyBindingFor, keymapView, type ActionId } from "$lib/keymap";
   import { get } from "svelte/store";
@@ -58,6 +60,8 @@
     group: string;
     run: () => void;
     keywords?: string;
+    // Lumen II Slice 4: optional reading-progress chip for recent-file rows.
+    progress?: RecentProgress;
   };
 
   type Props = {
@@ -301,14 +305,17 @@
       }
     }
     for (const r of recents) {
+      // Lumen II Slice 4: surface per-document reading position as a chip.
+      const prog = recentReadingProgress(r);
       out.push({
         id: `recent:${r.path}`,
         title: r.name,
-        subtitle: `Open · ${formatRelTime(r.openedAt)}${r.pageCount ? ` · ${r.pageCount} pages` : ""}`,
+        subtitle: `Open · ${formatRelTime(r.openedAt)}${!prog.hasProgress && r.pageCount ? ` · ${r.pageCount} pages` : ""}`,
         icon: "▥",
         group: "Recent files",
         run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
         keywords: `${r.name} ${r.path} pdf recent`,
+        progress: prog.hasProgress ? prog : undefined,
       });
     }
     // Theme quick actions
@@ -1017,6 +1024,20 @@
                 <span class="palette-title">{#each titleSegments(a) as seg}{#if seg.hit}<mark class="palette-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
                 {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
               </span>
+              {#if a.progress}
+                <span
+                  class="palette-progress"
+                  class:finished={a.progress.finished}
+                  aria-label={a.progress.finished ? "Finished reading" : `Read ${a.progress.percent} percent, page ${a.progress.page} of ${a.progress.total}`}
+                >
+                  {#if !a.progress.finished}
+                    <span class="palette-progress-track">
+                      <span class="palette-progress-fill" style={`width:${a.progress.percent}%`}></span>
+                    </span>
+                  {/if}
+                  <span class="palette-progress-label">{a.progress.label}</span>
+                </span>
+              {/if}
               {#if chord}<span class="palette-chord" aria-label={`Shortcut ${chord}`}>{chord}</span>{/if}
               {#if idx === selected}<span class="palette-enter">↵</span>{/if}
             </button>
@@ -1199,6 +1220,42 @@
   .palette-enter {
     font-size: 12px;
     color: var(--accent);
+  }
+  /* Lumen II Slice 4: recent-file reading-progress chip. A thin accent
+     track + percent label so a recent PDF reads as "continue at p.12/80".
+     Finished docs drop the bar and show a muted "Finished" pill. */
+  .palette-progress {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .palette-progress-track {
+    width: 42px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-3);
+    overflow: hidden;
+  }
+  .palette-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    min-width: 2px;
+  }
+  .palette-progress-label {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+  .palette-progress.finished .palette-progress-label {
+    color: color-mix(in srgb, var(--accent) 70%, var(--text-3));
+    font-weight: 600;
+  }
+  .palette-item.active .palette-progress-label {
+    color: var(--text-2);
   }
   /* Lumen Slice 5: bound-shortcut hint on the right of a row. Monospace
      key-cap styling matching the footer kbd vocabulary; muted by default,

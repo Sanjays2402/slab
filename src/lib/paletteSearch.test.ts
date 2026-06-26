@@ -26,6 +26,7 @@ import {
   classifyPaletteGroupNav,
   groupStartIndices,
   nextGroupIndex,
+  recentReadingProgress,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -664,6 +665,80 @@ function pick(text: string, ranges: PaletteRange[]): string {
   );
   // A heads array missing the 0 anchor still works (0 always added).
   expect(nextGroupIndex([3, 5], 1, "group-prev", N) === 0, "groupnav: 0 head always present");
+}
+
+// --- Lumen II Slice 4: recent-file reading progress -----------------
+{
+  // Mid-document progress: page/total + percent.
+  const mid = recentReadingProgress({ lastPage: 12, totalPages: 80 });
+  expect(mid.hasProgress, "progress: mid-doc has progress");
+  expect(mid.page === 12 && mid.total === 80, "progress: page + total carried");
+  expect(mid.percent === 15, "progress: 12/80 -> 15%");
+  expect(Math.abs(mid.fraction - 0.15) < 1e-9, "progress: fraction 0.15");
+  expect(!mid.finished, "progress: mid-doc not finished");
+  expect(mid.label === "p.12/80 · 15%", "progress: mid-doc chip label");
+
+  // Finished (last page reached) reads as "Finished", not "100%".
+  const done = recentReadingProgress({ lastPage: 80, totalPages: 80 });
+  expect(done.finished, "progress: last page -> finished");
+  expect(done.label === "Finished", "progress: finished chip label");
+  expect(done.percent === 100, "progress: finished still reports 100 percent");
+
+  // lastPage past the end is clamped to total (and counts as finished).
+  const over = recentReadingProgress({ lastPage: 200, totalPages: 80 });
+  expect(over.page === 80, "progress: over-end lastPage clamped to total");
+  expect(over.finished, "progress: clamped-to-end is finished");
+
+  // pageCount is a fallback total when totalPages is absent.
+  const viaCount = recentReadingProgress({ lastPage: 5, pageCount: 10 });
+  expect(viaCount.hasProgress && viaCount.total === 10, "progress: pageCount used as total fallback");
+  expect(viaCount.percent === 50, "progress: 5/10 via pageCount -> 50%");
+
+  // totalPages takes precedence over pageCount when both present.
+  const both = recentReadingProgress({ lastPage: 3, totalPages: 6, pageCount: 99 });
+  expect(both.total === 6, "progress: totalPages wins over pageCount");
+
+  // Page 1 of N is real progress (not nothing).
+  const start = recentReadingProgress({ lastPage: 1, totalPages: 50 });
+  expect(start.hasProgress && start.page === 1, "progress: page 1 is real progress");
+  expect(start.percent === 2, "progress: 1/50 -> 2%");
+
+  // No usable data -> empty summary, falls back to plain subtitle.
+  expect(!recentReadingProgress({}).hasProgress, "progress: no fields -> no progress");
+  expect(recentReadingProgress({}).label === "", "progress: no fields -> empty label");
+  expect(
+    !recentReadingProgress({ totalPages: 80 }).hasProgress,
+    "progress: total without lastPage -> no progress",
+  );
+  expect(
+    !recentReadingProgress({ lastPage: 12 }).hasProgress,
+    "progress: lastPage without total -> no progress",
+  );
+
+  // Garbage / degenerate inputs never throw, never show progress.
+  expect(
+    !recentReadingProgress({ lastPage: NaN, totalPages: 80 }).hasProgress,
+    "progress: NaN lastPage -> no progress",
+  );
+  expect(
+    !recentReadingProgress({ lastPage: 0, totalPages: 80 }).hasProgress,
+    "progress: page 0 -> no progress",
+  );
+  expect(
+    !recentReadingProgress({ lastPage: 5, totalPages: 0 }).hasProgress,
+    "progress: zero total -> no progress",
+  );
+  expect(
+    !recentReadingProgress({ lastPage: 5, totalPages: -3 }).hasProgress,
+    "progress: negative total -> no progress",
+  );
+  // @ts-expect-error null tolerance
+  expect(!recentReadingProgress(null).hasProgress, "progress: null file -> no progress");
+
+  // Fraction always clamps to [0,1].
+  const f = recentReadingProgress({ lastPage: 40, totalPages: 80 });
+  expect(f.fraction >= 0 && f.fraction <= 1, "progress: fraction in [0,1]");
+  expect(f.percent === 50, "progress: 40/80 -> 50%");
 }
 
 // eslint-disable-next-line no-console

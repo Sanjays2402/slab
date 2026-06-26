@@ -769,3 +769,73 @@ export function nextGroupIndex(
   return gi > 0 ? heads[gi - 1] : 0;
 }
 
+// --- Recent-file reading progress (Lumen II Slice 4) -----------------
+//
+// The empty-query palette lists recent + pinned PDFs, but the rows only
+// said "Open · 12m ago". The recent store already tracks per-document
+// reading position (lastPage / totalPages); surfacing it as a Raycast-
+// grade progress chip ("p.12/80 · 15%", or "Finished") turns the list
+// into a genuine "continue where I left off" launcher.
+//
+// Pure: takes a minimal structural shape (not the RecentFile import) so
+// the palette core stays dependency-free, like the rest of this module.
+
+/** The reading-position fields this helper reads off a recent file. */
+export interface RecentProgressInput {
+  lastPage?: number;
+  totalPages?: number;
+  pageCount?: number;
+}
+
+/** Derived reading-progress summary for a recent-file row. */
+export interface RecentProgress {
+  /** True when there's a usable last-page + total to show progress for. */
+  hasProgress: boolean;
+  /** Fraction read in [0, 1]. 0 when unknown. */
+  fraction: number;
+  /** Rounded percent in [0, 100]. */
+  percent: number;
+  /** Last viewed page (clamped to total), or 0 when unknown. */
+  page: number;
+  /** Total page count, or 0 when unknown. */
+  total: number;
+  /** True once the reader reached the final page. */
+  finished: boolean;
+  /** Compact chip label ("p.12/80 · 15%", "Finished", or "" when none). */
+  label: string;
+}
+
+const EMPTY_PROGRESS: RecentProgress = {
+  hasProgress: false,
+  fraction: 0,
+  percent: 0,
+  page: 0,
+  total: 0,
+  finished: false,
+  label: "",
+};
+
+/** Whether a value is a usable positive integer count/page. */
+function posInt(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n) && n >= 1;
+}
+
+/**
+ * Compute the reading-progress summary for a recent file. Returns an
+ * all-zero EMPTY summary (hasProgress false, label "") when there's no
+ * usable last-page + total — so the row falls back to its plain subtitle.
+ * `lastPage` is clamped into [1, total]; reaching the last page reads as
+ * "Finished" rather than "100%". Pure; tolerant of missing/garbage fields.
+ */
+export function recentReadingProgress(file: RecentProgressInput): RecentProgress {
+  if (!file) return EMPTY_PROGRESS;
+  const total = posInt(file.totalPages) ? Math.floor(file.totalPages) : posInt(file.pageCount) ? Math.floor(file.pageCount) : 0;
+  if (total <= 0 || !posInt(file.lastPage)) return EMPTY_PROGRESS;
+  const page = Math.min(Math.floor(file.lastPage), total);
+  const fraction = Math.max(0, Math.min(1, page / total));
+  const percent = Math.round(fraction * 100);
+  const finished = page >= total;
+  const label = finished ? "Finished" : `p.${page}/${total} · ${percent}%`;
+  return { hasProgress: true, fraction, percent, page, total, finished, label };
+}
+
