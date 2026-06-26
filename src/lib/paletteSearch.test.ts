@@ -11,6 +11,9 @@ import {
   scorePaletteEntry,
   splitHighlight,
   normalizeRanges,
+  classifyPaletteNav,
+  nextPaletteIndex,
+  PALETTE_PAGE_JUMP,
   type PaletteRange,
 } from "./paletteSearch";
 
@@ -215,6 +218,53 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(ranked.length === 3, "integration: all three match comp (Reader via keyword 'compare')");
   expect(ranked[0].e.title === "Compress" || ranked[0].e.title === "Compact", "integration: a Comp* title ranks first");
   expect(ranked[ranked.length - 1].e.title === "Reader", "integration: keyword-only Reader ranks last");
+}
+
+// --- classifyPaletteNav: key -> intent ------------------------------
+{
+  expect(classifyPaletteNav({ key: "ArrowDown" }) === "next", "nav: ArrowDown -> next");
+  expect(classifyPaletteNav({ key: "ArrowUp" }) === "prev", "nav: ArrowUp -> prev");
+  expect(classifyPaletteNav({ key: "Home" }) === "first", "nav: Home -> first");
+  expect(classifyPaletteNav({ key: "End" }) === "last", "nav: End -> last");
+  expect(classifyPaletteNav({ key: "PageUp" }) === "page-up", "nav: PageUp -> page-up");
+  expect(classifyPaletteNav({ key: "PageDown" }) === "page-down", "nav: PageDown -> page-down");
+  expect(classifyPaletteNav({ key: "Enter" }) === null, "nav: Enter -> null (not nav)");
+  expect(classifyPaletteNav({ key: "a" }) === null, "nav: typing -> null");
+}
+
+// --- nextPaletteIndex: arrows wrap ----------------------------------
+{
+  expect(nextPaletteIndex("next", 0, 5) === 1, "nav: next steps forward");
+  expect(nextPaletteIndex("next", 4, 5) === 0, "nav: next wraps past end to 0");
+  expect(nextPaletteIndex("prev", 3, 5) === 2, "nav: prev steps back");
+  expect(nextPaletteIndex("prev", 0, 5) === 4, "nav: prev wraps before start to last");
+}
+
+// --- nextPaletteIndex: Home / End jump extremes ---------------------
+{
+  expect(nextPaletteIndex("first", 3, 5) === 0, "nav: first -> 0");
+  expect(nextPaletteIndex("last", 1, 5) === 4, "nav: last -> count-1");
+}
+
+// --- nextPaletteIndex: paging clamps (never wraps) ------------------
+{
+  expect(nextPaletteIndex("page-down", 0, 20) === PALETTE_PAGE_JUMP, "nav: page-down jumps default page");
+  expect(nextPaletteIndex("page-down", 18, 20) === 19, "nav: page-down clamps at last (no wrap)");
+  expect(nextPaletteIndex("page-up", 19, 20) === 19 - PALETTE_PAGE_JUMP, "nav: page-up jumps back a page");
+  expect(nextPaletteIndex("page-up", 2, 20) === 0, "nav: page-up clamps at 0 (no wrap)");
+  expect(nextPaletteIndex("page-down", 5, 20, 3) === 8, "nav: custom page size honoured");
+}
+
+// --- nextPaletteIndex: defensive guards -----------------------------
+{
+  expect(nextPaletteIndex("next", 0, 0) === 0, "nav: empty list -> 0");
+  expect(nextPaletteIndex("next", 0, 1) === 0, "nav: single item next wraps to itself");
+  expect(nextPaletteIndex("prev", 0, 1) === 0, "nav: single item prev wraps to itself");
+  // Stale/out-of-range current is clamped before stepping.
+  expect(nextPaletteIndex("next", 99, 5) === 0, "nav: stale current past end clamps then wraps");
+  expect(nextPaletteIndex("prev", -5, 5) === 4, "nav: negative current clamps to 0 then wraps to last");
+  expect(nextPaletteIndex("next", NaN, 5) === 1, "nav: NaN current treated as 0");
+  expect(nextPaletteIndex("page-down", 0, NaN) === 0, "nav: NaN count -> 0");
 }
 
 // eslint-disable-next-line no-console

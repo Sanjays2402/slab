@@ -239,3 +239,83 @@ export function normalizeRanges(ranges: PaletteRange[], len: number): PaletteRan
   }
   return merged;
 }
+
+// --- Keyboard navigation (Lumen Slice 3) -----------------------------
+//
+// The palette's list cursor needs Raycast-grade movement: arrows that
+// WRAP at the ends (so ↓ on the last row jumps to the first), Home/End
+// to leap to either extreme, and PageUp/PageDown to page through a long
+// list. The classifier + index math live here as pure functions so
+// every wrap/clamp branch is testable without a DOM KeyboardEvent; the
+// Svelte handler only translates the result into `selected` + scroll.
+
+/** Minimal shape the nav classifier reads off a KeyboardEvent. */
+export interface PaletteNavEvent {
+  key: string;
+}
+
+export type PaletteNavIntent = "next" | "prev" | "first" | "last" | "page-up" | "page-down";
+
+/** Rows a PageUp / PageDown press moves the cursor. */
+export const PALETTE_PAGE_JUMP = 8;
+
+/**
+ * Classify a keypress into a navigation intent, or null if it isn't a
+ * nav key (so the caller leaves it for Enter/Escape/typing). Modifiers
+ * are intentionally ignored here — the palette input owns no Cmd/Ctrl
+ * nav chords, so a bare Arrow/Home/End/PageUp/PageDown is unambiguous.
+ */
+export function classifyPaletteNav(ev: PaletteNavEvent): PaletteNavIntent | null {
+  switch (ev.key) {
+    case "ArrowDown":
+      return "next";
+    case "ArrowUp":
+      return "prev";
+    case "Home":
+      return "first";
+    case "End":
+      return "last";
+    case "PageUp":
+      return "page-up";
+    case "PageDown":
+      return "page-down";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve the next cursor index for a nav intent over a list of `count`
+ * items, given the `current` index. Arrows WRAP (next past the end ->
+ * 0, prev before the start -> last); Home/End jump to the extremes;
+ * Page up/down clamp (never wrap) by `page` rows. `current` is clamped
+ * into range first so a stale index can't escape. Empty list -> 0.
+ */
+export function nextPaletteIndex(
+  intent: PaletteNavIntent,
+  current: number,
+  count: number,
+  page: number = PALETTE_PAGE_JUMP,
+): number {
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  const last = count - 1;
+  const cur = Number.isFinite(current) ? Math.max(0, Math.min(last, Math.floor(current))) : 0;
+  const step = Number.isFinite(page) && page > 0 ? Math.floor(page) : PALETTE_PAGE_JUMP;
+  switch (intent) {
+    case "next":
+      return cur >= last ? 0 : cur + 1;
+    case "prev":
+      return cur <= 0 ? last : cur - 1;
+    case "first":
+      return 0;
+    case "last":
+      return last;
+    case "page-up":
+      return Math.max(0, cur - step);
+    case "page-down":
+      return Math.min(last, cur + step);
+    default:
+      return cur;
+  }
+}
+

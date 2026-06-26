@@ -14,6 +14,8 @@
   import {
     scorePaletteEntry,
     splitHighlight,
+    classifyPaletteNav,
+    nextPaletteIndex,
     type PaletteRange,
   } from "$lib/paletteSearch";
   import { get } from "svelte/store";
@@ -71,6 +73,7 @@
   let query = $state("");
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
+  let listEl: HTMLElement | undefined = $state();
   let recents = $state<RecentFile[]>([]);
   // Glass Slice 5: MRU ranks for actions (id → rank, lower = more recent).
   let mru = $state<Record<string, number>>({});
@@ -810,17 +813,34 @@
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      selected = Math.min(filtered.length - 1, selected + 1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      selected = Math.max(0, selected - 1);
-    } else if (e.key === "Enter") {
+      return;
+    }
+    if (e.key === "Enter") {
       e.preventDefault();
       lastActivationNewTab = e.metaKey || e.ctrlKey;
       runSelected();
+      return;
     }
+    // Lumen Slice 3: Raycast-grade list movement. Arrows wrap at the
+    // ends, Home/End leap to either extreme, PageUp/PageDown page through
+    // a long list — all resolved by the tested pure core. Modifiers fall
+    // through (Cmd+ArrowDown etc. stays available for future chords).
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const intent = classifyPaletteNav(e);
+    if (intent) {
+      e.preventDefault();
+      selected = nextPaletteIndex(intent, selected, filtered.length);
+      scrollSelectedIntoView();
+    }
+  }
+
+  // Keep the active row visible as the cursor moves (wrap to top/bottom,
+  // paging, Home/End can all push it out of the scroll viewport).
+  function scrollSelectedIntoView() {
+    queueMicrotask(() => {
+      const el = listEl?.querySelector<HTMLElement>(".palette-item.active");
+      el?.scrollIntoView({ block: "nearest" });
+    });
   }
 
   onMount(() => {
@@ -847,7 +867,7 @@
       />
       <button class="palette-close" onclick={onClose} title="Close (Esc)">esc</button>
     </div>
-    <div class="palette-list">
+    <div class="palette-list" bind:this={listEl}>
       {#if filtered.length === 0}
         <div class="palette-empty">No matches for “{query}”</div>
       {:else}
@@ -877,6 +897,7 @@
     </div>
     <div class="palette-footer">
       <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>
       <span><kbd>↵</kbd> select</span>
       <span><kbd>esc</kbd> close</span>
     </div>
