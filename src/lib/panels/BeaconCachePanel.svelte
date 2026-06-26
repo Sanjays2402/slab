@@ -43,6 +43,8 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
+  import { searchIndexedPdfs } from "$lib/beaconCacheView";
+  import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
     open: boolean;
@@ -70,6 +72,10 @@
   type SortKey = "newest" | "oldest" | "chunks";
   let sortKey = $state<SortKey>("newest");
 
+  /** Slice 1: filter-as-you-type query over the indexed-PDF table. */
+  let search = $state("");
+  let searchEl = $state<HTMLInputElement | null>(null);
+
   const totalPdfs = $derived(pdfs.length);
   const totalChunks = $derived(
     pdfs.reduce((acc, p) => acc + p.chunks, 0),
@@ -77,8 +83,17 @@
   const isMixedModel = $derived(buckets.length > 1);
   const selectedCount = $derived(selected.size);
 
+  /** Rows surviving the search, each with basename highlight ranges. */
+  const searchHits = $derived(searchIndexedPdfs(pdfs, search));
+  /** hash -> highlight ranges, so the row template can paint the match. */
+  const nameRangesByHash = $derived(
+    new Map(searchHits.map((h) => [h.record.pdf_hash, h.nameRanges])),
+  );
+  const matchedCount = $derived(searchHits.length);
+  const isFiltering = $derived(search.trim().length > 0);
+
   const sortedPdfs = $derived.by(() => {
-    const out = pdfs.slice();
+    const out = searchHits.map((h) => h.record);
     switch (sortKey) {
       case "newest":
         out.sort(
@@ -381,7 +396,9 @@
       <!-- Main table -->
       <section class="bc-section bc-main">
         <div class="bc-section-head">
-          <h3>Indexed PDFs · {totalPdfs}</h3>
+          <h3>
+            Indexed PDFs · {#if isFiltering}{matchedCount} of {totalPdfs}{:else}{totalPdfs}{/if}
+          </h3>
           <div class="bc-sort">
             <button
               class="bc-sort-btn"
@@ -401,6 +418,39 @@
           </div>
         </div>
 
+        {#if pdfs.length > 0}
+          <div class="bc-search">
+            <input
+              bind:this={searchEl}
+              class="bc-search-input"
+              type="text"
+              placeholder="Filter by name, folder, model, or hash…"
+              bind:value={search}
+              spellcheck="false"
+              autocomplete="off"
+              aria-label="Filter indexed PDFs"
+              onkeydown={(e) => {
+                if (e.key === "Escape" && search) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  search = "";
+                }
+              }}
+            />
+            {#if isFiltering}
+              <button
+                class="bc-search-clear"
+                onclick={() => {
+                  search = "";
+                  searchEl?.focus();
+                }}
+                aria-label="Clear filter"
+                title="Clear filter (Esc)"
+              >Clear</button>
+            {/if}
+          </div>
+        {/if}
+
         {#if pdfs.length === 0}
           <div class="bc-empty">
             {#if loading}
@@ -408,6 +458,11 @@
             {:else}
               Beacon cache is empty. Open a PDF with Beacon enabled to start indexing.
             {/if}
+          </div>
+        {:else if sortedPdfs.length === 0}
+          <div class="bc-empty">
+            No PDFs match <span class="bc-empty-q">“{search.trim()}”</span>.
+            <button class="bc-link" onclick={() => (search = "")}>Clear filter</button>
           </div>
         {:else}
           <div class="bc-select-bar">
@@ -437,7 +492,11 @@
                   />
                 </label>
                 <div class="bc-row-body">
-                  <div class="bc-row-name">{basename(p.pdf_path)}</div>
+                  <div class="bc-row-name">
+                    {#each splitHighlight(basename(p.pdf_path), nameRangesByHash.get(p.pdf_hash) ?? []) as seg}
+                      {#if seg.hit}<mark class="bc-hl">{seg.text}</mark>{:else}{seg.text}{/if}
+                    {/each}
+                  </div>
                   <div class="bc-row-hint" title={p.pdf_path}>
                     <span class="bc-row-folder">{folderHint(p.pdf_path) || "/"}</span>
                     <span class="bc-row-hash tabular" title={p.pdf_hash}>{shortHash(p.pdf_hash)}</span>
@@ -703,6 +762,61 @@
     background: color-mix(in srgb, #79c0ff 22%, transparent);
     color: #c5e0ff;
     opacity: 1;
+  }
+
+  .bc-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .bc-search-input {
+    flex: 1;
+    appearance: none;
+    background: color-mix(in srgb, white 4%, transparent);
+    border: 1px solid color-mix(in srgb, white 10%, transparent);
+    color: inherit;
+    font-size: 12px;
+    padding: 7px 11px;
+    padding-right: 60px;
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 120ms, background 120ms;
+  }
+  .bc-search-input::placeholder {
+    color: inherit;
+    opacity: 0.4;
+  }
+  .bc-search-input:focus {
+    border-color: color-mix(in srgb, #79c0ff 50%, transparent);
+    background: color-mix(in srgb, #79c0ff 6%, transparent);
+  }
+  .bc-search-clear {
+    position: absolute;
+    right: 6px;
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.55;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 3px 7px;
+    border-radius: 6px;
+  }
+  .bc-search-clear:hover {
+    opacity: 1;
+    background: color-mix(in srgb, white 8%, transparent);
+  }
+  .bc-hl {
+    background: color-mix(in srgb, #79c0ff 30%, transparent);
+    color: #d6e9ff;
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+  .bc-empty-q {
+    color: #c5e0ff;
+    font-style: italic;
   }
 
   .bc-stale-list {
