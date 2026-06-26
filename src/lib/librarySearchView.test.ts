@@ -18,6 +18,11 @@ import {
   describeQueryInterpretation,
   stripSnippetMarks,
   refineSearchHits,
+  cycleSearchSort,
+  sortSearchGroups,
+  searchSortLabel,
+  describeSortMode,
+  SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
 } from "./librarySearchView";
@@ -345,6 +350,79 @@ const group = (
   expect(refineSearchHits(hits, "mark").length === 0, "refine: snippet markup not matchable");
   // @ts-expect-error — garbage
   expect(refineSearchHits(null, "x").length === 0, "refine: null list -> []");
+}
+
+// =====================================================================
+// Slice 4 — sort modes
+// =====================================================================
+{
+  expect(SEARCH_SORT_MODES.length === 3, "sort: three modes");
+  expect(searchSortLabel("relevance") === "Relevance", "sort: relevance label");
+  expect(searchSortLabel("document") === "Document", "sort: document label");
+  expect(searchSortLabel("matches") === "Matches", "sort: matches label");
+  expect(describeSortMode("matches") === "match count", "sort: describe matches");
+
+  // cycle wraps through all three.
+  expect(cycleSearchSort("relevance") === "document", "sort: cycle rel -> doc");
+  expect(cycleSearchSort("document") === "matches", "sort: cycle doc -> matches");
+  expect(cycleSearchSort("matches") === "relevance", "sort: cycle matches -> rel (wraps)");
+  // @ts-expect-error — garbage current
+  expect(cycleSearchSort("nonsense") === "relevance", "sort: garbage -> first mode");
+
+  const groups = [
+    group(1, "Charlie", [hit({ docId: 1 }), hit({ docId: 1 })]), // 2 hits, arrival 0
+    group(2, "Alpha", [hit({ docId: 2 }), hit({ docId: 2 }), hit({ docId: 2 })]), // 3 hits, arrival 1
+    group(3, "Bravo", [hit({ docId: 3 })]), // 1 hit, arrival 2
+  ];
+
+  // Relevance preserves arrival order.
+  const rel = sortSearchGroups(groups, "relevance");
+  expect(
+    rel.map((g) => g.docId).join(",") === "1,2,3",
+    "sort: relevance preserves arrival order",
+  );
+  expect(rel !== groups, "sort: returns a new array (relevance)");
+
+  // Document sorts title A->Z.
+  const doc = sortSearchGroups(groups, "document");
+  expect(
+    doc.map((g) => g.title).join(",") === "Alpha,Bravo,Charlie",
+    "sort: document is A->Z by title",
+  );
+
+  // Matches sorts by hit count, biggest first.
+  const matches = sortSearchGroups(groups, "matches");
+  expect(
+    matches.map((g) => g.docId).join(",") === "2,1,3",
+    "sort: matches is biggest hit-count first",
+  );
+
+  // Numeric-aware document sort (Doc2 < Doc10).
+  const numeric = sortSearchGroups(
+    [group(1, "Doc10", [hit()]), group(2, "Doc2", [hit()])],
+    "document",
+  );
+  expect(numeric.map((g) => g.title).join(",") === "Doc2,Doc10", "sort: document numeric-aware");
+
+  // Stable tie-break: equal match counts keep arrival order.
+  const ties = [
+    group(10, "Z", [hit()]),
+    group(20, "Y", [hit()]),
+    group(30, "X", [hit()]),
+  ];
+  const tied = sortSearchGroups(ties, "matches");
+  expect(
+    tied.map((g) => g.docId).join(",") === "10,20,30",
+    "sort: equal match counts keep arrival order (stable)",
+  );
+
+  // Input never mutated.
+  const before = groups.map((g) => g.docId).join(",");
+  sortSearchGroups(groups, "matches");
+  expect(groups.map((g) => g.docId).join(",") === before, "sort: input array not mutated");
+
+  // @ts-expect-error — garbage
+  expect(sortSearchGroups(null, "relevance").length === 0, "sort: null -> []");
 }
 
 // eslint-disable-next-line no-console

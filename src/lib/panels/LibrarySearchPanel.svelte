@@ -46,6 +46,10 @@
     interpretSearchQuery,
     describeQueryInterpretation,
     refineSearchHits,
+    sortSearchGroups,
+    searchSortLabel,
+    SEARCH_SORT_MODES,
+    type SearchSortMode,
     type SearchGroupLike,
   } from "$lib/librarySearchView";
 
@@ -208,7 +212,7 @@
   let refine = $state("");
   let refineEl = $state<HTMLInputElement | null>(null);
   const refinedHits = $derived(refineSearchHits(hits, refine));
-  const groups: DocGroup[] = $derived.by(() => {
+  const rawGroups: DocGroup[] = $derived.by(() => {
     const map = new Map<number, DocGroup>();
     for (const h of refinedHits) {
       let g = map.get(h.docId);
@@ -225,6 +229,16 @@
     }
     return Array.from(map.values());
   });
+
+  // ---- Slice 4 (Atlas III): result sort modes ----
+  // Reorder the document groups: Relevance (bm25 arrival order, default),
+  // Document (title A->Z), or Matches (hit count, biggest first). Stable,
+  // so equal groups never jitter. The cursor flat-index space is rebuilt
+  // off this sorted order so keyboard nav follows what the eye sees.
+  let sortMode = $state<SearchSortMode>("relevance");
+  const groups = $derived(
+    sortSearchGroups(rawGroups as SearchGroupLike<SearchHit>[], sortMode) as DocGroup[],
+  );
 
   // ---- Slice 1 (Atlas III): keyboard navigation through results ----
   // A flat cursor walks every hit across the grouped render. The arrow /
@@ -612,6 +626,20 @@
             }}>×</button
           >
         {/if}
+        <div class="sort-seg" role="group" aria-label="Sort results">
+          {#each SEARCH_SORT_MODES as m (m)}
+            <button
+              type="button"
+              class="sort-btn"
+              class:active={sortMode === m}
+              aria-pressed={sortMode === m}
+              onclick={() => (sortMode = m)}
+              title="Sort by {searchSortLabel(m).toLowerCase()}"
+            >
+              {searchSortLabel(m)}
+            </button>
+          {/each}
+        </div>
       </div>
       {#if groups.length === 0}
         <div class="state empty refine-empty">
@@ -986,6 +1014,40 @@
     background: var(--bg-hover, rgba(74, 114, 255, 0.06));
   }
 
+  /* Slice 4: sort segmented control — sits at the right of the refine
+     bar. Mirrors the Linear/Raycast segmented toggle: a pill container
+     with one active segment. */
+  .sort-seg {
+    display: inline-flex;
+    flex-shrink: 0;
+    padding: 2px;
+    gap: 1px;
+    border-radius: 7px;
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+  }
+  .sort-btn {
+    font: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--fg-muted, #777);
+    cursor: pointer;
+    transition: background 80ms, color 80ms;
+    white-space: nowrap;
+  }
+  .sort-btn:hover {
+    color: var(--fg, #222);
+  }
+  .sort-btn.active {
+    background: var(--bg-panel, #fff);
+    color: var(--accent, #4a72ff);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+
   /* Status footer pinned to the bottom of the panel — never scrolls with
      results so the live index-size is always visible. The dot mirrors the
      suggestion-engine status indicator language used elsewhere in Slab
@@ -1297,6 +1359,12 @@
     .refine-reset {
       background: var(--bg-panel, #222);
       color: var(--fg, #ddd);
+    }
+    .sort-seg {
+      background: var(--bg-subtle, rgba(255, 255, 255, 0.05));
+    }
+    .sort-btn.active {
+      background: var(--bg-panel, #333);
     }
   }
 </style>

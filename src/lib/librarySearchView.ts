@@ -461,3 +461,95 @@ export function refineSearchHits<T extends SearchHitLike>(
     return best > 0;
   });
 }
+
+// --- Slice 4: result sort modes --------------------------------------
+//
+// Results come back bm25-ranked and grouped by document in arrival
+// order, which is great for "best match first" but useless when you want
+// to scan alphabetically or find the document with the MOST hits. This
+// adds a three-mode sort over the document groups — Relevance (the FTS
+// order, untouched), Document (title A->Z), Matches (hit count, biggest
+// first) — each stable so equal groups never jitter between renders.
+
+/** A sort mode for the grouped results. */
+export type SearchSortMode = "relevance" | "document" | "matches";
+
+/** Every sort mode, in display order (drives the segmented control). */
+export const SEARCH_SORT_MODES: readonly SearchSortMode[] = [
+  "relevance",
+  "document",
+  "matches",
+];
+
+/** Human label for a sort mode (segmented-control button text). */
+export function searchSortLabel(mode: SearchSortMode): string {
+  switch (mode) {
+    case "relevance":
+      return "Relevance";
+    case "document":
+      return "Document";
+    case "matches":
+      return "Matches";
+    default:
+      return mode;
+  }
+}
+
+/** Longer label for the footer / aria ("sorted by …"). */
+export function describeSortMode(mode: SearchSortMode): string {
+  switch (mode) {
+    case "relevance":
+      return "best match";
+    case "document":
+      return "document name";
+    case "matches":
+      return "match count";
+    default:
+      return String(mode);
+  }
+}
+
+/**
+ * Advance to the next sort mode, wrapping. Lets a keyboard shortcut cycle
+ * the sort without reaching for the segmented control. Pure.
+ */
+export function cycleSearchSort(current: SearchSortMode): SearchSortMode {
+  const i = SEARCH_SORT_MODES.indexOf(current);
+  if (i < 0) return SEARCH_SORT_MODES[0];
+  return SEARCH_SORT_MODES[(i + 1) % SEARCH_SORT_MODES.length];
+}
+
+/**
+ * Sort document groups by the given mode, returning a NEW array (input is
+ * never mutated). "relevance" preserves arrival order (already bm25); the
+ * other modes fall back to arrival index as a stable tie-break so equal
+ * groups keep a deterministic order. "document" compares titles
+ * case-insensitively + numeric-aware (Doc2 < Doc10). A null list -> [].
+ */
+export function sortSearchGroups<T extends SearchHitLike>(
+  groups: readonly SearchGroupLike<T>[],
+  mode: SearchSortMode,
+): SearchGroupLike<T>[] {
+  if (!Array.isArray(groups)) return [];
+  const indexed = groups.map((g, i) => ({ g, i }));
+  if (mode === "relevance") {
+    // Already in arrival (rank) order; copy without reordering.
+    return indexed.map((x) => x.g);
+  }
+  indexed.sort((a, b) => {
+    let primary = 0;
+    if (mode === "document") {
+      primary = (a.g.title ?? "").localeCompare(b.g.title ?? "", undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    } else if (mode === "matches") {
+      const an = Array.isArray(a.g.hits) ? a.g.hits.length : 0;
+      const bn = Array.isArray(b.g.hits) ? b.g.hits.length : 0;
+      primary = bn - an; // biggest first
+    }
+    if (primary !== 0) return primary;
+    return a.i - b.i; // stable arrival-order tie-break
+  });
+  return indexed.map((x) => x.g);
+}
