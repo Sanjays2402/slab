@@ -15,6 +15,8 @@
 // discipline as `paletteSearch.ts` and `toastStack.ts`. The Svelte
 // component only renders what these functions return.
 
+import { scorePaletteField, type PaletteRange } from "./paletteSearch";
+
 /** Minimal shape we read off a live keymap action (matches KeymapAction). */
 export interface ShortcutActionLike {
   id: string;
@@ -167,7 +169,99 @@ export function buildShortcutGroups(
 }
 
 /** Total bindable + info row count across every group (for the header). */
-export function countShortcutRows(groups: ShortcutGroup[]): number {
+export function countShortcutRows(
+  groups: ReadonlyArray<{ rows: ReadonlyArray<unknown> }>,
+): number {
   if (!Array.isArray(groups)) return 0;
   return groups.reduce((n, g) => n + (Array.isArray(g.rows) ? g.rows.length : 0), 0);
+}
+
+// --- Filter-as-you-type (Lexicon Slice 2) ----------------------------
+//
+// The overlay shows 50+ rows; scanning for one shortcut means eyeballing
+// every section. A search box filters live. We reuse the tested palette
+// scorer (`scorePaletteField`) so highlight ranges and tie-breaking are
+// the SAME engine the ⌘K palette uses — no second fuzzy implementation
+// to drift.
+//
+// A row matches the query if any of these score > 0:
+//   - its label (the visible text) — ranges from here drive the <mark>s
+//   - its CANONICAL key text ("Mod+Shift+K", "Esc") so "shift" or "esc"
+//     finds rows by their keys, not just their names
+//   - its group title, so "theater" surfaces the whole Theater section
+//
+// We only ever highlight the LABEL (the palette's discipline: never mark
+// a substring the user can't see). Stable order is preserved within each
+// group — this is a reference sheet, so "learn where things live" beats
+// re-ranking on every keystroke.
+
+/** A row plus the label ranges that matched the active filter query. */
+export interface FilteredShortcutRow extends ShortcutRow {
+  /** Matched character ranges in `label` (empty when query is empty). */
+  titleRanges: PaletteRange[];
+}
+
+/** A filtered, titled section. */
+export interface FilteredShortcutGroup {
+  title: string;
+  rows: FilteredShortcutRow[];
+}
+
+/** Searchable key text for a row: canonical binding + any static keys. */
+function rowKeyText(row: ShortcutRow): string {
+  const parts: string[] = [];
+  if (row.binding) parts.push(row.binding);
+  if (Array.isArray(row.staticKeys) && row.staticKeys.length) {
+    parts.push(row.staticKeys.join(" "));
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Filter `groups` by `query`, returning only matching rows (with label
+ * highlight ranges) and dropping any group left empty. An empty/blank
+ * query returns every row with empty ranges (the unfiltered sheet).
+ *
+ * Pure + defensive: a null groups array yields []; a row that matches
+ * only on its keys or its group title is kept with empty title ranges
+ * (nothing to highlight in the visible label).
+ */
+export function filterShortcutGroups(
+  groups: ShortcutGroup[],
+  query: string,
+): FilteredShortcutGroup[] {
+  if (!Array.isArray(groups)) return [];
+  const q = (query ?? "").trim();
+
+  const passAll = (g: ShortcutGroup): FilteredShortcutGroup => ({
+    title: g.title,
+    rows: g.rows.map((r) => ({ ...r, titleRanges: [] })),
+  });
+
+  if (!q) return groups.map(passAll);
+
+  const out: FilteredShortcutGroup[] = [];
+  for (const g of groups) {
+    // A group-title hit surfaces the entire section (with no per-row
+    // label marks — the section heading is what matched).
+    const titleHit = scorePaletteField(q, g.title).score > 0;
+    if (titleHit) {
+      out.push(passAll(g));
+      continue;
+    }
+    const rows: FilteredShortcutRow[] = [];
+    for (const r of g.rows) {
+      const labelScore = scorePaletteField(q, r.label);
+      if (labelScore.score > 0) {
+        rows.push({ ...r, titleRanges: labelScore.ranges });
+        continue;
+      }
+      // Fall back to a key-text match (no visible label highlight).
+      if (scorePaletteField(q, rowKeyText(r)).score > 0) {
+        rows.push({ ...r, titleRanges: [] });
+      }
+    }
+    if (rows.length > 0) out.push({ title: g.title, rows });
+  }
+  return out;
 }

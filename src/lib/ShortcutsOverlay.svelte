@@ -4,9 +4,12 @@
   import {
     buildShortcutGroups,
     countShortcutRows,
+    filterShortcutGroups,
     type ShortcutInfoSpec,
     type ShortcutRow,
+    type FilteredShortcutRow,
   } from "$lib/shortcutsOverlay";
+  import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
     open: boolean;
@@ -87,13 +90,33 @@
     return row.staticKeys;
   }
 
-  let groups = $derived(buildShortcutGroups($keymapView.actions, INFO_HINTS));
-  let totalRows = $derived(countShortcutRows(groups));
+  // Lexicon Slice 2: live filter-as-you-type. `query` filters the
+  // grouped model through the tested `filterShortcutGroups`, which reuses
+  // the ⌘K palette scorer so label highlight ranges + matching are the
+  // same engine. An empty query shows the full sheet.
+  let query = $state("");
+  let baseGroups = $derived(buildShortcutGroups($keymapView.actions, INFO_HINTS));
+  let groups = $derived(filterShortcutGroups(baseGroups, query));
+  let totalRows = $derived(countShortcutRows(baseGroups));
+  let shownRows = $derived(countShortcutRows(groups));
+  let isFiltering = $derived(query.trim().length > 0);
+
+  // Reset the filter each time the sheet opens so it always starts fresh.
+  let wasOpen = false;
+  $effect(() => {
+    if (open && !wasOpen) query = "";
+    wasOpen = open;
+  });
 
   function onKey(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      // Esc clears an active filter first, then closes on a second press.
+      if (query.trim().length > 0) {
+        query = "";
+        return;
+      }
       onClose();
     }
   }
@@ -112,32 +135,61 @@
     <header>
       <div class="title-row">
         <h2>Keyboard shortcuts</h2>
-        <span class="count">{totalRows}</span>
+        <span class="count">{isFiltering ? `${shownRows}/${totalRows}` : totalRows}</span>
       </div>
       <button class="close" onclick={onClose} title="Close (Esc)">esc</button>
     </header>
+    <div class="search-row">
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        class="search"
+        type="text"
+        placeholder="Filter shortcuts by name or keys…"
+        bind:value={query}
+        autofocus
+        aria-label="Filter shortcuts"
+        spellcheck="false"
+        autocomplete="off"
+      />
+      {#if isFiltering}
+        <button class="clear" onclick={() => (query = "")} title="Clear filter (Esc)">clear</button>
+      {/if}
+    </div>
     <div class="grid">
-      {#each groups as g (g.title)}
-        <section>
-          <h3>{g.title}</h3>
-          <ul>
-            {#each g.rows as row (row.key)}
-              <li>
-                <span class="keys">
-                  {#each rowKeys(row) as k, j (j)}
-                    {#if j > 0}<span class="plus">+</span>{/if}
-                    <kbd>{k}</kbd>
-                  {/each}
-                </span>
-                <span class="label">
-                  {row.label}
-                  {#if row.isOverride}<span class="custom" title="Rebound from default">custom</span>{/if}
-                </span>
-              </li>
-            {/each}
-          </ul>
-        </section>
-      {/each}
+      {#if groups.length === 0}
+        <div class="empty">
+          <p>No shortcuts match <strong>{query.trim()}</strong>.</p>
+          <button class="empty-reset" onclick={() => (query = "")}>Clear filter</button>
+        </div>
+      {:else}
+        {#each groups as g (g.title)}
+          <section>
+            <h3>{g.title}</h3>
+            <ul>
+              {#each g.rows as row (row.key)}
+                <li>
+                  <span class="keys">
+                    {#each rowKeys(row) as k, j (j)}
+                      {#if j > 0}<span class="plus">+</span>{/if}
+                      <kbd>{k}</kbd>
+                    {/each}
+                  </span>
+                  <span class="label">
+                    {#if (row as FilteredShortcutRow).titleRanges?.length}
+                      {#each splitHighlight(row.label, (row as FilteredShortcutRow).titleRanges) as seg (seg.text + ":" + seg.hit)}
+                        {#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}
+                      {/each}
+                    {:else}
+                      {row.label}
+                    {/if}
+                    {#if row.isOverride}<span class="custom" title="Rebound from default">custom</span>{/if}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/each}
+      {/if}
     </div>
     <footer>
       <span>Press <kbd>?</kbd> any time to open this sheet. Rebind any action in Settings → Keyboard shortcuts.</span>
@@ -207,6 +259,78 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     cursor: pointer;
+  }
+  .search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .search {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm, 6px);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 10px;
+    outline: none;
+  }
+  .search:focus {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .search::placeholder {
+    color: var(--text-3);
+  }
+  .clear {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .clear:hover {
+    color: var(--text);
+  }
+  .empty {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 36px 20px;
+    color: var(--text-3);
+    font-size: 13px;
+  }
+  .empty strong {
+    color: var(--text-2);
+  }
+  .empty-reset {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    border-radius: 5px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .empty-reset:hover {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  mark {
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+    color: var(--text);
+    border-radius: 2px;
+    padding: 0 1px;
   }
   .grid {
     display: grid;

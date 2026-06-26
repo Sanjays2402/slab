@@ -10,6 +10,7 @@ import {
   buildShortcutGroups,
   shortcutGroupRank,
   countShortcutRows,
+  filterShortcutGroups,
   SHORTCUT_GROUP_ORDER,
   type ShortcutActionLike,
   type ShortcutInfoSpec,
@@ -174,6 +175,105 @@ const act = (
   expect(countShortcutRows([]) === 0, "count: empty -> 0");
   // @ts-expect-error null tolerance
   expect(countShortcutRows(null) === 0, "count: null -> 0");
+}
+
+// --- filterShortcutGroups: empty query -> unfiltered ----------------
+{
+  const groups = buildShortcutGroups(
+    [act("palette.open", "Global", "Mod+K"), act("tabs.new", "Tabs", "Mod+T")],
+    [{ group: "Global", label: "Close", keys: ["Esc"] }],
+  );
+  const all = filterShortcutGroups(groups, "");
+  expect(countShortcutRows(all) === 3, "filter: empty query keeps every row");
+  expect(all[0].rows[0].titleRanges.length === 0, "filter: empty query -> no ranges");
+  const blank = filterShortcutGroups(groups, "   ");
+  expect(countShortcutRows(blank) === 3, "filter: whitespace query treated as empty");
+}
+
+// --- filterShortcutGroups: label match with highlight ranges --------
+{
+  const groups = buildShortcutGroups([
+    { id: "a.x", label: "Open command palette", group: "Global", binding: "Mod+K" },
+    { id: "b.y", label: "Close current tab", group: "Tabs", binding: "Mod+W" },
+  ]);
+  const res = filterShortcutGroups(groups, "palette");
+  expect(res.length === 1 && res[0].title === "Global", "filter: label match keeps only Global");
+  expect(res[0].rows.length === 1, "filter: only the matching row");
+  const r = res[0].rows[0];
+  expect(r.titleRanges.length > 0, "filter: label match yields highlight ranges");
+  const hit = r.titleRanges.map((x) => r.label.slice(x.start, x.end)).join("");
+  expect(hit.toLowerCase() === "palette", "filter: ranges cover the matched substring");
+}
+
+// --- filterShortcutGroups: group-title match surfaces whole section -
+{
+  const groups = buildShortcutGroups([
+    act("t.next", "Theater", "PageDown"),
+    act("t.prev", "Theater", "PageUp"),
+    act("g.k", "Global", "Mod+K"),
+  ]);
+  const res = filterShortcutGroups(groups, "theater");
+  expect(res.length === 1 && res[0].title === "Theater", "filter: group-title hit keeps Theater");
+  expect(res[0].rows.length === 2, "filter: group-title hit surfaces ALL section rows");
+  expect(
+    res[0].rows.every((r) => r.titleRanges.length === 0),
+    "filter: group-title hit leaves rows un-highlighted (heading matched, not labels)",
+  );
+}
+
+// --- filterShortcutGroups: key-text match (no visible label mark) ----
+{
+  const groups = buildShortcutGroups(
+    [act("g.k", "Global", "Mod+Shift+K")],
+    [{ group: "Global", label: "Close current overlay", keys: ["Esc"] }],
+  );
+  // "shift" matches the canonical binding text, not the label.
+  const byBinding = filterShortcutGroups(groups, "shift");
+  expect(
+    byBinding.length === 1 && byBinding[0].rows.length === 1,
+    "filter: query matches a row by its canonical binding text",
+  );
+  expect(
+    byBinding[0].rows[0].titleRanges.length === 0,
+    "filter: key-text match leaves label un-highlighted",
+  );
+  // "esc" matches the info row's static key text.
+  const byStatic = filterShortcutGroups(groups, "esc");
+  expect(
+    byStatic.some((g) => g.rows.some((r) => r.actionId === null)),
+    "filter: info row found by its static key text",
+  );
+}
+
+// --- filterShortcutGroups: no match -> empty -------------------------
+{
+  const groups = buildShortcutGroups([act("g.k", "Global", "Mod+K")]);
+  const res = filterShortcutGroups(groups, "zzzznotathing");
+  expect(res.length === 0, "filter: no match -> empty array");
+}
+
+// --- filterShortcutGroups: defensive + purity ------------------------
+{
+  // @ts-expect-error null tolerance
+  expect(filterShortcutGroups(null, "x").length === 0, "filter: null groups -> empty");
+  const groups = buildShortcutGroups([act("g.k", "Global", "Mod+K")]);
+  const snapshot = JSON.stringify(groups);
+  filterShortcutGroups(groups, "palette");
+  expect(JSON.stringify(groups) === snapshot, "filter: does not mutate input groups");
+  // Group order preserved across a multi-group match.
+  const multi = buildShortcutGroups([
+    act("g.k", "Global", "Mod+K"),
+    act("t.t", "Tabs", "Mod+T"),
+  ]);
+  const open = filterShortcutGroups(multi, "o"); // matches "Open"/"to" labels (id-derived)
+  // Whatever survives must keep curated order Global-before-Tabs.
+  const titles = open.map((g) => g.title);
+  expect(
+    titles.indexOf("Global") === -1 ||
+      titles.indexOf("Tabs") === -1 ||
+      titles.indexOf("Global") < titles.indexOf("Tabs"),
+    "filter: surviving groups preserve curated order",
+  );
 }
 
 // eslint-disable-next-line no-console
