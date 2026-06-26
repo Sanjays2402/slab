@@ -8,6 +8,7 @@
     flattenShortcutRows,
     conflictingActionIds,
     detectShortcutConflicts,
+    formatShortcutsText,
     type ShortcutInfoSpec,
     type ShortcutRow,
     type FilteredShortcutRow,
@@ -17,6 +18,7 @@
     classifyPaletteNav,
     nextPaletteIndex,
   } from "$lib/paletteSearch";
+  import { notify } from "$lib/notify";
 
   type Props = {
     open: boolean;
@@ -147,6 +149,30 @@
     });
   }
 
+  // Lexicon Slice 5: copy the (filtered) sheet as aligned plain text for
+  // pasting into a README / issue / wiki. The pure formatter does the
+  // alignment; the resolver reuses the same per-platform key glyphs the
+  // UI shows (rowKeys joined). Clipboard + toast mirror the CommandPalette
+  // copy pattern.
+  let copied = $state(false);
+  async function copySheet() {
+    const text = formatShortcutsText(
+      groups,
+      (row: ShortcutRow) => rowKeys(row).join(IS_MAC ? "" : "+"),
+      { title: isFiltering ? `Slab keyboard shortcuts (filter: ${query.trim()})` : "Slab keyboard shortcuts" },
+    );
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+      setTimeout(() => (copied = false), 1600);
+      notify.success("Shortcuts copied", {
+        detail: `${shownRows} shortcut${shownRows === 1 ? "" : "s"} copied to clipboard`,
+      });
+    } catch {
+      notify.error("Couldn't copy shortcuts", { detail: "Clipboard access was blocked" });
+    }
+  }
+
   // Reset the filter each time the sheet opens so it always starts fresh.
   let wasOpen = false;
   $effect(() => {
@@ -196,7 +222,12 @@
         <h2>Keyboard shortcuts</h2>
         <span class="count">{isFiltering ? `${shownRows}/${totalRows}` : totalRows}</span>
       </div>
-      <button class="close" onclick={onClose} title="Close (Esc)">esc</button>
+      <div class="header-actions">
+        <button class="copy" onclick={copySheet} title="Copy shortcuts as text" disabled={shownRows === 0}>
+          {copied ? "copied" : "copy"}
+        </button>
+        <button class="close" onclick={onClose} title="Close (Esc)">esc</button>
+      </div>
     </header>
     <div class="search-row">
       <!-- svelte-ignore a11y_autofocus -->
@@ -333,6 +364,31 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     cursor: pointer;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .copy {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    border-radius: 4px;
+    padding: 3px 9px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: color 0.12s ease, border-color 0.12s ease;
+  }
+  .copy:hover:not(:disabled) {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  .copy:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
   .search-row {
     display: flex;

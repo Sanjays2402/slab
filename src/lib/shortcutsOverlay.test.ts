@@ -15,9 +15,11 @@ import {
   canonicalizeBinding,
   detectShortcutConflicts,
   conflictingActionIds,
+  formatShortcutsText,
   SHORTCUT_GROUP_ORDER,
   type ShortcutActionLike,
   type ShortcutInfoSpec,
+  type ShortcutRow,
 } from "./shortcutsOverlay";
 
 let passed = 0;
@@ -453,6 +455,73 @@ const act = (
     { id: "b", label: "B", group: "Global", binding: "" },
   ]);
   expect(detectShortcutConflicts(blanks).length === 0, "conflict: blank bindings ignored");
+}
+
+// --- formatShortcutsText: alignment + sections ----------------------
+{
+  const groups = buildShortcutGroups(
+    [
+      { id: "g.k", label: "Open command palette", group: "Global", binding: "Mod+K" },
+      { id: "t.t", label: "Close tab", group: "Tabs", binding: "Mod+W" },
+    ],
+    [{ group: "Global", label: "Close overlay", keys: ["Esc"] }],
+  );
+  // Trivial resolver: bindable rows -> binding string, info -> joined keys.
+  const resolve = (r: ShortcutRow): string =>
+    r.actionId ? r.binding : r.staticKeys.join("+");
+  const text = formatShortcutsText(groups, resolve, { title: "Slab Shortcuts" });
+  const lines = text.split("\n");
+  expect(lines[0] === "Slab Shortcuts", "text: title printed first");
+  expect(lines.includes("Global"), "text: Global section heading present");
+  expect(lines.includes("Tabs"), "text: Tabs section heading present");
+  // The keys column is padded to the widest key string ("Mod+Shift..."
+  // here is "Mod+K"/"Mod+W"/"Esc"; widest is 5). Every label should start
+  // at the same column.
+  const rowLines = lines.filter((l) => l.includes("Open command palette") || l.includes("Close tab"));
+  expect(rowLines.length === 2, "text: both bindable rows rendered");
+  const labelCol = rowLines.map((l) => l.indexOf(l.trimStart().split("  ").slice(-1)[0]));
+  expect(labelCol[0] === labelCol[1], "text: labels aligned to the same column");
+  // Section order preserved (Global before Tabs).
+  expect(
+    lines.indexOf("Global") < lines.indexOf("Tabs"),
+    "text: sections in curated order",
+  );
+  // Info row included with its keys.
+  expect(text.includes("Close overlay"), "text: info row exported too");
+}
+
+// --- formatShortcutsText: filtered subset ---------------------------
+{
+  const groups = buildShortcutGroups([
+    { id: "g.k", label: "Open palette", group: "Global", binding: "Mod+K" },
+    { id: "t.t", label: "Close tab", group: "Tabs", binding: "Mod+W" },
+  ]);
+  const filtered = filterShortcutGroups(groups, "palette");
+  const text = formatShortcutsText(
+    filtered,
+    (r) => r.binding,
+    { title: "Filtered" },
+  );
+  expect(text.includes("Open palette"), "text: filtered export includes the match");
+  expect(!text.includes("Close tab"), "text: filtered export excludes non-matches");
+}
+
+// --- formatShortcutsText: no title + defensive ----------------------
+{
+  const groups = buildShortcutGroups([act("g.k", "Global", "Mod+K")]);
+  const noTitle = formatShortcutsText(groups, (r) => r.binding);
+  expect(noTitle.split("\n")[0] === "Global", "text: no title -> starts at first section");
+  // Empty groups -> empty string (or just title).
+  expect(formatShortcutsText([], (r) => r.binding) === "", "text: empty groups -> empty string");
+  expect(
+    formatShortcutsText([], (r) => r.binding, { title: "Only Title" }) === "Only Title",
+    "text: empty groups with title -> just the title",
+  );
+  // @ts-expect-error null tolerance
+  expect(formatShortcutsText(null, (r) => r.binding) === "", "text: null groups -> empty string");
+  // Resolver returning "" never throws and aligns to label.
+  const blankKeys = formatShortcutsText(groups, () => "");
+  expect(blankKeys.includes("Global"), "text: blank resolver still renders sections");
 }
 
 // eslint-disable-next-line no-console

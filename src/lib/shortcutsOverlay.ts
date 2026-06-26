@@ -425,3 +425,64 @@ export function conflictingActionIds(groups: ShortcutGroup[]): Set<string> {
   }
   return out;
 }
+
+// --- Plain-text export (Lexicon Slice 5) -----------------------------
+//
+// A "Copy" affordance exports the (optionally filtered) sheet as clean,
+// column-aligned plain text — paste a reference into a README, an issue,
+// a wiki, or print it. The formatter is pure: it takes the grouped model
+// plus a `resolveKeys` callback (so platform key-glyph formatting stays
+// in the component, where `prettyBinding` can read navigator) and emits
+// aligned text. Tested without a DOM by passing a trivial resolver.
+
+export interface ShortcutTextOptions {
+  /** Heading printed once at the top. Omitted when blank. */
+  title?: string;
+  /** Left pad for each row. Default two spaces. */
+  indent?: string;
+}
+
+/**
+ * Render `groups` to column-aligned plain text. Each section prints its
+ * title, then one "keys  label" row per entry, the keys column padded to
+ * the widest key string in the WHOLE sheet so every column lines up.
+ * `resolveKeys(row)` supplies the display key string (e.g. "⌘⇧F").
+ *
+ * Pure + defensive: a null/empty groups array yields just the title (or
+ * "" when no title). Never throws on a resolver that returns "".
+ */
+export function formatShortcutsText(
+  groups: ShortcutGroup[],
+  resolveKeys: (row: ShortcutRow) => string,
+  opts: ShortcutTextOptions = {},
+): string {
+  const indent = opts.indent ?? "  ";
+  const title = (opts.title ?? "").trim();
+  const safeGroups = Array.isArray(groups) ? groups : [];
+
+  // First pass: resolve keys + find the widest key column for alignment.
+  let maxKeyWidth = 0;
+  const resolved = safeGroups.map((g) => ({
+    title: g.title,
+    rows: (Array.isArray(g.rows) ? g.rows : []).map((row) => {
+      const keys = resolveKeys(row) ?? "";
+      if (keys.length > maxKeyWidth) maxKeyWidth = keys.length;
+      return { keys, label: row.label ?? "" };
+    }),
+  }));
+
+  const lines: string[] = [];
+  if (title) lines.push(title);
+
+  for (const g of resolved) {
+    if (g.rows.length === 0) continue;
+    if (lines.length > 0) lines.push(""); // blank line before each section
+    lines.push(g.title);
+    for (const r of g.rows) {
+      const pad = r.keys.padEnd(maxKeyWidth, " ");
+      lines.push(`${indent}${pad}  ${r.label}`.trimEnd());
+    }
+  }
+
+  return lines.join("\n");
+}
