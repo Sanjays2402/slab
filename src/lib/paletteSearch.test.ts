@@ -14,7 +14,12 @@ import {
   classifyPaletteNav,
   nextPaletteIndex,
   PALETTE_PAGE_JUMP,
+  recencyWeight,
+  frecencyScore,
+  rankFrecency,
+  recordFrecency,
   type PaletteRange,
+  type FrecencyRecord,
 } from "./paletteSearch";
 
 let passed = 0;
@@ -265,6 +270,119 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(nextPaletteIndex("prev", -5, 5) === 4, "nav: negative current clamps to 0 then wraps to last");
   expect(nextPaletteIndex("next", NaN, 5) === 1, "nav: NaN current treated as 0");
   expect(nextPaletteIndex("page-down", 0, NaN) === 0, "nav: NaN count -> 0");
+}
+
+// --- Frecency: recencyWeight buckets --------------------------------
+{
+  const MIN = 60_000;
+  const HR = 60 * MIN;
+  const DY = 24 * HR;
+  expect(recencyWeight(0) === 1000, "recency: just-now -> 1000");
+  expect(recencyWeight(2 * MIN) === 1000, "recency: < 5min -> 1000");
+  expect(recencyWeight(30 * MIN) === 350, "recency: < 1h -> 350");
+  expect(recencyWeight(5 * HR) === 120, "recency: < 1d -> 120");
+  expect(recencyWeight(3 * DY) === 50, "recency: < 1w -> 50");
+  expect(recencyWeight(10 * DY) === 20, "recency: < 1mo -> 20");
+  expect(recencyWeight(200 * DY) === 8, "recency: ancient -> 8 floor");
+  expect(recencyWeight(-5) === 1000, "recency: negative age (clock skew) -> 1000");
+  expect(recencyWeight(NaN) === 1000, "recency: NaN -> 1000");
+  // Monotonic non-increasing with age.
+  expect(recencyWeight(MIN) >= recencyWeight(HR), "recency: weight non-increasing with age");
+}
+
+// --- Frecency: score blends frequency + recency ---------------------
+{
+  const now = 1_000_000_000_000;
+  const heavyStale: FrecencyRecord = { id: "a", count: 50, lastUsedAt: now - 10 * 24 * 60 * 60_000 }; // 10d
+  const lightFresh: FrecencyRecord = { id: "b", count: 1, lastUsedAt: now - 60_000 }; // 1m
+  // Recency dominates: a fresh single use beats a stale heavy one.
+  expect(frecencyScore(lightFresh, now) > frecencyScore(heavyStale, now), "frecency: recency dominates frequency");
+
+  // Within the same recency bucket, more frequent wins.
+  const a: FrecencyRecord = { id: "a", count: 10, lastUsedAt: now - 60_000 };
+  const b: FrecencyRecord = { id: "b", count: 2, lastUsedAt: now - 60_000 };
+  expect(frecencyScore(a, now) > frecencyScore(b, now), "frecency: frequency breaks recency-tie");
+
+  // Zero / missing count -> 0.
+  expect(frecencyScore({ id: "x", count: 0, lastUsedAt: now }, now) === 0, "frecency: count 0 -> 0");
+  expect(frecencyScore({ id: "x", count: NaN, lastUsedAt: now }, now) === 0, "frecency: NaN count -> 0");
+}
+
+// --- Frecency: log temper means freq never swamps recency -----------
+{
+  const now = 2_000_000_000_000;
+  // A command used 1000x a week ago should still lose to one used once a
+  // minute ago, because recency is a bucket multiplier.
+  const huge: FrecencyRecord = { id: "huge", count: 1000, lastUsedAt: now - 8 * 24 * 60 * 60_000 };
+  const fresh: FrecencyRecord = { id: "fresh", count: 1, lastUsedAt: now - 60_000 };
+  expect(frecencyScore(fresh, now) > frecencyScore(huge, now), "frecency: log-tempered freq can't swamp recency");
+}
+
+// --- rankFrecency: ordering + tie-breaks ----------------------------
+{
+  const now = 3_000_000_000_000;
+  const recs: FrecencyRecord[] = [
+    { id: "stale-heavy", count: 40, lastUsedAt: now - 20 * 24 * 60 * 60_000 },
+    { id: "fresh-light", count: 1, lastUsedAt: now - 30_000 },
+    { id: "mid", count: 5, lastUsedAt: now - 2 * 60 * 60_000 },
+  ];
+  const ranks = rankFrecency(recs, now);
+  expect(ranks["fresh-light"] === 0, "rank: freshest at rank 0");
+  expect(ranks["mid"] === 1, "rank: mid second");
+  expect(ranks["stale-heavy"] === 2, "rank: stale-heavy last despite high count");
+
+  // Dropped non-positive counts.
+  const filtered = rankFrecency([{ id: "z", count: 0, lastUsedAt: now }], now);
+  expect(Object.keys(filtered).length === 0, "rank: zero-count dropped");
+  expect(Object.keys(rankFrecency([], now)).length === 0, "rank: empty -> {}");
+
+  // Exact-tie breaks deterministically (same score+time -> id order).
+  const tie = rankFrecency(
+    [
+      { id: "b", count: 3, lastUsedAt: now - 60_000 },
+      { id: "a", count: 3, lastUsedAt: now - 60_000 },
+    ],
+    now,
+  );
+  expect(tie["a"] === 0 && tie["b"] === 1, "rank: exact tie breaks by id");
+}
+
+// --- recordFrecency: bump / insert / cap ----------------------------
+{
+  const now = 4_000_000_000_000;
+  // Insert new.
+  const r1 = recordFrecency([], "new", now, 16);
+  expect(r1.length === 1 && r1[0].count === 1 && r1[0].lastUsedAt === now, "record: insert new count-1");
+
+  // Bump existing.
+  const r2 = recordFrecency([{ id: "x", count: 3, lastUsedAt: now - 10_000 }], "x", now, 16);
+  expect(r2.length === 1 && r2[0].count === 4 && r2[0].lastUsedAt === now, "record: bump existing count + ts");
+
+  // Never mutates input.
+  const input: FrecencyRecord[] = [{ id: "x", count: 1, lastUsedAt: now - 1 }];
+  const before = input[0].count;
+  recordFrecency(input, "x", now, 16);
+  expect(input[0].count === before, "record: input not mutated");
+
+  // Empty id is a no-op (just capped passthrough).
+  const r3 = recordFrecency([{ id: "x", count: 1, lastUsedAt: now }], "", now, 16);
+  expect(r3.length === 1 && r3[0].id === "x", "record: empty id no-op");
+}
+
+{
+  // Capacity eviction keeps the highest-frecency records + always the
+  // just-touched one.
+  const now = 5_000_000_000_000;
+  const DY = 24 * 60 * 60_000;
+  const records: FrecencyRecord[] = [
+    { id: "keep1", count: 20, lastUsedAt: now - 60_000 },
+    { id: "keep2", count: 10, lastUsedAt: now - 2 * 60_000 },
+    { id: "evict", count: 1, lastUsedAt: now - 60 * DY },
+  ];
+  const out = recordFrecency(records, "brand-new", now, 3);
+  expect(out.length === 3, "record: capped to limit");
+  expect(out.some((r) => r.id === "brand-new"), "record: just-touched record retained");
+  expect(!out.some((r) => r.id === "evict"), "record: lowest-frecency evicted");
 }
 
 // eslint-disable-next-line no-console

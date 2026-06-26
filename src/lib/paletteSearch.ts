@@ -319,3 +319,122 @@ export function nextPaletteIndex(
   }
 }
 
+// --- Frecency ranking (Lumen Slice 4) --------------------------------
+//
+// The empty-query "Recently used" group floated commands by pure
+// recency, so a command invoked once 5 seconds ago outranked one used
+// 50 times a day. Raycast/Arc rank by *frecency* — frequency blended
+// with recency — so your daily-driver commands stay on top even if the
+// very last thing you touched was a one-off.
+//
+// We only persist an aggregate (count + lastUsedAt) per command, not a
+// full visit log, so this approximates Mozilla's frecency: a recency
+// BUCKET multiplier (recency dominates) times a logarithmically-tempered
+// frequency term (heavy use still wins ties without swamping recency).
+
+/** Persisted usage record for one command id. */
+export interface FrecencyRecord {
+  id: string;
+  /** Total times invoked. */
+  count: number;
+  /** Epoch ms of the most recent invocation. */
+  lastUsedAt: number;
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+const MONTH = 30 * DAY;
+
+/**
+ * Recency multiplier for an age in ms. Bucketed (not continuous) so the
+ * ordering is stable and predictable, with STEEP ratios between buckets
+ * so recency dominates: frequency (log-tempered below) can only overtake
+ * within the same bucket or across a near-adjacent one, never leapfrog a
+ * "used in the last 5 minutes" command with a stale heavy-use one.
+ */
+export function recencyWeight(ageMs: number): number {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return 1000; // treat future/NaN as "just now"
+  if (ageMs < 5 * MINUTE) return 1000;
+  if (ageMs < HOUR) return 350;
+  if (ageMs < DAY) return 120;
+  if (ageMs < WEEK) return 50;
+  if (ageMs < MONTH) return 20;
+  return 8;
+}
+
+/**
+ * Frecency score for a record at time `now`. Higher = should rank
+ * sooner. `(1 + ln(count)) * recencyWeight(age)` — the log temper means
+ * frequency rewards heavy use and breaks ties without ever swamping the
+ * recency bucket. A count <= 0 or missing record scores 0.
+ */
+export function frecencyScore(record: FrecencyRecord, now: number): number {
+  if (!record || !Number.isFinite(record.count) || record.count <= 0) return 0;
+  const last = Number.isFinite(record.lastUsedAt) ? record.lastUsedAt : 0;
+  const age = now - last;
+  const freqTerm = 1 + Math.log(record.count);
+  return freqTerm * recencyWeight(age);
+}
+
+/**
+ * Rank records by frecency, returning a map of id -> rank where rank 0
+ * is the strongest. Ties break by most-recent-first, then id for a
+ * stable order. Records with a non-positive count are dropped.
+ */
+export function rankFrecency(records: FrecencyRecord[], now: number): Record<string, number> {
+  if (!Array.isArray(records)) return {};
+  const scored = records
+    .filter((r) => r && Number.isFinite(r.count) && r.count > 0)
+    .map((r) => ({ id: r.id, score: frecencyScore(r, now), lastUsedAt: r.lastUsedAt }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const al = Number.isFinite(a.lastUsedAt) ? a.lastUsedAt : 0;
+      const bl = Number.isFinite(b.lastUsedAt) ? b.lastUsedAt : 0;
+      if (bl !== al) return bl - al;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+  const out: Record<string, number> = {};
+  for (let i = 0; i < scored.length; i++) out[scored[i].id] = i;
+  return out;
+}
+
+/**
+ * Fold a fresh invocation of `id` into an existing record list: bump the
+ * matching record's count + timestamp, or insert a new count-1 record.
+ * Returns a NEW array (never mutates input) capped to `limit` records,
+ * evicting the lowest-frecency entries when over capacity so the store
+ * can't grow without bound. The bumped/new record is always retained.
+ */
+export function recordFrecency(
+  records: FrecencyRecord[],
+  id: string,
+  now: number,
+  limit: number,
+): FrecencyRecord[] {
+  const base = Array.isArray(records) ? records : [];
+  if (!id) return base.slice(0, Math.max(0, limit));
+  let found = false;
+  const next: FrecencyRecord[] = base.map((r) => {
+    if (r.id === id) {
+      found = true;
+      return { id, count: (Number.isFinite(r.count) ? r.count : 0) + 1, lastUsedAt: now };
+    }
+    return r;
+  });
+  if (!found) next.push({ id, count: 1, lastUsedAt: now });
+  if (next.length <= limit) return next;
+  // Over capacity — keep the top `limit` by frecency, but never evict the
+  // record we just touched.
+  const ranks = rankFrecency(next, now);
+  const keep = next
+    .slice()
+    .sort((a, b) => (ranks[a.id] ?? Infinity) - (ranks[b.id] ?? Infinity))
+    .slice(0, limit);
+  if (!keep.some((r) => r.id === id)) {
+    keep[keep.length - 1] = next.find((r) => r.id === id)!;
+  }
+  return keep;
+}
+
