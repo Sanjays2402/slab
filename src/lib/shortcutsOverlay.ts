@@ -265,3 +265,53 @@ export function filterShortcutGroups(
   }
   return out;
 }
+
+// --- Flat navigation model (Lexicon Slice 3) -------------------------
+//
+// The overlay renders as titled sections, but a keyboard user wants to
+// walk it as ONE list (↓ from the last row of a section lands on the
+// first row of the next). We flatten the grouped model into a single
+// indexable array — each entry carries its group title + whether it's
+// the first row of its group, so the renderer can emit a section heading
+// inline while the cursor math stays a simple flat index. The actual
+// arrow/Home/End math is reused from the tested palette nav core
+// (`classifyPaletteNav` / `nextPaletteIndex`) — no second implementation.
+
+/** One row flattened out of its group, with render hints. */
+export interface FlatShortcutEntry<R extends ShortcutRow = ShortcutRow> {
+  /** The section this row belongs to. */
+  groupTitle: string;
+  /** True when this is the first row of its group (renderer emits an h3). */
+  isGroupStart: boolean;
+  /** Flat index across every group (0-based). */
+  flatIndex: number;
+  /** The underlying row (FilteredShortcutRow when filtering). */
+  row: R;
+}
+
+/**
+ * Flatten grouped rows into a single navigable list, tagging the first
+ * row of each group so the renderer can place section headers without a
+ * second pass. Pure; tolerates a null/garbage groups array (-> []).
+ */
+export function flattenShortcutRows<R extends ShortcutRow>(
+  groups: ReadonlyArray<{ title: string; rows: R[] }>,
+): FlatShortcutEntry<R>[] {
+  if (!Array.isArray(groups)) return [];
+  const out: FlatShortcutEntry<R>[] = [];
+  let flat = 0;
+  for (const g of groups) {
+    if (!g) continue;
+    const rows: R[] = Array.isArray(g.rows) ? g.rows : [];
+    for (let i = 0; i < rows.length; i++) {
+      out.push({
+        groupTitle: g.title,
+        isGroupStart: i === 0,
+        flatIndex: flat,
+        row: rows[i],
+      });
+      flat++;
+    }
+  }
+  return out;
+}

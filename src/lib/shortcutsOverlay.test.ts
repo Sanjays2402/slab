@@ -11,6 +11,7 @@ import {
   shortcutGroupRank,
   countShortcutRows,
   filterShortcutGroups,
+  flattenShortcutRows,
   SHORTCUT_GROUP_ORDER,
   type ShortcutActionLike,
   type ShortcutInfoSpec,
@@ -274,6 +275,62 @@ const act = (
       titles.indexOf("Global") < titles.indexOf("Tabs"),
     "filter: surviving groups preserve curated order",
   );
+}
+
+// --- flattenShortcutRows: flat index + group-start tags -------------
+{
+  const groups = buildShortcutGroups([
+    act("g.a", "Global", "Mod+K"),
+    act("g.b", "Global", "Mod+P"),
+    act("t.a", "Tabs", "Mod+T"),
+  ]);
+  const flat = flattenShortcutRows(groups);
+  expect(flat.length === 3, "flatten: 3 rows total");
+  expect(
+    flat.map((e) => e.flatIndex).join(",") === "0,1,2",
+    "flatten: flat indices are sequential 0,1,2",
+  );
+  expect(
+    flat.map((e) => (e.isGroupStart ? "1" : "0")).join("") === "101",
+    "flatten: first row of each group tagged isGroupStart",
+  );
+  expect(
+    flat.map((e) => e.groupTitle).join(",") === "Global,Global,Tabs",
+    "flatten: each entry carries its group title",
+  );
+  expect(flat[0].row.actionId === "g.a", "flatten: underlying row preserved");
+}
+
+// --- flattenShortcutRows: works on filtered groups + walkable index --
+{
+  const groups = buildShortcutGroups([
+    act("g.a", "Global", "Mod+K"),
+    act("t.a", "Tabs", "Mod+T"),
+    act("t.b", "Tabs", "Mod+W"),
+  ]);
+  const filtered = filterShortcutGroups(groups, "");
+  const flat = flattenShortcutRows(filtered);
+  expect(flat.length === 3, "flatten: filtered groups flatten too");
+  // The flat list is what nextPaletteIndex walks: a single contiguous
+  // index space across section boundaries.
+  expect(
+    flat[1].groupTitle === "Tabs" && flat[1].isGroupStart === true,
+    "flatten: section boundary marked at the right flat index",
+  );
+}
+
+// --- flattenShortcutRows: defensive ----------------------------------
+{
+  expect(flattenShortcutRows([]).length === 0, "flatten: empty -> empty");
+  // @ts-expect-error null tolerance
+  expect(flattenShortcutRows(null).length === 0, "flatten: null -> empty");
+  // Garbage group (no rows array) skipped.
+  const mixed = flattenShortcutRows([
+    // @ts-expect-error garbage
+    { title: "Bad" },
+    { title: "Good", rows: buildShortcutGroups([act("a.a", "Global", "X")])[0].rows },
+  ]);
+  expect(mixed.length === 1 && mixed[0].groupTitle === "Good", "flatten: garbage group skipped");
 }
 
 // eslint-disable-next-line no-console

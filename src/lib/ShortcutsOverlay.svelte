@@ -5,11 +5,16 @@
     buildShortcutGroups,
     countShortcutRows,
     filterShortcutGroups,
+    flattenShortcutRows,
     type ShortcutInfoSpec,
     type ShortcutRow,
     type FilteredShortcutRow,
   } from "$lib/shortcutsOverlay";
-  import { splitHighlight } from "$lib/paletteSearch";
+  import {
+    splitHighlight,
+    classifyPaletteNav,
+    nextPaletteIndex,
+  } from "$lib/paletteSearch";
 
   type Props = {
     open: boolean;
@@ -101,10 +106,45 @@
   let shownRows = $derived(countShortcutRows(groups));
   let isFiltering = $derived(query.trim().length > 0);
 
+  // Lexicon Slice 3: keyboard navigation. The grouped model flattens to
+  // a single index space (`flat`) so arrows walk across section
+  // boundaries as one list. Arrow/Home/End/PageUp/PageDown are resolved
+  // by the same tested palette nav core the ⌘K list uses
+  // (classifyPaletteNav + nextPaletteIndex). `selected` is the flat
+  // cursor index; the focused row gets an accent ring + scrolls into view.
+  let flat = $derived(flattenShortcutRows(groups));
+  let selected = $state(0);
+  let rowEls = $state<Array<HTMLLIElement | null>>([]);
+
+  // Map each row's stable key to its flat cursor index, so the grouped
+  // (2-column) render can keep its layout while sharing one index space
+  // with the keyboard cursor.
+  let flatIndexByKey = $derived(
+    new Map(flat.map((e) => [e.row.key, e.flatIndex] as const)),
+  );
+
+  // Keep the cursor in range as the filtered list grows/shrinks, and
+  // snap back to the top on every new query so the first match is primed.
+  $effect(() => {
+    // Re-run when the visible list changes.
+    void flat.length;
+    void query;
+    selected = 0;
+  });
+
+  function scrollSelectedIntoView() {
+    queueMicrotask(() => {
+      rowEls[selected]?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   // Reset the filter each time the sheet opens so it always starts fresh.
   let wasOpen = false;
   $effect(() => {
-    if (open && !wasOpen) query = "";
+    if (open && !wasOpen) {
+      query = "";
+      selected = 0;
+    }
     wasOpen = open;
   });
 
@@ -118,6 +158,16 @@
         return;
       }
       onClose();
+      return;
+    }
+    // List navigation — modifiers fall through (the search box owns text).
+    if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      const intent = classifyPaletteNav({ key: e.key });
+      if (intent && flat.length > 0) {
+        e.preventDefault();
+        selected = nextPaletteIndex(intent, selected, flat.length);
+        scrollSelectedIntoView();
+      }
     }
   }
 
@@ -167,7 +217,12 @@
             <h3>{g.title}</h3>
             <ul>
               {#each g.rows as row (row.key)}
-                <li>
+                {@const fi = flatIndexByKey.get(row.key) ?? -1}
+                <li
+                  bind:this={rowEls[fi]}
+                  class:focused={fi === selected}
+                  aria-current={fi === selected ? "true" : undefined}
+                >
                   <span class="keys">
                     {#each rowKeys(row) as k, j (j)}
                       {#if j > 0}<span class="plus">+</span>{/if}
@@ -192,7 +247,7 @@
       {/if}
     </div>
     <footer>
-      <span>Press <kbd>?</kbd> any time to open this sheet. Rebind any action in Settings → Keyboard shortcuts.</span>
+      <span class="hint-keys"><kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>?</kbd> toggle · Rebind in Settings → Keyboard shortcuts</span>
     </footer>
   </div>
 {/if}
@@ -362,6 +417,13 @@
     padding: 4px 0;
     font-size: 12px;
     color: var(--text-2);
+  }
+  li.focused {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    box-shadow: inset 2px 0 0 var(--accent);
+    border-radius: 4px;
+    margin: 0 -8px;
+    padding: 4px 8px;
   }
   .keys {
     display: inline-flex;
