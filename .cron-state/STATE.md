@@ -1,15 +1,115 @@
 # Slab Cron State
 
-Last updated: 2026-06-26 19:16 PT by Cake (cron) — round-42 BATCH shipped (5 frontend/UX slices) taking the **in-document Find bar (Cmd+F)** in ReaderPanel to palette grade ("Atlas IV") — the explicit roadmap follow-up to round 41's Library Search work, the parallel treatment for the OTHER search surface. The find bar shipped thin and untested: status was one inline ternary that could only say "N / total" or a bare "no matches" (no Searching/wrapped/idle distinction), the pdf.js find payload was hand-duplicated in THREE places (drift-prone), there was no match-diacritics option, no recent-search history, no global find-again chord, and nothing announced to a screen reader. Round 42 rebuilds it on a new tested pure core src/lib/readerFindView.ts (86 inline tests) reusing the palette scorer/nav (NO second engine). Slice 1 find-state model (interpretFindState collapses the two pdf.js find events into one discriminated idle/pending/found/not-found status, so a mid-scan zero count reads "Searching" not a false "No matches"; describeFindStatus/findStatusTone + a "wrapped" pill); slice 2 single dispatch builder (buildFindDispatch is the one source of truth for find/again-next/again-prev/options/clear, replacing 3 drifted literals; adds matchDiacritics; FIND_OPTION_TOGGLES segmented chips); slice 3 recent-search history (pushFindHistory MRU ring persisted at slab.reader.find.history.v1 + suggestFindHistory palette-scored dropdown, combobox/listbox); slice 4 global find-again (classifyFindGlobalKey F3 / Cmd+G with Shift-reverse, deliberately NOT claiming Shift+Cmd+F library search; classifyFindDropdownKey for in-dropdown arrow/enter/escape); slice 5 SR announcer (announceFindStatus polite aria-live "Match 3 of 17 for ..., wrapped"). PRIOR (round 41): Library Search panel ("Atlas III") on librarySearchView.ts (127 tests) — keyboard nav / FTS interp chips / refine / sort / summary footer.
+Last updated: 2026-06-27 06:10 PT by Cake (cron) — round-44 BATCH shipped (5 frontend/UX slices) WIRING the tested **RecentsHome view-core** ("Atlas V") into RecentsHome.svelte — the first-launch hero, the single highest-visibility surface in the app (shown the moment Slab opens with no document). This is the round-43 follow-through: round 43 shipped the tested pure core src/lib/recentsHomeView.ts (91 tests) but NEVER wired it into the component, which still ran the hero-selection / partition logic as an untested inline $derived, shipped EMOJI in its chrome (pushpin + heavy-x, a standing monochrome-glyph rule violation), and had no filter / sort / keyboard / footer. Round 44 is the "core then wire" second half (same pattern as round 42's reader-find core->wire). Slice 1 (fffc618) swap the inline continueCandidate/pinned/others derivations for the tested partitionRecents() + replace the pushpin/x emoji with two reusable inline-SVG snippets (pinGlyph/removeGlyph, currentColor) matching ToolboxPanel/LoomPanel; slice 2 (1e1f667) filter-as-you-type (filterRecents + highlightRecentName live <mark>, hero collapses while filtering, Results relabel, no-match empty state, Esc-clear); slice 3 (9928658) sort modes (sortRecentView Recent/Name/Progress/Pages segmented pill applied to both grids); slice 4 (7fa4862) keyboard nav (window keydown -> VIRTUAL cursor via flattenRecentCards/classifyRecentKey/moveRecentCursor/clampRecentCursor; Enter open / P pin / Backspace remove / Esc park; cursor never moves real focus so no Enter double-fire; from inside the filter only move+open pass through); slice 5 (191eb37) aria-live summary footer (summarizeRecents + countInProgress) + keycap chord hint. Gates: recentsHomeView 91/91, shared palette suites ALL unchanged (paletteSearch 253 / librarySearchView 127 / beaconCacheView 112 / readerFindView 86 / toastStack 254), pnpm check 0 errors / 104 warnings (rounds 32-43 baseline preserved EXACTLY — filter input, mark highlight, segmented sort, cursor ring, aria-live footer all clean), cargo fmt clean, ZERO Rust files changed. PRIOR (round 43): recentsHomeView.ts pure core (91 tests). (round 42): reader-find bar palette grade ("Atlas IV").
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** in package.json/Cargo.toml/tauri.conf.json/Cargo.lock.
-Internal module labels use the repo's logical-release naming ("Atlas IV"
-= v3.42.0) which runs ahead of the package version; NOT bumped this round
+Internal module labels use the repo's logical-release naming ("Atlas V"
+= v3.43.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `aff3fb6` — "feat(reader-find): wire palette-grade find bar into ReaderPanel".
+Latest commit: `191eb37` — "feat(recents-home): context-aware summary footer".
+
+### What round-44 (2026-06-27 06:10 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override) WIRING
+the tested pure view-core `src/lib/recentsHomeView.ts` (91 tests, shipped
+round 43 but never wired) into `RecentsHome.svelte` — Slab's first-launch
+hero, the single highest-visibility surface (shown the moment the app
+opens with no document loaded). This is the "core then wire" second half,
+the same discipline as round 42 (reader-find core 195fc23 -> wire aff3fb6).
+
+Before this round the component still ran the hero-selection / partition
+logic as an UNTESTED inline `$derived` (the contract that decides what
+the app's headline card even is had zero tests), shipped EMOJI in its
+chrome (pushpin + heavy-x — a standing violation of Slab's monochrome-
+glyph chrome rule), and had no filter, no sort, no keyboard path, and no
+summary. All five slices reuse the tested palette core (scorePaletteField
+/ splitHighlight / classifyPaletteNav / nextPaletteIndex /
+recentReadingProgress) through the view-core, so there is NO second
+fuzzy / nav / progress engine.
+
+- Slice 1 (fffc618): tested partition + monochrome chrome. Replaced the
+  inline continueCandidate / pinned / others derivations with
+  partitionRecents() from the tested core (renders identically, now with
+  unit-tested selection math). Also fixed the chrome-rule violation: the
+  pinned-card flag + the pin / remove action buttons used the pushpin and
+  heavy-x EMOJI; replaced with two reusable inline-SVG snippets
+  (pinGlyph / removeGlyph, currentColor-tinted) matching ToolboxPanel /
+  LoomPanel.
+
+- Slice 2 (1e1f667): filter-as-you-type. A palette-grade filter bar wired
+  to filterRecents() (basename OR full-path/folder match) +
+  highlightRecentName() (live <mark> over the matched range) — same
+  scorePaletteField core as Cmd+K and the library search panel. While a
+  filter is active the Continue-reading hero collapses and the board
+  becomes a flat matched list; the Recent section relabels to Results; a
+  no-match empty state offers one-click reset; Esc inside the input
+  clears the filter (stopPropagation so it never bubbles to app chords).
+
+- Slice 3 (9928658): sort modes. A segmented control (Recent / Name /
+  Progress / Pages) wired to sortRecentView() — Name case-insensitive +
+  numeric-aware, Progress furthest-read-first, Pages biggest-first, each
+  with a stable arrival tie-break — applied to BOTH grids so the whole
+  board re-orders together. Linear/Raycast segmented pill matching the
+  beacon-cache + library-search sort controls (aria-pressed, accent
+  active state).
+
+- Slice 4 (7fa4862): keyboard navigation. A window keydown handler drives
+  a VIRTUAL cursor (ring only, no DOM focus move) over the rendered cards
+  via flattenRecentCards (one flat index across pinned strip + recents
+  grid; the hero keeps its own Cmd+0). Reuses the palette nav core through
+  moveRecentCursor / clampRecentCursor (arrows wrap, Home/End, PageUp/
+  Down); classifyRecentKey owns the bare-key map (Enter open / P pin /
+  Backspace remove / Esc park). The cursor never moves real focus so Enter
+  can't double-fire a focused card button; from inside the filter box only
+  movement + Enter pass through (so a typed "p" stays literal text); an
+  $effect clamps the cursor back into range when a filter / pin / removal
+  shrinks the list. Accent cursor ring + scrollIntoView.
+
+- Slice 5 (191eb37): context-aware summary footer. summarizeRecents()
+  narrates the live view (total, or N of M while filtering with the term,
+  plus the in-progress count + active sort when not default) in an
+  aria-live=polite region mirroring the palette / library-search / beacon
+  footers. countInProgress reuses the palette progress core so the
+  mid-read threshold matches the hero resume chip exactly. Muted keycap
+  hint advertises the slice-4 chords.
+
+Gates result: tsx recentsHomeView.test.ts 91/91 pass (unchanged — the
+core was already fully tested; this round wired it), paletteSearch
+253/253 / librarySearchView 127/127 / beaconCacheView 112/112 /
+readerFindView 86/86 / toastStack 254/254 ALL unchanged (the shared
+palette core the view-core reuses is provably intact), pnpm check 0
+errors / 104 warnings (rounds 32-43 baseline preserved EXACTLY — the new
+filter input, <mark> highlight, segmented sort control, virtual-cursor
+ring, and aria-live footer all passed a11y with zero new warnings),
+cargo fmt --all --check clean, ZERO Rust files changed so the round-32
+lib baseline (clippy clean, 2620 tests) carries forward unchanged (the
+full Tauri binary build is never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 44):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI work
+  (wiring tested helpers, filter input, segmented sort, virtual-cursor
+  key handling, footer copy). Zero backend.
+- CORE-THEN-WIRE follow-through, not a pivot. Round 43 shipped the tested
+  recentsHomeView.ts core (91 tests) but left it unwired — the component
+  still ran untested inline logic + emoji chrome. This round wires all
+  five capabilities into the highest-visibility surface, exactly the
+  round-42 pattern (reader-find core -> wire).
+- Reuse over reinvention: every capability routes through the view-core's
+  reuse of the tested palette core; the 253-test palette suite is
+  unchanged, proving the wire didn't perturb the shared engine.
+- Fixed a standing chrome defect along the way: the pushpin + heavy-x
+  EMOJI in RecentsHome violated Slab's icon-only monochrome-glyph rule;
+  replaced with currentColor inline-SVG snippets.
+- VIRTUAL-cursor keyboard model (ring only, no focus move) deliberately
+  chosen so Enter can't double-fire on a focused card <button>, and so
+  the filter box keeps text-entry semantics (only move+open leak through).
+- Held the 104-warning svelte-check baseline EXACTLY — filter input,
+  mark, segmented control, cursor ring, and polite live region all clean.
+
+
 
 ### What round-42 (2026-06-26 19:16 PT) just shipped
 
@@ -1319,6 +1419,17 @@ Refilled frontend-first per the override (backend/infra items
 deferred until the override block is removed). Ordered roughly by
 demo value:
 
+- ~~RecentsHome (first-launch hero) to palette grade ("Atlas V")~~ — core
+  DONE round 43 (8ab126f): tested pure core src/lib/recentsHomeView.ts
+  (91 tests). WIRED DONE round 44 (fffc618..191eb37): partition core +
+  monochrome chrome (replaced pushpin/x emoji), filter-as-you-type
+  (filterRecents + highlightRecentName), sort modes (sortRecentView
+  Recent/Name/Progress/Pages), keyboard nav (flattenRecentCards +
+  classifyRecentKey virtual cursor), aria-live summary footer
+  (summarizeRecents). Still open as follow-ups: recents thumbnails could
+  show a tiny progress overlay; a "clear all unpinned" affordance in the
+  footer (clearRecent already exists); pinned-strip horizontal keyboard
+  scroll when it overflows.
 - ~~Library Search panel to Raycast/Linear grade ("Atlas III")~~ — DONE
   round 41 (5ccec44..ac81a2e): new tested pure core
   src/lib/librarySearchView.ts (127 tests) reusing the palette
