@@ -20,6 +20,10 @@ import {
   filterByReason,
   reconcileReasonFacet,
   describeDominantReason,
+  groupPendingStates,
+  filterByPendingState,
+  reconcilePendingStateFacet,
+  pendingStateLabel,
   flattenOcrRows,
   classifyOcrTableKey,
   nextOcrCursor,
@@ -484,6 +488,53 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
     }) === "4 in flight",
     "view: empty but in flight",
   );
+}
+
+// --- Slice 3b: pending-state facet -----------------------------------
+{
+  const pending = [
+    doc({ id: 1, path: "/a/scan1.pdf", ocr_state: "scanned" }),
+    doc({ id: 2, path: "/a/scan2.pdf", ocr_state: "scanned" }),
+    doc({ id: 3, path: "/a/mix1.pdf", ocr_state: "mixed" }),
+    doc({ id: 4, path: "/a/odd.pdf", ocr_state: "" }),
+  ];
+
+  // Labels map the two real states; unknown/blank pass through sensibly.
+  expect(pendingStateLabel("scanned") === "Image-only", "pstate: scanned label");
+  expect(pendingStateLabel("mixed") === "Mixed pages", "pstate: mixed label");
+  expect(pendingStateLabel("") === "Unknown", "pstate: blank -> Unknown");
+  expect(pendingStateLabel("weird") === "weird", "pstate: novel passes through");
+
+  // Grouping: dominant state first, blank bucketed under 'unknown'.
+  const buckets = groupPendingStates(pending);
+  expect(buckets.length === 3, "pstate: three buckets");
+  expect(buckets[0].state === "scanned" && buckets[0].count === 2, "pstate: scanned dominant");
+  expect(buckets.some((b) => b.state === "unknown" && b.count === 1), "pstate: blank -> unknown bucket");
+  expect(groupPendingStates([]).length === 0, "pstate: empty -> []");
+  // @ts-expect-error — garbage
+  expect(groupPendingStates(null).length === 0, "pstate: null -> []");
+
+  // Tie-break is alphabetical by state when counts equal.
+  const tie = groupPendingStates([
+    doc({ id: 1, path: "/x.pdf", ocr_state: "mixed" }),
+    doc({ id: 2, path: "/y.pdf", ocr_state: "scanned" }),
+  ]);
+  expect(tie[0].state === "mixed" && tie[1].state === "scanned", "pstate: equal counts sort alpha");
+
+  // Filtering to one state; null passes through; blank maps to unknown.
+  expect(filterByPendingState(pending, "scanned").length === 2, "pstate: filter scanned");
+  expect(filterByPendingState(pending, "mixed").map((d) => d.id).join() === "3", "pstate: filter mixed");
+  expect(filterByPendingState(pending, "unknown").map((d) => d.id).join() === "4", "pstate: filter unknown (blank)");
+  expect(filterByPendingState(pending, null).length === 4, "pstate: null facet keeps all");
+  // Returns a fresh array, never the input reference.
+  expect(filterByPendingState(pending, null) !== pending, "pstate: null facet returns a copy");
+  // @ts-expect-error — garbage
+  expect(filterByPendingState(null, "scanned").length === 0, "pstate: null list -> []");
+
+  // Reconcile: live facet survives, vanished facet clears.
+  expect(reconcilePendingStateFacet("scanned", buckets) === "scanned", "pstate: live facet kept");
+  expect(reconcilePendingStateFacet("gone", buckets) === null, "pstate: vanished facet cleared");
+  expect(reconcilePendingStateFacet(null, buckets) === null, "pstate: null facet stays null");
 }
 
 // eslint-disable-next-line no-console

@@ -50,6 +50,10 @@
     filterByReason,
     reconcileReasonFacet,
     describeDominantReason,
+    groupPendingStates,
+    filterByPendingState,
+    reconcilePendingStateFacet,
+    pendingStateLabel,
     flattenOcrRows,
     classifyOcrTableKey,
     nextOcrCursor,
@@ -90,6 +94,8 @@
   let sort = $state<OcrSort>({ field: "name", dir: "asc" });
   /** Slice 3: active failure-reason facet (one bucket) or null for all. */
   let reasonFacet = $state<string | null>(null);
+  /** Slice 3b: active pending-state facet (image-only/mixed) or null. */
+  let pendingStateFacet = $state<string | null>(null);
   /** Slice 4: virtual cursor index spanning failures-then-pending. */
   let cursor = $state(0);
   let rowEls = $state<Array<HTMLLIElement | null>>([]);
@@ -265,6 +271,7 @@
       listFocused = false;
       search = "";
       reasonFacet = null;
+      pendingStateFacet = null;
     }
   });
 
@@ -274,6 +281,9 @@
   const reasonBuckets = $derived(groupFailureReasons(failed));
   const dominantReason = $derived(describeDominantReason(reasonBuckets));
 
+  /** Slice 3b: pending-state buckets (image-only/mixed, dominant first). */
+  const pendingStateBuckets = $derived(groupPendingStates(pending));
+
   /** Slice 3 then 1 then 2: failures after reason facet -> search -> sort. */
   const facetedFailed = $derived(filterByReason(failed, reasonFacet));
   const failedHits = $derived(searchOcrDocs(facetedFailed, search));
@@ -281,8 +291,9 @@
     sortOcrDocs(failedHits.map((h) => h.record), sort),
   );
 
-  /** Slice 1 then 2: pending after search -> sort. */
-  const pendingHits = $derived(searchOcrDocs(pending, search));
+  /** Slice 3b then 1 then 2: pending after state facet -> search -> sort. */
+  const facetedPending = $derived(filterByPendingState(pending, pendingStateFacet));
+  const pendingHits = $derived(searchOcrDocs(facetedPending, search));
   const sortedPending = $derived(
     sortOcrDocs(pendingHits.map((h) => h.record), sort),
   );
@@ -297,7 +308,9 @@
     new Map([...failedHits, ...pendingHits].map((h) => [h.record.id, h.nameRanges])),
   );
 
-  const isFiltering = $derived(search.trim().length > 0 || reasonFacet !== null);
+  const isFiltering = $derived(
+    search.trim().length > 0 || reasonFacet !== null || pendingStateFacet !== null,
+  );
 
   /** Slice 4: one flat cursor space across both rendered lists (failures
       then the capped pending preview), so a single arrow walk crosses
@@ -307,6 +320,14 @@
   /** Slice 5: pending workload preview + context-aware footer line. */
   const pendingImpact = $derived(summarizePending(pending));
   const pendingImpactLabel = $derived(describeOcrImpact(pendingImpact));
+  /** Compose both facets (failure-reason + pending-state) into one footer
+      narration slot — they live in different sections but the footer is a
+      single line, so join them when both happen to be active. */
+  const facetLabel = $derived(
+    [reasonFacet, pendingStateFacet ? pendingStateLabel(pendingStateFacet) : null]
+      .filter((s): s is string => !!s)
+      .join(" + ") || null,
+  );
   const viewSummary = $derived(
     describeOcrView({
       shownFailed: sortedFailed.length,
@@ -314,7 +335,7 @@
       totalFailed: failed.length,
       totalPending: pending.length,
       inFlight: stats?.pending ?? 0,
-      reasonFacet,
+      reasonFacet: facetLabel,
       query: search,
     }),
   );
@@ -336,11 +357,22 @@
     reasonFacet = reasonFacet === reason ? null : reason;
   }
 
+  function togglePendingStateFacet(state: string) {
+    pendingStateFacet = pendingStateFacet === state ? null : state;
+  }
+
   // Keep a stale facet from silently emptying the inbox after a retry /
   // refresh drops its last failure (Slice 3 reconcile).
   $effect(() => {
     const live = reconcileReasonFacet(reasonFacet, reasonBuckets);
     if (live !== reasonFacet) reasonFacet = live;
+  });
+
+  // Keep a stale pending-state facet from silently emptying the pending
+  // list after its last image-only/mixed doc is run (Slice 3b reconcile).
+  $effect(() => {
+    const live = reconcilePendingStateFacet(pendingStateFacet, pendingStateBuckets);
+    if (live !== pendingStateFacet) pendingStateFacet = live;
   });
 
   // Keep the virtual cursor in range as the filtered/sorted lists grow or
@@ -534,6 +566,7 @@
                   onclick={() => {
                     search = "";
                     reasonFacet = null;
+                    pendingStateFacet = null;
                     searchEl?.focus();
                   }}
                   aria-label="Clear filter"
@@ -683,6 +716,25 @@
               </span>
             </h3>
           </header>
+
+          {#if pendingStateBuckets.length > 1}
+            <div class="oq-reasons" role="group" aria-label="Filter pending by kind">
+              {#each pendingStateBuckets as bucket (bucket.state)}
+                <button
+                  class="oq-reason"
+                  class:active={pendingStateFacet === bucket.state}
+                  onclick={() => togglePendingStateFacet(bucket.state)}
+                  aria-pressed={pendingStateFacet === bucket.state}
+                  title={pendingStateFacet === bucket.state
+                    ? `Showing only ${pendingStateLabel(bucket.state)} — click to clear`
+                    : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that are ${pendingStateLabel(bucket.state)}`}
+                >
+                  {pendingStateLabel(bucket.state)}
+                  <span class="oq-reason-count tabular">{bucket.count}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
           {#if pending.length === 0}
             <div class="oq-empty">
               {#if loading}
@@ -694,10 +746,20 @@
             </div>
           {:else if sortedPending.length === 0}
             <div class="oq-empty">
-              No pending docs match <span class="oq-empty-q">“{search.trim()}”</span>.
+              {#if pendingStateFacet && search.trim()}
+                No <span class="oq-empty-q">{pendingStateLabel(pendingStateFacet)}</span> docs match
+                <span class="oq-empty-q">“{search.trim()}”</span>.
+              {:else if pendingStateFacet}
+                No <span class="oq-empty-q">{pendingStateLabel(pendingStateFacet)}</span> docs pending.
+              {:else}
+                No pending docs match <span class="oq-empty-q">“{search.trim()}”</span>.
+              {/if}
               <button
                 class="oq-link"
-                onclick={() => (search = "")}
+                onclick={() => {
+                  search = "";
+                  pendingStateFacet = null;
+                }}
               >Clear filter</button>
             </div>
           {:else}

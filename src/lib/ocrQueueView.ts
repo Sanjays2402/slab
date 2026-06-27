@@ -392,6 +392,92 @@ export function describeDominantReason(buckets: readonly OcrReasonBucket[]): str
   return `Most failures: ${top.reason} (${top.count.toLocaleString()})`;
 }
 
+// --- Slice 3b: pending-state facet -------------------------------------
+//
+// The pending list mixes two genuinely different kinds of work: fully
+// image-only ("scanned") pages that need a complete OCR pass, and "mixed"
+// docs that already have some embedded text and only need the scanned
+// pages filled in. They cost differently and a user often wants to triage
+// just one kind ("run the cheap mixed ones first"). This mirrors the
+// failure-reason facet for the pending queue: group by ocr_state, render
+// clickable count pills, filter to one state, and auto-clear a stale
+// facet — the same shape as groupFailureReasons / filterByReason /
+// reconcileReasonFacet so the two facets behave identically.
+
+/** A pending-state bucket: the raw ocr_state + how many pending docs wear it. */
+export interface OcrStateBucket {
+  state: string;
+  count: number;
+}
+
+/**
+ * Human label for a pending ocr_state pill. "scanned" reads as
+ * "Image-only" and "mixed" as "Mixed pages" (matching the per-row meta
+ * line); any other state passes through unchanged so a novel pending
+ * state still renders a sensible pill rather than a raw token.
+ */
+export function pendingStateLabel(state: string): string {
+  switch (state) {
+    case "scanned":
+      return "Image-only";
+    case "mixed":
+      return "Mixed pages";
+    default:
+      return state || "Unknown";
+  }
+}
+
+/**
+ * Group a pending list by ocr_state, returning buckets sorted by count
+ * descending (dominant kind first), ties broken alphabetically by state
+ * so the order is stable. A null/empty list -> []. Rows with a blank
+ * state bucket under "unknown".
+ */
+export function groupPendingStates<T extends OcrDocLike>(
+  pending: readonly T[],
+): OcrStateBucket[] {
+  if (!Array.isArray(pending)) return [];
+  const counts = new Map<string, number>();
+  for (const doc of pending) {
+    if (!doc) continue;
+    const state = doc.ocr_state || "unknown";
+    counts.set(state, (counts.get(state) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([state, count]) => ({ state, count }))
+    .sort((a, b) => b.count - a.count || a.state.localeCompare(b.state));
+}
+
+/**
+ * Filter `pending` to rows whose ocr_state equals `state`. A null/empty
+ * state (no facet) passes every row through unchanged. The returned array
+ * is always a new array (never the input reference). Null list -> [].
+ */
+export function filterByPendingState<T extends OcrDocLike>(
+  pending: readonly T[],
+  state: string | null,
+): T[] {
+  if (!Array.isArray(pending)) return [];
+  if (!state) return pending.slice();
+  return pending.filter((d) => d && (d.ocr_state || "unknown") === state);
+}
+
+/**
+ * Reconcile an active pending-state facet against the live bucket list.
+ * If the faceted state no longer exists (its last pending doc was run, or
+ * a refresh dropped it), the facet is stale and must clear so the pending
+ * list doesn't silently show zero rows with no way back. Returns the
+ * state to keep, or null to drop the facet. Pure.
+ */
+export function reconcilePendingStateFacet(
+  active: string | null,
+  buckets: readonly OcrStateBucket[],
+): string | null {
+  if (!active) return null;
+  if (!Array.isArray(buckets)) return null;
+  return buckets.some((b) => b && b.state === active) ? active : null;
+}
+
 // --- Slice 4: keyboard navigation --------------------------------------
 //
 // The panel was mouse-only: you could search, sort, and triage, but
