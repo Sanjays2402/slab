@@ -25,6 +25,8 @@
   } from "$lib/recent";
   import {
     partitionRecents,
+    filterRecents,
+    highlightRecentName,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
   import { basename } from "$lib/types";
@@ -49,16 +51,31 @@
     unsub?.();
   });
 
+  // Slice 2 (round 44): filter-as-you-type. A user near the 12-file recents
+  // cap had no way to jump to one file — the grid was eyeball-only. The
+  // filter input narrows the board live, reusing the tested palette scorer
+  // (via filterRecents / highlightRecentName) so ranking + <mark> highlight
+  // behave EXACTLY like Cmd+K and the library search panel.
+  let query = $state("");
+  let filterEl: HTMLInputElement | null = $state(null);
+  const q = $derived(query.trim());
+  const filtering = $derived(q.length > 0);
+
   // The "Continue reading" hero card surfaces the single most useful next
   // action: the file with the freshest reading momentum. The selection +
   // partition math now lives in the tested pure core (recentsHomeView.ts),
   // so the contract that decides what the app's headline card even is has
   // unit tests instead of an untested inline $derived. `partitionRecents`
   // returns { hero, pinned, others } exactly mirroring the render regions.
+  //
+  // While a filter is active the hero collapses and the board becomes a
+  // flat matched list (pinned strip + recents grid both filtered); with no
+  // filter the partition's hero-aware split is used unchanged.
   const partition = $derived(partitionRecents(recents));
-  const continueCandidate = $derived(partition.hero);
-  const pinned = $derived(partition.pinned);
-  const others = $derived(partition.others);
+  const matched = $derived(filtering ? filterRecents(recents, q) : recents);
+  const continueCandidate = $derived(filtering ? null : partition.hero);
+  const pinned = $derived(filtering ? matched.filter((r) => r.pinned) : partition.pinned);
+  const others = $derived(filtering ? matched.filter((r) => !r.pinned) : partition.others);
 
   function progressPct(r: RecentFile): number {
     if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return 0;
@@ -113,8 +130,54 @@
     <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
   </svg>
 {/snippet}
+{#snippet searchGlyph()}
+  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+    <path d="M16 16l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+{/snippet}
+<!-- Renders a recent file's name with a live <mark> over the matched range. -->
+{#snippet nameSegs(name: string)}
+  {#each highlightRecentName(name, q) as seg}
+    {#if seg.hit}<mark class="hl">{seg.text}</mark>{:else}{seg.text}{/if}
+  {/each}
+{/snippet}
 
 <div class="recents-home">
+  {#if recents.length > 0}
+    <div class="filter-bar">
+      <span class="filter-ico" aria-hidden="true">{@render searchGlyph()}</span>
+      <input
+        bind:this={filterEl}
+        class="filter-input"
+        type="text"
+        placeholder="Filter recent documents…"
+        bind:value={query}
+        spellcheck="false"
+        autocomplete="off"
+        aria-label="Filter recent documents"
+        onkeydown={(e) => {
+          if (e.key === "Escape" && query) {
+            e.preventDefault();
+            e.stopPropagation();
+            query = "";
+          }
+        }}
+      />
+      {#if filtering}
+        <button
+          class="filter-clear"
+          onclick={() => {
+            query = "";
+            filterEl?.focus();
+          }}
+          aria-label="Clear filter"
+          title="Clear filter (Esc)"
+        >Clear</button>
+      {/if}
+    </div>
+  {/if}
+
   {#if continueCandidate && continueCandidate.lastPage && continueCandidate.totalPages}
     <!-- Hero: a user with reading momentum gets resume as the headline. -->
     <button class="hero-card resume" onclick={continueReading} title={continueCandidate.path}>
@@ -193,7 +256,7 @@
                 {/if}
                 <span class="pin-flag" aria-hidden="true">{@render pinGlyph()}</span>
               </div>
-              <span class="card-name">{r.name}</span>
+              <span class="card-name">{@render nameSegs(r.name)}</span>
               <span class="card-meta">
                 {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
               </span>
@@ -218,7 +281,7 @@
   {#if others.length > 0}
     <section class="row">
       <header class="row-head">
-        <span class="row-label">Recent</span>
+        <span class="row-label">{filtering ? "Results" : "Recent"}</span>
         <span class="row-hint">{others.length} file{others.length === 1 ? "" : "s"}</span>
       </header>
       <div class="grid">
@@ -233,7 +296,7 @@
                   <span class="card-thumb-placeholder">{basename(r.name).slice(0, 3).toUpperCase()}</span>
                 {/if}
               </div>
-              <span class="card-name">{r.name}</span>
+              <span class="card-name">{@render nameSegs(r.name)}</span>
               <span class="card-meta">
                 {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
               </span>
@@ -254,6 +317,17 @@
       </div>
     </section>
   {/if}
+
+  {#if filtering && pinned.length === 0 && others.length === 0}
+    <div class="filter-empty">
+      <p class="filter-empty-line">
+        No recent documents match <span class="filter-empty-q">“{q}”</span>.
+      </p>
+      <button class="filter-empty-reset" onclick={() => { query = ""; filterEl?.focus(); }}>
+        Clear filter
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -264,6 +338,77 @@
     gap: 1.5rem;
     padding: 0;
   }
+
+  /* Slice 2 — filter bar: palette-grade filter-as-you-type. */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-1, rgba(255,255,255,0.08));
+    background: var(--surface-2, rgba(255,255,255,0.03));
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .filter-bar:focus-within {
+    border-color: var(--accent, #5e6ad2);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #5e6ad2) 22%, transparent);
+  }
+  .filter-ico { display: flex; opacity: 0.5; }
+  .filter-ico .ico { width: 16px; height: 16px; }
+  .filter-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font-size: 0.9rem;
+    outline: none;
+  }
+  .filter-input::placeholder { opacity: 0.45; }
+  .filter-clear {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--accent, #5e6ad2);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.15rem 0.35rem;
+    border-radius: 6px;
+  }
+  .filter-clear:hover { background: color-mix(in srgb, var(--accent, #5e6ad2) 14%, transparent); }
+
+  .hl {
+    background: color-mix(in srgb, var(--accent, #5e6ad2) 36%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+
+  .filter-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 2.5rem 1rem;
+    text-align: center;
+    opacity: 0.85;
+  }
+  .filter-empty-line { margin: 0; opacity: 0.7; font-size: 0.95rem; }
+  .filter-empty-q { color: var(--accent, #5e6ad2); font-weight: 600; }
+  .filter-empty-reset {
+    appearance: none;
+    border: 1px solid var(--border-1, rgba(255,255,255,0.12));
+    background: var(--surface-2, rgba(255,255,255,0.03));
+    color: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0.4rem 0.9rem;
+    border-radius: 9px;
+  }
+  .filter-empty-reset:hover { border-color: var(--accent, #5e6ad2); }
 
   .hero-card {
     display: grid;
