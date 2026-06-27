@@ -21,6 +21,7 @@
     getRecentThumb,
     pinRecent,
     removeRecent,
+    clearRecent,
     type RecentFile,
   } from "$lib/recent";
   import {
@@ -36,6 +37,8 @@
     clampRecentCursor,
     summarizeRecents,
     countInProgress,
+    countUnpinned,
+    describeClearUnpinned,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -127,6 +130,27 @@
       sort: sortMode,
     }),
   );
+
+  // Slice 6 (this round): clear-unpinned affordance. The board only let you
+  // remove rows one at a time; the store already has a "clear unpinned"
+  // primitive (clearRecent preserves pinned). countUnpinned drives an honest
+  // count so the footer can offer "Clear N unpinned" and hide it when every
+  // row is pinned (nothing to clear). Confirm before wiping.
+  const unpinnedCount = $derived(countUnpinned(recents));
+  const clearUnpinnedLabel = $derived(describeClearUnpinned(unpinnedCount));
+  function clearUnpinned() {
+    if (unpinnedCount <= 0) return;
+    if (
+      !window.confirm(
+        `Clear ${unpinnedCount} unpinned ${unpinnedCount === 1 ? "document" : "documents"} from recents? Pinned documents are kept.`,
+      )
+    )
+      return;
+    clearRecent();
+    notify.info(
+      `Cleared ${unpinnedCount} unpinned ${unpinnedCount === 1 ? "document" : "documents"}`,
+    );
+  }
 
   // Keep the cursor in range when the list shrinks (a filter narrowed it, a
   // file was pinned/removed). A cleared filter / emptied board parks it.
@@ -483,6 +507,13 @@
   {#if recents.length > 0}
     <footer class="board-foot">
       <span class="board-foot-summary" aria-live="polite">{summary}</span>
+      {#if clearUnpinnedLabel}
+        <button
+          class="board-foot-clear"
+          onclick={clearUnpinned}
+          title="Remove every unpinned document from this list (pinned are kept)"
+        >{clearUnpinnedLabel}</button>
+      {/if}
       <span class="board-foot-hint" aria-hidden="true">
         <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>P</kbd> pin · <kbd>⌫</kbd> remove
       </span>
@@ -834,7 +865,27 @@
     font-size: 0.76rem;
     flex-wrap: wrap;
   }
-  .board-foot-summary { opacity: 0.6; }
+  .board-foot-summary { opacity: 0.6; margin-right: auto; }
+  /* Slice 6 — clear-unpinned affordance. Quiet by default; the danger
+     tint only surfaces on hover so it never competes with the summary. */
+  .board-foot-clear {
+    appearance: none;
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.1));
+    background: transparent;
+    color: inherit;
+    opacity: 0.55;
+    font-size: 0.74rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 120ms, border-color 120ms, color 120ms;
+  }
+  .board-foot-clear:hover {
+    opacity: 1;
+    color: #ef4444;
+    border-color: #ef4444;
+  }
   .board-foot-hint {
     display: inline-flex;
     align-items: center;

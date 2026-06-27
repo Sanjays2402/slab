@@ -450,3 +450,82 @@ export function summarizeRecents(state: RecentSummaryState): string {
   if (state?.sort && state.sort !== "recent") parts.push(`by ${describeRecentSort(state.sort)}`);
   return parts.join(" \u00b7 ");
 }
+
+// --- Slice 6: clear-unpinned affordance ------------------------------
+//
+// The board accumulates recents up to the store cap; the only way to
+// tidy it was to remove rows one at a time. The store already has a
+// "clear unpinned" primitive (recent.clearRecent preserves pinned), but
+// the board never surfaced it. This counts the unpinned rows so the
+// footer can offer a single "Clear N unpinned" action with an honest
+// count — and hide it entirely when there's nothing to clear.
+
+/**
+ * Count how many of the given recents are NOT pinned — the rows a
+ * "clear unpinned" action would remove. Pinned rows (and a missing
+ * `pinned` flag, treated as unpinned) are classified the same way the
+ * store's clearRecent does. A null/garbage list -> 0.
+ */
+export function countUnpinned(files: readonly RecentLike[]): number {
+  if (!Array.isArray(files)) return 0;
+  let n = 0;
+  for (const f of files) {
+    if (!f) continue;
+    if (!f.pinned) n++;
+  }
+  return n;
+}
+
+/**
+ * Compose the "clear unpinned" affordance label for the footer, e.g.
+ * "Clear 9 unpinned". Returns "" when there is nothing to clear (every
+ * row is pinned, or the list is empty) so the component can hide the
+ * button. Pure.
+ */
+export function describeClearUnpinned(count: number): string {
+  const n = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
+  if (n <= 0) return "";
+  return `Clear ${n} unpinned`;
+}
+
+// --- Slice 7: thumbnail reading-progress overlay ---------------------
+//
+// The recents cards showed reading position only as a row of dots below
+// the title — easy to miss, and the hero/pinned thumbnails showed
+// nothing at all. This derives a compact progress-bar model from the
+// SAME tested `recentReadingProgress` core the chip uses, so a thin
+// accent bar can sit along the bottom edge of any card's thumbnail
+// (finished cards read as a full bar with a distinct tint). One source
+// of truth: the bar, the dots, and the chip can never disagree.
+
+/** The thumbnail progress-overlay model for one recent card. */
+export interface RecentProgressBar {
+  /** Whether to render the bar at all (there's a usable position). */
+  show: boolean;
+  /** Fill percent in [0, 100]. */
+  percent: number;
+  /** True once the final page was reached (drives the "done" tint). */
+  finished: boolean;
+  /** aria-label / tooltip text ("p.12/80 · 15%" or "Finished"), "" when hidden. */
+  label: string;
+}
+
+const HIDDEN_PROGRESS_BAR: RecentProgressBar = {
+  show: false,
+  percent: 0,
+  finished: false,
+  label: "",
+};
+
+/**
+ * Derive the thumbnail progress-bar model for a recent file. Reuses the
+ * tested `recentReadingProgress` so the bar's fill + finished state match
+ * the dots and the palette chip exactly. A file with no usable last-page
+ * + total yields a hidden bar (show:false). Pure; tolerant of garbage.
+ */
+export function recentProgressBar(file: RecentLike | null | undefined): RecentProgressBar {
+  if (!file) return HIDDEN_PROGRESS_BAR;
+  const p = recentReadingProgress(file);
+  if (!p.hasProgress) return HIDDEN_PROGRESS_BAR;
+  return { show: true, percent: p.percent, finished: p.finished, label: p.label };
+}

@@ -25,6 +25,9 @@ import {
   clampRecentCursor,
   countInProgress,
   summarizeRecents,
+  countUnpinned,
+  describeClearUnpinned,
+  recentProgressBar,
   type RecentLike,
 } from "./recentsHomeView";
 
@@ -280,6 +283,56 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
 
   // Garbage numbers tolerated.
   expect(summarizeRecents({ total: NaN, shown: NaN, query: "", inProgress: NaN, sort: "recent" } as never) === "No recent documents yet", "summary: NaN total -> empty");
+}
+
+// --- countUnpinned + describeClearUnpinned (Slice 6) ---
+{
+  const files = [
+    mk({ path: "/a.pdf", pinned: true }),
+    mk({ path: "/b.pdf", pinned: false }),
+    mk({ path: "/c.pdf" }), // missing flag -> unpinned
+    mk({ path: "/d.pdf", pinned: true }),
+  ];
+  expect(countUnpinned(files) === 2, "unpinned: counts non-pinned incl. missing flag");
+  expect(countUnpinned([]) === 0, "unpinned: empty -> 0");
+  // @ts-expect-error — garbage
+  expect(countUnpinned(null) === 0, "unpinned: null -> 0");
+  expect(
+    countUnpinned([mk({ pinned: true }), mk({ pinned: true })]) === 0,
+    "unpinned: all pinned -> 0",
+  );
+  // null entries are skipped, not counted.
+  // @ts-expect-error — garbage entry
+  expect(countUnpinned([null, mk({ pinned: false })]) === 1, "unpinned: skips null entries");
+
+  expect(describeClearUnpinned(9) === "Clear 9 unpinned", "clearlabel: composes count");
+  expect(describeClearUnpinned(1) === "Clear 1 unpinned", "clearlabel: count of one");
+  expect(describeClearUnpinned(0) === "", "clearlabel: zero -> '' (hidden)");
+  expect(describeClearUnpinned(-3) === "", "clearlabel: negative -> '' (hidden)");
+  expect(describeClearUnpinned(NaN) === "", "clearlabel: NaN -> '' (hidden)");
+}
+
+// --- recentProgressBar (Slice 7) ---
+{
+  // Mid-read file -> visible bar with percent + label, not finished.
+  const mid = recentProgressBar(mk({ lastPage: 12, totalPages: 80 }));
+  expect(mid.show && mid.percent === 15 && !mid.finished, "bar: mid-read shows 15%");
+  expect(mid.label === "p.12/80 · 15%", "bar: mid-read label matches chip");
+
+  // Finished file -> full bar, finished flag, "Finished" label.
+  const done = recentProgressBar(mk({ lastPage: 80, totalPages: 80 }));
+  expect(done.show && done.finished && done.percent === 100, "bar: finished is full");
+  expect(done.label === "Finished", "bar: finished label");
+
+  // No usable progress -> hidden bar.
+  const none = recentProgressBar(mk({ path: "/x.pdf" }));
+  expect(!none.show && none.label === "", "bar: no progress -> hidden");
+  // Only a page count, no last page -> still hidden.
+  expect(!recentProgressBar(mk({ totalPages: 50 })).show, "bar: total without lastPage hidden");
+  // Null / garbage -> hidden.
+  expect(!recentProgressBar(null).show, "bar: null -> hidden");
+  // @ts-expect-error — garbage
+  expect(!recentProgressBar(undefined).show, "bar: undefined -> hidden");
 }
 
 // eslint-disable-next-line no-console
