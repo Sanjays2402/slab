@@ -41,6 +41,9 @@
     classifySearchResultKey,
     flattenSearchHits,
     flatSearchHitCount,
+    searchGroupStarts,
+    classifyPaletteGroupNav,
+    nextGroupIndex,
     nextSearchCursor,
     clampSearchCursor,
     interpretSearchQuery,
@@ -258,6 +261,8 @@
   /** Every hit flattened into one cursor index space, in render order. */
   const flatHits = $derived(flattenSearchHits(groups as SearchGroupLike<SearchHit>[]));
   const flatCount = $derived(flatSearchHitCount(groups as SearchGroupLike<SearchHit>[]));
+  /** Flat index of each document group's first hit, for the Cmd+↑/↓ jump. */
+  const groupStarts = $derived(searchGroupStarts(groups as SearchGroupLike<SearchHit>[]));
 
   // ---- Slice 2 (Atlas III): live query-interpretation preview ----
   // Mirror the FTS backend's lexer so the user can SEE how their query
@@ -324,6 +329,18 @@
   function onResultsKey(e: KeyboardEvent): void {
     // Only when there are results to walk; let the inputs own typing.
     if (flatCount === 0) return;
+    // Cmd/Ctrl+Up/Down leaps between document groups (Linear/Finder-style).
+    // Checked BEFORE classifySearchResultKey, which bails on any modifier,
+    // and works from the search/refine boxes too (the chord has no caret
+    // meaning there). Reuses the palette group-jump core via the view-core.
+    const groupIntent = classifyPaletteGroupNav(e);
+    if (groupIntent) {
+      e.preventDefault();
+      const start = cursor < 0 ? 0 : cursor;
+      cursor = nextGroupIndex(groupStarts, start, groupIntent, flatCount);
+      hitEls[cursor]?.scrollIntoView({ block: "nearest" });
+      return;
+    }
     const action = classifySearchResultKey(e);
     if (!action) return;
     const where = keyTarget(e);
@@ -581,6 +598,7 @@
         <ul class="tips">
           <li><kbd>Enter</kbd> — run search immediately</li>
           <li><kbd>Esc</kbd> — clear</li>
+          <li><kbd>⌘</kbd><kbd>↑</kbd>/<kbd>↓</kbd> — jump between documents in results</li>
           <li>Last word becomes a prefix match automatically</li>
           <li>
             Wrap a phrase in <kbd>"</kbd>quotes<kbd>"</kbd> to match adjacent

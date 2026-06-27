@@ -12,6 +12,9 @@ import {
   classifySearchResultKey,
   flattenSearchHits,
   flatSearchHitCount,
+  searchGroupStarts,
+  classifyPaletteGroupNav,
+  nextGroupIndex,
   nextSearchCursor,
   clampSearchCursor,
   interpretSearchQuery,
@@ -534,6 +537,44 @@ const group = (
   // (it matched the title/filename instead, which is correct).
   const k = buildSnippetSpans("nothing here", "absent");
   expect(k.every((s) => !s.refine), "spans: non-occurring refine paints nothing");
+}
+
+// --- searchGroupStarts + group-jump chord (Slice 1b) ---
+{
+  const g3 = [
+    group(1, "A", [hit(), hit(), hit()]),
+    group(2, "B", [hit(), hit()]),
+    group(3, "C", [hit(), hit(), hit(), hit()]),
+  ];
+  expect(
+    JSON.stringify(searchGroupStarts(g3)) === JSON.stringify([0, 3, 5]),
+    "groupstarts: flat heads from group sizes",
+  );
+  expect(JSON.stringify(searchGroupStarts([])) === "[]", "groupstarts: empty -> []");
+  // @ts-expect-error — garbage
+  expect(JSON.stringify(searchGroupStarts(null)) === "[]", "groupstarts: null -> []");
+  // A group with no hits contributes a head but zero width.
+  const gEmpty = [group(1, "A", [hit()]), group(2, "B", []), group(3, "C", [hit(), hit()])];
+  expect(
+    JSON.stringify(searchGroupStarts(gEmpty)) === JSON.stringify([0, 1, 1]),
+    "groupstarts: empty group keeps a head at zero width",
+  );
+
+  // The chord classifier is the palette's (re-exported) — sanity-check
+  // the re-export wiring resolves and behaves.
+  expect(classifyPaletteGroupNav({ key: "ArrowDown", metaKey: true }) === "group-next", "chord: Cmd+Down -> next");
+  expect(classifyPaletteGroupNav({ key: "ArrowUp", ctrlKey: true }) === "group-prev", "chord: Ctrl+Up -> prev");
+  expect(classifyPaletteGroupNav({ key: "ArrowDown" }) === null, "chord: bare arrow -> null");
+  expect(classifyPaletteGroupNav({ key: "ArrowDown", metaKey: true, shiftKey: true }) === null, "chord: Shift disqualifies");
+
+  // The mover leaps to group heads using those starts.
+  const starts = searchGroupStarts(g3); // [0,3,5], count 9
+  expect(nextGroupIndex(starts, 0, "group-next", 9) === 3, "jump: from row 0 -> head of group 2");
+  expect(nextGroupIndex(starts, 3, "group-next", 9) === 5, "jump: from head 3 -> head of group 3");
+  expect(nextGroupIndex(starts, 6, "group-next", 9) === 8, "jump: in last group -> last row");
+  expect(nextGroupIndex(starts, 6, "group-prev", 9) === 5, "jump: below head -> section top first");
+  expect(nextGroupIndex(starts, 5, "group-prev", 9) === 3, "jump: at head -> previous head");
+  expect(nextGroupIndex(starts, 0, "group-prev", 9) === 0, "jump: top stays at 0");
 }
 
 // eslint-disable-next-line no-console

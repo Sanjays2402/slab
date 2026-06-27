@@ -24,8 +24,19 @@ import {
   scorePaletteField,
   classifyPaletteNav,
   nextPaletteIndex,
+  classifyPaletteGroupNav,
+  groupStartIndices,
+  nextGroupIndex,
   type PaletteNavIntent,
+  type PaletteGroupNavIntent,
 } from "./paletteSearch";
+
+// Re-export the palette group-jump primitives so the panel can drive the
+// Cmd/Ctrl+Up/Down chord through one import surface (librarySearchView)
+// without reaching into paletteSearch directly — keeping the view-core
+// the single dependency the component talks to.
+export { classifyPaletteGroupNav, nextGroupIndex };
+export type { PaletteGroupNavIntent };
 
 /**
  * The fields the view-core reads off a search hit. Mirrors `SearchHit`
@@ -161,6 +172,29 @@ export function flatSearchHitCount(groups: readonly SearchGroupLike[]): number {
     if (g && Array.isArray(g.hits)) n += g.hits.length;
   }
   return n;
+}
+
+// --- Slice 1b: group-jump chord (Cmd/Ctrl + Up/Down) -----------------
+//
+// In a broad search the grouped result list runs to dozens of document
+// sections. Walking it one hit at a time with the arrows is slow; this
+// reuses the command palette's group-jump core (classifyPaletteGroupNav
+// + groupStartIndices + nextGroupIndex) so Cmd/Ctrl+Down leaps the cursor
+// to the next document header and Cmd/Ctrl+Up to the previous one, with
+// the same "jump to section top, then previous section" semantics. No
+// second implementation — the panel imports the classifier/mover from
+// here so the chord behaves identically to ⌘K.
+
+/**
+ * Flat start index (into the cursor space) of each document group's first
+ * hit, in render order. `[{hits:3},{hits:2},{hits:4}]` -> `[0, 3, 5]`.
+ * Thin adapter over the tested `groupStartIndices` so the panel doesn't
+ * re-derive the section heads. A null/garbage list -> [].
+ */
+export function searchGroupStarts(groups: readonly SearchGroupLike[]): number[] {
+  if (!Array.isArray(groups)) return [];
+  const sizes = groups.map((g) => (g && Array.isArray(g.hits) ? g.hits.length : 0));
+  return groupStartIndices(sizes);
 }
 
 /**
