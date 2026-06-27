@@ -30,6 +30,10 @@
     sortRecentView,
     recentSortLabel,
     RECENT_SORT_MODES,
+    flattenRecentCards,
+    classifyRecentKey,
+    moveRecentCursor,
+    clampRecentCursor,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -50,9 +54,11 @@
     unsub = subscribeRecent((files) => {
       recents = files;
     });
+    window.addEventListener("keydown", handleKey);
   });
   onDestroy(() => {
     unsub?.();
+    window.removeEventListener("keydown", handleKey);
   });
 
   // Slice 2 (round 44): filter-as-you-type. A user near the 12-file recents
@@ -91,6 +97,98 @@
   const others = $derived(
     sortRecentView(filtering ? matched.filter((r) => !r.pinned) : partition.others, sortMode),
   );
+
+  // Slice 4 (round 44): keyboard navigation. The board was mouse-only. A
+  // window keydown handler drives a VIRTUAL cursor (ring only, no DOM focus
+  // move) over the rendered cards — flattenRecentCards gives one index space
+  // across the pinned strip + recents grid (the hero keeps its own ⌘0). The
+  // cursor never moves real focus, so Enter on a focused card-button can't
+  // double-fire. Reuses the tested palette nav core via moveRecentCursor /
+  // clampRecentCursor, and classifyRecentKey owns the bare-key -> action map.
+  const flatRows = $derived(flattenRecentCards(pinned, others));
+  let cursor = $state(-1);
+  let cardEls = $state<Array<HTMLElement | null>>([]);
+  let listFocused = $state(false);
+
+  // Keep the cursor in range when the list shrinks (a filter narrowed it, a
+  // file was pinned/removed). A cleared filter / emptied board parks it.
+  $effect(() => {
+    cursor = clampRecentCursor(cursor, flatRows.length);
+    if (flatRows.length === 0) listFocused = false;
+  });
+
+  function scrollCursorIntoView() {
+    queueMicrotask(() => {
+      const el = cardEls[cursor];
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  /**
+   * Window-level key handler. Returns true when it consumed the event.
+   * While the filter input is focused only nav + Enter are honored (so the
+   * arrows reach the cards but typed letters like "p" stay literal text);
+   * elsewhere the full bare-key map (Enter / P / Backspace / Esc) applies.
+   */
+  function handleKey(e: KeyboardEvent): boolean {
+    if (recents.length === 0) return false;
+    const target = e.target as HTMLElement | null;
+    const inFilter = target === filterEl;
+    const tag = target?.tagName;
+    // Outside the filter, ignore keys aimed at other inputs/controls.
+    if (!inFilter && (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")) {
+      return false;
+    }
+    const action = classifyRecentKey(e);
+    if (!action) return false;
+    // From inside the filter box, only let movement + open through — pin /
+    // remove / clear would hijack the user's typing.
+    if (inFilter && action.kind !== "move" && action.kind !== "open") return false;
+
+    const row = cursor >= 0 ? flatRows[cursor] : null;
+    switch (action.kind) {
+      case "move": {
+        if (flatRows.length === 0) return false;
+        e.preventDefault();
+        listFocused = true;
+        cursor = moveRecentCursor(action.intent, cursor, flatRows.length);
+        scrollCursorIntoView();
+        return true;
+      }
+      case "open": {
+        if (!row) return false;
+        e.preventDefault();
+        onOpen(row.file);
+        return true;
+      }
+      case "pin": {
+        if (!row) return false;
+        e.preventDefault();
+        pinRecent(row.file.path);
+        notify.success(row.file.pinned ? `Unpinned ${row.file.name}` : `Pinned ${row.file.name}`);
+        return true;
+      }
+      case "remove": {
+        if (!row) return false;
+        e.preventDefault();
+        removeRecent(row.file.path);
+        notify.info(`Removed ${row.file.name} from recents`);
+        return true;
+      }
+      case "clear": {
+        // Esc parks the cursor if the list has focus; otherwise it falls
+        // through (the filter's own Esc handler clears the query first).
+        if (listFocused && cursor >= 0) {
+          e.preventDefault();
+          cursor = -1;
+          listFocused = false;
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
+  }
 
   function progressPct(r: RecentFile): number {
     if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return 0;
@@ -270,9 +368,13 @@
         <span class="row-hint">{pinned.length} file{pinned.length === 1 ? "" : "s"}</span>
       </header>
       <div class="row-strip">
-        {#each pinned as r (r.path)}
+        {#each pinned as r, i (r.path)}
           {@const thumb = getRecentThumb(r.path)}
-          <div class="card pinned">
+          <div
+            class="card pinned"
+            class:cursor={listFocused && cursor === i}
+            bind:this={cardEls[i]}
+          >
             <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
               <div class="card-thumb">
                 {#if thumb}
@@ -311,9 +413,14 @@
         <span class="row-hint">{others.length} file{others.length === 1 ? "" : "s"}</span>
       </header>
       <div class="grid">
-        {#each others as r (r.path)}
+        {#each others as r, i (r.path)}
           {@const thumb = getRecentThumb(r.path)}
-          <div class="card">
+          {@const flatIdx = pinned.length + i}
+          <div
+            class="card"
+            class:cursor={listFocused && cursor === flatIdx}
+            bind:this={cardEls[flatIdx]}
+          >
             <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
               <div class="card-thumb">
                 {#if thumb}
@@ -609,6 +716,13 @@
     box-shadow: 0 8px 22px -14px rgba(0,0,0,0.5);
   }
   .card.pinned { border-color: var(--accent, #5e6ad2); }
+  /* Slice 4 — virtual keyboard cursor ring. */
+  .card.cursor {
+    border-color: var(--accent, #5e6ad2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #5e6ad2) 55%, transparent),
+      0 8px 22px -14px rgba(0,0,0,0.5);
+  }
+  .card.cursor .card-actions { opacity: 1; }
 
   .card-body {
     width: 100%;
