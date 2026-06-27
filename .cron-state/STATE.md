@@ -1,15 +1,121 @@
 # Slab Cron State
 
-Last updated: 2026-06-27 06:10 PT by Cake (cron) — round-44 BATCH shipped (5 frontend/UX slices) WIRING the tested **RecentsHome view-core** ("Atlas V") into RecentsHome.svelte — the first-launch hero, the single highest-visibility surface in the app (shown the moment Slab opens with no document). This is the round-43 follow-through: round 43 shipped the tested pure core src/lib/recentsHomeView.ts (91 tests) but NEVER wired it into the component, which still ran the hero-selection / partition logic as an untested inline $derived, shipped EMOJI in its chrome (pushpin + heavy-x, a standing monochrome-glyph rule violation), and had no filter / sort / keyboard / footer. Round 44 is the "core then wire" second half (same pattern as round 42's reader-find core->wire). Slice 1 (fffc618) swap the inline continueCandidate/pinned/others derivations for the tested partitionRecents() + replace the pushpin/x emoji with two reusable inline-SVG snippets (pinGlyph/removeGlyph, currentColor) matching ToolboxPanel/LoomPanel; slice 2 (1e1f667) filter-as-you-type (filterRecents + highlightRecentName live <mark>, hero collapses while filtering, Results relabel, no-match empty state, Esc-clear); slice 3 (9928658) sort modes (sortRecentView Recent/Name/Progress/Pages segmented pill applied to both grids); slice 4 (7fa4862) keyboard nav (window keydown -> VIRTUAL cursor via flattenRecentCards/classifyRecentKey/moveRecentCursor/clampRecentCursor; Enter open / P pin / Backspace remove / Esc park; cursor never moves real focus so no Enter double-fire; from inside the filter only move+open pass through); slice 5 (191eb37) aria-live summary footer (summarizeRecents + countInProgress) + keycap chord hint. Gates: recentsHomeView 91/91, shared palette suites ALL unchanged (paletteSearch 253 / librarySearchView 127 / beaconCacheView 112 / readerFindView 86 / toastStack 254), pnpm check 0 errors / 104 warnings (rounds 32-43 baseline preserved EXACTLY — filter input, mark highlight, segmented sort, cursor ring, aria-live footer all clean), cargo fmt clean, ZERO Rust files changed. PRIOR (round 43): recentsHomeView.ts pure core (91 tests). (round 42): reader-find bar palette grade ("Atlas IV").
+Last updated: 2026-06-27 09:55 PT by Cake (cron) — round-45 BATCH shipped (5 frontend/UX capabilities) taking the **OCR Queue Panel** ("Atlas VI") from two flat unsearchable lists to Beacon-grade, on a new tested pure core src/lib/ocrQueueView.ts (122 tests). DELIBERATE PIVOT off the round-44 RecentsHome wire. Capabilities: (1) search-as-you-type over BOTH lists (searchOcrDocs; basename highlighted, silent matches on folder/state/error reason); (2) segmented Name/Folder/Pages/State sort w/ caret (cycleOcrSort, numeric-aware); (3) failure-reason grouping + facet (canonicalizeOcrError collapses noisy ocr_error to short buckets; groupFailureReasons -> clickable pills + dominant lede; reconcileReasonFacet auto-clears stale); (4) keyboard nav — one virtual cursor (flattenOcrRows) spanning failures-then-pending, arrows wrap / Enter runs-or-retries by section / O open / Esc park, ring only no focus move; (5) aria-live context footer (describeOcrView) + Run-all workload preview (summarizePending). Pending cap 20->60 w/ actionable overflow. COMMIT STRUCTURE: 2 commits (58ea2d3 tested core + 122 tests; 2f8eda5 cohesive wire) — honest round-42 rationale (wire interleaves all five into shared derived state + one template; can't split into 5 separately-compiling commits without red intermediates). Gates: ocrQueueView 122/122, shared palette suites ALL unchanged (paletteSearch 253 / librarySearchView 127 / beaconCacheView 112 / readerFindView 86 / recentsHomeView 91), pnpm check 0 errors / 104 warnings (rounds 32-44 baseline preserved EXACTLY), cargo fmt --all --check clean, ZERO Rust files changed. [PREV round-44 (2026-06-27 06:10 PT): wired RecentsHome view-core "Atlas V" into RecentsHome.svelte — partition+monochrome chrome (fffc618), filter (1e1f667), sort (9928658), keyboard (7fa4862), footer (191eb37); recentsHomeView 91/91.]
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** in package.json/Cargo.toml/tauri.conf.json/Cargo.lock.
-Internal module labels use the repo's logical-release naming ("Atlas V"
-= v3.43.0) which runs ahead of the package version; NOT bumped this round
+Internal module labels use the repo's logical-release naming ("Atlas VI"
+= v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `191eb37` — "feat(recents-home): context-aware summary footer".
+Latest commit: `2f8eda5` — "feat(ocr-queue): wire palette-grade search/sort/facet/keyboard/footer".
+
+### What round-45 (2026-06-27 09:55 PT) just shipped
+
+Five FRONTEND/UX capabilities (per Sanjay's frontend-focus override)
+PIVOTING off the round-44 RecentsHome wire to the **OCR Queue Panel**
+("Atlas VI") — a full modal every Beacon/OCR user reaches via the
+command palette ("OCR Queue…"), Cmd/Ctrl+Shift+O, or the
+`slab:open-ocr-queue` window event. It shipped as two flat lists (a
+failure inbox naming each `ocr_error`, a pending preview hard-capped at
+20 with a dead "+N more") that had NO search (a 200-failure inbox is a
+wall of rows), NO sort, raw noisy error strings (190 docs failing for
+one root cause read as 190 separate rows), a bare "Loading…" spinner
+(explicitly flagged on the roadmap), mouse-only interaction, and ZERO
+pure-core tests.
+
+New pure DOM-free module `src/lib/ocrQueueView.ts` (122 inline tests)
+backs all five capabilities — same pure-core/thin-shell discipline as
+beaconCacheView.ts / librarySearchView.ts / paletteSearch.ts /
+toastStack.ts. Reuses the tested palette core (scorePaletteField for
+search+highlight, classifyPaletteNav/nextPaletteIndex for nav) so there
+is NO second fuzzy/nav engine to drift.
+
+- Capability 1: filter-as-you-type search (searchOcrDocs). A
+  palette-grade filter bar over BOTH lists — basename match highlighted
+  live via splitHighlight, with silent secondary matches on full path
+  (folder), OCR state, and — crucially for the inbox — the captured
+  error reason, so "tesseract" surfaces every doc that failed for that
+  cause. Esc clears; section counts relabel to "N of M" while filtering;
+  per-list filtered empty states with one-click reset.
+
+- Capability 2: multi-field sort (cycleOcrSort / sortOcrDocs). A
+  segmented Name/Folder/Pages/State control with direction caret applied
+  to BOTH lists; name/folder case-insensitive + numeric-aware (file2 <
+  file10), pages numeric, stable id tie-break. Matches the Beacon /
+  library-search segmented pills.
+
+- Capability 3: failure-reason grouping + facet (canonicalizeOcrError /
+  groupFailureReasons / filterByReason / reconcileReasonFacet /
+  describeDominantReason). Raw ocr_error strings collapse to short
+  stable buckets (Tesseract not installed, Timed out, Encrypted PDF,
+  Damaged PDF, Permission denied, Out of memory, Disk full; unknowns ->
+  first-line headline capped at 60). Rendered as clickable pills with
+  per-reason counts + a dominant-cause lede ("Most failures: Tesseract
+  not installed (190)"); click a reason to triage just that root cause;
+  a stale facet auto-clears after a retry empties it.
+
+- Capability 4: keyboard navigation (flattenOcrRows / classifyOcrTableKey
+  / nextOcrCursor / clampOcrCursor). ONE virtual cursor spans both
+  rendered lists (failures first, then the capped pending preview) so a
+  single arrow walk crosses the whole queue; arrows wrap + Home/End +
+  PageUp/Down (palette nav core), Enter runs a pending doc or retries a
+  failed one BY SECTION, "o" opens, Esc parks. Cursor ring only (no DOM
+  focus move so Enter can't double-fire a focused button); clamps back
+  into range when a filter/facet shrinks the list; resets on close.
+
+- Capability 5: context footer + run-all workload preview
+  (describeOcrView / summarizePending / describeOcrImpact). An aria-live
+  polite footer narrates the live view ("3 failed · 12 pending", "2 of 8
+  matching Tesseract not installed", in-flight count) mirroring the
+  Beacon/palette footers; a "Run all: 12 docs · 3,400 pages" preview
+  shows the true OCR workload BEFORE the click; muted keycap chord hint.
+
+Pending preview cap raised 20 -> 60 with an actionable overflow note now
+that filter + sort make any specific doc reachable. Consolidated the
+component's local `basename` onto the view-core's `ocrBasename` (single
+source of truth so display + highlight ranges never disagree).
+
+Gates result: tsx ocrQueueView.test.ts 122/122 pass (basename/folder +
+search + sort + reason-canon/group/facet + flatten/keys/cursor +
+impact/footer), shared palette suite paletteSearch 253/253 /
+librarySearchView 127/127 / beaconCacheView 112/112 / readerFindView
+86/86 / recentsHomeView 91/91 ALL unchanged (the reused palette core is
+provably intact), pnpm check 0 errors / 104 warnings (rounds 32-44
+baseline preserved EXACTLY — the new filter input, <mark> highlight,
+segmented sort, reason-facet pills, virtual-cursor ring, and aria-live
+footer all passed a11y with zero new warnings), cargo fmt --all --check
+clean, ZERO Rust files changed so the round-32 lib baseline (clippy
+clean, 2620 tests) carries forward unchanged (the full Tauri binary
+build is never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 45):
+- Frontend-focus override honoured: all five capabilities are TS/Svelte
+  UI work (search scoring, sort, error canonicalization + grouping,
+  flat-nav key handling, footer copy). Zero backend.
+- DELIBERATE PIVOT off RecentsHome. Rounds 40-44 power-user-completed
+  the Beacon inspector, library/reader search, and the recents hero;
+  the OCR Queue Panel was the obvious next subsystem — high-visibility
+  modal, genuinely weak (flat, mouse-only, raw error noise, bare
+  spinner), the last major panel with zero pure-core tests.
+- Reuse over reinvention: imports the tested palette core
+  (scorePaletteField, classifyPaletteNav/nextPaletteIndex) — no second
+  fuzzy/nav engine. The 253-test palette suite is unchanged.
+- Same pure-core/thin-shell split: every decision (search match, sort,
+  error canon, flat-nav index, footer copy) is a pure function in
+  ocrQueueView.ts unit-tested without a DOM; OcrQueuePanel.svelte owns
+  the imperative edges (Tauri calls, keydown, scroll, toast).
+- COMMIT STRUCTURE NOTE: 2 commits, not 5 — the same honest round-42
+  rationale. The tested pure core (all five capabilities' logic + 122
+  tests, green standalone) is its own commit (58ea2d3); the component
+  integration (2f8eda5) is one cohesive surface that interleaves all
+  five into shared derived state + one template and cannot split into 5
+  separately-COMPILING commits without pushing red intermediate states.
+  Honest 2-commit structure over 5 fake non-compiling fragments.
+- Held the 104-warning svelte-check baseline EXACTLY — the new filter
+  input, reason-facet aria-pressed pills, segmented sort, cursor ring,
+  and polite live region all clean.
 
 ### What round-44 (2026-06-27 06:10 PT) just shipped
 
@@ -1481,8 +1587,21 @@ demo value:
 - per-plugin "Run prune now" affordance (deferred since round 25;
   button + confirm popover + result toast — wire the result through
   notify.promise for the spinner->done morph).
-- empty/loading/skeleton-state pass across panels that still show
-  a bare spinner (Signet verify, Beacon cache, Quill queue).
+- ~~OCR Queue Panel to Beacon grade ("Atlas VI")~~ — DONE round 45
+  (58ea2d3 core + 2f8eda5 wire): new tested pure core
+  src/lib/ocrQueueView.ts (122 tests) reusing the palette scorer/nav.
+  Search over both lists (searchOcrDocs), Name/Folder/Pages/State sort
+  (cycleOcrSort), failure-reason grouping + facet (canonicalizeOcrError
+  / groupFailureReasons), one virtual cursor across both lists
+  (flattenOcrRows / classifyOcrTableKey), aria-live footer + Run-all
+  workload preview (describeOcrView / summarizePending). Pending cap
+  20->60. Still open as follow-ups: a per-reason "Retry all <reason>"
+  button (retry only the faceted bucket); a real progress bar while
+  Run-all is in flight (the run is currently fire-and-refresh); the
+  pending "image-only/mixed" state could be a clickable facet too.
+- empty/loading/skeleton-state pass across the panels that still show
+  a bare spinner (Signet verify, Quill queue — Beacon cache done round
+  40, OCR queue done round 45).
 - Beacon Cache Inspector follow-ups (round 40): column COLLAPSE /
   thumbnails still open if wanted later.
 
