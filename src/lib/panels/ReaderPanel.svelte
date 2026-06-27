@@ -17,6 +17,27 @@
   import { slabScanAudit, nonEmptyPages, type ScanAuditReport } from "$lib/lens";
   import { analyzeSlides, type SlideReport } from "$lib/slides";
   import PresenterOverlay from "$lib/components/PresenterOverlay.svelte";
+  import {
+    interpretFindState,
+    idleFindStatus,
+    describeFindStatus,
+    findStatusTone,
+    announceFindStatus,
+    buildFindDispatch,
+    defaultFindOptions,
+    toggleFindOption,
+    describeFindOptions,
+    FIND_OPTION_TOGGLES,
+    pushFindHistory,
+    suggestFindHistory,
+    suggestionSegments,
+    classifyFindGlobalKey,
+    classifyFindDropdownKey,
+    type FindStatus,
+    type FindOptions,
+    type FindSuggestion,
+  } from "$lib/readerFindView";
+  import { classifyPaletteNav, nextPaletteIndex } from "$lib/paletteSearch";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -131,9 +152,15 @@
   let zoomPct = $state(100);
   let findOpen = $state(false);
   let findQuery = $state("");
-  let findStatus = $state<{ current: number; total: number }>({ current: 0, total: 0 });
-  let findCaseSensitive = $state(false);
-  let findWholeWord = $state(false);
+  let findStatus = $state<FindStatus>(idleFindStatus());
+  let findOptions = $state<FindOptions>(defaultFindOptions());
+  // Atlas IV: recent-search MRU ring (persisted) + live suggestion dropdown.
+  let findHistory = $state<string[]>(loadFindHistory());
+  let findSuggestOpen = $state(false);
+  let findSuggestCursor = $state(-1);
+  // Atlas IV: aria-live announcement, debounced by equality so the same
+  // phrase isn't re-read as pdf.js fires repeated progress events.
+  let findAnnounce = $state("");
   let thumbsOpen = $state(true);
   let infoOpen = $state(false);
   let outlineOpen = $state(false);
@@ -801,16 +828,10 @@
       syncZoom();
     });
     eventBus.on("updatefindcontrolstate", (s: any) => {
-      findStatus = {
-        current: s.matchesCount?.current ?? 0,
-        total: s.matchesCount?.total ?? 0,
-      };
+      applyFindEvent(s);
     });
     eventBus.on("updatefindmatchescount", (s: any) => {
-      findStatus = {
-        current: s.matchesCount?.current ?? 0,
-        total: s.matchesCount?.total ?? 0,
-      };
+      applyFindEvent(s);
     });
   }
 
@@ -868,7 +889,7 @@
       findQuery = highlight;
       // Don't pop the find bar by default — the highlights are enough.
       // If the user wants to keep navigating matches they can hit Cmd+F.
-      runFind(highlight, "find");
+      runFind(highlight);
     }
     // Trigger the halo on the next frame so the scroll has time to land.
     jumpHalo = false;
@@ -954,7 +975,7 @@
     const d = (e as CustomEvent<{ query: string }>).detail;
     findQuery = d.query;
     if (!findOpen) toggleFind();
-    runFind(findQuery, "find");
+    runFind(findQuery);
   }
 
   function onVimFindNext(e: Event) {
@@ -978,55 +999,150 @@
     setZoomValue(Math.max(0.25, +(pdfViewer.currentScale / 1.2).toFixed(2)));
   }
 
-  // ---------- Find ----------
-  function toggleFind() {
-    findOpen = !findOpen;
-    if (findOpen) {
-      queueMicrotask(() => {
-        const inp = document.querySelector<HTMLInputElement>(".find-input");
-        inp?.focus();
-        inp?.select();
-      });
-    } else {
-      runFind("", "find");
+  // ---------- Find (Atlas IV: tested pure core $lib/readerFindView) ----------
+  const FIND_HISTORY_KEY = "slab.reader.find.history.v1";
+
+  function loadFindHistory(): string[] {
+    if (typeof localStorage === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(FIND_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveFindHistory(h: string[]): void {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(FIND_HISTORY_KEY, JSON.stringify(h));
+    } catch {
+      /* localStorage full — best effort */
     }
   }
 
-  function runFind(q: string, type: string = "find") {
-    if (!eventBus) return;
-    eventBus.dispatch("find", {
-      source: null,
-      type,
-      query: q,
-      caseSensitive: findCaseSensitive,
-      entireWord: findWholeWord,
-      highlightAll: true,
-      findPrevious: false,
+  // Slice 3: live suggestion list derived from the ring + current query.
+  // Always computed (not gated on findSuggestOpen) so runFind can read its
+  // length to decide whether to keep the dropdown open without a circular
+  // dependency; the *rendering* is gated on findSuggestOpen in the markup.
+  let findSuggestions = $derived<FindSuggestion[]>(suggestFindHistory(findHistory, findQuery));
+
+  function focusFindInput() {
+    queueMicrotask(() => {
+      const inp = document.querySelector<HTMLInputElement>(".find-input");
+      inp?.focus();
+      inp?.select();
     });
   }
-  function findNext() {
+
+  function toggleFind() {
+    findOpen = !findOpen;
+    if (findOpen) {
+      // Opening on an empty box surfaces the recent-search dropdown.
+      findSuggestOpen = true;
+      findSuggestCursor = -1;
+      focusFindInput();
+    } else {
+      closeFind();
+    }
+  }
+
+  function closeFind() {
+    findOpen = false;
+    findSuggestOpen = false;
+    findSuggestCursor = -1;
+    findStatus = idleFindStatus();
+    findAnnounce = "";
+    dispatchFind("clear");
+  }
+
+  // Slice 2: every pdf.js find dispatch flows through ONE builder.
+  function dispatchFind(action: Parameters<typeof buildFindDispatch>[0], query: string = findQuery) {
     if (!eventBus) return;
-    eventBus.dispatch("find", {
-      source: null,
-      type: "again",
-      query: findQuery,
-      caseSensitive: findCaseSensitive,
-      entireWord: findWholeWord,
-      highlightAll: true,
-      findPrevious: false,
-    });
+    eventBus.dispatch("find", buildFindDispatch(action, query, findOptions));
+  }
+
+  function runFind(q: string) {
+    findSuggestOpen = q.length === 0 ? true : findSuggestions.length > 0;
+    findSuggestCursor = -1;
+    if (q.trim()) {
+      findHistory = pushFindHistory(findHistory, q);
+      saveFindHistory(findHistory);
+    }
+    dispatchFind("find", q);
+  }
+
+  function findNext() {
+    dispatchFind("again-next");
   }
   function findPrev() {
-    if (!eventBus) return;
-    eventBus.dispatch("find", {
-      source: null,
-      type: "again",
-      query: findQuery,
-      caseSensitive: findCaseSensitive,
-      entireWord: findWholeWord,
-      highlightAll: true,
-      findPrevious: true,
-    });
+    dispatchFind("again-prev");
+  }
+
+  // Slice 2: re-run after toggling an option chip (case / word / diacritics).
+  function setFindOption(key: keyof FindOptions) {
+    findOptions = toggleFindOption(findOptions, key);
+    if (findQuery) dispatchFind("options");
+  }
+
+  // Slice 3: commit a recent-search suggestion into the box + run it.
+  function commitSuggestion(q: string) {
+    findQuery = q;
+    findSuggestOpen = false;
+    findSuggestCursor = -1;
+    focusFindInput();
+    runFind(q);
+  }
+
+  // Slice 4: keystrokes inside the find input — dropdown nav first, then
+  // the find box's own Enter/Escape. stopPropagation on every handled key
+  // so the window-level reader keymap (page nav, Escape-closes-find) never
+  // double-fires while the user is interacting with the find input.
+  function onFindInputKey(e: KeyboardEvent) {
+    if (findSuggestOpen && findSuggestions.length > 0) {
+      const intent = classifyFindDropdownKey(e, findSuggestCursor >= 0);
+      if (intent === "next" || intent === "prev") {
+        e.preventDefault();
+        e.stopPropagation();
+        const nav = classifyPaletteNav({ key: e.key });
+        if (nav) findSuggestCursor = nextPaletteIndex(nav, findSuggestCursor, findSuggestions.length);
+        return;
+      }
+      if (intent === "commit") {
+        e.preventDefault();
+        e.stopPropagation();
+        commitSuggestion(findSuggestions[findSuggestCursor].query);
+        return;
+      }
+      if (intent === "close") {
+        // First Escape closes only the dropdown; the bar stays open.
+        e.preventDefault();
+        e.stopPropagation();
+        findSuggestOpen = false;
+        findSuggestCursor = -1;
+        return;
+      }
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      findSuggestOpen = false;
+      if (e.shiftKey) findPrev();
+      else findNext();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFind();
+    }
+  }
+
+  // Slice 1 + 5: turn the two pdf.js find events into one clean status,
+  // then narrate it to the aria-live region (deduped by equality).
+  function applyFindEvent(s: { state?: number | null; matchesCount?: { current?: number | null; total?: number | null } | null }) {
+    findStatus = interpretFindState(s, findQuery);
+    const phrase = announceFindStatus(findStatus);
+    if (phrase && phrase !== findAnnounce) findAnnounce = phrase;
   }
 
   // ---------- Thumbnails ----------
@@ -1085,17 +1201,34 @@
       return;
     }
     if (!doc) return;
-    if (isMod && e.key === "f") {
+    // Slice 4 (Atlas IV): global find chords classified by the tested core —
+    // Cmd/Ctrl+F opens/focuses, F3 / Cmd+G cycle matches from anywhere
+    // (Shift reverses). Shift+Cmd+F (library search) is deliberately not
+    // claimed by classifyFindGlobalKey.
+    const findIntent = classifyFindGlobalKey(e);
+    if (findIntent === "open") {
       e.preventDefault();
-      toggleFind();
-    } else if (isMod && (e.key === "=" || e.key === "+")) {
+      if (!findOpen) toggleFind();
+      else focusFindInput();
+      return;
+    } else if (findIntent === "again-next" || findIntent === "again-prev") {
+      // Only cycle when there's a live query to step through.
+      if (findQuery) {
+        e.preventDefault();
+        if (!findOpen) findOpen = true;
+        if (findIntent === "again-prev") findPrev();
+        else findNext();
+        return;
+      }
+    }
+    if (isMod && (e.key === "=" || e.key === "+")) {
       e.preventDefault();
       zoomIn();
     } else if (isMod && e.key === "-") {
       e.preventDefault();
       zoomOut();
     } else if (e.key === "Escape" && findOpen) {
-      toggleFind();
+      closeFind();
     } else if (e.key === "Escape" && cheatsheetOpen) {
       cheatsheetOpen = false;
     } else if (e.key === "?" && !(e.target as HTMLElement)?.matches("input,textarea")) {
@@ -1520,33 +1653,71 @@
 
   {#if findOpen}
     <div class="findbar">
-      <input
-        class="find-input"
-        placeholder="Search in document"
-        aria-label="Find in document"
-        bind:value={findQuery}
-        oninput={() => runFind(findQuery, "find")}
-        onkeydown={(e) => {
-          if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) findPrev(); else findNext(); }
-          else if (e.key === "Escape") { e.preventDefault(); toggleFind(); }
-        }}
-      />
-      <label class="find-opt">
-        <input type="checkbox" bind:checked={findCaseSensitive} onchange={() => runFind(findQuery, "highlightallchange")} />
-        Aa
-      </label>
-      <label class="find-opt">
-        <input type="checkbox" bind:checked={findWholeWord} onchange={() => runFind(findQuery, "highlightallchange")} />
-        Word
-      </label>
-      <span class="find-count">
-        {findStatus.total > 0
-          ? `${findStatus.current} / ${findStatus.total}`
-          : (findQuery ? "no matches" : "")}
+      <div class="find-field">
+        <input
+          class="find-input"
+          placeholder="Find in document"
+          aria-label="Find in document"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-expanded={findSuggestOpen && findSuggestions.length > 0}
+          aria-controls="find-suggest-list"
+          aria-activedescendant={findSuggestCursor >= 0 ? `find-suggest-${findSuggestCursor}` : undefined}
+          bind:value={findQuery}
+          oninput={() => runFind(findQuery)}
+          onkeydown={onFindInputKey}
+          onfocus={() => { findSuggestOpen = true; }}
+          onblur={() => { setTimeout(() => { findSuggestOpen = false; findSuggestCursor = -1; }, 120); }}
+        />
+        {#if findSuggestOpen && findSuggestions.length > 0}
+          <ul class="find-suggest" id="find-suggest-list" role="listbox" aria-label="Recent searches">
+            {#each findSuggestions as s, i (s.query)}
+              <li role="presentation">
+                <button
+                  id={`find-suggest-${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={i === findSuggestCursor}
+                  class="find-suggest-item"
+                  class:active={i === findSuggestCursor}
+                  onmouseenter={() => (findSuggestCursor = i)}
+                  onclick={() => commitSuggestion(s.query)}
+                >
+                  <span class="find-suggest-glyph" aria-hidden="true">{findQuery ? "\u2197" : "\u21BA"}</span>
+                  <span class="find-suggest-text">
+                    {#each suggestionSegments(s) as seg (seg.text + (seg.hit ? "1" : "0"))}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+                  </span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+      <div class="find-opts" role="group" aria-label="Find options">
+        {#each FIND_OPTION_TOGGLES as opt (opt.key)}
+          <button
+            type="button"
+            class="find-opt-chip"
+            class:on={findOptions[opt.key]}
+            aria-pressed={findOptions[opt.key]}
+            title={opt.title}
+            aria-label={opt.title}
+            onclick={() => setFindOption(opt.key)}
+          >{opt.label}</button>
+        {/each}
+      </div>
+      <span class="find-count" data-tone={findStatusTone(findStatus)} title={describeFindOptions(findOptions)}>
+        {describeFindStatus(findStatus)}
       </span>
-      <button class="tb-btn icon" onclick={findPrev} disabled={!findQuery} title="Previous">↑</button>
-      <button class="tb-btn icon" onclick={findNext} disabled={!findQuery} title="Next">↓</button>
+      {#if findStatus.wrapped}
+        <span class="find-wrapped" title="Search wrapped past the end of the document">wrapped</span>
+      {/if}
+      <button class="tb-btn icon" onclick={findPrev} disabled={!findQuery} title="Previous match (Shift+F3)" aria-label="Previous match">↑</button>
+      <button class="tb-btn icon" onclick={findNext} disabled={!findQuery} title="Next match (F3)" aria-label="Next match">↓</button>
+      <button class="tb-btn icon" onclick={closeFind} title="Close find (Esc)" aria-label="Close find">×</button>
     </div>
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{findAnnounce}</div>
   {/if}
 
   <div class="viewer-grid" class:no-thumbs={!thumbsOpen && !outlineOpen} class:with-info={infoOpen}>
@@ -1919,9 +2090,16 @@
     background: var(--bg-2);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+  }
+  .find-field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
   }
   .find-input {
-    flex: 1;
+    width: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
@@ -1933,20 +2111,112 @@
     outline: none;
     border-color: var(--accent);
   }
-  .find-opt {
+  /* Slice 3: recent-search dropdown */
+  .find-suggest {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--bg-1, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    z-index: 20;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .find-suggest-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-radius: calc(var(--r-sm) - 2px);
+    padding: 6px 8px;
+    color: var(--text-2);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .find-suggest-item.active {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--text);
+  }
+  .find-suggest-glyph {
+    color: var(--text-3);
+    font-size: 12px;
+    width: 14px;
+    flex-shrink: 0;
+    text-align: center;
+  }
+  .find-suggest-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .find-suggest-text :global(mark) {
+    background: transparent;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Slice 2: option chips */
+  .find-opts {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .find-opt-chip {
+    background: var(--bg);
+    border: 1px solid var(--border);
     color: var(--text-3);
+    border-radius: var(--r-sm);
+    padding: 4px 7px;
+    font-size: 11px;
+    line-height: 1;
     cursor: pointer;
+    transition:
+      color 0.12s,
+      border-color 0.12s,
+      background 0.12s;
+  }
+  .find-opt-chip:hover {
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .find-opt-chip.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
   .find-count {
     font-size: 12px;
     color: var(--text-3);
-    width: 80px;
+    min-width: 64px;
     text-align: right;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .find-count[data-tone="warn"] {
+    color: #ffb648;
+  }
+  .find-count[data-tone="normal"] {
+    color: var(--text);
+  }
+  /* Slice 1: wrapped pill */
+  .find-wrapped {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 999px;
+    padding: 1px 6px;
+    flex-shrink: 0;
   }
 
   .viewer-grid {
