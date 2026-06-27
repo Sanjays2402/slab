@@ -34,6 +34,8 @@
     classifyRecentKey,
     moveRecentCursor,
     clampRecentCursor,
+    summarizeRecents,
+    countInProgress,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -109,6 +111,22 @@
   let cursor = $state(-1);
   let cardEls = $state<Array<HTMLElement | null>>([]);
   let listFocused = $state(false);
+
+  // Slice 5 (round 44): context-aware summary footer. The board gave no
+  // running sense of what you were looking at. summarizeRecents narrates the
+  // live view (shown-vs-total, the filter term, the in-progress count, the
+  // active sort) into an aria-live region, mirroring the command-palette /
+  // library-search / beacon-cache footers. countInProgress reuses the
+  // palette progress core so the threshold matches the hero chip exactly.
+  const summary = $derived(
+    summarizeRecents({
+      total: recents.length,
+      shown: filtering ? matched.length : recents.length,
+      query: q,
+      inProgress: countInProgress(filtering ? matched : recents),
+      sort: sortMode,
+    }),
+  );
 
   // Keep the cursor in range when the list shrinks (a filter narrowed it, a
   // file was pinned/removed). A cleared filter / emptied board parks it.
@@ -461,6 +479,15 @@
       </button>
     </div>
   {/if}
+
+  {#if recents.length > 0}
+    <footer class="board-foot">
+      <span class="board-foot-summary" aria-live="polite">{summary}</span>
+      <span class="board-foot-hint" aria-hidden="true">
+        <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>P</kbd> pin · <kbd>⌫</kbd> remove
+      </span>
+    </footer>
+  {/if}
 </div>
 
 <style>
@@ -795,4 +822,32 @@
   .act .ico { width: 13px; height: 13px; }
   .act:hover { border-color: var(--accent, #5e6ad2); }
   .act.danger:hover { border-color: #ef4444; color: #ef4444; }
+
+  /* Slice 5 — context-aware summary footer. */
+  .board-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0.25rem 0;
+    border-top: 1px solid var(--border-1, rgba(255,255,255,0.06));
+    font-size: 0.76rem;
+    flex-wrap: wrap;
+  }
+  .board-foot-summary { opacity: 0.6; }
+  .board-foot-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    opacity: 0.4;
+    white-space: nowrap;
+  }
+  .board-foot-hint kbd {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.92em;
+    padding: 0.04em 0.32em;
+    border-radius: 4px;
+    background: var(--surface-3, rgba(255,255,255,0.06));
+    border: 1px solid var(--border-1, rgba(255,255,255,0.08));
+  }
 </style>
