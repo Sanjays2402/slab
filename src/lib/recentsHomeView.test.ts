@@ -331,8 +331,8 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   expect(!recentProgressBar(mk({ totalPages: 50 })).show, "bar: total without lastPage hidden");
   // Null / garbage -> hidden.
   expect(!recentProgressBar(null).show, "bar: null -> hidden");
-  // @ts-expect-error — garbage
   expect(!recentProgressBar(undefined).show, "bar: undefined -> hidden");
+  expect(!recentProgressBar({} as RecentLike).show, "bar: empty object -> hidden");
 }
 
 // eslint-disable-next-line no-console

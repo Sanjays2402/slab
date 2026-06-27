@@ -39,6 +39,7 @@
     countInProgress,
     countUnpinned,
     describeClearUnpinned,
+    recentProgressBar,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -297,6 +298,29 @@
     {#if seg.hit}<mark class="hl">{seg.text}</mark>{:else}{seg.text}{/if}
   {/each}
 {/snippet}
+<!-- Slice 7 — thumbnail reading-progress overlay. A thin accent bar along
+     the bottom edge of a card/hero thumbnail shows how far through the doc
+     you are, derived from the same tested recentReadingProgress core the
+     dots + palette chip use (so they can never disagree). Finished docs
+     read as a full bar with a distinct done tint. Hidden when there's no
+     usable position. -->
+{#snippet progressOverlay(r: RecentFile)}
+  {@const bar = recentProgressBar(r)}
+  {#if bar.show}
+    <div
+      class="thumb-progress"
+      class:done={bar.finished}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={bar.percent}
+      aria-label={bar.label}
+      title={bar.label}
+    >
+      <span class="thumb-progress-fill" style="width: {bar.percent}%"></span>
+    </div>
+  {/if}
+{/snippet}
 
 <div class="recents-home">
   {#if recents.length > 0}
@@ -425,6 +449,7 @@
                   <span class="card-thumb-placeholder">PDF</span>
                 {/if}
                 <span class="pin-flag" aria-hidden="true">{@render pinGlyph()}</span>
+                {@render progressOverlay(r)}
               </div>
               <span class="card-name">{@render nameSegs(r.name)}</span>
               <span class="card-meta">
@@ -470,6 +495,7 @@
                 {:else}
                   <span class="card-thumb-placeholder">{basename(r.name).slice(0, 3).toUpperCase()}</span>
                 {/if}
+                {@render progressOverlay(r)}
               </div>
               <span class="card-name">{@render nameSegs(r.name)}</span>
               <span class="card-meta">
@@ -814,6 +840,26 @@
     display: flex;
   }
   .pin-flag .ico { width: 14px; height: 14px; }
+  /* Slice 7 — thumbnail progress overlay. A thin accent bar pinned to the
+     bottom edge of the thumbnail; a translucent track behind the fill so
+     even a tiny fill reads as "started". Finished docs get a calm green. */
+  .thumb-progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .thumb-progress-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent, #5e6ad2);
+    transition: width 200ms ease;
+  }
+  .thumb-progress.done .thumb-progress-fill {
+    background: var(--success, #3fb950);
+  }
   .card-name {
     font-size: 0.85rem;
     font-weight: 500;
