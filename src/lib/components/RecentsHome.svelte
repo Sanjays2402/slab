@@ -23,6 +23,9 @@
     removeRecent,
     type RecentFile,
   } from "$lib/recent";
+  import {
+    partitionRecents,
+  } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
   import { basename } from "$lib/types";
   import { onMount, onDestroy } from "svelte";
@@ -47,31 +50,15 @@
   });
 
   // The "Continue reading" hero card surfaces the single most useful next
-  // action: the file with the freshest reading progress. We prefer files
-  // that have a lastPage *and* are not already at the end. Pinned items
-  // are eligible but don't dominate — the hero is about momentum, not
-  // a curated favourites shelf.
-  const continueCandidate = $derived.by<RecentFile | null>(() => {
-    const withProgress = recents
-      .filter((r) => r.lastPage && r.totalPages && r.lastPage < r.totalPages)
-      .sort((a, b) => (b.lastReadAt ?? b.openedAt) - (a.lastReadAt ?? a.openedAt));
-    if (withProgress.length > 0) return withProgress[0];
-    // Fall back to most recent file even without progress (first-open case).
-    return recents[0] ?? null;
-  });
-
-  const pinned = $derived(recents.filter((r) => r.pinned));
-  // Everything except the hero candidate (avoid duplication) and pinned
-  // items (already shown in their own row, unless we have <4 pinned).
-  const others = $derived.by(() => {
-    const heroPath = continueCandidate?.path;
-    const pinnedPaths = new Set(pinned.map((p) => p.path));
-    return recents.filter((r) => {
-      if (r.path === heroPath) return false;
-      if (pinnedPaths.has(r.path)) return false;
-      return true;
-    });
-  });
+  // action: the file with the freshest reading momentum. The selection +
+  // partition math now lives in the tested pure core (recentsHomeView.ts),
+  // so the contract that decides what the app's headline card even is has
+  // unit tests instead of an untested inline $derived. `partitionRecents`
+  // returns { hero, pinned, others } exactly mirroring the render regions.
+  const partition = $derived(partitionRecents(recents));
+  const continueCandidate = $derived(partition.hero);
+  const pinned = $derived(partition.pinned);
+  const others = $derived(partition.others);
 
   function progressPct(r: RecentFile): number {
     if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return 0;
@@ -113,6 +100,19 @@
     void _path;
   });
 </script>
+
+<!-- Monochrome glyphs (Slab chrome is icon-only, never emoji). -->
+{#snippet pinGlyph()}
+  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3-1-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+    <path d="M12 15v5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+{/snippet}
+{#snippet removeGlyph()}
+  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+{/snippet}
 
 <div class="recents-home">
   {#if continueCandidate && continueCandidate.lastPage && continueCandidate.totalPages}
@@ -191,7 +191,7 @@
                 {:else}
                   <span class="card-thumb-placeholder">PDF</span>
                 {/if}
-                <span class="pin-flag" aria-hidden="true">📌</span>
+                <span class="pin-flag" aria-hidden="true">{@render pinGlyph()}</span>
               </div>
               <span class="card-name">{r.name}</span>
               <span class="card-meta">
@@ -206,8 +206,8 @@
               {/if}
             </button>
             <div class="card-actions">
-              <button class="act" title="Unpin" aria-label="Unpin" onclick={(e) => handlePin(e, r)}>📌</button>
-              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>✕</button>
+              <button class="act" title="Unpin" aria-label="Unpin" onclick={(e) => handlePin(e, r)}>{@render pinGlyph()}</button>
+              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>{@render removeGlyph()}</button>
             </div>
           </div>
         {/each}
@@ -246,8 +246,8 @@
               {/if}
             </button>
             <div class="card-actions">
-              <button class="act" title="Pin to top" aria-label="Pin" onclick={(e) => handlePin(e, r)}>📌</button>
-              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>✕</button>
+              <button class="act" title="Pin to top" aria-label="Pin" onclick={(e) => handlePin(e, r)}>{@render pinGlyph()}</button>
+              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>{@render removeGlyph()}</button>
             </div>
           </div>
         {/each}
@@ -437,9 +437,11 @@
   }
   .pin-flag {
     position: absolute; top: 6px; right: 6px;
-    font-size: 14px;
+    color: var(--accent, #5e6ad2);
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
+    display: flex;
   }
+  .pin-flag .ico { width: 14px; height: 14px; }
   .card-name {
     font-size: 0.85rem;
     font-weight: 500;
@@ -476,6 +478,7 @@
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
+  .act .ico { width: 13px; height: 13px; }
   .act:hover { border-color: var(--accent, #5e6ad2); }
   .act.danger:hover { border-color: #ef4444; color: #ef4444; }
 </style>
