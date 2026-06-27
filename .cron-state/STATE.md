@@ -1,15 +1,112 @@
 # Slab Cron State
 
-Last updated: 2026-06-26 14:30 PT by Cake (cron) — round-41 BATCH shipped (5 frontend/UX slices) PIVOTING off the round-40 Beacon Cache Inspector ("Atlas II") to the **Library Search panel** ("Atlas III") — Cmd+Shift+F, the single highest-visibility surface in the app. It shipped as a flat, mouse-only results list with ZERO pure-core tests: no keyboard path through the grouped hits, no sense of how the FTS engine would interpret the query, no way to narrow a large result set without re-running the search, no sort control, no live summary. Round 41 takes it to Raycast/Linear grade on a new tested pure core src/lib/librarySearchView.ts (127 inline tests) reusing the palette scorer/nav core (NO second engine). Slice 1 keyboard nav (flattenSearchHits collapses grouped hits into one flat cursor space; classifySearchResultKey -> move/open/clear reusing classifyPaletteNav+nextPaletteIndex; accent cursor ring + scroll-into-view; mouse hover syncs cursor); slice 2 live query-interpretation chips (interpretSearchQuery is a FAITHFUL port of the Rust FTS lexer in search.rs tokenize/build_match_expr — last bare word = prefix, quotes = phrase, -term excludes, only-exclusions = noAnchor returns nothing; accent prefix chip + glob glyph, italic phrase, struck-through exclude, amber no-anchor warning); slice 3 in-results refine (refineSearchHits narrows already-returned hits client-side via scorePaletteField on snippet/title/basename, no round-trip; sticky refine bar, refined-empty state, resets on fresh search); slice 4 sort modes (sortSearchGroups relevance/document/matches, stable, numeric-aware; Linear segmented control); slice 5 summary footer + page-spread badge (summarizeSearchResults narrates shown-vs-total + refine + sort like the palette footer; pageSpread -> "pp. 3-47" per group). PRIOR (round 40): Beacon Cache Inspector ("Atlas II") on beaconCacheView.ts (112 tests) — filter/sort/model-facet/impact-bar/keyboard-nav.
+Last updated: 2026-06-26 19:16 PT by Cake (cron) — round-42 BATCH shipped (5 frontend/UX slices) taking the **in-document Find bar (Cmd+F)** in ReaderPanel to palette grade ("Atlas IV") — the explicit roadmap follow-up to round 41's Library Search work, the parallel treatment for the OTHER search surface. The find bar shipped thin and untested: status was one inline ternary that could only say "N / total" or a bare "no matches" (no Searching/wrapped/idle distinction), the pdf.js find payload was hand-duplicated in THREE places (drift-prone), there was no match-diacritics option, no recent-search history, no global find-again chord, and nothing announced to a screen reader. Round 42 rebuilds it on a new tested pure core src/lib/readerFindView.ts (86 inline tests) reusing the palette scorer/nav (NO second engine). Slice 1 find-state model (interpretFindState collapses the two pdf.js find events into one discriminated idle/pending/found/not-found status, so a mid-scan zero count reads "Searching" not a false "No matches"; describeFindStatus/findStatusTone + a "wrapped" pill); slice 2 single dispatch builder (buildFindDispatch is the one source of truth for find/again-next/again-prev/options/clear, replacing 3 drifted literals; adds matchDiacritics; FIND_OPTION_TOGGLES segmented chips); slice 3 recent-search history (pushFindHistory MRU ring persisted at slab.reader.find.history.v1 + suggestFindHistory palette-scored dropdown, combobox/listbox); slice 4 global find-again (classifyFindGlobalKey F3 / Cmd+G with Shift-reverse, deliberately NOT claiming Shift+Cmd+F library search; classifyFindDropdownKey for in-dropdown arrow/enter/escape); slice 5 SR announcer (announceFindStatus polite aria-live "Match 3 of 17 for ..., wrapped"). PRIOR (round 41): Library Search panel ("Atlas III") on librarySearchView.ts (127 tests) — keyboard nav / FTS interp chips / refine / sort / summary footer.
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
 **Version: 3.39.0** in package.json/Cargo.toml/tauri.conf.json/Cargo.lock.
-Internal module labels use the repo's logical-release naming ("Atlas III"
-= v3.41.0) which runs ahead of the package version; NOT bumped this round
+Internal module labels use the repo's logical-release naming ("Atlas IV"
+= v3.42.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `ac81a2e` — "feat(library-search): result summary footer + per-group page-spread badge".
+Latest commit: `aff3fb6` — "feat(reader-find): wire palette-grade find bar into ReaderPanel".
+
+### What round-42 (2026-06-26 19:16 PT) just shipped
+
+Five FRONTEND/UX slices (per Sanjay's frontend-focus override) taking
+the **in-document Find bar (Cmd+F)** in ReaderPanel.svelte to palette
+grade ("Atlas IV"). This is the explicit round-41 follow-up: round 41
+took the cross-document Library Search panel (Cmd+Shift+F) to Raycast/
+Linear grade on a tested pure core; this is the parallel treatment for
+the OTHER search surface — the IN-document find, which shipped thin and
+untested.
+
+New pure DOM-free module `src/lib/readerFindView.ts` (86 inline tests)
+backs all five capabilities — same pure-core/thin-shell discipline as
+librarySearchView.ts / paletteSearch.ts / beaconCacheView.ts /
+shortcutsOverlay.ts / toastStack.ts. Reuses the tested palette core
+(scorePaletteField for the recent-search dropdown, classifyPaletteNav/
+nextPaletteIndex for its cursor) so there is NO second fuzzy/nav engine.
+
+- Slice 1 + the integration: find-state model (195fc23 core, aff3fb6
+  wire). interpretFindState collapses the TWO raw pdf.js find events
+  (updatefindcontrolstate carrying a FindState code + the count-only
+  updatefindmatchescount progress event) into one discriminated status
+  (idle / pending / found / not-found). The key fix: a zero match count
+  on a count-only progress event mid-scan now reads as "Searching"
+  rather than falsely flashing "No matches" before the scan reaches a
+  hit. describeFindStatus ("Searching" / "No matches" / "3 of 17") +
+  findStatusTone (muted/warn/normal) render it; a WRAPPED step shows a
+  subtle "wrapped" pill instead of silently looping.
+
+- Slice 2: single dispatch builder. buildFindDispatch is the ONE source
+  of truth for the pdf.js find payload across find / again-next /
+  again-prev / options-rerun / clear, replacing three hand-duplicated
+  object literals that had already drifted (a flag added to one was
+  missing from the others). Adds the matchDiacritics option pdf.js
+  supports but the bar never exposed; FIND_OPTION_TOGGLES renders case /
+  whole-word / diacritics as aria-pressed segmented chips from one
+  tested list.
+
+- Slice 3: recent-search history. pushFindHistory is a persisted MRU
+  ring (slab.reader.find.history.v1, case-insensitive dedupe keeping the
+  newest casing, capped at 12); suggestFindHistory ranks it with the
+  palette scorer (empty box -> most-recent N in MRU order; typing ->
+  scored + <mark>-highlighted, excluding the exact already-typed term).
+  Rendered as a proper combobox/listbox dropdown under the input;
+  click or Enter-on-highlight commits + runs.
+
+- Slice 4: global find-again. classifyFindGlobalKey maps F3 / Cmd+G
+  (Shift reverses) to find-again and Cmd+F to open, wired into the
+  reader's window keydown handler so matches cycle from ANYWHERE — and
+  it deliberately does NOT claim the Shift+Cmd+F library-search chord.
+  classifyFindDropdownKey owns arrow/enter/escape inside the dropdown,
+  with stopPropagation so the reader keymap never double-fires; first
+  Escape closes just the dropdown, second closes the bar.
+
+- Slice 5: screen-reader announcer. announceFindStatus composes a
+  polite aria-live phrase ("Match 3 of 17 for "term"", ", wrapped",
+  "No matches for "term"", "Searching for "term"..."), deduped by
+  equality so repeated progress events don't re-announce. Mirrors the
+  library-search / palette / beacon footer narration style.
+
+Gates result: tsx readerFindView.test.ts 86/86 pass
+(slices: state-model + dispatch + history + chords + announcer), shared
+palette suite paletteSearch 253/253 / librarySearchView 127/127 /
+beaconCacheView 112/112 / shortcutsOverlay 95/95 / toastStack 254/254 /
+hopper ALL unchanged (the reused palette core is provably intact), pnpm
+check 0 errors / 104 warnings (rounds 32-41 baseline preserved EXACTLY —
+the new combobox input, suggestion listbox, option chips, wrapped pill,
+and aria-live region all passed a11y with zero new warnings), cargo fmt
+--all --check clean, ZERO Rust files changed so the round-32 lib
+baseline (clippy clean, 2620 tests) carries forward unchanged (the full
+Tauri binary build is never run in a tick — it wedges the disk).
+
+PROCESS NOTES (round 42):
+- Frontend-focus override honoured: all five slices are TS/Svelte UI
+  work (find-state interpretation, dispatch building, MRU + scoring,
+  chord classification, SR copy). Zero backend.
+- DELIBERATE FOLLOW-UP, not a pivot. Round 41 took the cross-document
+  Library Search to palette grade; the explicit next roadmap item was
+  "Reader find-in-page overlay to palette grade (Cmd+F inside a PDF) —
+  a parallel treatment on a tested pure core." This is exactly that.
+- Reuse over reinvention: imports the tested palette core
+  (scorePaletteField, classifyPaletteNav/nextPaletteIndex) — no second
+  fuzzy/nav engine. The 253-test palette suite is unchanged.
+- Faithful to the engine: interpretFindState mirrors the real pdf.js
+  FindState enum (FOUND/NOT_FOUND/WRAPPED/PENDING) + its two-event
+  dispatch protocol (read web/pdf_viewer.mjs as ground truth) so the
+  status never lies about what the controller is doing.
+- COMMIT STRUCTURE NOTE: shipped as 2 commits, not 5. The tested pure
+  core (all five capabilities' logic + 86 tests, green standalone) is
+  its own commit (195fc23); the component integration (aff3fb6) is one
+  cohesive find-bar surface that cannot be split into 5 separately-
+  COMPILING commits without pushing red intermediate states. Honest 2-
+  commit structure over 5 fake non-compiling fragments.
+- Held the 104-warning svelte-check baseline EXACTLY — combobox a11y
+  (role=combobox/listbox/option, aria-expanded/activedescendant/
+  selected), the aria-pressed option chips, and the polite live region
+  all clean.
 
 ### What round-41 (2026-06-26 14:30 PT) just shipped
 
@@ -1240,10 +1337,19 @@ demo value:
   each snippet (the server <mark> is the FTS match; a distinct tint for
   the client refine would show WHY a row survived). Reuse splitHighlight
   + the refine scorer's ranges.
-- Reader find-in-page overlay to palette grade (Cmd+F inside a PDF):
-  the in-document find currently has no match-count / next-prev cursor /
-  keyboard cycle the way the library search now does — a parallel
-  treatment on a tested pure core.
+- ~~Reader find-in-page overlay to palette grade (Cmd+F inside a PDF)~~ —
+  DONE round 42 (195fc23..aff3fb6): new tested pure core
+  src/lib/readerFindView.ts (86 tests) reusing the palette scorer/nav.
+  Find-state model (interpretFindState collapses the two pdf.js find
+  events into idle/pending/found/not-found; "wrapped" pill;
+  describeFindStatus/findStatusTone), single dispatch builder
+  (buildFindDispatch replaces 3 drifted literals + adds matchDiacritics),
+  recent-search history (pushFindHistory MRU ring + suggestFindHistory
+  palette-scored combobox dropdown), global find-again (classifyFindGlobalKey
+  F3/Cmd+G Shift-reverse + classifyFindDropdownKey), SR announcer
+  (announceFindStatus polite aria-live). Still open as follow-ups:
+  reader find could highlight the active match's page in the thumbnail
+  rail; per-find-result mini-map on the scrollbar.
 - persisted undo ring across sessions UI (round 31 ring is
   ephemeral; surface a "restored N undo steps" banner on reopen).
 - palette: recent-files thumbnails (getRecentThumb data URLs already
