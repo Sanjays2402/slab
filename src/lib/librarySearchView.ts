@@ -462,6 +462,106 @@ export function refineSearchHits<T extends SearchHitLike>(
   });
 }
 
+// --- Slice 3b: snippet refine-highlight -------------------------------
+//
+// The server snippet already wraps each FTS match in `<mark>…</mark>`
+// (the bm25 match), but when an in-results refine is ALSO active the row
+// survived because its text contains the refine term too — and nothing
+// shows WHERE. This parses a snippet into typed spans: the server-mark
+// runs, plus a SECOND highlight painted over every case-insensitive
+// occurrence of the refine term in the plain text BETWEEN marks. The
+// component renders the two tints distinctly (FTS match vs why-it-
+// survived) without using `{@html}`, so there's no XSS surface at all.
+//
+// Matching the refine as a literal substring (case-insensitive) — not
+// the fuzzy palette scorer — is deliberate: a highlight must mark a
+// contiguous, visible run, and `refineSearchHits` already decided
+// membership; this only paints the obvious literal hits inside the kept
+// snippet so the eye lands on them. A refine that only matched the title
+// or filename (not the snippet text) simply paints nothing here, which
+// is correct.
+
+/** One rendered span of a parsed snippet. */
+export interface SnippetSpan {
+  text: string;
+  /** True for text inside the server `<mark>` (the FTS match). */
+  match: boolean;
+  /** True for a literal occurrence of the active refine term. */
+  refine: boolean;
+}
+
+const SNIPPET_ENTITIES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/&amp;/g, "&"],
+  [/&lt;/g, "<"],
+  [/&gt;/g, ">"],
+];
+
+/** Decode the handful of entities the snippet pipeline emits. */
+function decodeSnippetEntities(s: string): string {
+  let out = s;
+  for (const [re, ch] of SNIPPET_ENTITIES) out = out.replace(re, ch);
+  return out;
+}
+
+/**
+ * Paint every case-insensitive literal occurrence of `refine` inside a
+ * plain (mark-free) text run, returning the run split into refine / non-
+ * refine spans that all carry the given `match` flag. A blank refine (or
+ * a run with no occurrence) yields a single span. Pure; the empty-string
+ * refine is treated as "no refine" so it never matches between every
+ * character.
+ */
+function paintRefine(text: string, refine: string, match: boolean): SnippetSpan[] {
+  if (!text) return [];
+  const needle = (refine ?? "").trim();
+  if (!needle) return [{ text, match, refine: false }];
+  const hayLc = text.toLowerCase();
+  const needleLc = needle.toLowerCase();
+  const out: SnippetSpan[] = [];
+  let from = 0;
+  let at = hayLc.indexOf(needleLc, from);
+  while (at >= 0) {
+    if (at > from) out.push({ text: text.slice(from, at), match, refine: false });
+    out.push({ text: text.slice(at, at + needle.length), match, refine: true });
+    from = at + needle.length;
+    at = hayLc.indexOf(needleLc, from);
+  }
+  if (from < text.length) out.push({ text: text.slice(from), match, refine: false });
+  return out;
+}
+
+/**
+ * Parse a server snippet (the raw `<mark>`-wrapped, entity-encoded string
+ * the FTS backend returns) into a flat list of render spans. Text inside
+ * `<mark>…</mark>` is flagged `match`; every literal case-insensitive
+ * occurrence of `refine` — inside OR outside a mark — is additionally
+ * flagged `refine`. Entities (`&amp;`/`&lt;`/`&gt;`) are decoded so the
+ * component can render `span.text` as plain text content (no `{@html}`,
+ * no XSS surface). Unterminated / stray marks degrade to plain text. A
+ * null/empty snippet -> []. Pure + DOM-free.
+ */
+export function buildSnippetSpans(snippet: string, refine: string): SnippetSpan[] {
+  if (!snippet) return [];
+  const spans: SnippetSpan[] = [];
+  const re = /<mark>([\s\S]*?)<\/mark>/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(snippet)) !== null) {
+    if (m.index > last) {
+      const plain = decodeSnippetEntities(snippet.slice(last, m.index));
+      spans.push(...paintRefine(plain, refine, false));
+    }
+    const inner = decodeSnippetEntities(m[1]);
+    spans.push(...paintRefine(inner, refine, true));
+    last = re.lastIndex;
+  }
+  if (last < snippet.length) {
+    const tail = decodeSnippetEntities(snippet.slice(last));
+    spans.push(...paintRefine(tail, refine, false));
+  }
+  return spans;
+}
+
 // --- Slice 4: result sort modes --------------------------------------
 //
 // Results come back bm25-ranked and grouped by document in arrival

@@ -50,6 +50,7 @@
     searchSortLabel,
     summarizeSearchResults,
     pageSpread,
+    buildSnippetSpans,
     SEARCH_SORT_MODES,
     type SearchSortMode,
     type SearchGroupLike,
@@ -83,17 +84,6 @@
 
   // 180ms debounce keeps the FTS5 query rate sane while feeling instant.
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /** Sanitise the snippet so only `<mark>` survives. */
-  function safeSnippet(s: string): string {
-    // Escape every < then re-introduce the two tags we explicitly trust.
-    return s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/&lt;mark&gt;/g, "<mark>")
-      .replace(/&lt;\/mark&gt;/g, "</mark>");
-  }
 
   async function runSearch(q: string): Promise<void> {
     const trimmed = q.trim();
@@ -703,7 +693,13 @@
                   title="Open at page {h.pageIndex + 1}"
                 >
                   <span class="page-badge">p. {h.pageIndex + 1}</span>
-                  <span class="snippet">{@html safeSnippet(h.snippet)}</span>
+                  <span class="snippet"
+                    >{#each buildSnippetSpans(h.snippet, refine) as seg}{#if seg.match && seg.refine}<mark
+                          class="refine-in-match">{seg.text}</mark
+                        >{:else if seg.match}<mark>{seg.text}</mark>{:else if seg.refine}<mark
+                          class="refine-only">{seg.text}</mark
+                        >{:else}{seg.text}{/if}{/each}</span
+                  >
                 </button>
               </li>
             {/each}
@@ -1220,6 +1216,21 @@
     font-weight: 600;
   }
 
+  /* Refine-highlight (Atlas III follow-up): a SECOND, distinct tint over
+     the live refine term so you can see WHY a row survived the refine —
+     the FTS match (yellow above) vs the client-side refine (cyan). A
+     refine that also lands inside an FTS match gets a blended underline so
+     both meanings read at once. */
+  .snippet :global(mark.refine-only) {
+    background: var(--refine-bg, #b5ecff);
+    font-weight: 600;
+  }
+  .snippet :global(mark.refine-in-match) {
+    background: var(--mark-bg, #fff3a3);
+    box-shadow: inset 0 -2px 0 var(--refine-underline, #2bb5e0);
+    font-weight: 600;
+  }
+
   .state {
     max-width: 560px;
     margin: 48px auto;
@@ -1386,6 +1397,15 @@
     .snippet :global(mark) {
       background: var(--mark-bg, #6b5e1f);
       color: #fff;
+    }
+    .snippet :global(mark.refine-only) {
+      background: var(--refine-bg, #11475a);
+      color: #eaffff;
+    }
+    .snippet :global(mark.refine-in-match) {
+      background: var(--mark-bg, #6b5e1f);
+      color: #fff;
+      box-shadow: inset 0 -2px 0 var(--refine-underline, #4ec8ee);
     }
     .interp-chip {
       background: var(--bg-subtle, rgba(255, 255, 255, 0.06));

@@ -18,6 +18,7 @@ import {
   describeQueryInterpretation,
   stripSnippetMarks,
   refineSearchHits,
+  buildSnippetSpans,
   cycleSearchSort,
   sortSearchGroups,
   searchSortLabel,
@@ -480,6 +481,59 @@ const group = (
     pageSpread([hit({ pageIndex: NaN as never }), hit({ pageIndex: 7 })]) === "p. 8",
     "spread: skips non-finite pageIndex",
   );
+}
+
+// --- buildSnippetSpans (Slice 3b refine-highlight) ---
+{
+  // Plain text, no marks, no refine -> a single non-match non-refine span.
+  const a = buildSnippetSpans("hello world", "");
+  expect(a.length === 1 && a[0].text === "hello world", "spans: plain single span");
+  expect(!a[0].match && !a[0].refine, "spans: plain not match/refine");
+
+  // Server mark is flagged match.
+  const b = buildSnippetSpans("a <mark>cat</mark> sat", "");
+  expect(b.length === 3, "spans: split around one mark");
+  expect(b[0].text === "a " && !b[0].match, "spans: pre-mark plain");
+  expect(b[1].text === "cat" && b[1].match && !b[1].refine, "spans: mark flagged match");
+  expect(b[2].text === " sat" && !b[2].match, "spans: post-mark plain");
+
+  // Refine paints a literal occurrence OUTSIDE a mark, case-insensitive.
+  const c = buildSnippetSpans("the Termination clause", "termination");
+  const cr = c.find((s) => s.refine);
+  expect(!!cr && cr.text === "Termination", "spans: refine keeps original casing");
+  expect(c.map((s) => s.text).join("") === "the Termination clause", "spans: refine lossless reassembly");
+
+  // Refine INSIDE a mark carries BOTH flags.
+  const d = buildSnippetSpans("x <mark>force majeure</mark> y", "majeure");
+  const both = d.find((s) => s.match && s.refine);
+  expect(!!both && both.text === "majeure", "spans: refine inside mark is match+refine");
+
+  // Multiple refine occurrences across mark boundary.
+  const e = buildSnippetSpans("pay <mark>pay</mark> pay", "pay");
+  expect(e.filter((s) => s.refine).length === 3, "spans: all three 'pay' painted");
+  expect(e.filter((s) => s.match && s.refine).length === 1, "spans: middle 'pay' is match+refine");
+
+  // Entities decode so render is plain text (no {@html}).
+  const f = buildSnippetSpans("a &amp; <mark>b &lt;c&gt;</mark>", "");
+  expect(f.map((s) => s.text).join("") === "a & b <c>", "spans: entities decoded");
+
+  // Blank refine never paints (no zero-width matches between chars).
+  const g = buildSnippetSpans("abc", "   ");
+  expect(g.length === 1 && !g[0].refine, "spans: whitespace refine paints nothing");
+
+  // Empty / null snippet -> [].
+  expect(buildSnippetSpans("", "x").length === 0, "spans: empty snippet -> []");
+  // @ts-expect-error — garbage
+  expect(buildSnippetSpans(null, "x").length === 0, "spans: null snippet -> []");
+
+  // Unterminated mark degrades to plain text rather than throwing.
+  const h = buildSnippetSpans("a <mark>b", "");
+  expect(h.map((s) => s.text).join("") === "a <mark>b", "spans: unterminated mark kept literal");
+
+  // Refine that doesn't occur in the snippet text -> no refine spans
+  // (it matched the title/filename instead, which is correct).
+  const k = buildSnippetSpans("nothing here", "absent");
+  expect(k.every((s) => !s.refine), "spans: non-occurring refine paints nothing");
 }
 
 // eslint-disable-next-line no-console
