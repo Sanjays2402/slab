@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-27 09:55 PT by Cake (cron) — round-45 BATCH shipped (5 frontend/UX capabilities) taking the **OCR Queue Panel** ("Atlas VI") from two flat unsearchable lists to Beacon-grade, on a new tested pure core src/lib/ocrQueueView.ts (122 tests). DELIBERATE PIVOT off the round-44 RecentsHome wire. Capabilities: (1) search-as-you-type over BOTH lists (searchOcrDocs; basename highlighted, silent matches on folder/state/error reason); (2) segmented Name/Folder/Pages/State sort w/ caret (cycleOcrSort, numeric-aware); (3) failure-reason grouping + facet (canonicalizeOcrError collapses noisy ocr_error to short buckets; groupFailureReasons -> clickable pills + dominant lede; reconcileReasonFacet auto-clears stale); (4) keyboard nav — one virtual cursor (flattenOcrRows) spanning failures-then-pending, arrows wrap / Enter runs-or-retries by section / O open / Esc park, ring only no focus move; (5) aria-live context footer (describeOcrView) + Run-all workload preview (summarizePending). Pending cap 20->60 w/ actionable overflow. COMMIT STRUCTURE: 2 commits (58ea2d3 tested core + 122 tests; 2f8eda5 cohesive wire) — honest round-42 rationale (wire interleaves all five into shared derived state + one template; can't split into 5 separately-compiling commits without red intermediates). Gates: ocrQueueView 122/122, shared palette suites ALL unchanged (paletteSearch 253 / librarySearchView 127 / beaconCacheView 112 / readerFindView 86 / recentsHomeView 91), pnpm check 0 errors / 104 warnings (rounds 32-44 baseline preserved EXACTLY), cargo fmt --all --check clean, ZERO Rust files changed. [PREV round-44 (2026-06-27 06:10 PT): wired RecentsHome view-core "Atlas V" into RecentsHome.svelte — partition+monochrome chrome (fffc618), filter (1e1f667), sort (9928658), keyboard (7fa4862), footer (191eb37); recentsHomeView 91/91.]
+Last updated: 2026-06-27 14:55 PT by Cake (cron) — round-46 BATCH shipped (5 frontend/UX capabilities, FIVE separate commits) — explicit roadmap FOLLOW-UPS across three surfaces with tested cores: (1) Library Search snippet refine-highlight (98b7c5f) — new tested buildSnippetSpans parses the server <mark> snippet into typed spans + paints a SECOND distinct tint over the live refine term, replacing {@html safeSnippet} so there is now ZERO HTML-injection surface; (2) Library Search Cmd/Ctrl+Up/Down group-jump (a6262b2) — new searchGroupStarts adapter reusing the palette's classifyPaletteGroupNav/nextGroupIndex so the chord matches Cmd+K exactly; (3) OCR Queue pending-state facet (4bbaf51) — groupPendingStates/filterByPendingState/reconcilePendingStateFacet/pendingStateLabel mirroring the failure-reason facet for image-only/mixed triage; (4) RecentsHome clear-unpinned footer affordance (e048678) — countUnpinned/describeClearUnpinned wiring the store's clearRecent with an honest count + confirm; (5) RecentsHome thumbnail progress overlay (bb1594e) — recentProgressBar reusing recentReadingProgress, a thin accent bar on every card thumbnail. COMMIT STRUCTURE: FIVE separate independently-revertible commits this round (not 2) — these are genuinely separable additive follow-ups on already-wired surfaces, each compiling green standalone, unlike rounds 41-45's single-new-surface wires. Gates: librarySearchView 127->158, ocrQueueView 122->141, recentsHomeView 91->110 (69 new tests); shared palette suite paletteSearch 253 / beaconCacheView 112 / readerFindView 86 / toastStack 254 ALL unchanged (reused core provably intact); pnpm check 0 errors / 104 warnings (rounds 32-45 baseline preserved EXACTLY); cargo fmt --all --check clean, ZERO Rust files changed.
+
+PREV round-45 (2026-06-27 09:55 PT): wired the OCR Queue Panel ("Atlas VI") to Beacon grade on new tested core src/lib/ocrQueueView.ts (122 tests) — search/sort/reason-facet/keyboard/footer (2 commits 58ea2d3 + 2f8eda5).
 
 **Active branch: `main`** — commit and push DIRECTLY to main every tick. No feature branches.
 
@@ -9,7 +11,7 @@ Internal module labels use the repo's logical-release naming ("Atlas VI"
 = v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `2f8eda5` — "feat(ocr-queue): wire palette-grade search/sort/facet/keyboard/footer".
+Latest commit: `bb1594e` — "feat(recents-home): reading-progress overlay on card thumbnails".
 
 ### What round-45 (2026-06-27 09:55 PT) just shipped
 
@@ -1525,6 +1527,18 @@ Refilled frontend-first per the override (backend/infra items
 deferred until the override block is removed). Ordered roughly by
 demo value:
 
+- OCR Queue: per-reason "Retry all <reason>" button — when a failure
+  facet is active, a header action that re-queues ONLY that bucket
+  (reuses ocrQueueRequeue over filterByReason output); pairs with the
+  round-45 facet + round-46 pending-state facet.
+- Library Search: recent-search chips keyboard-navigable — the empty-
+  query chip strip is mouse-only; give it a flat cursor (reuse the
+  palette nav core) so arrows/Enter run a recent search.
+- RecentsHome: pinned-strip horizontal keyboard scroll — when the
+  pinned strip overflows, Left/Right should scroll it into view while
+  the virtual cursor walks it (the cards already flatten; just needs a
+  scroll-into-view on the strip axis).
+
 - ~~RecentsHome (first-launch hero) to palette grade ("Atlas V")~~ — core
   DONE round 43 (8ab126f): tested pure core src/lib/recentsHomeView.ts
   (91 tests). WIRED DONE round 44 (fffc618..191eb37): partition core +
@@ -1532,9 +1546,12 @@ demo value:
   (filterRecents + highlightRecentName), sort modes (sortRecentView
   Recent/Name/Progress/Pages), keyboard nav (flattenRecentCards +
   classifyRecentKey virtual cursor), aria-live summary footer
-  (summarizeRecents). Still open as follow-ups: recents thumbnails could
-  show a tiny progress overlay; a "clear all unpinned" affordance in the
-  footer (clearRecent already exists); pinned-strip horizontal keyboard
+  (summarizeRecents). Round-46 follow-ups DONE: thumbnail progress overlay
+  (bb1594e: recentProgressBar reusing recentReadingProgress — thin accent
+  bar on every card thumbnail, green when finished) and "clear all
+  unpinned" footer affordance (e048678: countUnpinned/describeClearUnpinned
+  wiring the store's clearRecent with an honest count + confirm);
+  recentsHomeView 91->110. Still open: pinned-strip horizontal keyboard
   scroll when it overflows.
 - ~~Library Search panel to Raycast/Linear grade ("Atlas III")~~ — DONE
   round 41 (5ccec44..ac81a2e): new tested pure core
@@ -1545,15 +1562,18 @@ demo value:
   in-results client-side refine (refineSearchHits, no round-trip),
   3-mode sort (sortSearchGroups relevance/document/matches), summary
   footer + per-group page-spread badge (summarizeSearchResults /
-  pageSpread). Still open as follow-ups: highlight the refine term
-  inside snippets (live <mark> over the server snippet); a "jump to
-  next/prev document group" chord (Cmd+Down already free); recent-search
-  chips keyboard-navigable.
-- Library Search: snippet refine-highlight — when an in-results refine
-  is active, paint a second-color <mark> over the refine term inside
-  each snippet (the server <mark> is the FTS match; a distinct tint for
-  the client refine would show WHY a row survived). Reuse splitHighlight
-  + the refine scorer's ranges.
+  pageSpread). Round-46 follow-ups DONE: snippet refine-highlight
+  (98b7c5f) and Cmd/Ctrl+Up/Down jump-to-next/prev-document-group
+  (a6262b2: searchGroupStarts reusing the palette's classifyPaletteGroupNav
+  / nextGroupIndex); librarySearchView 127->158. Still open as follow-ups:
+  recent-search chips keyboard-navigable.
+- ~~Library Search: snippet refine-highlight~~ — DONE round 46 (98b7c5f):
+  new tested buildSnippetSpans parses the server <mark> snippet into typed
+  render spans (match / refine / both) + paints a SECOND distinct cyan
+  tint over every literal case-insensitive occurrence of the active refine
+  term. Replaced {@html safeSnippet} with plain Svelte text spans so there
+  is now ZERO HTML-injection surface (safeSnippet removed). librarySearchView
+  127->144 then ->158.
 - ~~Reader find-in-page overlay to palette grade (Cmd+F inside a PDF)~~ —
   DONE round 42 (195fc23..aff3fb6): new tested pure core
   src/lib/readerFindView.ts (86 tests) reusing the palette scorer/nav.
@@ -1595,10 +1615,13 @@ demo value:
   / groupFailureReasons), one virtual cursor across both lists
   (flattenOcrRows / classifyOcrTableKey), aria-live footer + Run-all
   workload preview (describeOcrView / summarizePending). Pending cap
-  20->60. Still open as follow-ups: a per-reason "Retry all <reason>"
-  button (retry only the faceted bucket); a real progress bar while
-  Run-all is in flight (the run is currently fire-and-refresh); the
-  pending "image-only/mixed" state could be a clickable facet too.
+  20->60. Pending state facet DONE round 46 (4bbaf51:
+  groupPendingStates/filterByPendingState/reconcilePendingStateFacet/
+  pendingStateLabel — clickable image-only/mixed pills mirroring the
+  failure-reason facet; ocrQueueView 122->141). Still open as follow-ups:
+  a per-reason "Retry all <reason>" button (retry only the faceted
+  bucket); a real progress bar while Run-all is in flight (the run is
+  currently fire-and-refresh).
 - empty/loading/skeleton-state pass across the panels that still show
   a bare spinner (Signet verify, Quill queue — Beacon cache done round
   40, OCR queue done round 45).
