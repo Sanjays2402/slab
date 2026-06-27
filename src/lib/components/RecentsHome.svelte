@@ -27,6 +27,10 @@
     partitionRecents,
     filterRecents,
     highlightRecentName,
+    sortRecentView,
+    recentSortLabel,
+    RECENT_SORT_MODES,
+    type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
   import { basename } from "$lib/types";
@@ -61,6 +65,12 @@
   const q = $derived(query.trim());
   const filtering = $derived(q.length > 0);
 
+  // Slice 3 (round 44): sort modes. Recents only ever sorted newest-first.
+  // The segmented control cycles Recent / Name / Progress / Pages via the
+  // tested sortRecentView, applied to BOTH rendered grids (pinned + others)
+  // so the whole board re-orders together.
+  let sortMode = $state<RecentSortMode>("recent");
+
   // The "Continue reading" hero card surfaces the single most useful next
   // action: the file with the freshest reading momentum. The selection +
   // partition math now lives in the tested pure core (recentsHomeView.ts),
@@ -70,12 +80,17 @@
   //
   // While a filter is active the hero collapses and the board becomes a
   // flat matched list (pinned strip + recents grid both filtered); with no
-  // filter the partition's hero-aware split is used unchanged.
+  // filter the partition's hero-aware split is used unchanged. The rendered
+  // rows are then run through sortRecentView so the active sort mode wins.
   const partition = $derived(partitionRecents(recents));
   const matched = $derived(filtering ? filterRecents(recents, q) : recents);
   const continueCandidate = $derived(filtering ? null : partition.hero);
-  const pinned = $derived(filtering ? matched.filter((r) => r.pinned) : partition.pinned);
-  const others = $derived(filtering ? matched.filter((r) => !r.pinned) : partition.others);
+  const pinned = $derived(
+    sortRecentView(filtering ? matched.filter((r) => r.pinned) : partition.pinned, sortMode),
+  );
+  const others = $derived(
+    sortRecentView(filtering ? matched.filter((r) => !r.pinned) : partition.others, sortMode),
+  );
 
   function progressPct(r: RecentFile): number {
     if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return 0;
@@ -175,6 +190,17 @@
           title="Clear filter (Esc)"
         >Clear</button>
       {/if}
+      <div class="sort-seg" role="group" aria-label="Sort recent documents">
+        {#each RECENT_SORT_MODES as mode (mode)}
+          <button
+            class="sort-btn"
+            class:active={sortMode === mode}
+            onclick={() => (sortMode = mode)}
+            aria-pressed={sortMode === mode}
+            title={`Sort by ${recentSortLabel(mode)}`}
+          >{recentSortLabel(mode)}</button>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -378,6 +404,35 @@
     border-radius: 6px;
   }
   .filter-clear:hover { background: color-mix(in srgb, var(--accent, #5e6ad2) 14%, transparent); }
+
+  /* Slice 3 — segmented sort control. */
+  .sort-seg {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--surface-3, rgba(255,255,255,0.04));
+    flex: 0 0 auto;
+  }
+  .sort-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    font-size: 0.74rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.22rem 0.5rem;
+    border-radius: 6px;
+    transition: background 120ms ease, opacity 120ms ease;
+    white-space: nowrap;
+  }
+  .sort-btn:hover { opacity: 0.9; background: color-mix(in srgb, white 6%, transparent); }
+  .sort-btn.active {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent, #5e6ad2) 26%, transparent);
+  }
 
   .hl {
     background: color-mix(in srgb, var(--accent, #5e6ad2) 36%, transparent);
