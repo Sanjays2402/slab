@@ -39,6 +39,28 @@
     type OcrQueueResult,
     type OcrQueueStats,
   } from "$lib/library";
+  import {
+    ocrBasename,
+    searchOcrDocs,
+    sortOcrDocs,
+    cycleOcrSort,
+    ocrSortLabel,
+    OCR_SORT_FIELDS,
+    groupFailureReasons,
+    filterByReason,
+    reconcileReasonFacet,
+    describeDominantReason,
+    flattenOcrRows,
+    classifyOcrTableKey,
+    nextOcrCursor,
+    clampOcrCursor,
+    summarizePending,
+    describeOcrImpact,
+    describeOcrView,
+    type OcrSort,
+    type OcrSortField,
+  } from "$lib/ocrQueueView";
+  import { splitHighlight } from "$lib/paletteSearch";
 
   type Props = {
     open: boolean;
@@ -59,6 +81,20 @@
   let requeueingAll = $state(false);
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // --- Atlas VI view-core state ---------------------------------------
+  /** Slice 1: filter-as-you-type query over both lists. */
+  let search = $state("");
+  let searchEl = $state<HTMLInputElement | null>(null);
+  /** Slice 2: shared sort column + direction across both lists. */
+  let sort = $state<OcrSort>({ field: "name", dir: "asc" });
+  /** Slice 3: active failure-reason facet (one bucket) or null for all. */
+  let reasonFacet = $state<string | null>(null);
+  /** Slice 4: virtual cursor index spanning failures-then-pending. */
+  let cursor = $state(0);
+  let rowEls = $state<Array<HTMLLIElement | null>>([]);
+  /** True once the list has keyboard focus (drives the cursor ring). */
+  let listFocused = $state(false);
 
   function showToast(msg: string) {
     toast = msg;
@@ -92,9 +128,11 @@
     }
   }
 
+  // Single source of truth for "the name" — delegates to the view-core's
+  // ocrBasename so display + the search highlight ranges can never
+  // disagree on where a row's basename starts.
   function basename(path: string): string {
-    const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-    return i >= 0 ? path.slice(i + 1) : path;
+    return ocrBasename(path);
   }
 
   /** Compact folder hint (the path minus the basename, trimmed). */
@@ -196,6 +234,9 @@
 
   function handleKey(e: KeyboardEvent) {
     if (!open) return;
+    // Slice 4: let the virtual cursor claim arrows / Enter / o / Escape
+    // first; it bails when focus is in the search box or on a button.
+    if (handleTableKey(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
@@ -215,13 +256,69 @@
   });
 
   $effect(() => {
-    if (open) refresh();
+    if (open) {
+      refresh();
+    } else {
+      // Reset the keyboard cursor + filters when the panel closes so a
+      // reopen starts clean (mirrors the Beacon inspector).
+      cursor = 0;
+      listFocused = false;
+      search = "";
+      reasonFacet = null;
+    }
   });
 
-  // ---------- derived display helpers ----------
+  // ---------- Atlas VI: search / sort / facet / cursor derived --------
 
-  const pendingPreview = $derived(pending.slice(0, 20));
-  const hasMorePending = $derived(pending.length > 20);
+  /** Slice 3: failure-reason buckets (dominant cause first). */
+  const reasonBuckets = $derived(groupFailureReasons(failed));
+  const dominantReason = $derived(describeDominantReason(reasonBuckets));
+
+  /** Slice 3 then 1 then 2: failures after reason facet -> search -> sort. */
+  const facetedFailed = $derived(filterByReason(failed, reasonFacet));
+  const failedHits = $derived(searchOcrDocs(facetedFailed, search));
+  const sortedFailed = $derived(
+    sortOcrDocs(failedHits.map((h) => h.record), sort),
+  );
+
+  /** Slice 1 then 2: pending after search -> sort. */
+  const pendingHits = $derived(searchOcrDocs(pending, search));
+  const sortedPending = $derived(
+    sortOcrDocs(pendingHits.map((h) => h.record), sort),
+  );
+  /** Cap the rendered pending rows so an unfiltered 5k queue isn't a wall;
+      filtering/sorting now makes any specific doc reachable within the cap. */
+  const PENDING_CAP = 60;
+  const visiblePending = $derived(sortedPending.slice(0, PENDING_CAP));
+  const hiddenPending = $derived(Math.max(0, sortedPending.length - PENDING_CAP));
+
+  /** id -> basename highlight ranges, so each row template can paint. */
+  const nameRangesById = $derived(
+    new Map([...failedHits, ...pendingHits].map((h) => [h.record.id, h.nameRanges])),
+  );
+
+  const isFiltering = $derived(search.trim().length > 0 || reasonFacet !== null);
+
+  /** Slice 4: one flat cursor space across both rendered lists (failures
+      then the capped pending preview), so a single arrow walk crosses
+      exactly the rows on screen. */
+  const flatRows = $derived(flattenOcrRows(sortedFailed, visiblePending));
+
+  /** Slice 5: pending workload preview + context-aware footer line. */
+  const pendingImpact = $derived(summarizePending(pending));
+  const pendingImpactLabel = $derived(describeOcrImpact(pendingImpact));
+  const viewSummary = $derived(
+    describeOcrView({
+      shownFailed: sortedFailed.length,
+      shownPending: sortedPending.length,
+      totalFailed: failed.length,
+      totalPending: pending.length,
+      inFlight: stats?.pending ?? 0,
+      reasonFacet,
+      query: search,
+    }),
+  );
+
   const hasFailures = $derived(failed.length > 0);
   const totalDocs = $derived(stats?.total ?? 0);
   const indexedShare = $derived(() => {
@@ -230,6 +327,83 @@
     const pct = Math.round((indexed * 100) / stats.total);
     return { indexed, pct };
   });
+
+  function setSort(field: OcrSortField) {
+    sort = cycleOcrSort(sort, field);
+  }
+
+  function toggleReasonFacet(reason: string) {
+    reasonFacet = reasonFacet === reason ? null : reason;
+  }
+
+  // Keep a stale facet from silently emptying the inbox after a retry /
+  // refresh drops its last failure (Slice 3 reconcile).
+  $effect(() => {
+    const live = reconcileReasonFacet(reasonFacet, reasonBuckets);
+    if (live !== reasonFacet) reasonFacet = live;
+  });
+
+  // Keep the virtual cursor in range as the filtered/sorted lists grow or
+  // shrink so it can never point past the end (Slice 4 clamp).
+  $effect(() => {
+    void flatRows.length;
+    cursor = clampOcrCursor(cursor, flatRows.length);
+  });
+
+  function scrollCursorIntoView() {
+    queueMicrotask(() => {
+      rowEls[cursor]?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  /** Slice 4: drive both lists from the keyboard. Returns true when it
+      consumed the event so the caller can skip the panel-close path.
+      Bails when focus is in the search box or on a button so typing and
+      native activation still work. */
+  function handleTableKey(e: KeyboardEvent): boolean {
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "SELECT") {
+      return false;
+    }
+    const action = classifyOcrTableKey(e);
+    if (!action) return false;
+    const rows = flatRows;
+    switch (action.kind) {
+      case "move": {
+        if (rows.length === 0) return false;
+        e.preventDefault();
+        listFocused = true;
+        cursor = nextOcrCursor(action.intent, cursor, rows.length);
+        scrollCursorIntoView();
+        return true;
+      }
+      case "activate": {
+        const row = rows[cursor];
+        if (!row || !listFocused) return false;
+        e.preventDefault();
+        // Enter runs a pending doc or retries a failed one, by section.
+        if (row.section === "pending") void runOne(row.record);
+        else void requeue(row.record);
+        return true;
+      }
+      case "open": {
+        const row = rows[cursor];
+        if (!row || !listFocused) return false;
+        e.preventDefault();
+        void openInReader(row.record);
+        return true;
+      }
+      case "clear": {
+        if (!listFocused) return false;
+        e.preventDefault();
+        listFocused = false;
+        return true;
+      }
+    }
+    return false;
+  }
+
 </script>
 
 {#if open}
@@ -334,13 +508,67 @@
           </section>
         {/if}
 
+        {#if failed.length > 0 || pending.length > 0}
+          <div class="oq-toolbar">
+            <div class="oq-search">
+              <input
+                bind:this={searchEl}
+                class="oq-search-input"
+                type="text"
+                placeholder="Filter by name, folder, state, or reason…"
+                bind:value={search}
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Filter OCR queue"
+                onkeydown={(e) => {
+                  if (e.key === "Escape" && search) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    search = "";
+                  }
+                }}
+              />
+              {#if isFiltering}
+                <button
+                  class="oq-search-clear"
+                  onclick={() => {
+                    search = "";
+                    reasonFacet = null;
+                    searchEl?.focus();
+                  }}
+                  aria-label="Clear filter"
+                  title="Clear filter (Esc)"
+                >Clear</button>
+              {/if}
+            </div>
+            <div class="oq-sort" role="group" aria-label="Sort OCR queue">
+              {#each OCR_SORT_FIELDS as field (field)}
+                <button
+                  class="oq-sort-btn"
+                  class:active={sort.field === field}
+                  onclick={() => setSort(field)}
+                  aria-pressed={sort.field === field}
+                  title={`Sort by ${ocrSortLabel(field)}${sort.field === field ? (sort.dir === "asc" ? " (ascending)" : " (descending)") : ""}`}
+                >
+                  {ocrSortLabel(field)}
+                  {#if sort.field === field}
+                    <span class="oq-caret" aria-hidden="true">{sort.dir === "asc" ? "\u2191" : "\u2193"}</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
         {#if hasFailures}
           <section class="oq-section" aria-label="OCR failures">
             <header class="oq-section-head">
               <h3>
                 <span class="dot fail" aria-hidden="true"></span>
                 Failures
-                <span class="count">({failed.length})</span>
+                <span class="count">
+                  {#if isFiltering}({sortedFailed.length} of {failed.length}){:else}({failed.length}){/if}
+                </span>
               </h3>
               <button
                 class="oq-btn small danger"
@@ -351,46 +579,97 @@
                 {requeueingAll ? "Re-queueing…" : "Retry all"}
               </button>
             </header>
-            <ul class="oq-list">
-              {#each failed as doc (doc.id)}
-                <li class="oq-row failed">
-                  <div class="row-main">
-                    <div class="row-name" title={doc.path}>
-                      {doc.title ?? basename(doc.path)}
+
+            {#if reasonBuckets.length > 1}
+              <div class="oq-reasons" role="group" aria-label="Filter by failure reason">
+                <span class="oq-reasons-lede" title={dominantReason}>{dominantReason}</span>
+                {#each reasonBuckets as bucket (bucket.reason)}
+                  <button
+                    class="oq-reason"
+                    class:active={reasonFacet === bucket.reason}
+                    onclick={() => toggleReasonFacet(bucket.reason)}
+                    aria-pressed={reasonFacet === bucket.reason}
+                    title={reasonFacet === bucket.reason
+                      ? `Showing only “${bucket.reason}” — click to clear`
+                      : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that failed: ${bucket.reason}`}
+                  >
+                    {bucket.reason}
+                    <span class="oq-reason-count tabular">{bucket.count}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+
+            {#if sortedFailed.length === 0}
+              <div class="oq-empty">
+                {#if reasonFacet && search.trim()}
+                  No <span class="oq-empty-q">{reasonFacet}</span> failures match
+                  <span class="oq-empty-q">“{search.trim()}”</span>.
+                {:else if reasonFacet}
+                  No failures under <span class="oq-empty-q">{reasonFacet}</span>.
+                {:else}
+                  No failures match <span class="oq-empty-q">“{search.trim()}”</span>.
+                {/if}
+                <button
+                  class="oq-link"
+                  onclick={() => {
+                    search = "";
+                    reasonFacet = null;
+                  }}
+                >Clear filters</button>
+              </div>
+            {:else}
+              <ul class="oq-list">
+                {#each sortedFailed as doc, i (doc.id)}
+                  <li
+                    bind:this={rowEls[i]}
+                    class="oq-row failed"
+                    class:cursor={listFocused && i === cursor}
+                  >
+                    <div class="row-main">
+                      <div class="row-name" title={doc.path}>
+                        {#if doc.title}
+                          {doc.title}
+                        {:else}
+                          {#each splitHighlight(basename(doc.path), nameRangesById.get(doc.id) ?? []) as seg}
+                            {#if seg.hit}<mark class="oq-hl">{seg.text}</mark>{:else}{seg.text}{/if}
+                          {/each}
+                        {/if}
+                      </div>
+                      <div class="row-meta">
+                        <span class="row-folder">{folderHint(doc.path)}</span>
+                        {#if doc.ocr_error}
+                          <span class="row-reason" title={doc.ocr_error}>
+                            {doc.ocr_error}
+                          </span>
+                        {:else}
+                          <span class="row-reason muted">
+                            (no reason captured)
+                          </span>
+                        {/if}
+                      </div>
                     </div>
-                    <div class="row-meta">
-                      <span class="row-folder">{folderHint(doc.path)}</span>
-                      {#if doc.ocr_error}
-                        <span class="row-reason" title={doc.ocr_error}>
-                          {doc.ocr_error}
-                        </span>
-                      {:else}
-                        <span class="row-reason muted">
-                          (no reason captured)
-                        </span>
-                      {/if}
+                    <div class="row-actions">
+                      <button
+                        class="oq-btn small"
+                        onclick={() => openInReader(doc)}
+                        title="Open in Reader"
+                      >
+                        Open
+                      </button>
+                      <button
+                        class="oq-btn small"
+                        onclick={() => requeue(doc)}
+                        disabled={busy.has(doc.id)}
+                        title="Flip back to scanned + clear stored error so the next Run picks it up"
+                      >
+                        {busy.has(doc.id) ? "…" : "Retry"}
+                      </button>
                     </div>
-                  </div>
-                  <div class="row-actions">
-                    <button
-                      class="oq-btn small"
-                      onclick={() => openInReader(doc)}
-                      title="Open in Reader"
-                    >
-                      Open
-                    </button>
-                    <button
-                      class="oq-btn small"
-                      onclick={() => requeue(doc)}
-                      disabled={busy.has(doc.id)}
-                      title="Flip back to scanned + clear stored error so the next Run picks it up"
-                    >
-                      {busy.has(doc.id) ? "…" : "Retry"}
-                    </button>
-                  </div>
-                </li>
-              {/each}
-            </ul>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           </section>
         {/if}
 
@@ -400,22 +679,44 @@
               <span class="dot pend" aria-hidden="true"></span>
               Pending
               <span class="count">
-                ({stats?.pending_total ?? 0})
+                {#if isFiltering}({sortedPending.length} of {pending.length}){:else}({pending.length}){/if}
               </span>
             </h3>
           </header>
-          {#if (stats?.pending_total ?? 0) === 0}
+          {#if pending.length === 0}
             <div class="oq-empty">
-              Nothing pending. Add a folder of scanned PDFs to seed the
-              queue — Slab classifies each file on import.
+              {#if loading}
+                Loading…
+              {:else}
+                Nothing pending. Add a folder of scanned PDFs to seed the
+                queue — Slab classifies each file on import.
+              {/if}
+            </div>
+          {:else if sortedPending.length === 0}
+            <div class="oq-empty">
+              No pending docs match <span class="oq-empty-q">“{search.trim()}”</span>.
+              <button
+                class="oq-link"
+                onclick={() => (search = "")}
+              >Clear filter</button>
             </div>
           {:else}
             <ul class="oq-list">
-              {#each pendingPreview as doc (doc.id)}
-                <li class="oq-row pending">
+              {#each visiblePending as doc, i (doc.id)}
+                <li
+                  bind:this={rowEls[sortedFailed.length + i]}
+                  class="oq-row pending"
+                  class:cursor={listFocused && sortedFailed.length + i === cursor}
+                >
                   <div class="row-main">
                     <div class="row-name" title={doc.path}>
-                      {doc.title ?? basename(doc.path)}
+                      {#if doc.title}
+                        {doc.title}
+                      {:else}
+                        {#each splitHighlight(basename(doc.path), nameRangesById.get(doc.id) ?? []) as seg}
+                          {#if seg.hit}<mark class="oq-hl">{seg.text}</mark>{:else}{seg.text}{/if}
+                        {/each}
+                      {/if}
                     </div>
                     <div class="row-meta">
                       <span class="row-folder">{folderHint(doc.path)}</span>
@@ -444,14 +745,27 @@
                 </li>
               {/each}
             </ul>
-            {#if hasMorePending}
+            {#if hiddenPending > 0}
               <div class="oq-more">
-                +{pending.length - 20} more queued — Run all to process every doc.
+                +{hiddenPending.toLocaleString()} more — filter to narrow, or
+                Run all to process every doc.
               </div>
             {/if}
           {/if}
         </section>
       </div>
+
+      <footer class="oq-foot">
+        <span class="oq-foot-summary" aria-live="polite">{viewSummary}</span>
+        {#if (stats?.pending_total ?? 0) > 0}
+          <span class="oq-foot-impact" title="Total workload Run all would process">
+            Run all: {pendingImpactLabel}
+          </span>
+        {/if}
+        <span class="oq-kbd-hint" aria-hidden="true">
+          <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> run/retry · <kbd>O</kbd> open
+        </span>
+      </footer>
 
       {#if toast}
         <div class="oq-toast" role="status">{toast}</div>
@@ -758,4 +1072,192 @@
     from { opacity: 0; transform: translate(-50%, 8px); }
     to   { opacity: 1; transform: translate(-50%, 0); }
   }
+
+  /* ----- Atlas VI: search + sort toolbar ----- */
+  .oq-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .oq-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 220px;
+  }
+  .oq-search-input {
+    flex: 1;
+    appearance: none;
+    background: color-mix(in srgb, white 4%, transparent);
+    border: 1px solid color-mix(in srgb, white 10%, transparent);
+    color: inherit;
+    font-size: 12px;
+    padding: 7px 11px;
+    padding-right: 60px;
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 120ms, background 120ms;
+  }
+  .oq-search-input::placeholder { color: inherit; opacity: 0.4; }
+  .oq-search-input:focus {
+    border-color: color-mix(in srgb, #7c8cff 50%, transparent);
+    background: color-mix(in srgb, #7c8cff 6%, transparent);
+  }
+  .oq-search-clear {
+    position: absolute;
+    right: 6px;
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.55;
+    font-size: 11px;
+    padding: 4px 7px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 120ms, background 120ms;
+  }
+  .oq-search-clear:hover {
+    opacity: 0.95;
+    background: color-mix(in srgb, white 8%, transparent);
+  }
+  .oq-sort {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: color-mix(in srgb, white 3%, transparent);
+    border: 1px solid color-mix(in srgb, white 7%, transparent);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .oq-sort-btn {
+    appearance: none;
+    background: transparent;
+    color: inherit;
+    border: none;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: background 120ms, opacity 120ms, color 120ms;
+  }
+  .oq-sort-btn:hover {
+    background: color-mix(in srgb, white 6%, transparent);
+    opacity: 0.9;
+  }
+  .oq-sort-btn.active {
+    background: color-mix(in srgb, #7c8cff 22%, transparent);
+    color: #d9deff;
+    opacity: 1;
+  }
+  .oq-caret { margin-left: 3px; font-size: 10px; opacity: 0.85; }
+
+  /* ----- Atlas VI: failure-reason facets ----- */
+  .oq-reasons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 0 4px 10px;
+  }
+  .oq-reasons-lede {
+    font-size: 11px;
+    opacity: 0.6;
+    margin-right: 4px;
+    white-space: nowrap;
+  }
+  .oq-reason {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: color-mix(in srgb, #ff7474 8%, transparent);
+    border: 1px solid color-mix(in srgb, #ff7474 24%, transparent);
+    color: #ffc4c4;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms;
+  }
+  .oq-reason:hover {
+    background: color-mix(in srgb, #ff7474 16%, transparent);
+  }
+  .oq-reason.active {
+    background: color-mix(in srgb, #ff7474 26%, transparent);
+    border-color: color-mix(in srgb, #ff7474 55%, transparent);
+    color: #fff;
+  }
+  .oq-reason-count {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+    background: color-mix(in srgb, black 22%, transparent);
+    padding: 0 5px;
+    border-radius: 999px;
+  }
+
+  /* ----- Atlas VI: name highlight + cursor ring + filtered empty ----- */
+  .oq-hl {
+    background: color-mix(in srgb, #7c8cff 40%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+  .oq-row.cursor {
+    border-color: color-mix(in srgb, #7c8cff 65%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, #7c8cff 45%, transparent);
+    background: color-mix(in srgb, #7c8cff 10%, transparent);
+  }
+  .oq-empty-q { color: #c4d0ff; font-weight: 600; }
+  .oq-link {
+    appearance: none;
+    background: none;
+    border: none;
+    color: #9aa9ff;
+    cursor: pointer;
+    font-size: inherit;
+    padding: 0 2px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .oq-link:hover { color: #c4d0ff; }
+
+  /* ----- Atlas VI: context-aware footer ----- */
+  .oq-foot {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 22px;
+    border-top: 1px solid color-mix(in srgb, white 7%, transparent);
+    background: color-mix(in srgb, white 2%, transparent);
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+  .oq-foot-summary { opacity: 0.72; }
+  .oq-foot-impact {
+    opacity: 0.7;
+    padding-left: 14px;
+    border-left: 1px solid color-mix(in srgb, white 10%, transparent);
+  }
+  .oq-kbd-hint {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.5;
+    font-size: 10px;
+  }
+  .oq-kbd-hint kbd {
+    font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: color-mix(in srgb, white 8%, transparent);
+    border: 1px solid color-mix(in srgb, white 12%, transparent);
+  }
+  .tabular { font-variant-numeric: tabular-nums; }
 </style>
