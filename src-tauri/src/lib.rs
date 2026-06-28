@@ -4053,6 +4053,25 @@ fn slab_library_clear_search_history(app: tauri::AppHandle) -> CmdResult<usize> 
     result.into()
 }
 
+/// Delete a SINGLE recent-search row by id. Backs the per-chip delete
+/// affordance (an x on each chip / Backspace on the focused chip) so the
+/// user can prune one stray query without nuking the whole history.
+/// Returns true when a row was actually removed (false for a stale id that
+/// a concurrent clear already dropped). Suggestion-cluster dismissals are
+/// NOT touched.
+#[tauri::command]
+fn slab_library_delete_search(app: tauri::AppHandle, id: i64) -> CmdResult<bool> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let removed = pdf::library::search_log::delete_one(&db, id)?;
+        if removed {
+            emit_library_changed(&app);
+        }
+        Ok(removed)
+    })();
+    result.into()
+}
+
 // ---------------------------------------------------------------------
 // v3.39.0 "Atlas Tag-Suggest" — per-document heuristic tag suggestions.
 // ---------------------------------------------------------------------
@@ -7812,6 +7831,7 @@ pub fn run() {
             slab_library_search_log_count,
             slab_library_recent_searches,
             slab_library_clear_search_history,
+            slab_library_delete_search,
             slab_library_index_stats,
             slab_library_tag_suggestions_for_doc,
             slab_library_tag_suggestions_bulk_for_untagged,

@@ -778,6 +778,7 @@ export function pageSpread(hits: readonly SearchHitLike[]): string {
 export type RecentChipAction =
   | { kind: "move"; intent: PaletteNavIntent }
   | { kind: "run" }
+  | { kind: "delete" }
   | { kind: "clear" }
   | null;
 
@@ -786,9 +787,11 @@ export type RecentChipAction =
  * or null if it isn't a chip key (so it falls through to the search
  * input / browser). Any modifier (Cmd/Ctrl/Alt) disqualifies so app
  * chords keep priority. ArrowLeft/Right map to prev/next (the strip is a
- * horizontal row); Home/End leap; Enter runs the focused chip; Escape
- * parks the cursor. ArrowUp/Down are deliberately NOT claimed — they
- * belong to the results cursor — so the two never collide.
+ * horizontal row); Home/End leap; Enter runs the focused chip; Backspace
+ * or Delete drops the focused chip (one stray query, complementing the
+ * all-or-nothing Clear history); Escape parks the cursor. ArrowUp/Down
+ * are deliberately NOT claimed — they belong to the results cursor — so
+ * the two never collide.
  */
 export function classifyRecentChipKey(ev: SearchKeyEvent): RecentChipAction {
   if (!ev) return null;
@@ -804,6 +807,9 @@ export function classifyRecentChipKey(ev: SearchKeyEvent): RecentChipAction {
       return { kind: "move", intent: "last" };
     case "Enter":
       return { kind: "run" };
+    case "Backspace":
+    case "Delete":
+      return { kind: "delete" };
     case "Escape":
       return { kind: "clear" };
     default:
@@ -836,4 +842,36 @@ export function clampChipCursor(current: number, count: number): number {
   if (!Number.isFinite(count) || count <= 0) return -1;
   if (!Number.isFinite(current) || current < 0) return -1;
   return Math.min(count - 1, Math.floor(current));
+}
+
+// --- Recent-chip relative age -----------------------------------------
+//
+// Each recent-search chip showed only its last-run match count — but not
+// WHEN it was last run, so a query from five minutes ago and one from
+// last month looked identical. This pure helper turns a chip's unix
+// timestamp into a compact, human relative age ("just now", "2h",
+// "3d", "5w") for a muted suffix on the chip, mirroring the coarse
+// granularity Linear/GitHub use on activity rows.
+
+/**
+ * Format a unix-seconds timestamp as a compact relative age against `now`
+ * (also unix seconds). Buckets: <45s "just now"; minutes "Nm"; hours
+ * "Nh"; days "Nd"; weeks "Nw"; beyond ~1y "1y+". A future or garbage
+ * timestamp degrades to "just now" rather than a negative age. Pure; the
+ * units are deliberately coarse (one significant figure) so the chip stays
+ * a glanceable suffix, not a precise clock.
+ */
+export function formatRelativeAge(ts: number, now: number): string {
+  if (!Number.isFinite(ts) || !Number.isFinite(now)) return "just now";
+  const secs = Math.floor(now - ts);
+  if (secs < 45) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${Math.max(1, mins)}m`;
+  const hours = Math.floor(secs / 3600);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(secs / 86400);
+  if (days < 7) return `${days}d`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 52) return `${weeks}w`;
+  return "1y+";
 }

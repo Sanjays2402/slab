@@ -31,6 +31,7 @@ import {
   classifyRecentChipKey,
   nextChipCursor,
   clampChipCursor,
+  formatRelativeAge,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -606,6 +607,13 @@ const group = (
   // Enter runs, Escape parks.
   expect(classifyRecentChipKey({ key: "Enter" })?.kind === "run", "chip: Enter -> run");
   expect(classifyRecentChipKey({ key: "Escape" })?.kind === "clear", "chip: Escape -> clear");
+  // Backspace / Delete drop the focused chip (one stray query).
+  expect(classifyRecentChipKey({ key: "Backspace" })?.kind === "delete", "chip: Backspace -> delete");
+  expect(classifyRecentChipKey({ key: "Delete" })?.kind === "delete", "chip: Delete -> delete");
+  expect(
+    classifyRecentChipKey({ key: "Backspace", metaKey: true }) === null,
+    "chip: Cmd+Backspace falls through (app chord)",
+  );
   // Up/Down are NOT claimed — they belong to the results cursor.
   expect(classifyRecentChipKey({ key: "ArrowUp" }) === null, "chip: Up not claimed (results owns it)");
   expect(classifyRecentChipKey({ key: "ArrowDown" }) === null, "chip: Down not claimed");
@@ -629,6 +637,29 @@ const group = (
   expect(clampChipCursor(0, 0) === -1, "chip: empty strip -> -1");
   expect(clampChipCursor(-1, 5) === -1, "chip: negative cursor -> -1 (unfocused)");
   expect(clampChipCursor(3, NaN) === -1, "chip: NaN count -> -1");
+}
+
+// --- formatRelativeAge ------------------------------------------------
+{
+  const NOW = 1_700_000_000; // fixed reference
+  expect(formatRelativeAge(NOW, NOW) === "just now", "age: same instant -> just now");
+  expect(formatRelativeAge(NOW - 10, NOW) === "just now", "age: 10s -> just now");
+  expect(formatRelativeAge(NOW - 44, NOW) === "just now", "age: 44s -> just now (under threshold)");
+  expect(formatRelativeAge(NOW - 60, NOW) === "1m", "age: 60s -> 1m");
+  expect(formatRelativeAge(NOW - 90, NOW) === "1m", "age: 90s -> 1m (floored)");
+  expect(formatRelativeAge(NOW - 59 * 60, NOW) === "59m", "age: 59m -> 59m");
+  expect(formatRelativeAge(NOW - 60 * 60, NOW) === "1h", "age: 1h -> 1h");
+  expect(formatRelativeAge(NOW - 23 * 3600, NOW) === "23h", "age: 23h -> 23h");
+  expect(formatRelativeAge(NOW - 24 * 3600, NOW) === "1d", "age: 24h -> 1d");
+  expect(formatRelativeAge(NOW - 6 * 86400, NOW) === "6d", "age: 6d -> 6d");
+  expect(formatRelativeAge(NOW - 7 * 86400, NOW) === "1w", "age: 7d -> 1w");
+  expect(formatRelativeAge(NOW - 51 * 7 * 86400, NOW) === "51w", "age: 51w -> 51w");
+  expect(formatRelativeAge(NOW - 52 * 7 * 86400, NOW) === "1y+", "age: >=52w -> 1y+");
+  // A future timestamp (clock skew) degrades to "just now", never negative.
+  expect(formatRelativeAge(NOW + 5000, NOW) === "just now", "age: future ts -> just now");
+  // Garbage is safe.
+  expect(formatRelativeAge(NaN, NOW) === "just now", "age: NaN ts -> just now");
+  expect(formatRelativeAge(NOW, NaN) === "just now", "age: NaN now -> just now");
 }
 
 // eslint-disable-next-line no-console

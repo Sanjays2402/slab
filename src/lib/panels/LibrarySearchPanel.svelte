@@ -27,6 +27,7 @@
   import { onMount } from "svelte";
   import {
     clearLibrarySearchHistory,
+    deleteLibrarySearch,
     libraryIndexStats,
     listFolders,
     librarySearch,
@@ -57,6 +58,7 @@
     classifyRecentChipKey,
     nextChipCursor,
     clampChipCursor,
+    formatRelativeAge,
     SEARCH_SORT_MODES,
     type SearchSortMode,
     type SearchGroupLike,
@@ -76,6 +78,10 @@
    *  only in the empty-query state where the strip is shown. */
   let chipCursor = $state(-1);
   let chipEls = $state<(HTMLButtonElement | null)[]>([]);
+  /** Reactive "now" (unix seconds) for the per-chip relative-age suffix.
+   *  Ticks once a minute — the ages are coarse (m/h/d/w) so a minute is
+   *  plenty fresh, and an empty-query strip is the only place it's read. */
+  let nowSec = $state(Math.floor(Date.now() / 1000));
   /** Toggle for the "clear history" affordance shown when recents>0. */
   let clearing = $state(false);
   /** Every indexed folder; loaded once on mount. The picker is only shown
@@ -163,6 +169,32 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       clearing = false;
+    }
+  }
+
+  /** Slice (this round): delete ONE recent-search chip — the per-chip x
+      button or Backspace/Delete on the focused chip — complementing the
+      all-or-nothing Clear history. Optimistically drops the row locally
+      and keeps the chip cursor anchored on the same slot (so a Backspace
+      run can delete several in a row), reconciling the cursor into the
+      shrunken strip. Reverts the optimistic drop if the backend rejects. */
+  async function deleteRecent(r: RecentSearch): Promise<void> {
+    const prev = recents;
+    const idx = recents.findIndex((x) => x.id === r.id);
+    if (idx < 0) return;
+    recents = recents.filter((x) => x.id !== r.id);
+    // Keep focus on the slot the deleted chip occupied (now the next chip),
+    // clamped into the shrunken strip; -1 when the strip is now empty.
+    chipCursor = clampChipCursor(idx, recents.length);
+    try {
+      await deleteLibrarySearch(r.id);
+      if (recents.length === 0) inputEl?.focus();
+      else chipEls[chipCursor]?.focus();
+    } catch (e) {
+      // Backend rejected — restore the chip so the UI never lies.
+      recents = prev;
+      chipCursor = clampChipCursor(idx, recents.length);
+      error = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -374,6 +406,13 @@
           runRecent(recents[chipCursor]);
           return;
         }
+        if (chipAction.kind === "delete" && chipCursor >= 0 && chipCursor < recents.length) {
+          // Backspace / Delete on the focused chip drops just that one
+          // recent search (the per-chip x button's keyboard twin).
+          e.preventDefault();
+          void deleteRecent(recents[chipCursor]);
+          return;
+        }
         if (chipAction.kind === "clear" && chipCursor >= 0) {
           e.preventDefault();
           chipCursor = -1;
@@ -439,6 +478,12 @@
     void refreshRecents();
     void refreshFolders();
     void refreshIndexStats();
+    // Tick the relative-age clock once a minute so chip ages ("2m", "1h")
+    // stay current without a per-second timer (the units are coarse).
+    const ageTimer = setInterval(() => {
+      nowSec = Math.floor(Date.now() / 1000);
+    }, 60_000);
+    return () => clearInterval(ageTimer);
   });
 
   async function refreshFolders(): Promise<void> {
@@ -631,9 +676,9 @@
                 {clearing ? "Clearing…" : "Clear history"}
               </button>
             </header>
-            <ul class="recents-list" role="listbox" aria-label="Recent searches — arrow keys to navigate, Enter to run">
+            <ul class="recents-list" role="listbox" aria-label="Recent searches — arrow keys to navigate, Enter to run, Backspace to delete">
               {#each recents as r, ci (r.id)}
-                <li role="presentation">
+                <li role="presentation" class="recent-chip-wrap">
                   <button
                     bind:this={chipEls[ci]}
                     type="button"
@@ -648,13 +693,34 @@
                       : "No matches last run"}
                   >
                     <span class="recent-query">{r.query}</span>
+                    <span class="recent-age">{formatRelativeAge(r.ts, nowSec)}</span>
                     <span class="recent-meta">{r.resultCount}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="recent-chip-del"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      void deleteRecent(r);
+                    }}
+                    title="Remove this search"
+                    aria-label={`Remove "${r.query}" from recent searches`}
+                  >
+                    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                      <path
+                        d="M4 4l8 8M12 4l-8 8"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        fill="none"
+                      />
+                    </svg>
                   </button>
                 </li>
               {/each}
             </ul>
             <p class="recents-hint" aria-hidden="true">
-              <kbd>←</kbd><kbd>→</kbd> to browse · <kbd>Enter</kbd> to run
+              <kbd>←</kbd><kbd>→</kbd> to browse · <kbd>Enter</kbd> to run · <kbd>⌫</kbd> to remove
             </p>
           </section>
         {/if}
@@ -1444,6 +1510,46 @@
   .recent-chip.cursor:focus {
     outline: none;
   }
+  /* Per-chip delete: the x button rides just inside the chip's trailing
+     edge. Hidden until the chip is hovered or carries the keyboard cursor
+     so the strip stays calm, then fades in as an escape hatch. */
+  .recent-chip-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .recent-chip-wrap .recent-chip {
+    padding-right: 24px;
+  }
+  .recent-chip-del {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--fg-muted, #888);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 80ms, background 80ms, color 80ms;
+  }
+  .recent-chip-wrap:hover .recent-chip-del,
+  .recent-chip.cursor + .recent-chip-del {
+    opacity: 1;
+  }
+  .recent-chip-del:hover,
+  .recent-chip-del:focus-visible {
+    opacity: 1;
+    background: var(--danger-fade, rgba(229, 72, 77, 0.16));
+    color: var(--danger, #e5484d);
+    outline: none;
+  }
   .recents-hint {
     margin: 8px 0 0;
     font-size: 11px;
@@ -1472,6 +1578,16 @@
     border-radius: 999px;
     background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
     flex-shrink: 0;
+  }
+  /* Relative-age suffix on a recent chip ("2m" / "3d") — a quiet,
+     tabular-aligned hint sitting between the query and its match count. */
+  .recent-age {
+    font-size: 10px;
+    color: var(--fg-muted, #999);
+    opacity: 0.75;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   @media (prefers-color-scheme: dark) {

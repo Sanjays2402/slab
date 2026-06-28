@@ -336,6 +336,21 @@ export async function clearLibrarySearchHistory(): Promise<number> {
 }
 
 /**
+ * Delete a SINGLE recent-search row by id. Backs the per-chip delete
+ * affordance (an x on each chip / Backspace on the focused chip) so the
+ * user can prune one stray query without nuking the whole history.
+ * Resolves true when a row was actually removed, false for a stale id
+ * (e.g. a chip already gone after a concurrent clear). v3.57.0 Atlas
+ * Recent-Searches.
+ */
+export async function deleteLibrarySearch(id: number): Promise<boolean> {
+  const res = await invoke<CmdResult<boolean>>("slab_library_delete_search", {
+    id,
+  });
+  return unwrap(res);
+}
+
+/**
  * Snapshot of the FTS5 library index size. Powers the LibrarySearchPanel
  * status footer so the user can see at-a-glance how many docs + pages
  * are searchable. Two cheap COUNTs server-side; safe to call frequently.
