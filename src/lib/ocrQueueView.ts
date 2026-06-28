@@ -742,6 +742,64 @@ export function describeRunAllProgress(
   return { done: d, total: t, pagesDone: pd, pagesTotal: pt, fraction, percent, label, finished: t > 0 && d >= t };
 }
 
+// --- Slice 5c: cancel an in-flight Run-all -----------------------------
+//
+// The per-doc Run-all loop ticks a determinate bar, but once started it
+// ran to the end with no way out — a 5,000-doc batch kicked off by
+// mistake meant force-quitting the app. The component now flips a cancel
+// flag the loop checks before each doc; this pure helper turns the final
+// tallies (succeeded / failed / whether it was canceled) into the
+// completion toast so a canceled batch reads honestly ("… canceled
+// (13 of 47)") instead of masquerading as a clean finish.
+
+/** The terminal summary of a Run-all batch (drives the completion toast). */
+export interface RunAllOutcome {
+  /** Docs that OCR'd cleanly. */
+  ok: number;
+  /** Docs that failed OCR. */
+  fail: number;
+  /** Docs actually processed (ok + fail, clamped to total). */
+  done: number;
+  /** Total docs the batch set out to run. */
+  total: number;
+  /** True when the user canceled the run. */
+  canceled: boolean;
+  /** True when canceling stopped the loop before every doc ran. */
+  partial: boolean;
+  /** Toast line, e.g. "OCR queue: 12 succeeded, 1 failed — canceled (13 of 47)". */
+  label: string;
+}
+
+/**
+ * Build the completion summary for a Run-all batch from the running
+ * tallies. `canceled` is the component's cancel flag at loop exit; a run
+ * that was canceled BEFORE every doc finished is `partial` and its label
+ * names how far it got ("… canceled (13 of 47)"), while a run that
+ * completed (or was "canceled" on the very last doc) reads as a normal
+ * finish ("… (of 47)"). Counts are clamped so a stray tally can't exceed
+ * the total. Pure; tolerant of garbage numbers.
+ */
+export function describeRunAllOutcome(
+  ok: number,
+  fail: number,
+  total: number,
+  canceled: boolean,
+): RunAllOutcome {
+  const t = Math.max(0, Math.floor(Number.isFinite(total) ? total : 0));
+  const o = Math.max(0, Math.floor(Number.isFinite(ok) ? ok : 0));
+  const f = Math.max(0, Math.floor(Number.isFinite(fail) ? fail : 0));
+  const done = Math.min(t, o + f);
+  const canceledFlag = !!canceled;
+  const partial = canceledFlag && done < t;
+  let label = `OCR queue: ${o.toLocaleString()} succeeded, ${f.toLocaleString()} failed`;
+  if (partial) {
+    label += ` \u2014 canceled (${done.toLocaleString()} of ${t.toLocaleString()})`;
+  } else {
+    label += ` (of ${t.toLocaleString()})`;
+  }
+  return { ok: o, fail: f, done, total: t, canceled: canceledFlag, partial, label };
+}
+
 /** The live state the footer narrates. */
 export interface OcrViewState {
   /** Failure rows currently shown (after reason facet + search). */

@@ -62,6 +62,7 @@
     summarizePending,
     describeOcrImpact,
     describeRunAllProgress,
+    describeRunAllOutcome,
     describeOcrView,
     type OcrSort,
     type OcrSortField,
@@ -84,6 +85,10 @@
   /** Per-doc id of an in-flight run/requeue, used to disable buttons. */
   let busy = $state<Set<number>>(new Set());
   let runningAll = $state(false);
+  /** Slice 5c: set true when the user hits Cancel mid Run-all; the per-doc
+      loop checks it before each iteration and breaks after the current doc
+      (the in-flight doc always finishes — there is no mid-OCR abort). */
+  let cancelRequested = $state(false);
   /** Slice 5b: live Run-all progress (docs + pages done) so the overlay
       shows a REAL determinate bar instead of a frozen "Running N…". */
   let runAllDone = $state(0);
@@ -194,16 +199,21 @@
     runAllPagesDone = 0;
     runAllTotal = workload.docs;
     runAllPagesTotal = workload.pages;
+    cancelRequested = false;
     runningAll = true;
     error = null;
     let ok = 0;
     let fail = 0;
     try {
       // Run docs one at a time (not the blanket ocrQueueRunAll) so the
-      // overlay can tick a REAL determinate bar after every doc. Per-doc
-      // OCR failures are tallied, never thrown — a single bad PDF can't
-      // abort the batch.
+      // overlay can tick a REAL determinate bar after every doc, AND so a
+      // Cancel can break the loop between docs. Per-doc OCR failures are
+      // tallied, never thrown — a single bad PDF can't abort the batch.
       for (const doc of batch) {
+        // Slice 5c: honour a Cancel requested since the last doc. The doc
+        // currently in flight always finishes (OCR has no mid-page abort);
+        // we just stop picking up new ones.
+        if (cancelRequested) break;
         try {
           const r: OcrQueueResult = await ocrQueueRunOne(doc.id, null);
           if (r.state_after === "ocr_failed" || r.error) fail++;
@@ -214,15 +224,24 @@
         runAllDone++;
         if (typeof doc.pages === "number" && doc.pages > 0) runAllPagesDone += doc.pages;
       }
-      showToast(
-        `OCR queue: ${ok} succeeded, ${fail} failed (of ${batch.length})`,
-      );
+      // describeRunAllOutcome names a canceled-before-end run honestly
+      // ("… canceled (13 of 47)") vs a clean finish ("… (of 47)").
+      showToast(describeRunAllOutcome(ok, fail, batch.length, cancelRequested).label);
       await refresh();
     } catch (e) {
       error = (e as Error).message;
     } finally {
       runningAll = false;
+      cancelRequested = false;
     }
+  }
+
+  /** Slice 5c: request cancellation of the in-flight Run-all. The loop
+      checks the flag before its next doc and stops; the doc currently
+      being OCR'd still completes. Idempotent + a no-op when nothing runs. */
+  function cancelRunAll() {
+    if (!runningAll) return;
+    cancelRequested = true;
   }
 
   async function requeue(doc: DocumentRecord) {
@@ -590,6 +609,15 @@
             <div class="oq-runall-fill" style={`width:${runAllProgress.percent}%`}></div>
           </div>
           <span class="oq-runall-label tabular">{runAllProgress.label}</span>
+          <button
+            type="button"
+            class="oq-runall-cancel"
+            onclick={cancelRunAll}
+            disabled={cancelRequested}
+            title="Stop after the current document finishes"
+          >
+            {cancelRequested ? "Stopping…" : "Cancel"}
+          </button>
         </div>
       {/if}
 
@@ -1078,6 +1106,29 @@
     color: var(--fg-muted, #9aa0aa);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  /* Slice 5c: cancel the in-flight Run-all. A subtle danger-tinted ghost
+     button so it reads as an escape hatch, not the primary action. */
+  .oq-runall-cancel {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 7px;
+    border: 1px solid color-mix(in srgb, var(--danger, #e5484d) 35%, transparent);
+    background: color-mix(in srgb, var(--danger, #e5484d) 10%, transparent);
+    color: color-mix(in srgb, var(--danger, #e5484d) 90%, var(--fg, #fff));
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .oq-runall-cancel:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
+    border-color: color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
+  }
+  .oq-runall-cancel:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
   .oq-body {

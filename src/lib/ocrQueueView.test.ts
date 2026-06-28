@@ -34,6 +34,7 @@ import {
   describeOcrImpact,
   describeRunAllProgress,
   describeOcrView,
+  describeRunAllOutcome,
   OCR_REASON_UNKNOWN,
   type OcrDocLike,
   type OcrSort,
@@ -617,6 +618,52 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(empty.fraction === 0 && empty.finished === false, "runall: empty batch not finished");
   const junk = describeRunAllProgress(NaN, NaN, NaN, NaN);
   expect(junk.total === 0 && junk.done === 0 && junk.percent === 0, "runall: NaN -> zeros");
+}
+
+// --- Slice 5c: describeRunAllOutcome ----------------------------------
+{
+  // A clean completion: not canceled, names "of N".
+  const done = describeRunAllOutcome(12, 1, 13, false);
+  expect(done.done === 13 && done.total === 13, "outcome: done counts ok+fail");
+  expect(!done.canceled && !done.partial, "outcome: completed run not canceled/partial");
+  expect(
+    done.label === "OCR queue: 12 succeeded, 1 failed (of 13)",
+    "outcome: clean label names total",
+  );
+
+  // Canceled midway -> partial, names how far it got.
+  const cut = describeRunAllOutcome(10, 3, 47, true);
+  expect(cut.done === 13 && cut.partial, "outcome: canceled before end is partial");
+  expect(
+    cut.label === "OCR queue: 10 succeeded, 3 failed \u2014 canceled (13 of 47)",
+    "outcome: partial label names progress",
+  );
+
+  // Cancel flag set but the loop had already finished the last doc ->
+  // reads as a normal finish, not a partial cancel.
+  const onLast = describeRunAllOutcome(46, 1, 47, true);
+  expect(onLast.done === 47 && !onLast.partial, "outcome: cancel on last doc is not partial");
+  expect(
+    onLast.label === "OCR queue: 46 succeeded, 1 failed (of 47)",
+    "outcome: full-but-flagged reads as finish",
+  );
+
+  // Thousands grouping in the label.
+  const big = describeRunAllOutcome(1000, 234, 5000, true);
+  expect(
+    big.label === "OCR queue: 1,000 succeeded, 234 failed \u2014 canceled (1,234 of 5,000)",
+    "outcome: thousands-grouped",
+  );
+
+  // Clamp: a stray over-count can't exceed the total.
+  const over = describeRunAllOutcome(99, 99, 10, false);
+  expect(over.done === 10, "outcome: done clamps to total");
+
+  // Empty / garbage batch is safe.
+  const empty = describeRunAllOutcome(0, 0, 0, false);
+  expect(empty.done === 0 && !empty.partial, "outcome: empty batch safe");
+  const junk = describeRunAllOutcome(NaN, NaN, NaN, true);
+  expect(junk.total === 0 && junk.done === 0 && !junk.partial, "outcome: NaN -> zeros, no partial");
 }
 
 // eslint-disable-next-line no-console
