@@ -31,7 +31,6 @@
     ocrQueueListPending,
     ocrQueueListFailed,
     ocrQueueRunOne,
-    ocrQueueRunAll,
     ocrQueueRequeue,
     ocrQueueRequeueAllFailed,
     ocrQueueStats,
@@ -62,6 +61,7 @@
     clampOcrCursor,
     summarizePending,
     describeOcrImpact,
+    describeRunAllProgress,
     describeOcrView,
     type OcrSort,
     type OcrSortField,
@@ -84,6 +84,12 @@
   /** Per-doc id of an in-flight run/requeue, used to disable buttons. */
   let busy = $state<Set<number>>(new Set());
   let runningAll = $state(false);
+  /** Slice 5b: live Run-all progress (docs + pages done) so the overlay
+      shows a REAL determinate bar instead of a frozen "Running N…". */
+  let runAllDone = $state(0);
+  let runAllPagesDone = $state(0);
+  let runAllTotal = $state(0);
+  let runAllPagesTotal = $state(0);
   let requeueingAll = $state(false);
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -179,14 +185,37 @@
 
   async function runAllPending() {
     if (runningAll || (stats?.pending_total ?? 0) === 0) return;
+    // Snapshot the queue up front so the bar's denominator is fixed even
+    // as rows hop buckets; measure the true page workload for the label.
+    const batch = pending.slice();
+    if (batch.length === 0) return;
+    const workload = summarizePending(batch);
+    runAllDone = 0;
+    runAllPagesDone = 0;
+    runAllTotal = workload.docs;
+    runAllPagesTotal = workload.pages;
     runningAll = true;
     error = null;
+    let ok = 0;
+    let fail = 0;
     try {
-      const results = await ocrQueueRunAll(null);
-      const ok = results.filter((r) => r.state_after === "ocr_done").length;
-      const fail = results.filter((r) => r.state_after === "ocr_failed").length;
+      // Run docs one at a time (not the blanket ocrQueueRunAll) so the
+      // overlay can tick a REAL determinate bar after every doc. Per-doc
+      // OCR failures are tallied, never thrown — a single bad PDF can't
+      // abort the batch.
+      for (const doc of batch) {
+        try {
+          const r: OcrQueueResult = await ocrQueueRunOne(doc.id, null);
+          if (r.state_after === "ocr_failed" || r.error) fail++;
+          else ok++;
+        } catch {
+          fail++;
+        }
+        runAllDone++;
+        if (typeof doc.pages === "number" && doc.pages > 0) runAllPagesDone += doc.pages;
+      }
       showToast(
-        `OCR queue: ${ok} succeeded, ${fail} failed (of ${results.length})`,
+        `OCR queue: ${ok} succeeded, ${fail} failed (of ${batch.length})`,
       );
       await refresh();
     } catch (e) {
@@ -362,6 +391,11 @@
   /** Slice 5: pending workload preview + context-aware footer line. */
   const pendingImpact = $derived(summarizePending(pending));
   const pendingImpactLabel = $derived(describeOcrImpact(pendingImpact));
+  /** Slice 5b: determinate Run-all progress model (docs + pages done vs
+      the snapshotted workload) — drives the overlay bar + label. */
+  const runAllProgress = $derived(
+    describeRunAllProgress(runAllDone, runAllTotal, runAllPagesDone, runAllPagesTotal),
+  );
   /** Compose both facets (failure-reason + pending-state) into one footer
       narration slot — they live in different sections but the footer is a
       single line, so join them when both happen to be active. */
@@ -520,7 +554,7 @@
             title="Run OCR on every scanned/mixed document in the queue"
           >
             {runningAll
-              ? `Running ${stats?.pending_total ?? 0}…`
+              ? `Running… ${runAllProgress.percent}%`
               : `Run all (${stats?.pending_total ?? 0})`}
           </button>
           <button
@@ -541,6 +575,23 @@
           </button>
         </div>
       </header>
+
+      {#if runningAll}
+        <div
+          class="oq-runall"
+          role="progressbar"
+          aria-label="Running OCR on the queue"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={runAllProgress.percent}
+          aria-valuetext={runAllProgress.label}
+        >
+          <div class="oq-runall-track">
+            <div class="oq-runall-fill" style={`width:${runAllProgress.percent}%`}></div>
+          </div>
+          <span class="oq-runall-label tabular">{runAllProgress.label}</span>
+        </div>
+      {/if}
 
       {#if error}
         <div class="oq-error" role="alert">{error}</div>
@@ -995,6 +1046,38 @@
     color: #ffb8be;
     border-radius: 8px;
     font-size: 12px;
+  }
+
+  /* Slice 5b: determinate Run-all progress bar. Sits just under the
+     header while the per-doc batch runs, ticking after every doc. */
+  .oq-runall {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 22px 0;
+  }
+  .oq-runall-track {
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--fg, #fff) 12%, transparent);
+    overflow: hidden;
+  }
+  .oq-runall-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent, #7c8cff) 80%, transparent),
+      var(--accent, #7c8cff)
+    );
+    transition: width 200ms ease;
+  }
+  .oq-runall-label {
+    font-size: 11px;
+    color: var(--fg-muted, #9aa0aa);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
   .oq-body {

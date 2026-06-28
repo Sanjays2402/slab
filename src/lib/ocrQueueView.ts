@@ -685,6 +685,63 @@ export function describeOcrImpact(impact: OcrImpact): string {
   return parts.join(" \u00b7 ");
 }
 
+// --- Slice 5b: determinate Run-all progress ----------------------------
+//
+// "Run all" was fire-and-refresh: the button froze on "Running 47…" for
+// however many minutes the batch took, with no sense of how far along it
+// was. Running the pending docs one at a time (each its own ocrQueueRunOne)
+// lets the UI tick a REAL progress bar after every doc. This pure helper
+// turns the running tallies (docs done, pages done) against the known
+// workload into a determinate progress model — fraction for the bar, a
+// human label ("12 / 47 docs · 3,400 pages") for the overlay — so the
+// component just renders it.
+
+/** A determinate progress snapshot for the in-flight Run-all batch. */
+export interface RunAllProgress {
+  /** Docs finished so far. */
+  done: number;
+  /** Total docs in the batch. */
+  total: number;
+  /** Pages OCR'd so far. */
+  pagesDone: number;
+  /** Total pages across the batch. */
+  pagesTotal: number;
+  /** Completion fraction in [0, 1] (by docs; 0 when total is 0). */
+  fraction: number;
+  /** Rounded percent in [0, 100]. */
+  percent: number;
+  /** Overlay label, e.g. "12 / 47 docs · 3,400 pages". */
+  label: string;
+  /** True once every doc is processed. */
+  finished: boolean;
+}
+
+/**
+ * Build the determinate progress model for a Run-all batch from the
+ * running tallies. `done` / `pagesDone` accumulate as each doc finishes;
+ * `total` / `pagesTotal` are the workload measured up front (via
+ * `summarizePending`). Counts are clamped into range so a stray
+ * over-count can't push the bar past 100%. The label always names the
+ * doc progress and appends the page progress when a page total is known.
+ * Pure; tolerant of garbage numbers.
+ */
+export function describeRunAllProgress(
+  done: number,
+  total: number,
+  pagesDone: number,
+  pagesTotal: number,
+): RunAllProgress {
+  const t = Math.max(0, Math.floor(Number.isFinite(total) ? total : 0));
+  const d = Math.max(0, Math.min(t, Math.floor(Number.isFinite(done) ? done : 0)));
+  const pt = Math.max(0, Math.floor(Number.isFinite(pagesTotal) ? pagesTotal : 0));
+  const pd = Math.max(0, Math.min(pt, Math.floor(Number.isFinite(pagesDone) ? pagesDone : 0)));
+  const fraction = t > 0 ? d / t : 0;
+  const percent = Math.round(fraction * 100);
+  let label = `${d.toLocaleString()} / ${t.toLocaleString()} doc${t === 1 ? "" : "s"}`;
+  if (pt > 0) label += ` \u00b7 ${pd.toLocaleString()} / ${pt.toLocaleString()} pages`;
+  return { done: d, total: t, pagesDone: pd, pagesTotal: pt, fraction, percent, label, finished: t > 0 && d >= t };
+}
+
 /** The live state the footer narrates. */
 export interface OcrViewState {
   /** Failure rows currently shown (after reason facet + search). */

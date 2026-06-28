@@ -32,6 +32,7 @@ import {
   clampOcrCursor,
   summarizePending,
   describeOcrImpact,
+  describeRunAllProgress,
   describeOcrView,
   OCR_REASON_UNKNOWN,
   type OcrDocLike,
@@ -577,6 +578,46 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(describeReasonRetry("Encrypted PDF", 0) === "", "retry-reason: zero count -> hidden");
   expect(describeReasonRetry(null, 5) === "", "retry-reason: null reason -> hidden");
   expect(describeReasonRetry("X", -3) === "", "retry-reason: negative count -> hidden");
+}
+
+// --- Slice 5b: determinate Run-all progress --------------------------
+{
+  // Start of a 47-doc / 3,400-page batch.
+  const start = describeRunAllProgress(0, 47, 0, 3400);
+  expect(start.fraction === 0 && start.percent === 0, "runall: zero at start");
+  expect(start.label === "0 / 47 docs \u00b7 0 / 3,400 pages", "runall: start label names docs + pages");
+  expect(start.finished === false, "runall: not finished at start");
+
+  // Midway through.
+  const mid = describeRunAllProgress(12, 47, 900, 3400);
+  expect(Math.abs(mid.fraction - 12 / 47) < 1e-9, "runall: fraction by docs");
+  expect(mid.percent === Math.round((12 / 47) * 100), "runall: percent rounds the doc fraction");
+  expect(mid.label === "12 / 47 docs \u00b7 900 / 3,400 pages", "runall: mid label thousands-groups");
+  expect(mid.finished === false, "runall: mid not finished");
+
+  // Done.
+  const done = describeRunAllProgress(47, 47, 3400, 3400);
+  expect(done.fraction === 1 && done.percent === 100, "runall: full at end");
+  expect(done.finished === true, "runall: finished when all docs done");
+
+  // No page total known -> label drops the page clause.
+  const noPages = describeRunAllProgress(3, 10, 0, 0);
+  expect(noPages.label === "3 / 10 docs", "runall: no page total -> docs-only label");
+
+  // Single doc pluralizes correctly.
+  expect(describeRunAllProgress(0, 1, 0, 0).label === "0 / 1 doc", "runall: single doc singular");
+
+  // Clamps: an over-count can't push past the total.
+  const over = describeRunAllProgress(99, 10, 99, 50);
+  expect(over.done === 10 && over.fraction === 1, "runall: done clamps to total");
+  expect(over.pagesDone === 50, "runall: pagesDone clamps to pagesTotal");
+
+  // Garbage / empty batch is safe.
+  const empty = describeRunAllProgress(0, 0, 0, 0);
+  expect(empty.fraction === 0 && empty.finished === false, "runall: empty batch not finished");
+  // @ts-expect-error — garbage
+  const junk = describeRunAllProgress(NaN, NaN, NaN, NaN);
+  expect(junk.total === 0 && junk.done === 0 && junk.percent === 0, "runall: NaN -> zeros");
 }
 
 // eslint-disable-next-line no-console
