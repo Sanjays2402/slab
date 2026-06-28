@@ -1082,3 +1082,48 @@ export function describePinnedSearches(pinned: readonly string[]): string {
   if (n <= 0) return "";
   return `${n.toLocaleString()} saved ${n === 1 ? "search" : "searches"}`;
 }
+
+// --- Reorder the Saved-searches strip (round 51 slice 4) -------------
+//
+// The saved-search strip renders newest-pinned-first with no way to
+// arrange it — a query you saved long ago but reach for daily sat at the
+// far end. This adds a user-defined order: moveSavedSearch computes the
+// new newest-first list after a drag or an Alt+Arrow keyboard move, the
+// exact RecentsHome.movePinned pattern (splice from -> to) but on the
+// flat string[] the saved strip persists, so there's no second reorder
+// engine. The component persists the result via savePinnedSearches.
+
+/**
+ * Compute the new saved-search order after moving the chip at `from` to
+ * index `to` within the current list. Returns a NEW normalized + de-duped
+ * list (input never mutated), ready for savePinnedSearches. Indices are
+ * clamped into range; an out-of-range or no-op move returns the list
+ * unchanged (normalized). A null/garbage list -> []. Pure + DOM-free.
+ */
+export function moveSavedSearch(
+  pinned: readonly string[],
+  from: number,
+  to: number,
+): string[] {
+  // Normalize + de-dupe first so the reorder operates on exactly what the
+  // strip renders (and can never reintroduce a casing/spacing duplicate).
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const p of Array.isArray(pinned) ? pinned : []) {
+    const np = normalizePinnedQuery(p);
+    if (!np) continue;
+    const key = np.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push(np);
+  }
+  const n = list.length;
+  if (n === 0) return [];
+  const f = Math.floor(Number.isFinite(from) ? from : -1);
+  const t = Math.max(0, Math.min(n - 1, Math.floor(Number.isFinite(to) ? to : 0)));
+  if (f < 0 || f >= n || f === t) return list;
+  const next = list.slice();
+  const [moved] = next.splice(f, 1);
+  next.splice(t, 0, moved);
+  return next;
+}

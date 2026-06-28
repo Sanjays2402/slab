@@ -40,6 +40,7 @@ import {
   isPinnedSearch,
   togglePinnedSearch,
   describePinnedSearches,
+  moveSavedSearch,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -866,6 +867,54 @@ const group = (
   expect(describePinnedSearches([]) === "", "pin-desc: empty -> ''");
   expect(describePinnedSearches(["", "  "]) === "", "pin-desc: only-blanks -> ''");
   expect(describePinnedSearches(null as unknown as string[]) === "", "pin-desc: null -> ''");
+}
+
+// --- moveSavedSearch (round 51 slice 4) ------------------------------
+{
+  const base = ["alpha", "beta", "gamma", "delta"];
+
+  // Move the first chip to the end.
+  expect(
+    JSON.stringify(moveSavedSearch(base, 0, 3)) === JSON.stringify(["beta", "gamma", "delta", "alpha"]),
+    "move-saved: first -> last",
+  );
+  // Move the last chip to the front.
+  expect(
+    JSON.stringify(moveSavedSearch(base, 3, 0)) === JSON.stringify(["delta", "alpha", "beta", "gamma"]),
+    "move-saved: last -> first",
+  );
+  // Move a middle chip one left.
+  expect(
+    JSON.stringify(moveSavedSearch(base, 2, 1)) === JSON.stringify(["alpha", "gamma", "beta", "delta"]),
+    "move-saved: middle one left",
+  );
+  // No-op move (from === to) returns the normalized list unchanged.
+  expect(
+    JSON.stringify(moveSavedSearch(base, 1, 1)) === JSON.stringify(base),
+    "move-saved: no-op move unchanged",
+  );
+  // `to` clamps into range (moving past the end lands at the end).
+  expect(
+    JSON.stringify(moveSavedSearch(base, 0, 99)) === JSON.stringify(["beta", "gamma", "delta", "alpha"]),
+    "move-saved: to clamps to last",
+  );
+  // Out-of-range `from` -> unchanged (normalized).
+  expect(
+    JSON.stringify(moveSavedSearch(base, 9, 0)) === JSON.stringify(base),
+    "move-saved: from out of range -> unchanged",
+  );
+  // Normalizes + de-dupes before moving (so the strip stays clean).
+  expect(
+    JSON.stringify(moveSavedSearch(["  a  ", "b", "A", ""], 0, 1)) === JSON.stringify(["b", "a"]),
+    "move-saved: normalizes + de-dupes, then moves",
+  );
+  // Garbage safety.
+  expect(JSON.stringify(moveSavedSearch([], 0, 1)) === "[]", "move-saved: empty -> []");
+  expect(JSON.stringify(moveSavedSearch(null as unknown as string[], 0, 1)) === "[]", "move-saved: null -> []");
+  expect(
+    JSON.stringify(moveSavedSearch(base, NaN, NaN)) === JSON.stringify(base),
+    "move-saved: NaN indices -> unchanged",
+  );
 }
 
 // eslint-disable-next-line no-console

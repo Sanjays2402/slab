@@ -66,6 +66,7 @@
     isPinnedSearch,
     togglePinnedSearch,
     describePinnedSearches,
+    moveSavedSearch,
     type RecentChipSortMode,
     SEARCH_SORT_MODES,
     type SearchSortMode,
@@ -198,6 +199,55 @@
   function togglePin(q: string): void {
     pinned = togglePinnedSearch(pinned, q);
     savePinnedSearches(pinned);
+  }
+
+  // Round 51 Slice 4: drag-to-reorder the Saved-searches strip. The strip
+  // rendered newest-pinned-first with no way to arrange it. dragIndex
+  // tracks the chip being dragged; reorderSaved commits a move via the
+  // tested moveSavedSearch (splice from -> to) and persists it. A keyboard
+  // path (Slice 5) calls the same reorderSaved with the Alt+Arrow delta.
+  let dragIndex = $state(-1);
+  let dragOverIndex = $state(-1);
+
+  /** Move the saved chip at `from` to index `to`, persist, and keep the
+      keyboard cursor on the moved chip so an Alt+Arrow run tracks it. */
+  function reorderSaved(from: number, to: number): void {
+    const next = moveSavedSearch(pinned, from, to);
+    // moveSavedSearch clamps `to`; recompute the landing slot the same way
+    // so the cursor follows the chip even when `to` was out of range.
+    const landed = Math.max(0, Math.min(next.length - 1, to));
+    pinned = next;
+    savePinnedSearches(pinned);
+    if (chipCursor >= 0) chipCursor = landed;
+  }
+
+  function onSavedDragStart(e: DragEvent, i: number): void {
+    dragIndex = i;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox requires data to be set for a drag to start.
+      try { e.dataTransfer.setData("text/plain", String(i)); } catch { /* ignore */ }
+    }
+  }
+
+  function onSavedDragOver(e: DragEvent, i: number): void {
+    if (dragIndex < 0) return;
+    e.preventDefault(); // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    dragOverIndex = i;
+  }
+
+  function onSavedDrop(e: DragEvent, i: number): void {
+    if (dragIndex < 0) return;
+    e.preventDefault();
+    if (dragIndex !== i) reorderSaved(dragIndex, i);
+    dragIndex = -1;
+    dragOverIndex = -1;
+  }
+
+  function onSavedDragEnd(): void {
+    dragIndex = -1;
+    dragOverIndex = -1;
   }
 
   /** Run a bare query string — the empty-state recovery suggestions pivot
@@ -731,13 +781,23 @@
               <span class="saved-count" aria-live="polite">{pinnedSummary}</span>
             </header>
             <ul class="recents-list" aria-label="Saved searches">
-              {#each pinned as pq (pq)}
-                <li role="presentation" class="recent-chip-wrap">
+              {#each pinned as pq, i (pq)}
+                <li
+                  role="presentation"
+                  class="recent-chip-wrap saved-chip-wrap"
+                  class:dragging={dragIndex === i}
+                  class:drag-over={dragOverIndex === i && dragIndex !== i}
+                  draggable="true"
+                  ondragstart={(e) => onSavedDragStart(e, i)}
+                  ondragover={(e) => onSavedDragOver(e, i)}
+                  ondrop={(e) => onSavedDrop(e, i)}
+                  ondragend={onSavedDragEnd}
+                >
                   <button
                     type="button"
                     class="recent-chip saved-chip"
                     onclick={() => runPinned(pq)}
-                    title={`Run saved search "${pq}"`}
+                    title={`Run saved search "${pq}" (drag to reorder)`}
                   >
                     <span class="saved-pin-glyph" aria-hidden="true">
                       <svg viewBox="0 0 16 16" width="10" height="10">
@@ -1791,6 +1851,21 @@
   .recent-chip-wrap {
     position: relative;
     display: inline-flex;
+  }
+  /* Round 51 Slice 4: drag-to-reorder feedback on the Saved-searches strip.
+     The dragged chip dims; the chip being hovered over shows an accent
+     drop-indicator on its leading edge so the landing slot is legible. */
+  .saved-chip-wrap {
+    cursor: grab;
+    transition: opacity 120ms ease;
+  }
+  .saved-chip-wrap.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+  }
+  .saved-chip-wrap.drag-over {
+    box-shadow: inset 2px 0 0 0 var(--accent, #4c8bf5);
+    border-radius: 7px;
   }
   .recent-chip-wrap .recent-chip {
     padding-right: 24px;
