@@ -562,3 +562,63 @@ export function recentProgressBar(file: RecentLike | null | undefined): RecentPr
   if (!p.hasProgress) return HIDDEN_PROGRESS_BAR;
   return { show: true, percent: p.percent, finished: p.finished, label: p.label };
 }
+
+// --- Pinned-strip overflow affordance ---------------------------------
+//
+// Round 47 made the pinned strip horizontally scrollable (ArrowLeft/Right
+// + recentCardScrollOptions). But a strip that overflows off the right
+// edge gave NO hint there was more — no fade, no chevron — so a user with
+// 12 pinned docs never knew six were hidden. This pure helper turns the
+// strip's live scroll geometry into a render model: whether it overflows
+// at all, and which edges still have content beyond them, so the
+// component can paint gradient masks + enable/disable the scroll chevrons.
+
+/** Scroll geometry of a horizontally-scrolling strip. */
+export interface StripScroll {
+  /** Current horizontal scroll offset (px from the left). */
+  scrollLeft: number;
+  /** Total scrollable content width (px). */
+  scrollWidth: number;
+  /** Visible width of the strip viewport (px). */
+  clientWidth: number;
+}
+
+/** Which edges of an overflowing strip still have hidden content. */
+export interface StripEdges {
+  /** True when the content is wider than the viewport (scroll is possible). */
+  overflowing: boolean;
+  /** True when there is hidden content to the LEFT (scrolled away from start). */
+  atStart: boolean;
+  /** True when there is hidden content to the RIGHT (more to scroll into). */
+  atEnd: boolean;
+}
+
+/**
+ * Derive the overflow-affordance model for a horizontally-scrolling strip
+ * from its live scroll geometry. `atStart` / `atEnd` report whether the
+ * LEADING / TRAILING edge still hides content (so the component shows a
+ * fade mask + enables a chevron on that side). A 1px tolerance absorbs
+ * sub-pixel rounding (a strip scrolled to the very end often reports
+ * scrollLeft a fraction short of scrollWidth-clientWidth). A strip that
+ * fits entirely is `overflowing:false` with both edges false. Pure;
+ * tolerant of garbage / negative numbers.
+ */
+export function pinnedStripEdges(scroll: StripScroll | null | undefined): StripEdges {
+  const none: StripEdges = { overflowing: false, atStart: false, atEnd: false };
+  if (!scroll) return none;
+  const sw = Number.isFinite(scroll.scrollWidth) ? Math.max(0, scroll.scrollWidth) : 0;
+  const cw = Number.isFinite(scroll.clientWidth) ? Math.max(0, scroll.clientWidth) : 0;
+  const maxScroll = sw - cw;
+  // Tolerance for sub-pixel rounding so the trailing fade vanishes cleanly
+  // at the true end instead of lingering a fraction of a pixel short.
+  const EPS = 1;
+  if (maxScroll <= EPS) return none;
+  const sl = Number.isFinite(scroll.scrollLeft)
+    ? Math.min(maxScroll, Math.max(0, scroll.scrollLeft))
+    : 0;
+  return {
+    overflowing: true,
+    atStart: sl > EPS,
+    atEnd: sl < maxScroll - EPS,
+  };
+}

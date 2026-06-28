@@ -29,6 +29,7 @@ import {
   countUnpinned,
   describeClearUnpinned,
   recentProgressBar,
+  pinnedStripEdges,
   type RecentLike,
 } from "./recentsHomeView";
 
@@ -353,6 +354,37 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   expect(!recentProgressBar(null).show, "bar: null -> hidden");
   expect(!recentProgressBar(undefined).show, "bar: undefined -> hidden");
   expect(!recentProgressBar({} as RecentLike).show, "bar: empty object -> hidden");
+}
+
+// --- pinnedStripEdges -------------------------------------------------
+{
+  // Fits entirely (content == viewport) -> not overflowing, no edges.
+  const fits = pinnedStripEdges({ scrollLeft: 0, scrollWidth: 400, clientWidth: 400 });
+  expect(!fits.overflowing && !fits.atStart && !fits.atEnd, "strip: fits -> no affordance");
+
+  // Overflowing, scrolled to the very start -> trailing edge only.
+  const start = pinnedStripEdges({ scrollLeft: 0, scrollWidth: 1000, clientWidth: 400 });
+  expect(start.overflowing && !start.atStart && start.atEnd, "strip: at start -> only trailing fade");
+
+  // Scrolled into the middle -> both edges hide content.
+  const mid = pinnedStripEdges({ scrollLeft: 300, scrollWidth: 1000, clientWidth: 400 });
+  expect(mid.atStart && mid.atEnd, "strip: middle -> both fades");
+
+  // Scrolled to the very end -> leading edge only (trailing clears).
+  const end = pinnedStripEdges({ scrollLeft: 600, scrollWidth: 1000, clientWidth: 400 });
+  expect(end.atStart && !end.atEnd, "strip: at end -> only leading fade");
+
+  // Sub-pixel short of the end (rounding) still reads as "at end".
+  const nearEnd = pinnedStripEdges({ scrollLeft: 599.4, scrollWidth: 1000, clientWidth: 400 });
+  expect(!nearEnd.atEnd, "strip: within 1px of end -> trailing fade cleared");
+
+  // Garbage / null is safe.
+  expect(!pinnedStripEdges(null).overflowing, "strip: null -> no affordance");
+  const junk = pinnedStripEdges({ scrollLeft: NaN, scrollWidth: NaN, clientWidth: NaN });
+  expect(!junk.overflowing && !junk.atStart && !junk.atEnd, "strip: NaN -> no affordance");
+  // Over-scrolled past the end is clamped (no phantom trailing fade).
+  const over = pinnedStripEdges({ scrollLeft: 9999, scrollWidth: 1000, clientWidth: 400 });
+  expect(over.atStart && !over.atEnd, "strip: over-scroll clamps to end");
 }
 
 // eslint-disable-next-line no-console

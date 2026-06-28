@@ -41,6 +41,7 @@
     countUnpinned,
     describeClearUnpinned,
     recentProgressBar,
+    pinnedStripEdges,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -62,10 +63,15 @@
       recents = files;
     });
     window.addEventListener("keydown", handleKey);
+    // Re-measure the pinned strip's overflow on viewport resize (a window
+    // narrowing can turn a fitting strip into an overflowing one).
+    window.addEventListener("resize", measureStrip);
+    queueMicrotask(measureStrip);
   });
   onDestroy(() => {
     unsub?.();
     window.removeEventListener("keydown", handleKey);
+    window.removeEventListener("resize", measureStrip);
   });
 
   // Slice 2 (round 44): filter-as-you-type. A user near the 12-file recents
@@ -104,6 +110,40 @@
   const others = $derived(
     sortRecentView(filtering ? matched.filter((r) => !r.pinned) : partition.others, sortMode),
   );
+
+  // Pinned-strip overflow affordance (this round): the strip scrolls
+  // horizontally but gave no hint when it overflowed. Track its live scroll
+  // geometry; pinnedStripEdges turns it into {overflowing, atStart, atEnd}
+  // so we can paint edge fades + enable the scroll chevrons. Recomputed on
+  // scroll, on resize, and whenever the pinned list changes.
+  let stripEl = $state<HTMLDivElement | null>(null);
+  let stripEdges = $state(pinnedStripEdges(null));
+
+  function measureStrip(): void {
+    if (!stripEl) {
+      stripEdges = pinnedStripEdges(null);
+      return;
+    }
+    stripEdges = pinnedStripEdges({
+      scrollLeft: stripEl.scrollLeft,
+      scrollWidth: stripEl.scrollWidth,
+      clientWidth: stripEl.clientWidth,
+    });
+  }
+
+  /** Scroll the pinned strip by ~80% of a viewport in the given direction
+      (the chevron buttons + a fallback for pointer-only users). */
+  function scrollStrip(dir: -1 | 1): void {
+    if (!stripEl) return;
+    stripEl.scrollBy({ left: dir * stripEl.clientWidth * 0.8, behavior: "smooth" });
+  }
+
+  // Re-measure when the pinned list changes (a pin/unpin can flip overflow).
+  $effect(() => {
+    void pinned.length;
+    void stripEl;
+    queueMicrotask(measureStrip);
+  });
 
   // Slice 4 (round 44): keyboard navigation. The board was mouse-only. A
   // window keydown handler drives a VIRTUAL cursor (ring only, no DOM focus
@@ -447,7 +487,36 @@
         <span class="row-label">Pinned</span>
         <span class="row-hint">{pinned.length} file{pinned.length === 1 ? "" : "s"}</span>
       </header>
-      <div class="row-strip">
+      <div
+        class="strip-wrap"
+        class:has-start={stripEdges.atStart}
+        class:has-end={stripEdges.atEnd}
+      >
+        {#if stripEdges.overflowing}
+          <button
+            type="button"
+            class="strip-nav prev"
+            aria-label="Scroll pinned documents left"
+            disabled={!stripEdges.atStart}
+            onclick={() => scrollStrip(-1)}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="strip-nav next"
+            aria-label="Scroll pinned documents right"
+            disabled={!stripEdges.atEnd}
+            onclick={() => scrollStrip(1)}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+            </svg>
+          </button>
+        {/if}
+        <div class="row-strip" bind:this={stripEl} onscroll={measureStrip}>
         {#each pinned as r, i (r.path)}
           {@const thumb = getRecentThumb(r.path)}
           <div
@@ -483,6 +552,7 @@
             </div>
           </div>
         {/each}
+        </div>
       </div>
     </section>
   {/if}
@@ -793,6 +863,63 @@
     scrollbar-width: thin;
   }
   .row-strip .card { min-width: 160px; flex: 0 0 160px; }
+
+  /* Pinned-strip overflow affordance: a positioned wrapper paints edge
+     fade masks (only when there's hidden content that way) and hosts the
+     scroll chevrons. The masks use pseudo-elements gated by the
+     has-start / has-end classes the component toggles from pinnedStripEdges. */
+  .strip-wrap { position: relative; }
+  .strip-wrap::before,
+  .strip-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0.25rem;
+    bottom: 0.5rem;
+    width: 2.5rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 140ms ease;
+    z-index: 1;
+  }
+  .strip-wrap::before {
+    left: 0;
+    background: linear-gradient(to right, var(--bg, #0d0d10), transparent);
+  }
+  .strip-wrap::after {
+    right: 0;
+    background: linear-gradient(to left, var(--bg, #0d0d10), transparent);
+  }
+  .strip-wrap.has-start::before { opacity: 1; }
+  .strip-wrap.has-end::after { opacity: 1; }
+
+  .strip-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    background: color-mix(in srgb, var(--bg-panel, #1a1a1f) 88%, transparent);
+    backdrop-filter: blur(6px);
+    color: var(--fg, #fff);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 140ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .strip-nav.prev { left: -6px; }
+  .strip-nav.next { right: -6px; }
+  .strip-wrap.has-start .strip-nav.prev,
+  .strip-wrap.has-end .strip-nav.next { opacity: 1; }
+  .strip-nav:hover:not(:disabled) {
+    background: var(--bg-panel, #1a1a1f);
+    border-color: var(--accent, #7c8cff);
+  }
+  .strip-nav:disabled { opacity: 0; pointer-events: none; }
 
   .grid {
     display: grid;
