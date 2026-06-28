@@ -45,6 +45,7 @@
   } from "$lib/beaconCache";
   import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { splitHighlight } from "$lib/paletteSearch";
+  import { loadBeaconSort, saveBeaconSort } from "$lib/beaconSortStore";
 
   type Props = {
     open: boolean;
@@ -69,7 +70,7 @@
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Slice 2: multi-field column sort (field + direction). */
-  let sort = $state<BeaconSort>({ field: "indexed", dir: "desc" });
+  let sort = $state<BeaconSort>(loadBeaconSort());
 
   /** Slice 1: filter-as-you-type query over the indexed-PDF table. */
   let search = $state("");
@@ -117,6 +118,7 @@
 
   function setSort(field: BeaconSortField) {
     sort = cycleBeaconSort(sort, field);
+    saveBeaconSort(sort);
   }
 
   function toggleModelFacet(model: string) {

@@ -197,6 +197,21 @@ export function cycleBeaconSort(
 }
 
 /**
+ * Whether `x` is a structurally valid BeaconSort (a known field + a known
+ * direction). The type guard shared by the inspector and the localStorage
+ * shell (beaconSortStore.ts) so a corrupt or schema-drifted persisted value
+ * can never seat itself into the panel's sort state. Pure, garbage-safe.
+ */
+export function isBeaconSort(x: unknown): x is BeaconSort {
+  if (typeof x !== "object" || x === null) return false;
+  const s = x as { field?: unknown; dir?: unknown };
+  return (
+    BEACON_SORT_FIELDS.includes(s.field as BeaconSortField) &&
+    (s.dir === "asc" || s.dir === "desc")
+  );
+}
+
+/**
  * Sort `pdfs` by the given sort state, returning a NEW array (input is
  * never mutated). Every comparison falls back to a stable `pdf_hash`
  * tie-break so equal rows keep a deterministic order across renders.
