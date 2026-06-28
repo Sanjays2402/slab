@@ -615,7 +615,6 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   // Garbage / empty batch is safe.
   const empty = describeRunAllProgress(0, 0, 0, 0);
   expect(empty.fraction === 0 && empty.finished === false, "runall: empty batch not finished");
-  // @ts-expect-error — garbage
   const junk = describeRunAllProgress(NaN, NaN, NaN, NaN);
   expect(junk.total === 0 && junk.done === 0 && junk.percent === 0, "runall: NaN -> zeros");
 }

@@ -628,7 +628,6 @@ const group = (
   expect(clampChipCursor(2, 5) === 2, "chip: clamp in-range unchanged");
   expect(clampChipCursor(0, 0) === -1, "chip: empty strip -> -1");
   expect(clampChipCursor(-1, 5) === -1, "chip: negative cursor -> -1 (unfocused)");
-  // @ts-expect-error — garbage count
   expect(clampChipCursor(3, NaN) === -1, "chip: NaN count -> -1");
 }
 
