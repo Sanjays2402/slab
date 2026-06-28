@@ -44,6 +44,7 @@ export interface RecentLike {
   openedAt: number;
   pageCount?: number;
   pinned?: boolean;
+  pinOrder?: number;
   lastPage?: number;
   totalPages?: number;
   lastReadAt?: number;
@@ -621,4 +622,66 @@ export function pinnedStripEdges(scroll: StripScroll | null | undefined): StripE
     atStart: sl > EPS,
     atEnd: sl < maxScroll - EPS,
   };
+}
+
+// --- Slice 8: drag-to-reorder the pinned strip ------------------------
+//
+// The pinned strip rendered in the store's pinned-first/openedAt-desc
+// order with no way to arrange it — your most-used pin could sit third
+// because you opened it least recently. This adds a user-defined order:
+// orderPinnedStrip honours a per-card `pinOrder` stamp (set by dragging),
+// and movePinned computes the new path order after a drag or an Alt+Arrow
+// keyboard move. Both are pure; the store's reorderPinned persists the
+// result, and crucially the GLOBAL store sort still ignores pinOrder so
+// reordering the strip can't perturb the hero / palette / eviction.
+
+/**
+ * Order the pinned cards for the strip. Cards carrying a finite `pinOrder`
+ * lead, ascending by that stamp; cards without one keep their incoming
+ * (store-sorted) order and follow. Every comparison falls back to arrival
+ * index so the sort is stable. Returns a NEW array (input never mutated).
+ * A null/garbage list -> []. Pure + DOM-free.
+ */
+export function orderPinnedStrip<T extends RecentLike>(pinned: readonly T[]): T[] {
+  if (!Array.isArray(pinned)) return [];
+  const hasOrder = (f: T): boolean =>
+    typeof f.pinOrder === "number" && Number.isFinite(f.pinOrder);
+  const indexed = pinned.filter(Boolean).map((f, i) => ({ f, i }));
+  indexed.sort((a, b) => {
+    const aHas = hasOrder(a.f);
+    const bHas = hasOrder(b.f);
+    if (aHas && bHas) {
+      const d = (a.f.pinOrder as number) - (b.f.pinOrder as number);
+      if (d !== 0) return d;
+    } else if (aHas !== bHas) {
+      return aHas ? -1 : 1; // stamped cards lead unstamped ones
+    }
+    return a.i - b.i; // stable arrival tie-break
+  });
+  return indexed.map((x) => x.f);
+}
+
+/**
+ * Compute the new left-to-right path order after moving the card at
+ * `from` to index `to` within the CURRENT strip order. Returns the
+ * reordered list of paths (ready for the store's reorderPinned). Indices
+ * are clamped into range; an out-of-range / no-op move returns the paths
+ * unchanged. A null/garbage list -> []. Pure.
+ */
+export function movePinned<T extends RecentLike>(
+  ordered: readonly T[],
+  from: number,
+  to: number,
+): string[] {
+  if (!Array.isArray(ordered)) return [];
+  const paths = ordered.filter(Boolean).map((f) => f.path);
+  const n = paths.length;
+  if (n === 0) return [];
+  const f = Math.floor(Number.isFinite(from) ? from : -1);
+  const t = Math.max(0, Math.min(n - 1, Math.floor(Number.isFinite(to) ? to : 0)));
+  if (f < 0 || f >= n || f === t) return paths;
+  const next = paths.slice();
+  const [moved] = next.splice(f, 1);
+  next.splice(t, 0, moved);
+  return next;
 }

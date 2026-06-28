@@ -22,6 +22,7 @@
     pinRecent,
     removeRecent,
     clearRecent,
+    reorderPinned,
     type RecentFile,
   } from "$lib/recent";
   import {
@@ -42,6 +43,8 @@
     describeClearUnpinned,
     recentProgressBar,
     pinnedStripEdges,
+    orderPinnedStrip,
+    movePinned,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -104,12 +107,27 @@
   const partition = $derived(partitionRecents(recents));
   const matched = $derived(filtering ? filterRecents(recents, q) : recents);
   const continueCandidate = $derived(filtering ? null : partition.hero);
+  // The pinned strip honours the user's manual drag order (orderPinnedStrip
+  // reads each card's pinOrder) ONLY in the default Recent view with no
+  // filter — an explicit sort (Name/Progress/Pages) or an active filter
+  // takes precedence, exactly like the others grid. So drag-order is the
+  // resting arrangement, and choosing a sort still works.
+  const pinnedBase = $derived(
+    filtering ? matched.filter((r) => r.pinned) : partition.pinned,
+  );
   const pinned = $derived(
-    sortRecentView(filtering ? matched.filter((r) => r.pinned) : partition.pinned, sortMode),
+    !filtering && sortMode === "recent"
+      ? orderPinnedStrip(pinnedBase)
+      : sortRecentView(pinnedBase, sortMode),
   );
   const others = $derived(
     sortRecentView(filtering ? matched.filter((r) => !r.pinned) : partition.others, sortMode),
   );
+  /** True only when the strip is in its manually-orderable resting state
+   *  (default Recent sort, no filter) — gates the drag handles + Alt+Arrow
+   *  reorder so a reorder during a sort/filter can't write a misleading
+   *  pinOrder. */
+  const stripReorderable = $derived(!filtering && sortMode === "recent" && pinned.length > 1);
 
   // Pinned-strip overflow affordance (this round): the strip scrolls
   // horizontally but gave no hint when it overflowed. Track its live scroll
@@ -136,6 +154,71 @@
   function scrollStrip(dir: -1 | 1): void {
     if (!stripEl) return;
     stripEl.scrollBy({ left: dir * stripEl.clientWidth * 0.8, behavior: "smooth" });
+  }
+
+  // Slice 8 (this round): drag-to-reorder the pinned strip. The strip
+  // rendered in store order with no way to arrange it. A card carries a
+  // drag handle; HTML5 drag computes the new order and reorderPinned
+  // persists each card's pinOrder. Keyboard users get Alt+Left/Right on a
+  // focused card (no pointer needed). All gated on stripReorderable so a
+  // reorder during a sort/filter can't stamp a misleading order.
+  /** Index (within the rendered `pinned` strip) of the card being dragged,
+   *  or -1 when no drag is in flight. Drives the drag-source dimming. */
+  let dragIdx = $state(-1);
+  /** Index the dragged card is currently hovering over (the drop target),
+   *  or -1. Drives the drop-indicator ring. */
+  let dragOverIdx = $state(-1);
+
+  /** Commit a reorder: move the card at `from` to `to` and persist. The
+      pure movePinned computes the new path order from the CURRENT strip
+      order; reorderPinned stamps pinOrder (store sort untouched). */
+  function commitReorder(from: number, to: number): void {
+    if (!stripReorderable) return;
+    const order = movePinned(pinned, from, to);
+    if (order.length > 0) reorderPinned(order);
+  }
+
+  function onDragStart(e: DragEvent, i: number): void {
+    if (!stripReorderable) return;
+    dragIdx = i;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox requires data to be set for a drag to start.
+      try { e.dataTransfer.setData("text/plain", String(i)); } catch { /* ignore */ }
+    }
+  }
+
+  function onDragOver(e: DragEvent, i: number): void {
+    if (dragIdx < 0) return;
+    e.preventDefault(); // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    dragOverIdx = i;
+  }
+
+  function onDrop(e: DragEvent, i: number): void {
+    if (dragIdx < 0) return;
+    e.preventDefault();
+    if (dragIdx !== i) commitReorder(dragIdx, i);
+    dragIdx = -1;
+    dragOverIdx = -1;
+  }
+
+  function onDragEnd(): void {
+    dragIdx = -1;
+    dragOverIdx = -1;
+  }
+
+  /** Keyboard reorder: Alt+Left/Right nudges a focused pinned card one slot.
+      Returns true if it handled the key (so the caller can stop). */
+  function nudgePinned(i: number, dir: -1 | 1): boolean {
+    if (!stripReorderable) return false;
+    const to = i + dir;
+    if (to < 0 || to >= pinned.length) return false;
+    commitReorder(i, to);
+    // Keep the keyboard cursor on the moved card so repeated nudges chain.
+    cursor = to;
+    queueMicrotask(() => cardEls[to]?.focus?.());
+    return true;
   }
 
   // Re-measure when the pinned list changes (a pin/unpin can flip overflow).
@@ -228,6 +311,20 @@
     // Outside the filter, ignore keys aimed at other inputs/controls.
     if (!inFilter && (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")) {
       return false;
+    }
+    // Slice 8: Alt+Left/Right reorders a focused PINNED card one slot — a
+    // keyboard twin of drag-to-reorder. Checked before classifyRecentKey
+    // (which disqualifies modifier chords). Only when the cursor sits on a
+    // pinned card and the strip is in its reorderable resting state.
+    if (
+      e.altKey && !e.metaKey && !e.ctrlKey && !inFilter &&
+      (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+      stripReorderable && cursor >= 0 && cursor < pinned.length
+    ) {
+      if (nudgePinned(cursor, e.key === "ArrowRight" ? 1 : -1)) {
+        e.preventDefault();
+        return true;
+      }
     }
     const action = classifyRecentKey(e);
     if (!action) return false;
@@ -516,14 +613,40 @@
             </svg>
           </button>
         {/if}
-        <div class="row-strip" bind:this={stripEl} onscroll={measureStrip}>
+        <div class="row-strip" bind:this={stripEl} onscroll={measureStrip} role="list" aria-label="Pinned documents">
         {#each pinned as r, i (r.path)}
           {@const thumb = getRecentThumb(r.path)}
           <div
             class="card pinned"
             class:cursor={listFocused && cursor === i}
+            class:dragging={dragIdx === i}
+            class:drop-target={dragOverIdx === i && dragIdx >= 0 && dragIdx !== i}
+            class:reorderable={stripReorderable}
             bind:this={cardEls[i]}
+            role="listitem"
+            aria-label={stripReorderable ? `${r.name} — draggable, Alt+Left or Alt+Right to reorder` : r.name}
+            draggable={stripReorderable}
+            ondragstart={(e) => onDragStart(e, i)}
+            ondragover={(e) => onDragOver(e, i)}
+            ondrop={(e) => onDrop(e, i)}
+            ondragend={onDragEnd}
           >
+            {#if stripReorderable}
+              <span
+                class="drag-grip"
+                aria-hidden="true"
+                title="Drag to reorder (or Alt+←/→)"
+              >
+                <svg viewBox="0 0 10 16" width="8" height="13">
+                  <circle cx="2.5" cy="3" r="1.2" fill="currentColor" />
+                  <circle cx="7.5" cy="3" r="1.2" fill="currentColor" />
+                  <circle cx="2.5" cy="8" r="1.2" fill="currentColor" />
+                  <circle cx="7.5" cy="8" r="1.2" fill="currentColor" />
+                  <circle cx="2.5" cy="13" r="1.2" fill="currentColor" />
+                  <circle cx="7.5" cy="13" r="1.2" fill="currentColor" />
+                </svg>
+              </span>
+            {/if}
             <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
               <div class="card-thumb">
                 {#if thumb}
@@ -948,6 +1071,40 @@
       0 8px 22px -14px rgba(0,0,0,0.5);
   }
   .card.cursor .card-actions { opacity: 1; }
+
+  /* Slice 8 — drag-to-reorder the pinned strip. The card carries a grip
+     affordance (top-left, fades in on hover/cursor); the drag source dims
+     and the drop target shows an accent ring so the landing slot is clear. */
+  .card.reorderable { position: relative; }
+  .drag-grip {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 4px;
+    color: var(--text-3, #8b8b94);
+    background: color-mix(in srgb, var(--bg-1, #16161a) 70%, transparent);
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 100ms ease, color 100ms ease;
+  }
+  .card.reorderable:hover .drag-grip,
+  .card.reorderable.cursor .drag-grip {
+    opacity: 1;
+  }
+  .drag-grip:hover { color: var(--accent, #5e6ad2); }
+  .card.dragging {
+    opacity: 0.45;
+    cursor: grabbing;
+  }
+  .card.drop-target {
+    border-color: var(--accent, #5e6ad2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #5e6ad2) 70%, transparent);
+  }
 
   .card-body {
     width: 100%;

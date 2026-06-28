@@ -30,6 +30,8 @@ import {
   describeClearUnpinned,
   recentProgressBar,
   pinnedStripEdges,
+  orderPinnedStrip,
+  movePinned,
   type RecentLike,
 } from "./recentsHomeView";
 
@@ -55,6 +57,7 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   openedAt: over.openedAt ?? 1000,
   pageCount: over.pageCount,
   pinned: over.pinned,
+  pinOrder: over.pinOrder,
   lastPage: over.lastPage,
   totalPages: over.totalPages,
   lastReadAt: over.lastReadAt,
@@ -385,6 +388,83 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   // Over-scrolled past the end is clamped (no phantom trailing fade).
   const over = pinnedStripEdges({ scrollLeft: 9999, scrollWidth: 1000, clientWidth: 400 });
   expect(over.atStart && !over.atEnd, "strip: over-scroll clamps to end");
+}
+
+// --- orderPinnedStrip + movePinned ------------------------------------
+{
+  // No pinOrder anywhere: incoming (store) order is preserved.
+  {
+    const a = mk({ path: "/a", pinned: true });
+    const b = mk({ path: "/b", pinned: true });
+    const c = mk({ path: "/c", pinned: true });
+    const out = orderPinnedStrip([a, b, c]);
+    expect(out.map((f) => f.path).join() === "/a,/b,/c", "order: no pinOrder -> store order");
+  }
+
+  // Fully stamped: ascending by pinOrder regardless of arrival order.
+  {
+    const a = mk({ path: "/a", pinned: true, pinOrder: 2 });
+    const b = mk({ path: "/b", pinned: true, pinOrder: 0 });
+    const c = mk({ path: "/c", pinned: true, pinOrder: 1 });
+    const out = orderPinnedStrip([a, b, c]);
+    expect(out.map((f) => f.path).join() === "/b,/c,/a", "order: ascending by pinOrder");
+  }
+
+  // pinOrder 0 is honoured (not treated as missing).
+  {
+    const a = mk({ path: "/a", pinned: true, pinOrder: 1 });
+    const b = mk({ path: "/b", pinned: true, pinOrder: 0 });
+    const out = orderPinnedStrip([a, b]);
+    expect(out[0].path === "/b", "order: pinOrder 0 leads");
+  }
+
+  // Mixed: stamped cards lead unstamped, unstamped keep arrival order.
+  {
+    const a = mk({ path: "/a", pinned: true });
+    const b = mk({ path: "/b", pinned: true, pinOrder: 5 });
+    const c = mk({ path: "/c", pinned: true });
+    const out = orderPinnedStrip([a, b, c]);
+    expect(out.map((f) => f.path).join() === "/b,/a,/c", "order: stamped leads, unstamped stable");
+  }
+
+  // Stable tie-break on equal pinOrder.
+  {
+    const a = mk({ path: "/a", pinned: true, pinOrder: 3 });
+    const b = mk({ path: "/b", pinned: true, pinOrder: 3 });
+    const out = orderPinnedStrip([a, b]);
+    expect(out[0].path === "/a" && out[1].path === "/b", "order: stable on equal pinOrder");
+  }
+
+  // Non-mutating + garbage tolerant.
+  {
+    const src = [mk({ path: "/a", pinned: true, pinOrder: 1 }), mk({ path: "/b", pinned: true, pinOrder: 0 })];
+    orderPinnedStrip(src);
+    expect(src[0].path === "/a", "order: input not mutated");
+    expect(orderPinnedStrip([]).length === 0, "order: empty -> []");
+    expect(orderPinnedStrip(null as unknown as RecentLike[]).length === 0, "order: null -> []");
+  }
+
+  // movePinned: drag a card to a new index -> new path order.
+  {
+    const list = [mk({ path: "/a" }), mk({ path: "/b" }), mk({ path: "/c" }), mk({ path: "/d" })];
+    expect(movePinned(list, 0, 2).join() === "/b,/c,/a,/d", "move: first to index 2");
+    expect(movePinned(list, 3, 0).join() === "/d,/a,/b,/c", "move: last to front");
+    expect(movePinned(list, 1, 2).join() === "/a,/c,/b,/d", "move: adjacent swap");
+  }
+
+  // movePinned: no-op + out-of-range returns paths unchanged.
+  {
+    const list = [mk({ path: "/a" }), mk({ path: "/b" }), mk({ path: "/c" })];
+    expect(movePinned(list, 1, 1).join() === "/a,/b,/c", "move: same index -> unchanged");
+    expect(movePinned(list, -1, 0).join() === "/a,/b,/c", "move: negative from -> unchanged");
+    expect(movePinned(list, 5, 0).join() === "/a,/b,/c", "move: from out of range -> unchanged");
+    // `to` clamps into range rather than dropping the card.
+    expect(movePinned(list, 0, 99).join() === "/b,/c,/a", "move: to over-range clamps to end");
+  }
+
+  // movePinned: garbage tolerant.
+  expect(movePinned([], 0, 1).length === 0, "move: empty -> []");
+  expect(movePinned(null as unknown as RecentLike[], 0, 1).length === 0, "move: null -> []");
 }
 
 // eslint-disable-next-line no-console

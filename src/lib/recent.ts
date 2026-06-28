@@ -23,6 +23,11 @@ export type RecentFile = {
   openedAt: number;    // unix ms — last time this file was opened
   pageCount?: number;  // optional cached page count
   pinned?: boolean;    // Glass: user-pinned, floats to top, exempt from auto-evict
+  // Stockade: user-defined order WITHIN the pinned strip on RecentsHome.
+  // Lower sorts earlier. Absent until the user drags to reorder; the global
+  // store sort (sortRecents) deliberately ignores it so nothing else is
+  // perturbed — only the RecentsHome strip honours it via orderPinnedStrip.
+  pinOrder?: number;
   // Atlas Lite: per-document reading progress so the reader can resume where
   // the user left off and the RecentsHome can render progress dots.
   lastPage?: number;     // 1-indexed last viewed page
@@ -50,6 +55,7 @@ function read(): RecentFile[] {
       const out: RecentFile = { path: x.path, name: x.name, openedAt: x.openedAt };
       if (typeof x.pageCount === "number") out.pageCount = x.pageCount;
       if (typeof x.pinned === "boolean") out.pinned = x.pinned;
+      if (typeof x.pinOrder === "number" && Number.isFinite(x.pinOrder)) out.pinOrder = x.pinOrder;
       if (typeof x.lastPage === "number" && x.lastPage > 0) out.lastPage = x.lastPage;
       if (typeof x.totalPages === "number" && x.totalPages > 0) out.totalPages = x.totalPages;
       if (typeof x.lastReadAt === "number") out.lastReadAt = x.lastReadAt;
@@ -203,6 +209,36 @@ export function pinRecent(path: string, pinned?: boolean) {
   const next = [...cur];
   next[idx] = { ...next[idx], pinned: pinned ?? !next[idx].pinned };
   write(next);
+}
+
+/**
+ * Persist a user-defined order for the pinned strip. `orderedPaths` is the
+ * desired left-to-right order of pinned cards; we stamp each matching
+ * record's `pinOrder` to its index in that array so the RecentsHome strip
+ * (via orderPinnedStrip) can render the manual order. Paths that aren't
+ * currently pinned (or don't exist) are ignored. Records absent from the
+ * list keep whatever pinOrder they had. The GLOBAL store sort is untouched
+ * — only the strip reads pinOrder — so reordering can't perturb the hero,
+ * the palette, or eviction. No-op when nothing matches.
+ */
+export function reorderPinned(orderedPaths: string[]) {
+  if (!Array.isArray(orderedPaths) || orderedPaths.length === 0) return;
+  const cur = read();
+  const rank = new Map<string, number>();
+  orderedPaths.forEach((p, i) => {
+    if (typeof p === "string") rank.set(p, i);
+  });
+  let changed = false;
+  const next = cur.map((r) => {
+    const i = rank.get(r.path);
+    // Only stamp pinned rows present in the order list; a non-pinned or
+    // missing row is left exactly as-is.
+    if (i === undefined || !r.pinned) return r;
+    if (r.pinOrder === i) return r;
+    changed = true;
+    return { ...r, pinOrder: i };
+  });
+  if (changed) write(next);
 }
 
 /** Remove a single recent file (and its thumb). Pinned or not — user wins. */
