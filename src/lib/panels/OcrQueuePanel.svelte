@@ -72,6 +72,7 @@
     type OcrSortField,
   } from "$lib/ocrQueueView";
   import { splitHighlight } from "$lib/paletteSearch";
+  import { loadOcrSort, saveOcrSort } from "$lib/ocrSortStore";
 
   type Props = {
     open: boolean;
@@ -131,7 +132,7 @@
   let search = $state("");
   let searchEl = $state<HTMLInputElement | null>(null);
   /** Slice 2: shared sort column + direction across both lists. */
-  let sort = $state<OcrSort>({ field: "name", dir: "asc" });
+  let sort = $state<OcrSort>(loadOcrSort());
   /** Slice 3: active failure-reason facet (one bucket) or null for all. */
   let reasonFacet = $state<string | null>(null);
   /** Slice 3b: active pending-state facet (image-only/mixed) or null. */
@@ -562,6 +563,7 @@
 
   function setSort(field: OcrSortField) {
     sort = cycleOcrSort(sort, field);
+    saveOcrSort(sort);
   }
 
   function toggleReasonFacet(reason: string) {

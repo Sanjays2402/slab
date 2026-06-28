@@ -209,6 +209,21 @@ export function cycleOcrSort(current: OcrSort, clicked: OcrSortField): OcrSort {
 }
 
 /**
+ * Whether `x` is a structurally valid OcrSort (a known field + a known
+ * direction). The type guard shared by the panel and the localStorage
+ * shell (ocrSortStore.ts) so a corrupt or schema-drifted persisted value
+ * can never seat itself into the panel's sort state. Pure, garbage-safe.
+ */
+export function isOcrSort(x: unknown): x is OcrSort {
+  if (typeof x !== "object" || x === null) return false;
+  const s = x as { field?: unknown; dir?: unknown };
+  return (
+    OCR_SORT_FIELDS.includes(s.field as OcrSortField) &&
+    (s.dir === "asc" || s.dir === "desc")
+  );
+}
+
+/**
  * Sort `docs` by the given sort state, returning a NEW array (input is
  * never mutated). Every comparison falls back to a stable `id` tie-break
  * so equal rows keep a deterministic order across renders. Name sorts
