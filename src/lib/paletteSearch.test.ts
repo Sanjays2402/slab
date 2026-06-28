@@ -29,6 +29,8 @@ import {
   recentReadingProgress,
   describePaletteCount,
   paletteActionVerb,
+  toggleCollapsedGroup,
+  partitionCollapsedGroups,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -785,6 +787,52 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(paletteActionVerb({ id: "" }) === "", "footer: empty id -> empty verb");
   // Unknown id with no group falls back to Run.
   expect(paletteActionVerb({ id: "mystery:thing" }) === "Run", "footer: unknown -> Run fallback");
+}
+
+// --- Group collapse (Lumen III Slice 1) ------------------------------
+{
+  // Toggle: adds when absent, removes when present, never mutates input.
+  const base = new Set<string>();
+  const a = toggleCollapsedGroup(base, "Appearance");
+  expect(a.has("Appearance") && base.size === 0, "collapse: toggle adds (input untouched)");
+  const b = toggleCollapsedGroup(a, "Appearance");
+  expect(!b.has("Appearance"), "collapse: toggle removes when present");
+  expect(a !== b && a !== base, "collapse: each toggle returns a new set");
+
+  const grouped: [string, { id: string }[]][] = [
+    ["Panels", [{ id: "p1" }, { id: "p2" }]],
+    ["Appearance", [{ id: "t1" }, { id: "t2" }, { id: "t3" }]],
+    ["Library", [{ id: "l1" }]],
+  ];
+
+  // No collapse: every item visible, heads at 0 / 2 / 5.
+  const open = partitionCollapsedGroups(grouped, new Set());
+  expect(open.visible.length === 6, "collapse: nothing folded -> all 6 visible");
+  expect(open.starts.join() === "0,2,5", "collapse: heads at 0,2,5 when open");
+  expect(open.display.every((d) => !d.collapsed), "collapse: no group flagged collapsed");
+  expect(open.display[1].items.length === 3, "collapse: open group keeps its items");
+  expect(open.display[1].count === 3, "collapse: header count is the true size");
+
+  // Fold the middle group: its items vanish from `visible`, header stays,
+  // and the following group's start index shifts down accordingly.
+  const folded = partitionCollapsedGroups(grouped, new Set(["Appearance"]));
+  expect(folded.visible.map((x) => x.id).join() === "p1,p2,l1", "collapse: folded items absent from cursor space");
+  expect(folded.display.length === 3, "collapse: all three headers still render");
+  expect(folded.display[1].collapsed && folded.display[1].items.length === 0, "collapse: folded group shows header, no items");
+  expect(folded.display[1].count === 3, "collapse: folded header still shows true count");
+  expect(folded.starts.join() === "0,2", "collapse: only open groups contribute heads");
+
+  // Fold everything: zero visible rows, three headers, no heads.
+  const allFolded = partitionCollapsedGroups(grouped, new Set(["Panels", "Appearance", "Library"]));
+  expect(allFolded.visible.length === 0, "collapse: all folded -> empty cursor space");
+  expect(allFolded.display.length === 3, "collapse: all folded -> headers remain");
+  expect(allFolded.starts.length === 0, "collapse: all folded -> no jump heads");
+
+  // Garbage tolerant.
+  // @ts-expect-error — garbage grouped list
+  expect(partitionCollapsedGroups(null, new Set()).visible.length === 0, "collapse: null grouped -> empty");
+  // @ts-expect-error — garbage collapsed arg
+  expect(partitionCollapsedGroups(grouped, null).visible.length === 6, "collapse: null set treated as nothing folded");
 }
 
 // eslint-disable-next-line no-console

@@ -891,3 +891,88 @@ export function paletteActionVerb(row: PaletteFooterRow | null | undefined): str
   return "Run";
 }
 
+// --- Group collapse (Lumen III Slice 1) ------------------------------
+//
+// The empty-query palette is a browse surface: 100+ commands across a
+// dozen labelled sections (Panels, Forms, Appearance, Library, …).
+// Linear / Raycast / Finder all let you FOLD a section you don't care
+// about so the ones you do are closer. The palette already owns the
+// per-section group-jump chord (Lumen II Slice 3); collapse is the
+// remaining half. This pure core decides, given the rendered groups and
+// the set of collapsed group names, what to DISPLAY (every header stays,
+// collapsed groups drop their items) and the flat VISIBLE list the
+// keyboard cursor walks (collapsed groups' items are skipped, so arrows
+// never land on a hidden row), plus the visible group heads for the
+// jump chord. The Svelte shell only renders + toggles.
+
+/** Toggle a group's collapsed state, returning a NEW set (never mutates). */
+export function toggleCollapsedGroup(
+  collapsed: ReadonlySet<string>,
+  group: string,
+): Set<string> {
+  const next = new Set(collapsed);
+  if (next.has(group)) next.delete(group);
+  else next.add(group);
+  return next;
+}
+
+/** One rendered group row: header always shown, items empty when folded. */
+export interface CollapsedGroupRow<T> {
+  group: string;
+  /** Items to render — [] when the group is collapsed. */
+  items: T[];
+  /** Whether this group is folded. */
+  collapsed: boolean;
+  /** The group's TRUE item count (for the header badge), folded or not. */
+  count: number;
+}
+
+/** The display structure + flat cursor space after applying collapse. */
+export interface CollapsedView<T> {
+  /** Per-group rows to render (headers + visible items). */
+  display: CollapsedGroupRow<T>[];
+  /** Flat list of items from NON-collapsed groups, in render order. This
+   *  is the index space the keyboard cursor lives in — a collapsed
+   *  group's items are absent, so the cursor can't land on a hidden row. */
+  visible: T[];
+  /** Flat start index (into `visible`) of each non-collapsed group, for
+   *  the Cmd/Ctrl+Arrow group-jump. */
+  starts: number[];
+}
+
+/**
+ * Partition grouped entries by a collapsed-group set. Every group keeps
+ * its header (so a folded section is still visible + re-openable) but a
+ * collapsed group renders zero items and contributes nothing to the
+ * `visible` cursor space — so arrowing never highlights a hidden row, and
+ * the group-jump heads line up with what's on screen. Input is never
+ * mutated; a null/garbage grouped list -> all-empty view. Pure.
+ */
+export function partitionCollapsedGroups<T>(
+  grouped: readonly (readonly [string, T[]])[],
+  collapsed: ReadonlySet<string>,
+): CollapsedView<T> {
+  const display: CollapsedGroupRow<T>[] = [];
+  const visible: T[] = [];
+  const starts: number[] = [];
+  if (!Array.isArray(grouped)) return { display, visible, starts };
+  const folded = collapsed instanceof Set ? collapsed : new Set<string>();
+  for (const entry of grouped) {
+    if (!Array.isArray(entry)) continue;
+    const group = entry[0];
+    const items = Array.isArray(entry[1]) ? entry[1] : [];
+    const isCollapsed = folded.has(group);
+    display.push({
+      group,
+      items: isCollapsed ? [] : items,
+      collapsed: isCollapsed,
+      count: items.length,
+    });
+    if (!isCollapsed) {
+      starts.push(visible.length);
+      for (const it of items) visible.push(it);
+    }
+  }
+  return { display, visible, starts };
+}
+

@@ -22,11 +22,12 @@
     entryMatchesScope,
     describePaletteScope,
     classifyPaletteGroupNav,
-    groupStartIndices,
     nextGroupIndex,
     recentReadingProgress,
     describePaletteCount,
     paletteActionVerb,
+    toggleCollapsedGroup,
+    partitionCollapsedGroups,
     type PaletteRange,
     type PaletteFallback,
     type RecentProgress,
@@ -833,22 +834,48 @@
     return Array.from(map.entries());
   });
 
+  // Lumen III Slice 1: group collapse. In browse (empty-query) mode the
+  // user can FOLD a section header so its rows tuck away; the set of
+  // collapsed group names lives here and persists across opens within a
+  // session (Raycast-style muscle memory). Collapse is DISABLED while a
+  // query is active — folding a group during search would hide matching
+  // results, which is a footgun — so the effective set is empty then.
+  let collapsedGroups = $state<Set<string>>(new Set());
+  const collapseActive = $derived(!scopeParse.term.trim());
+  let collapsedView = $derived(
+    partitionCollapsedGroups(
+      grouped,
+      collapseActive ? collapsedGroups : new Set<string>(),
+    ),
+  );
+  /** The flat list the keyboard cursor walks — items from open groups only,
+      so arrows never land on a folded (hidden) row. */
+  let visibleList = $derived(collapsedView.visible);
+
+  function toggleGroup(group: string): void {
+    collapsedGroups = toggleCollapsedGroup(collapsedGroups, group);
+    // Re-seed the cursor to the top so it can't strand on a now-hidden row
+    // (the clamp effect would also catch it, but this keeps it predictable).
+    selected = 0;
+  }
+
   // Lumen II Slice 3: flat start index of each rendered group, so
-  // Cmd/Ctrl+Arrow can leap the cursor between section heads. `grouped`
-  // preserves filtered order, so group sizes accumulate 1:1 onto the flat
-  // `filtered` index space the `selected` cursor lives in.
-  let groupStarts = $derived(groupStartIndices(grouped.map(([, items]) => items.length)));
+  // Cmd/Ctrl+Arrow can leap the cursor between section heads. With
+  // collapse applied, the heads come straight from the visible-list
+  // partition so a folded group contributes no (unreachable) head.
+  let groupStarts = $derived(collapsedView.starts);
 
   // Lumen II Slice 5: context-aware footer. The count pulses with the live
   // result list, and the Enter hint's verb tracks the selected row ("Open"
   // a file, "Switch to" a panel, "Apply" a theme, "Run" a command) so the
   // user sees what Return will do before committing.
   let resultCountLabel = $derived(describePaletteCount(filtered.length));
-  let enterVerb = $derived(paletteActionVerb(filtered[selected] ?? null));
+  let enterVerb = $derived(paletteActionVerb(visibleList[selected] ?? null));
 
-  // Clamp selection when filter shrinks list
+  // Clamp selection when filter shrinks list (selected indexes the
+  // visible/cursor list, which collapse can shrink below `filtered`).
   $effect(() => {
-    if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
+    if (selected >= visibleList.length) selected = Math.max(0, visibleList.length - 1);
   });
 
   // Lumen II Slice 1: empty-state fallback. When the live filter comes back
@@ -897,7 +924,7 @@
   let lastActivationNewTab = false;
 
   function runSelected() {
-    const a = filtered[selected];
+    const a = visibleList[selected];
     if (!a) return;
     // Record into MRU before running so the next palette open shows it on top.
     // Skip the "clear MRU" action itself so it doesn't become its own bait.
@@ -925,7 +952,7 @@
     const groupIntent = classifyPaletteGroupNav(e);
     if (groupIntent) {
       e.preventDefault();
-      selected = nextGroupIndex(groupStarts, selected, groupIntent, filtered.length);
+      selected = nextGroupIndex(groupStarts, selected, groupIntent, visibleList.length);
       scrollSelectedIntoView();
       return;
     }
@@ -937,7 +964,7 @@
     const intent = classifyPaletteNav(e);
     if (intent) {
       e.preventDefault();
-      selected = nextPaletteIndex(intent, selected, filtered.length);
+      selected = nextPaletteIndex(intent, selected, visibleList.length);
       scrollSelectedIntoView();
     }
   }
@@ -1014,10 +1041,28 @@
           <div class="palette-empty">No matches for “{scopeParse.term}”</div>
         {/if}
       {:else}
-        {#each grouped as [group, items] (group)}
-          <div class="palette-group-label">{group}</div>
-          {#each items as a (a.id)}
-            {@const idx = filtered.indexOf(a)}
+        {#each collapsedView.display as section (section.group)}
+          <button
+            type="button"
+            class="palette-group-label palette-group-toggle"
+            class:collapsed={section.collapsed}
+            aria-expanded={!section.collapsed}
+            disabled={!collapseActive}
+            onclick={() => toggleGroup(section.group)}
+            title={collapseActive
+              ? section.collapsed
+                ? `Expand ${section.group}`
+                : `Collapse ${section.group}`
+              : section.group}
+          >
+            {#if collapseActive}
+              <span class="palette-group-chevron" aria-hidden="true">{section.collapsed ? "▸" : "▾"}</span>
+            {/if}
+            <span class="palette-group-name">{section.group}</span>
+            <span class="palette-group-count" aria-hidden="true">{section.count}</span>
+          </button>
+          {#each section.items as a (a.id)}
+            {@const idx = visibleList.indexOf(a)}
             {@const chord = rowChord(a)}
             <button
               class="palette-item"
@@ -1171,6 +1216,52 @@
     text-transform: uppercase;
     color: var(--text-3);
     letter-spacing: 0.6px;
+  }
+  /* Lumen III: the group label is now a collapse toggle (a real <button>
+     so it's keyboard + screen-reader reachable). Reset button chrome and
+     lay out chevron / name / count in a row. */
+  .palette-group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-3);
+  }
+  .palette-group-toggle:disabled {
+    cursor: default;
+  }
+  .palette-group-toggle:not(:disabled):hover {
+    color: var(--text-2);
+  }
+  .palette-group-chevron {
+    display: inline-flex;
+    width: 10px;
+    justify-content: center;
+    font-size: 9px;
+    opacity: 0.7;
+    transition: transform 120ms ease;
+  }
+  .palette-group-name {
+    flex: 1;
+  }
+  .palette-group-count {
+    font-variant-numeric: tabular-nums;
+    font-size: 9px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-3) 22%, transparent);
+    color: var(--text-3);
+  }
+  .palette-group-toggle.collapsed .palette-group-name {
+    opacity: 0.75;
   }
   .palette-item {
     width: 100%;
