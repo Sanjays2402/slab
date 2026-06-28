@@ -45,6 +45,7 @@
     ocrSortLabel,
     OCR_SORT_FIELDS,
     groupFailureReasons,
+    reasonShareBars,
     filterByReason,
     reconcileReasonFacet,
     describeDominantReason,
@@ -462,6 +463,10 @@
 
   /** Slice 3: failure-reason buckets (dominant cause first). */
   const reasonBuckets = $derived(groupFailureReasons(failed));
+  /** Round 52: proportional shares so each facet pill carries a mini bar. */
+  const reasonShares = $derived(
+    new Map(reasonShareBars(reasonBuckets).map((s) => [s.reason, s])),
+  );
   const dominantReason = $derived(describeDominantReason(reasonBuckets));
 
   /** Slice 3c: how many failures the active reason facet covers + its
@@ -980,6 +985,7 @@
               <div class="oq-reasons" role="group" aria-label="Filter by failure reason">
                 <span class="oq-reasons-lede" title={dominantReason}>{dominantReason}</span>
                 {#each reasonBuckets as bucket (bucket.reason)}
+                  {@const share = reasonShares.get(bucket.reason)}
                   <button
                     class="oq-reason"
                     class:active={reasonFacet === bucket.reason}
@@ -987,10 +993,17 @@
                     aria-pressed={reasonFacet === bucket.reason}
                     title={reasonFacet === bucket.reason
                       ? `Showing only “${bucket.reason}” — click to clear`
-                      : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that failed: ${bucket.reason}`}
+                      : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that failed: ${bucket.reason}${share ? ` (${share.percent}% of failures)` : ""}`}
                   >
                     {bucket.reason}
                     <span class="oq-reason-count tabular">{bucket.count}</span>
+                    {#if share}
+                      <span
+                        class="oq-reason-bar"
+                        style={`--share:${(share.scaled * 100).toFixed(1)}%`}
+                        aria-hidden="true"
+                      ></span>
+                    {/if}
                   </button>
                 {/each}
                 {#if reasonRetryLabel}
@@ -1843,7 +1856,25 @@
     padding: 3px 8px;
     border-radius: 999px;
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
     transition: background 120ms, border-color 120ms;
+  }
+  /* Round 52: proportional failure-share bar inset along the pill bottom so
+     the dominant cause reads as visibly biggest — a histogram, not a wall of
+     equal pills. Width is the bucket's share of the largest bucket. */
+  .oq-reason-bar {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    width: var(--share, 0%);
+    background: color-mix(in srgb, #ff7474 70%, transparent);
+    border-radius: 0 999px 999px 0;
+    pointer-events: none;
+  }
+  .oq-reason.active .oq-reason-bar {
+    background: color-mix(in srgb, #fff 75%, transparent);
   }
   .oq-reason:hover {
     background: color-mix(in srgb, #ff7474 16%, transparent);

@@ -362,6 +362,40 @@ export function groupFailureReasons<T extends OcrDocLike>(
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
+/** A reason bucket annotated with its share-of-total for a mini bar. */
+export interface OcrReasonShare extends OcrReasonBucket {
+  /** This bucket's count over the TOTAL failures, 0..1. */
+  fraction: number;
+  /** This bucket's count over the LARGEST bucket, 0..1 (bar width). */
+  scaled: number;
+  /** Rounded whole-percent of total, for the SR label. */
+  percent: number;
+}
+
+/**
+ * Annotate reason buckets with proportional shares so the facet pills can
+ * render a mini bar showing each cause's weight at a glance — turning a wall
+ * of equal-looking pills into a histogram where the dominant cause is
+ * visibly biggest. `fraction` is share of total; `scaled` is share of the
+ * largest bucket (so the top cause fills the bar, the rest scale relative).
+ * Stable order (reuses groupFailureReasons sorting). Empty/garbage -> [].
+ */
+export function reasonShareBars(buckets: readonly OcrReasonBucket[]): OcrReasonShare[] {
+  if (!Array.isArray(buckets) || buckets.length === 0) return [];
+  const total = buckets.reduce((s, b) => s + (b?.count > 0 ? b.count : 0), 0);
+  const max = buckets.reduce((m, b) => Math.max(m, b?.count > 0 ? b.count : 0), 0);
+  if (total <= 0 || max <= 0) return [];
+  return buckets
+    .filter((b) => b && b.count > 0)
+    .map((b) => ({
+      reason: b.reason,
+      count: b.count,
+      fraction: b.count / total,
+      scaled: b.count / max,
+      percent: Math.round((b.count / total) * 100),
+    }));
+}
+
 /**
  * Filter `failed` to rows whose canonical reason equals `reason`. A
  * null/empty reason (no facet) passes every row through unchanged. The

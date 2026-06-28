@@ -17,6 +17,7 @@ import {
   OCR_SORT_FIELDS,
   canonicalizeOcrError,
   groupFailureReasons,
+  reasonShareBars,
   filterByReason,
   reconcileReasonFacet,
   describeDominantReason,
@@ -292,6 +293,28 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   const allRows = filterByReason(failed, null);
   expect(allRows.length === 4 && allRows !== failed, "facet: null reason returns all, new array");
   expect(filterByReason(null as unknown as OcrDocLike[], "x").length === 0, "facet: null list -> []");
+}
+
+// --- reasonShareBars (round 52): proportional facet histogram --------
+{
+  const bars = reasonShareBars([
+    { reason: "Tesseract not installed", count: 6 },
+    { reason: "Encrypted PDF", count: 3 },
+    { reason: "Unknown error", count: 1 },
+  ]);
+  expect(bars.length === 3, "share: one bar per bucket");
+  expect(bars[0].scaled === 1, "share: largest bucket fills the bar");
+  expect(bars[1].scaled === 0.5, "share: half-size bucket scales to 0.5");
+  expect(bars[0].percent === 60, "share: 6 of 10 -> 60 percent");
+  expect(bars[2].percent === 10, "share: 1 of 10 -> 10 percent");
+  expect(Math.abs(bars[1].fraction - 0.3) < 1e-9, "share: fraction is share of total");
+  // Garbage / empty safety.
+  expect(reasonShareBars([]).length === 0, "share: empty -> []");
+  expect(reasonShareBars(null as never).length === 0, "share: null -> []");
+  expect(reasonShareBars([{ reason: "x", count: 0 }]).length === 0, "share: all-zero -> []");
+  // Negative/garbage counts are dropped, not summed.
+  const mixed = reasonShareBars([{ reason: "a", count: 4 }, { reason: "b", count: -2 } as never]);
+  expect(mixed.length === 1 && mixed[0].percent === 100, "share: garbage count dropped, sole bucket = 100");
 }
 
 // --- Slice 3: reconcileReasonFacet / describeDominantReason ----------
