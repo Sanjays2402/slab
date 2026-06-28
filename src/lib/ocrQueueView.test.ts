@@ -20,6 +20,8 @@ import {
   filterByReason,
   reconcileReasonFacet,
   describeDominantReason,
+  collectReasonRetryIds,
+  describeReasonRetry,
   groupPendingStates,
   filterByPendingState,
   reconcilePendingStateFacet,
@@ -535,6 +537,46 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(reconcilePendingStateFacet("scanned", buckets) === "scanned", "pstate: live facet kept");
   expect(reconcilePendingStateFacet("gone", buckets) === null, "pstate: vanished facet cleared");
   expect(reconcilePendingStateFacet(null, buckets) === null, "pstate: null facet stays null");
+}
+
+// --- Slice 3c: per-reason "Retry all <reason>" -----------------------
+{
+  const failed = [
+    doc({ id: 1, path: "/a/x.pdf", ocr_state: "ocr_failed", ocr_error: "tesseract: command not found" }),
+    doc({ id: 2, path: "/a/y.pdf", ocr_state: "ocr_failed", ocr_error: "tesseract not on PATH" }),
+    doc({ id: 3, path: "/a/z.pdf", ocr_state: "ocr_failed", ocr_error: "PDF is encrypted" }),
+    doc({ id: 4, path: "/a/w.pdf", ocr_state: "ocr_failed", ocr_error: "timed out after 60s" }),
+  ];
+
+  // Collects exactly the ids of the faceted bucket, in input order.
+  const tess = collectReasonRetryIds(failed, "Tesseract not installed");
+  expect(tess.join() === "1,2", "retry-reason: collects the two tesseract ids in order");
+  expect(collectReasonRetryIds(failed, "Encrypted PDF").join() === "3", "retry-reason: encrypted bucket");
+  expect(collectReasonRetryIds(failed, "Timed out").join() === "4", "retry-reason: timeout bucket");
+  // A reason no failure wears -> [].
+  expect(collectReasonRetryIds(failed, "Disk full").length === 0, "retry-reason: absent reason -> []");
+  // Null/blank reason -> [] (the blanket Retry all covers everything).
+  expect(collectReasonRetryIds(failed, null).length === 0, "retry-reason: null reason -> []");
+  expect(collectReasonRetryIds(failed, "").length === 0, "retry-reason: blank reason -> []");
+  // The collected set matches filterByReason's membership exactly.
+  const viaFilter = filterByReason(failed, "Tesseract not installed").map((d) => d.id);
+  expect(viaFilter.join() === tess.join(), "retry-reason: matches filterByReason membership");
+  // @ts-expect-error — garbage list
+  expect(collectReasonRetryIds(null, "Timed out").length === 0, "retry-reason: null list -> []");
+
+  // Label: names the reason + thousands-grouped count.
+  expect(
+    describeReasonRetry("Tesseract not installed", 2) === "Retry 2 \u00b7 Tesseract not installed",
+    "retry-reason: label names reason + count",
+  );
+  expect(
+    describeReasonRetry("Timed out", 1500) === "Retry 1,500 \u00b7 Timed out",
+    "retry-reason: label thousands-groups the count",
+  );
+  // Hidden when there is nothing to retry or no facet.
+  expect(describeReasonRetry("Encrypted PDF", 0) === "", "retry-reason: zero count -> hidden");
+  expect(describeReasonRetry(null, 5) === "", "retry-reason: null reason -> hidden");
+  expect(describeReasonRetry("X", -3) === "", "retry-reason: negative count -> hidden");
 }
 
 // eslint-disable-next-line no-console

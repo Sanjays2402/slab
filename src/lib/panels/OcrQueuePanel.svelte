@@ -50,6 +50,8 @@
     filterByReason,
     reconcileReasonFacet,
     describeDominantReason,
+    collectReasonRetryIds,
+    describeReasonRetry,
     groupPendingStates,
     filterByPendingState,
     reconcilePendingStateFacet,
@@ -228,6 +230,39 @@
     }
   }
 
+  /** True while a per-reason "Retry all <reason>" loop is in flight. */
+  let requeueingReason = $state(false);
+
+  /** Slice 3c: re-queue ONLY the docs that failed for the active reason
+      facet — not every failure. Loops `ocrQueueRequeue` over exactly the
+      faceted ids (the same membership `filterByReason` decides), then
+      refreshes once. Re-queueing flips each row back to `scanned` so the
+      next Run picks it up; we leave the running to the queue rather than
+      OCR'ing inline so the action stays cheap + non-blocking. */
+  async function requeueReason() {
+    if (requeueingReason || !reasonFacet) return;
+    const ids = collectReasonRetryIds(failed, reasonFacet);
+    if (ids.length === 0) return;
+    requeueingReason = true;
+    error = null;
+    const label = reasonFacet;
+    try {
+      let n = 0;
+      for (const id of ids) {
+        await ocrQueueRequeue(id);
+        n++;
+      }
+      showToast(`Re-queued ${n} ${n === 1 ? "doc" : "docs"} — ${label}`);
+      // The facet's bucket is now empty; reconcile will clear it, and the
+      // refresh re-pulls both lists so the retried rows reappear as pending.
+      await refresh();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      requeueingReason = false;
+    }
+  }
+
   async function openInReader(doc: DocumentRecord) {
     // Mirror LibraryPanel.requestOpen: dispatch a window event the
     // root +page.svelte translates into a Reader tab. Works in both
@@ -280,6 +315,13 @@
   /** Slice 3: failure-reason buckets (dominant cause first). */
   const reasonBuckets = $derived(groupFailureReasons(failed));
   const dominantReason = $derived(describeDominantReason(reasonBuckets));
+
+  /** Slice 3c: how many failures the active reason facet covers + its
+      "Retry N · <reason>" button label (empty string when no facet). */
+  const reasonRetryCount = $derived(
+    reasonFacet ? collectReasonRetryIds(failed, reasonFacet).length : 0,
+  );
+  const reasonRetryLabel = $derived(describeReasonRetry(reasonFacet, reasonRetryCount));
 
   /** Slice 3b: pending-state buckets (image-only/mixed, dominant first). */
   const pendingStateBuckets = $derived(groupPendingStates(pending));
@@ -630,6 +672,16 @@
                     <span class="oq-reason-count tabular">{bucket.count}</span>
                   </button>
                 {/each}
+                {#if reasonRetryLabel}
+                  <button
+                    class="oq-reason-retry"
+                    onclick={requeueReason}
+                    disabled={requeueingReason}
+                    title={`Re-queue only the ${reasonRetryCount} ${reasonRetryCount === 1 ? "doc" : "docs"} that failed: ${reasonFacet} — leaving every other reason untouched`}
+                  >
+                    {requeueingReason ? "Re-queueing…" : reasonRetryLabel}
+                  </button>
+                {/if}
               </div>
             {/if}
 
@@ -1260,6 +1312,35 @@
     background: color-mix(in srgb, black 22%, transparent);
     padding: 0 5px;
     border-radius: 999px;
+  }
+  /* Slice 3c: per-reason retry — a clear call-to-action pushed to the end
+     of the facet row, only present while a reason is selected. Reads as a
+     warm accent rather than the destructive-red the pills use, since
+     re-queueing is constructive (flip back to scanned + retry). */
+  .oq-reason-retry {
+    appearance: none;
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 11px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--accent, #7c8cff) 50%, transparent);
+    background: color-mix(in srgb, var(--accent, #7c8cff) 22%, transparent);
+    color: var(--fg, #f4f5f7);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 120ms, border-color 120ms, opacity 120ms;
+  }
+  .oq-reason-retry:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent, #7c8cff) 34%, transparent);
+    border-color: color-mix(in srgb, var(--accent, #7c8cff) 70%, transparent);
+  }
+  .oq-reason-retry:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   /* ----- Atlas VI: name highlight + cursor ring + filtered empty ----- */

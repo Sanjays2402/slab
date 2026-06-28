@@ -392,6 +392,51 @@ export function describeDominantReason(buckets: readonly OcrReasonBucket[]): str
   return `Most failures: ${top.reason} (${top.count.toLocaleString()})`;
 }
 
+// --- Slice 3c: per-reason "Retry all <reason>" ------------------------
+//
+// The failure facet (Slice 3) lets you SEE just one root cause, but the
+// only retry affordances were per-row "Retry" and the blanket header
+// "Retry all" (every failure, every reason). When 190 docs failed for
+// "Tesseract not installed" and you've just installed tesseract, you
+// want to retry exactly that bucket — not the 4 encrypted PDFs that will
+// only fail again. This collects the ids of the faceted bucket so the
+// component can loop `ocrQueueRequeue` over precisely those rows, and
+// composes the honest button label naming the reason + count.
+
+/**
+ * Collect the ids of every failure whose canonical reason equals
+ * `reason`, in input order. This is the exact set a "Retry all
+ * <reason>" action re-queues — the same membership `filterByReason`
+ * decides, projected to ids so the component can loop `ocrQueueRequeue`
+ * without re-canonicalizing. A null/empty reason yields [] (the blanket
+ * "Retry all" already covers "everything"); a null list -> []. Pure.
+ */
+export function collectReasonRetryIds<T extends OcrDocLike>(
+  failed: readonly T[],
+  reason: string | null,
+): number[] {
+  if (!Array.isArray(failed) || !reason) return [];
+  const out: number[] = [];
+  for (const d of failed) {
+    if (!d) continue;
+    if (canonicalizeOcrError(d.ocr_error) === reason) out.push(d.id);
+  }
+  return out;
+}
+
+/**
+ * Compose the per-reason retry button label, e.g. "Retry 190 ·
+ * Tesseract not installed". The count is thousands-grouped + pluralized
+ * implicitly via the reason context (the bucket pill already shows the
+ * noun). A zero count or blank reason -> "" so the component hides the
+ * button. Pure.
+ */
+export function describeReasonRetry(reason: string | null, count: number): string {
+  const n = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0));
+  if (!reason || n <= 0) return "";
+  return `Retry ${n.toLocaleString()} \u00b7 ${reason}`;
+}
+
 // --- Slice 3b: pending-state facet -------------------------------------
 //
 // The pending list mixes two genuinely different kinds of work: fully
