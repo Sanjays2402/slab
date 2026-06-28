@@ -56,6 +56,7 @@
     pageSpread,
     buildSnippetSpans,
     classifyRecentChipKey,
+    classifySavedSearchKey,
     nextChipCursor,
     clampChipCursor,
     formatRelativeAge,
@@ -208,6 +209,12 @@
   // path (Slice 5) calls the same reorderSaved with the Alt+Arrow delta.
   let dragIndex = $state(-1);
   let dragOverIndex = $state(-1);
+  // Round 51 Slice 5: a horizontal keyboard cursor over the saved strip
+  // (-1 = none focused), the twin of the recent strip's chipCursor.
+  // Left/Right walk it, Alt+Left/Right reorder, Enter runs, Backspace
+  // unpins, Escape parks. Lives only in the empty-query state.
+  let savedCursor = $state(-1);
+  let savedEls = $state<(HTMLButtonElement | null)[]>([]);
 
   /** Move the saved chip at `from` to index `to`, persist, and keep the
       keyboard cursor on the moved chip so an Alt+Arrow run tracks it. */
@@ -218,7 +225,11 @@
     const landed = Math.max(0, Math.min(next.length - 1, to));
     pinned = next;
     savePinnedSearches(pinned);
-    if (chipCursor >= 0) chipCursor = landed;
+    if (savedCursor >= 0) {
+      savedCursor = landed;
+      // Keep DOM focus on the moved chip so a repeated Alt+Arrow keeps going.
+      queueMicrotask(() => savedEls[savedCursor]?.focus());
+    }
   }
 
   function onSavedDragStart(e: DragEvent, i: number): void {
@@ -467,6 +478,13 @@
     chipCursor = clampChipCursor(chipCursor, recents.length);
   });
 
+  // Round 51 Slice 5: keep the saved-strip cursor in range as the pinned
+  // list changes (an unpin via the x button, a reorder, or a fresh pin).
+  // A stale cursor past the new end snaps back; an empty strip parks at -1.
+  $effect(() => {
+    savedCursor = clampChipCursor(savedCursor, pinned.length);
+  });
+
   function moveCursor(intent: Parameters<typeof nextSearchCursor>[0]): void {
     if (flatCount === 0) return;
     const start = cursor < 0 ? 0 : cursor;
@@ -487,6 +505,51 @@
 
   /** Window-level keydown: drive the results cursor when the list has hits. */
   function onResultsKey(e: KeyboardEvent): void {
+    // Round 51 Slice 5: when a SAVED-search chip holds the keyboard cursor
+    // (reached via Tab, then tracked by savedCursor), the saved strip owns
+    // the keys: Left/Right walk it, Alt+Left/Right reorder it, Enter runs,
+    // Backspace unpins, Escape parks. Checked BEFORE the recent strip so a
+    // focused saved chip can't double-fire; only in the empty-query state.
+    if (!query.trim() && pinned.length > 0 && savedCursor >= 0) {
+      const savedAction = classifySavedSearchKey(e);
+      if (savedAction) {
+        if (savedAction.kind === "reorder") {
+          e.preventDefault();
+          reorderSaved(savedCursor, savedCursor + savedAction.dir);
+          return;
+        }
+        if (savedAction.kind === "move") {
+          e.preventDefault();
+          savedCursor = nextChipCursor(savedAction.intent, savedCursor, pinned.length);
+          savedEls[savedCursor]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+          savedEls[savedCursor]?.focus();
+          return;
+        }
+        if (savedAction.kind === "run" && savedCursor < pinned.length) {
+          e.preventDefault();
+          runPinned(pinned[savedCursor]);
+          return;
+        }
+        if (savedAction.kind === "unpin" && savedCursor < pinned.length) {
+          e.preventDefault();
+          const wasAt = savedCursor;
+          togglePin(pinned[savedCursor]);
+          // The list shrank under the cursor; clamp it back into range and
+          // re-focus, or park if the strip is now empty.
+          const clamped = clampChipCursor(wasAt, pinned.length);
+          savedCursor = clamped;
+          if (clamped >= 0) queueMicrotask(() => savedEls[clamped]?.focus());
+          else inputEl?.focus();
+          return;
+        }
+        if (savedAction.kind === "clear") {
+          e.preventDefault();
+          savedCursor = -1;
+          inputEl?.focus();
+          return;
+        }
+      }
+    }
     // Slice 6: in the empty-query state the recent-search chip strip owns
     // the keyboard — Left/Right walk it, Enter runs the focused chip,
     // Escape parks it. This can't collide with the results cursor (there
@@ -780,7 +843,7 @@
               <span class="recents-label">Saved searches</span>
               <span class="saved-count" aria-live="polite">{pinnedSummary}</span>
             </header>
-            <ul class="recents-list" aria-label="Saved searches">
+            <ul class="recents-list" role="listbox" aria-label="Saved searches — arrow keys to navigate, Enter to run, Alt+arrows to reorder, Backspace to unpin">
               {#each pinned as pq, i (pq)}
                 <li
                   role="presentation"
@@ -796,8 +859,14 @@
                   <button
                     type="button"
                     class="recent-chip saved-chip"
+                    class:cursor={savedCursor === i}
+                    role="option"
+                    aria-selected={savedCursor === i}
+                    bind:this={savedEls[i]}
                     onclick={() => runPinned(pq)}
-                    title={`Run saved search "${pq}" (drag to reorder)`}
+                    onfocus={() => (savedCursor = i)}
+                    onmouseenter={() => (savedCursor = i)}
+                    title={`Run saved search "${pq}" (drag or Alt+Arrow to reorder)`}
                   >
                     <span class="saved-pin-glyph" aria-hidden="true">
                       <svg viewBox="0 0 16 16" width="10" height="10">

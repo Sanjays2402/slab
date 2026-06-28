@@ -1127,3 +1127,64 @@ export function moveSavedSearch(
   next.splice(t, 0, moved);
   return next;
 }
+
+// --- Saved-searches strip keyboard cursor (round 51 slice 5) ---------
+//
+// The recent-search strip has a horizontal keyboard cursor
+// (classifyRecentChipKey); the saved strip shipped click-only. This gives
+// it the SAME Left/Right/Home/End/Enter/unpin cursor, PLUS an Alt+Arrow
+// reorder path that drives the slice-4 moveSavedSearch from the keyboard
+// (the saved strip is reorderable; the recent strip is not, so this is a
+// distinct classifier rather than a shared one). The cursor index math
+// reuses the tested nextChipCursor/clampChipCursor so wrap/clamp matches
+// the recent strip and every other surface.
+
+/** What a keypress over the SAVED-search chip strip should do. */
+export type SavedSearchAction =
+  | { kind: "move"; intent: PaletteNavIntent }
+  | { kind: "reorder"; dir: -1 | 1 }
+  | { kind: "run" }
+  | { kind: "unpin" }
+  | { kind: "clear" }
+  | null;
+
+/**
+ * Classify a keypress over the saved-search chip strip into an action, or
+ * null if it isn't a strip key (so it falls through to the search input /
+ * browser). Alt+ArrowLeft/Right REORDER the focused chip one slot (the
+ * keyboard twin of drag); plain ArrowLeft/Right MOVE the cursor; Home/End
+ * leap; Enter runs the focused chip; Backspace/Delete unpins it; Escape
+ * parks the cursor. Cmd/Ctrl disqualify everything so app chords keep
+ * priority. ArrowUp/Down are deliberately NOT claimed (they belong to the
+ * results cursor). The Alt branch is checked BEFORE the plain-arrow branch
+ * so a held Alt always reorders rather than moving.
+ */
+export function classifySavedSearchKey(ev: SearchKeyEvent): SavedSearchAction {
+  if (!ev) return null;
+  if (ev.ctrlKey || ev.metaKey) return null;
+  // Alt+Arrow reorders (the keyboard twin of drag); plain Arrow moves.
+  if (ev.altKey) {
+    if (ev.key === "ArrowLeft") return { kind: "reorder", dir: -1 };
+    if (ev.key === "ArrowRight") return { kind: "reorder", dir: 1 };
+    return null; // any other Alt-combo isn't ours
+  }
+  switch (ev.key) {
+    case "ArrowLeft":
+      return { kind: "move", intent: "prev" };
+    case "ArrowRight":
+      return { kind: "move", intent: "next" };
+    case "Home":
+      return { kind: "move", intent: "first" };
+    case "End":
+      return { kind: "move", intent: "last" };
+    case "Enter":
+      return { kind: "run" };
+    case "Backspace":
+    case "Delete":
+      return { kind: "unpin" };
+    case "Escape":
+      return { kind: "clear" };
+    default:
+      return null;
+  }
+}

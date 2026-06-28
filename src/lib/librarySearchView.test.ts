@@ -41,6 +41,7 @@ import {
   togglePinnedSearch,
   describePinnedSearches,
   moveSavedSearch,
+  classifySavedSearchKey,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -915,6 +916,60 @@ const group = (
     JSON.stringify(moveSavedSearch(base, NaN, NaN)) === JSON.stringify(base),
     "move-saved: NaN indices -> unchanged",
   );
+}
+
+// --- classifySavedSearchKey (round 51 slice 5) -----------------------
+{
+  // Plain Left/Right MOVE the cursor; Home/End leap.
+  expect(
+    JSON.stringify(classifySavedSearchKey({ key: "ArrowRight" })) ===
+      JSON.stringify({ kind: "move", intent: "next" }),
+    "saved-key: Right -> move next",
+  );
+  expect(
+    JSON.stringify(classifySavedSearchKey({ key: "ArrowLeft" })) ===
+      JSON.stringify({ kind: "move", intent: "prev" }),
+    "saved-key: Left -> move prev",
+  );
+  expect(
+    JSON.stringify(classifySavedSearchKey({ key: "Home" })) ===
+      JSON.stringify({ kind: "move", intent: "first" }),
+    "saved-key: Home -> first",
+  );
+  expect(
+    JSON.stringify(classifySavedSearchKey({ key: "End" })) ===
+      JSON.stringify({ kind: "move", intent: "last" }),
+    "saved-key: End -> last",
+  );
+  // Alt+Left/Right REORDER (keyboard twin of drag), checked before move.
+  expect(
+    JSON.stringify(classifySavedSearchKey({ key: "ArrowRight", altKey: true })) ===
+      JSON.stringify({ kind: "reorder", dir: 1 }),
+    "saved-key: Alt+Right -> reorder +1",
+  );
+  expect(
+    JSON.stringify(classifySavedSearchKey({ key: "ArrowLeft", altKey: true })) ===
+      JSON.stringify({ kind: "reorder", dir: -1 }),
+    "saved-key: Alt+Left -> reorder -1",
+  );
+  // Enter runs, Backspace/Delete unpin, Escape parks.
+  expect(classifySavedSearchKey({ key: "Enter" })?.kind === "run", "saved-key: Enter -> run");
+  expect(classifySavedSearchKey({ key: "Backspace" })?.kind === "unpin", "saved-key: Backspace -> unpin");
+  expect(classifySavedSearchKey({ key: "Delete" })?.kind === "unpin", "saved-key: Delete -> unpin");
+  expect(classifySavedSearchKey({ key: "Escape" })?.kind === "clear", "saved-key: Escape -> clear");
+  // Up/Down NOT claimed (results cursor owns the vertical axis).
+  expect(classifySavedSearchKey({ key: "ArrowUp" }) === null, "saved-key: Up not claimed");
+  expect(classifySavedSearchKey({ key: "ArrowDown" }) === null, "saved-key: Down not claimed");
+  // Cmd/Ctrl disqualify everything so app chords win.
+  expect(classifySavedSearchKey({ key: "ArrowRight", metaKey: true }) === null, "saved-key: Cmd+Right falls through");
+  expect(classifySavedSearchKey({ key: "ArrowLeft", ctrlKey: true }) === null, "saved-key: Ctrl+Left falls through");
+  expect(classifySavedSearchKey({ key: "Enter", metaKey: true }) === null, "saved-key: Cmd+Enter falls through");
+  // Alt on a non-arrow key isn't ours (e.g. Alt+Enter falls through).
+  expect(classifySavedSearchKey({ key: "Enter", altKey: true }) === null, "saved-key: Alt+Enter falls through");
+  expect(classifySavedSearchKey({ key: "Home", altKey: true }) === null, "saved-key: Alt+Home falls through");
+  // A letter is not a strip key; null event safe.
+  expect(classifySavedSearchKey({ key: "p" }) === null, "saved-key: a letter is not a strip key");
+  expect(classifySavedSearchKey(null as never) === null, "saved-key: null event -> null");
 }
 
 // eslint-disable-next-line no-console
