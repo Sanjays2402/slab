@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-28 08:55 PT by Cake (cron) — round-50 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) — the FULL round-49 refill roadmap across FOUR surfaces, each on a tested pure core. NOTE: this tick opened with a DISK EMERGENCY — both /Volumes/Projects (repo) and /Volumes/SlabBuild were detached and the SanjayProjects.sparseimage reported an invalid container superblock; recovered with a clean detach + `hdiutil attach -nomount` + `fsck_apfs -y /dev/disk6` (passed clean, ~6 min) + mount. ~10 min lost to recovery, still shipped all 5. (1) OCR Queue cancellable Requeue-all + Retry-remaining resume (15d1351) — describeRequeueRemaining + describeRequeueAllOutcome; requeueAllFailed now loops ocrQueueRequeue per-doc over a snapshot with a Cancel flag, planRunRemaining carves the un-run tail -> "Retry remaining (N)" banner + inline determinate bar (the failure-inbox twin of Run-all); ocrQueueView 196->212 tests; (2) Palette legible bulk-collapse footer (e5d6fa2) — describeCollapseState(grouped,collapsed)->{total,open,collapsed,allCollapsed,noneCollapsed,label}, a live "N of M sections open" / "All M collapsed" count beside the fold-all button (aria-live); paletteSearch 284->298 tests; (3) RecentsHome reset-pin-order (0f1c4c1) — anyPinOrder(pinned) + describeResetPinOrder(count) + store clearPinOrder(); a "Reset order (N)" button in the Pinned header shown only once a manual drag order exists; recentsHomeView 142->155 tests; (4) Library Search pin-a-search (4d99d59) — normalizePinnedQuery + isPinnedSearch + togglePinnedSearch(cap 32) + describePinnedSearches + NEW savedSearches.ts localStorage shell (mirrors paletteCollapsed.ts); a per-chip pin toggle + a distinct accent "Saved searches" strip surviving the rolling log's eviction, kept isolated from the recents cursor; librarySearchView 225->251 tests; (5) OCR Queue first-load skeleton (7b11748) — a firstLoad gate renders shimmer placeholders (stats strip + a row section) on the very first fetch instead of a bare "Loading…", aria-busy + sr-only live label, honors prefers-reduced-motion. Gates: 916 view-core tests pass (212+298+155+251), pnpm check 0 errors / 104 warnings (rounds 32-49 baseline preserved EXACTLY — zero new a11y warnings across the requeue bar, fold-all count, reset button, pin toggles + saved strip, and skeleton), cargo fmt --all --check clean, ZERO Rust changed so the round-32 lib baseline carries forward.
+Last updated: 2026-06-28 11:40 PT by Cake (cron) — round-51 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FOUR surfaces, each on a tested pure core. NOTE: this tick opened with a DISK EMERGENCY — both /Volumes/Projects (repo) and /Volumes/SlabBuild failed to mount (Input/output error, errno 5; macOS auto-repair failed 0x8). Root cause: the exFAT "Sanjay SSD" fskit_agent (pid 4864) was killed + the drive remounted at 11:19:58, leaving the already-attached sparseimages with stale block mappings (fsck_apfs: "failed to read container superblock"). Recovered with a clean `hdiutil detach -force` of both stale image devices + fresh `hdiutil attach` against the current exFAT mount (~3 min, NO fsck needed — the images themselves were intact, only the mapping was stale). Shipped all 5. (1) OCR Queue in-flight doc name under the bulk bar (eac91db) — describeInFlightDoc(path,action) -> "Running invoice.pdf…" / "Re-queuing scan.pdf…" reusing ocrBasename; component sets currentDocPath each loop iteration, clears in finally, renders an aria-live caption under both the Run-all + Requeue-all determinate bars (truncating); ocrQueueView 212->221 tests; (2) Palette Alt-click solo-expand (a82b520) — soloExpandGroup(grouped,collapsed,group) folds every OTHER section (symmetric: re-Alt-click an already-solo group pops all back open); header onclick branches on e.altKey, persists via saveCollapsedGroups; paletteSearch 298->308 tests; (3) RecentsHome persist sort mode (60105a3) — NEW recentsView.ts localStorage shell (loadRecentSort/saveRecentSort, default "recent") gated on tested isRecentSortMode guard; sortMode seeds from load, every pick routes through setSort; FILTER query deliberately NOT persisted (stale term would hide recents on reopen); recentsHomeView 155->167 tests; (4) Library Search drag-reorder Saved-searches strip (5493b3e) — moveSavedSearch(pinned,from,to) splice (RecentsHome.movePinned pattern on the flat string[]), normalize+dedupe first; typed DragEvent handlers + accent drop-indicator; librarySearchView 251->261 tests; (5) Library Search keyboard cursor over Saved strip (d465273) — classifySavedSearchKey: plain arrows MOVE, Alt+arrows REORDER (checked first), Enter run / Backspace unpin / Esc park; role=listbox/option + cursor ring + savedCursor clamp effect; librarySearchView 261->280 tests. Gate: 4 tsx suites green (221/308/167/280), pnpm check 0 errors / 104 warnings (rounds 32-50 baseline EXACT), ZERO Rust changed.
+
+PREV round-50 (2026-06-28 08:55 PT): 5 frontend/UX capabilities, 5 feature commits — (1) OCR Queue cancellable Requeue-all + Retry-remaining resume (15d1351); (2) Palette legible bulk-collapse footer (e5d6fa2); (3) RecentsHome reset-pin-order (0f1c4c1); (4) Library Search pin-a-search (4d99d59); (5) OCR Queue first-load skeleton (7b11748). [opened with a disk emergency too — invalid container superblock, recovered via fsck_apfs.]
 
 PREV round-49 (2026-06-28 06:37 PT): 5 frontend/UX capabilities, 5 feature commits — (1) Library Search recent-chip SORT toggle (a968670); (2) OCR Queue "Run remaining" RESUME after a canceled Run-all (38fa4ff); (3) Palette COLLAPSE-ALL/EXPAND-ALL (ebd7399); (4) Library Search empty-state SUGGESTED-QUERIES row (93ec44c); (5) RecentsHome DRAG-TO-REORDER the pinned strip (f430bfd).
 
@@ -19,7 +21,7 @@ Internal module labels use the repo's logical-release naming ("Atlas VI"
 = v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `4d99d59` — "feat(library-search): pin a search to a sticky saved-search strip" (round 50 lands 5 commits: 15d1351, e5d6fa2, 0f1c4c1, 7b11748, 4d99d59).
+Latest commit: `d465273` — "feat(library-search): keyboard cursor over the Saved-searches strip" (round 51 lands 5 commits: eac91db, a82b520, 60105a3, 5493b3e, d465273).
 
 ### What round-45 (2026-06-27 09:55 PT) just shipped
 
@@ -1619,21 +1621,29 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
 
 Ordered roughly by demo value (all frontend; backend deferred per override):
 
-- OCR Queue: a per-doc Requeue progress could surface WHICH doc is in
-  flight (a live "re-queuing <name>…" line under the bar), mirroring how a
-  determinate Run-all could name the current doc — both bars are anonymous.
-- Palette: a "collapse this group's siblings" / solo-expand affordance
-  (Alt-click a header to fold every OTHER section), complementing collapse-
-  all now that the fold state is legible.
-- RecentsHome: persist the active SORT mode + filter across sessions (the
-  board resets to Recent/​no-filter every open; a tiny localStorage shell
-  like savedSearches.ts would remember the last view).
-- Library Search: drag-to-reorder the Saved-searches strip (reuse the
-  RecentsHome movePinned/orderPinnedStrip pattern on the pinned[] list, with
-  an Alt+Arrow keyboard path), so a user can arrange their saved queries.
-- Library Search: a keyboard cursor over the Saved-searches strip (the
-  recents strip has classifyRecentChipKey nav; the saved strip is click-only
-  — give it the same Left/Right/Enter/unpin horizontal cursor).
+- ~~OCR Queue: a per-doc Requeue progress could surface WHICH doc is in
+  flight~~ — DONE round 51 (eac91db): describeInFlightDoc(path,action) ->
+  "Running <name>…" / "Re-queuing <name>…" reusing ocrBasename; component
+  sets currentDocPath each loop iteration, aria-live caption under BOTH the
+  Run-all + Requeue-all bars. ocrQueueView 221 tests.
+- ~~Palette: a "collapse this group's siblings" / solo-expand affordance
+  (Alt-click a header to fold every OTHER section)~~ — DONE round 51
+  (a82b520): soloExpandGroup(grouped,collapsed,group), symmetric (re-Alt-
+  click an already-solo group pops all back open); header onclick branches
+  on e.altKey. paletteSearch 308 tests.
+- ~~RecentsHome: persist the active SORT mode across sessions~~ — DONE
+  round 51 (60105a3): NEW recentsView.ts shell (loadRecentSort/saveRecentSort,
+  default "recent") gated on tested isRecentSortMode guard; setSort persists
+  every pick. FILTER deliberately NOT persisted (stale term hides recents on
+  reopen). recentsHomeView 167 tests.
+- ~~Library Search: drag-to-reorder the Saved-searches strip~~ — DONE round
+  51 (5493b3e): moveSavedSearch(pinned,from,to) splice (movePinned pattern
+  on the flat string[]), normalize+dedupe first; typed DragEvent handlers +
+  accent drop-indicator. librarySearchView 261 tests.
+- ~~Library Search: a keyboard cursor over the Saved-searches strip~~ —
+  DONE round 51 (d465273): classifySavedSearchKey (plain arrows MOVE,
+  Alt+arrows REORDER checked first, Enter/Backspace/Esc); role=listbox/option
+  + cursor ring + savedCursor clamp effect. librarySearchView 280 tests.
 - Reader find: highlight the active match's page in the thumbnail rail;
   per-find-result mini-map on the scrollbar (round-42 follow-ups).
 - doc-detail metadata editor read surface (inline-editable title / tags
@@ -1648,6 +1658,39 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   name-asc every open).
 - Palette: recent-files thumbnails in the browse list (getRecentThumb data
   URLs already exist; the palette shows none).
+
+### Next FRONTEND candidates — refilled round 51
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- OCR Queue: persist the sort column + direction across sessions (resets to
+  name-asc every open) — the OcrSort twin of round-51's recentsView.ts; a
+  thin localStorage shell + an isOcrSort guard, seeded into the panel's
+  `sort` $state.
+- Beacon cache inspector: a saved-filter affordance — pin a model/folder
+  facet combo, reusing the savedSearches.ts localStorage pattern + a
+  pinned-filter strip; the inspector already has the facet machinery.
+- doc-detail metadata editor read surface (inline-editable title / tags
+  with optimistic save + rollback toast — toast actions already exist).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- histogram hover-tooltip on bar segments (per-segment count + label on
+  hover/focus, keyboard-reachable).
+- empty/loading/skeleton-state pass across panels still showing a bare
+  spinner (Signet verify, Quill queue) — the OCR-Queue round-50 skeleton
+  pattern (firstLoad gate + shimmer + aria-busy) applied to the laggards.
+- Palette: recent-files thumbnails in the browse list (getRecentThumb data
+  URLs already exist; the palette shows none).
+- Library Search: a "run all saved searches in sequence" / cycle affordance,
+  or a count badge per saved chip showing last-run hit count (the recent
+  chips show it; the saved chips don't).
+- RecentsHome: persist the pinned-strip collapsed/expanded state, or a
+  "jump to continue-reading hero" chord (Cmd+0 exists; surface it in the UI).
+- OCR Queue: a per-reason sparkline / mini histogram of failure ages so a
+  recurring root cause is visible at a glance.
+- Palette: a "pin a command" affordance (frecency exists via cmdMru; let a
+  user hard-pin a favourite to the top of browse, reusing the saved-search
+  localStorage pattern).
 
 - ~~OCR Queue: per-reason "Retry all <reason>" button~~ — DONE round 47
   (af53f7b): collectReasonRetryIds + describeReasonRetry back a
