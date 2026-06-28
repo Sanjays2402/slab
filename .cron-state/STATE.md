@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-27 14:55 PT by Cake (cron) — round-46 BATCH shipped (5 frontend/UX capabilities, FIVE separate commits) — explicit roadmap FOLLOW-UPS across three surfaces with tested cores: (1) Library Search snippet refine-highlight (98b7c5f) — new tested buildSnippetSpans parses the server <mark> snippet into typed spans + paints a SECOND distinct tint over the live refine term, replacing {@html safeSnippet} so there is now ZERO HTML-injection surface; (2) Library Search Cmd/Ctrl+Up/Down group-jump (a6262b2) — new searchGroupStarts adapter reusing the palette's classifyPaletteGroupNav/nextGroupIndex so the chord matches Cmd+K exactly; (3) OCR Queue pending-state facet (4bbaf51) — groupPendingStates/filterByPendingState/reconcilePendingStateFacet/pendingStateLabel mirroring the failure-reason facet for image-only/mixed triage; (4) RecentsHome clear-unpinned footer affordance (e048678) — countUnpinned/describeClearUnpinned wiring the store's clearRecent with an honest count + confirm; (5) RecentsHome thumbnail progress overlay (bb1594e) — recentProgressBar reusing recentReadingProgress, a thin accent bar on every card thumbnail. COMMIT STRUCTURE: FIVE separate independently-revertible commits this round (not 2) — these are genuinely separable additive follow-ups on already-wired surfaces, each compiling green standalone, unlike rounds 41-45's single-new-surface wires. Gates: librarySearchView 127->158, ocrQueueView 122->141, recentsHomeView 91->110 (69 new tests); shared palette suite paletteSearch 253 / beaconCacheView 112 / readerFindView 86 / toastStack 254 ALL unchanged (reused core provably intact); pnpm check 0 errors / 104 warnings (rounds 32-45 baseline preserved EXACTLY); cargo fmt --all --check clean, ZERO Rust files changed.
+Last updated: 2026-06-27 19:46 PT by Cake (cron) — round-47 BATCH shipped (5 frontend/UX capabilities, 5 feature commits + 1 test fixup) — explicit roadmap FOLLOW-UPS across four surfaces, each with a tested pure core: (1) OCR Queue per-reason "Retry all <reason>" (af53f7b) — collectReasonRetryIds/describeReasonRetry back a constructive-accent button in the failure-reason facet row that re-queues ONLY the active bucket via a looped ocrQueueRequeue, leaving every other root cause untouched; (2) OCR Queue determinate Run-all progress (2d48a21) — switched Run-all from blanket ocrQueueRunAll to a per-doc ocrQueueRunOne loop ticking a REAL role=progressbar bar after each doc, backed by new describeRunAllProgress (clamped {fraction,percent,label,finished}); workload snapshotted up front, per-doc failures tallied not thrown; (3) Library Search recent-chips keyboard nav (4eaedfc) — classifyRecentChipKey/nextChipCursor/clampChipCursor give the empty-query chip strip a flat HORIZONTAL cursor (Left/Right wrap, Home/End, Enter runs, Esc parks) on a different axis from the vertical results cursor so neither steals the other's keys; strip is now role=listbox; (4) RecentsHome pinned-strip horizontal nav+scroll (f9e21e3) — classifyRecentKey now maps ArrowLeft/Right to prev/next and recentCardScrollOptions(section) returns per-axis scrollIntoView alignment so a pinned card scrolls inline-center while a grid card scrolls vertically (horizontal arrows stay with the filter-box caret); (5) Command Palette group collapse (440d72e) — toggleCollapsedGroup/partitionCollapsedGroups make each section header a real toggle button that folds its rows; returns BOTH the render structure (headers always shown w/ true count + chevron) and the flat VISIBLE cursor list so arrows + Cmd-arrow jump never land on a hidden row; collapse disabled during search; cursor now indexes the visible list (a bonus: cursor order == render order, fixing the old filtered.indexOf divergence). Gates: ocrQueueView 141->169, librarySearchView 158->180, recentsHomeView 110->117, paletteSearch 253->271 (74 new tests); pnpm check 0 errors / 104 warnings (rounds 32-46 baseline preserved EXACTLY); cargo fmt --all --check clean, ZERO Rust files changed (round-32 lib baseline carries forward). COMMIT STRUCTURE: 5 separate feature commits (each compiles + gates green standalone) + 1 tiny test fixup (dropped two unused @ts-expect-error directives — NaN is type number so the calls are valid TS).
+
+PREV round-46 (2026-06-27 14:55 PT): 5 frontend/UX capabilities across three surfaces (5 commits) — Library Search snippet refine-highlight (98b7c5f), Cmd/Ctrl+Up/Down group-jump (a6262b2), OCR Queue pending-state facet (4bbaf51), RecentsHome clear-unpinned footer (e048678) + thumbnail progress overlay (bb1594e).
 
 PREV round-45 (2026-06-27 09:55 PT): wired the OCR Queue Panel ("Atlas VI") to Beacon grade on new tested core src/lib/ocrQueueView.ts (122 tests) — search/sort/reason-facet/keyboard/footer (2 commits 58ea2d3 + 2f8eda5).
 
@@ -1527,17 +1529,44 @@ Refilled frontend-first per the override (backend/infra items
 deferred until the override block is removed). Ordered roughly by
 demo value:
 
-- OCR Queue: per-reason "Retry all <reason>" button — when a failure
-  facet is active, a header action that re-queues ONLY that bucket
-  (reuses ocrQueueRequeue over filterByReason output); pairs with the
-  round-45 facet + round-46 pending-state facet.
-- Library Search: recent-search chips keyboard-navigable — the empty-
-  query chip strip is mouse-only; give it a flat cursor (reuse the
-  palette nav core) so arrows/Enter run a recent search.
-- RecentsHome: pinned-strip horizontal keyboard scroll — when the
-  pinned strip overflows, Left/Right should scroll it into view while
-  the virtual cursor walks it (the cards already flatten; just needs a
-  scroll-into-view on the strip axis).
+- OCR Queue: cancel an in-flight Run-all (the per-doc loop now ticks a
+  determinate bar — add a Cancel button that breaks the loop after the
+  current doc; needs a cancel flag the loop checks each iteration).
+- Library Search: recent-chip delete affordance (an x on each chip /
+  Backspace on the focused chip to drop ONE recent search, complementing
+  the all-or-nothing "Clear history"). Pairs with the round-47 chip
+  cursor — Backspace on the focused chip is the natural chord.
+- Palette: remember collapsed groups across SESSIONS (round 47 holds the
+  fold set in component state — persist it to localStorage so a folded
+  Appearance stays folded after a restart; a tiny store like cmdMru).
+- RecentsHome: pinned-strip overflow fade/scroll-affordance (now that
+  Left/Right scroll it horizontally, add a gradient mask + chevrons at
+  the strip edges when it overflows so the affordance is discoverable).
+
+- ~~OCR Queue: per-reason "Retry all <reason>" button~~ — DONE round 47
+  (af53f7b): collectReasonRetryIds + describeReasonRetry back a
+  constructive-accent button in the failure-reason facet row; loops
+  ocrQueueRequeue over exactly the faceted bucket. ocrQueueView 141->154.
+- ~~OCR Queue: real Run-all progress bar~~ — DONE round 47 (2d48a21):
+  per-doc ocrQueueRunOne loop + describeRunAllProgress determinate
+  {fraction,percent,label,finished} model + role=progressbar bar.
+  ocrQueueView 154->169. The last OCR-queue follow-up (cancel) is above.
+- ~~Library Search: recent-search chips keyboard-navigable~~ — DONE
+  round 47 (4eaedfc): classifyRecentChipKey + nextChipCursor +
+  clampChipCursor give the empty-query strip a horizontal cursor
+  (Left/Right/Home/End/Enter/Escape), role=listbox. librarySearchView
+  158->180.
+- ~~RecentsHome: pinned-strip horizontal keyboard scroll~~ — DONE round
+  47 (f9e21e3): classifyRecentKey maps ArrowLeft/Right -> prev/next +
+  recentCardScrollOptions(section) per-axis scrollIntoView so a pinned
+  card scrolls inline-center. recentsHomeView 110->117. Overflow
+  fade/affordance follow-up is above.
+- ~~palette: group COLLAPSE (click a section header to fold it)~~ — DONE
+  round 47 (440d72e): toggleCollapsedGroup + partitionCollapsedGroups —
+  each header is a toggle button; folded groups keep their header+count+
+  chevron but drop items from the visible cursor space; disabled during
+  search. paletteSearch 253->271. Cross-session persistence follow-up
+  is above.
 
 - ~~RecentsHome (first-launch hero) to palette grade ("Atlas V")~~ — core
   DONE round 43 (8ab126f): tested pure core src/lib/recentsHomeView.ts
