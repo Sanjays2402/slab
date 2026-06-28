@@ -32,6 +32,8 @@ import {
   pinnedStripEdges,
   orderPinnedStrip,
   movePinned,
+  anyPinOrder,
+  describeResetPinOrder,
   type RecentLike,
 } from "./recentsHomeView";
 
@@ -465,6 +467,37 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   // movePinned: garbage tolerant.
   expect(movePinned([], 0, 1).length === 0, "move: empty -> []");
   expect(movePinned(null as unknown as RecentLike[], 0, 1).length === 0, "move: null -> []");
+}
+
+// --- Slice 9: anyPinOrder + describeResetPinOrder ---------------------
+{
+  // anyPinOrder: true once any card carries a finite pinOrder stamp.
+  const unstamped = [mk({ path: "/a" }), mk({ path: "/b" }), mk({ path: "/c" })];
+  expect(anyPinOrder(unstamped) === false, "any-order: no stamps -> false");
+
+  const stamped = [mk({ path: "/a", pinOrder: 1 }), mk({ path: "/b" })];
+  expect(anyPinOrder(stamped) === true, "any-order: one stamp -> true");
+
+  // A zero stamp is a valid order (index 0), not "no order".
+  expect(anyPinOrder([mk({ path: "/a", pinOrder: 0 })]) === true, "any-order: pinOrder 0 counts");
+
+  // Non-finite / garbage stamps don't count.
+  expect(
+    anyPinOrder([mk({ path: "/a", pinOrder: NaN as unknown as number })]) === false,
+    "any-order: NaN stamp -> false",
+  );
+  expect(anyPinOrder([]) === false, "any-order: empty -> false");
+  expect(anyPinOrder(null as unknown as RecentLike[]) === false, "any-order: null -> false");
+
+  // describeResetPinOrder: hidden under 2 cards (nothing to reset), else
+  // "Reset order (N)" with thousands grouping.
+  expect(describeResetPinOrder(0) === "", "reset-label: zero -> '' (hidden)");
+  expect(describeResetPinOrder(1) === "", "reset-label: one card -> '' (no order to undo)");
+  expect(describeResetPinOrder(2) === "Reset order (2)", "reset-label: two cards");
+  expect(describeResetPinOrder(12) === "Reset order (12)", "reset-label: many cards");
+  expect(describeResetPinOrder(1500) === "Reset order (1,500)", "reset-label: thousands-grouped");
+  expect(describeResetPinOrder(NaN) === "", "reset-label: NaN -> '' safe");
+  expect(describeResetPinOrder(-3) === "", "reset-label: negative -> '' safe");
 }
 
 // eslint-disable-next-line no-console

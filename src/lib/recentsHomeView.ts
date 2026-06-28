@@ -685,3 +685,38 @@ export function movePinned<T extends RecentLike>(
   next.splice(t, 0, moved);
   return next;
 }
+
+// --- Slice 9: reset the pinned-strip order ----------------------------
+//
+// Once a user has dragged the strip into a custom arrangement, the only
+// way back to the store's natural pinned-first/openedAt-desc order was to
+// re-drag every card. `anyPinOrder` detects whether ANY card carries a
+// drag stamp (so the reset affordance only appears once an order exists),
+// and the store's clearPinOrder strips every stamp so orderPinnedStrip
+// falls straight back to arrival order. Pure complement to the drag core.
+
+/**
+ * Whether any pinned card carries a finite `pinOrder` stamp — i.e. the
+ * strip has been manually reordered, so a "reset order" affordance is
+ * meaningful. False for an empty/garbage list or a strip with no stamps.
+ * Pure + DOM-free.
+ */
+export function anyPinOrder(pinned: readonly RecentLike[]): boolean {
+  if (!Array.isArray(pinned)) return false;
+  for (const f of pinned) {
+    if (f && typeof f.pinOrder === "number" && Number.isFinite(f.pinOrder)) return true;
+  }
+  return false;
+}
+
+/**
+ * Compose the "reset pin order" affordance label from the pinned count,
+ * e.g. "Reset order (4)". Returns "" when there is nothing to reset
+ * (fewer than 2 cards — a single card has no order to undo), so the
+ * component hides the control. Pure (locale grouping via toLocaleString).
+ */
+export function describeResetPinOrder(pinnedCount: number): string {
+  const n = Math.max(0, Math.floor(Number.isFinite(pinnedCount) ? pinnedCount : 0));
+  if (n < 2) return "";
+  return `Reset order (${n.toLocaleString()})`;
+}

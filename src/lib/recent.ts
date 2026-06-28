@@ -241,6 +241,25 @@ export function reorderPinned(orderedPaths: string[]) {
   if (changed) write(next);
 }
 
+/**
+ * Clear every record's `pinOrder` stamp, dropping the strip back to the
+ * store's natural pinned-first/openedAt-desc order. Backs the RecentsHome
+ * "reset order" affordance — the inverse of reorderPinned. The GLOBAL sort
+ * never read pinOrder, so this only affects the strip's resting order.
+ * No-op when no record carries a stamp.
+ */
+export function clearPinOrder() {
+  const cur = read();
+  let changed = false;
+  const next = cur.map((r) => {
+    if (r.pinOrder === undefined) return r;
+    changed = true;
+    const { pinOrder: _drop, ...rest } = r;
+    return rest;
+  });
+  if (changed) write(next);
+}
+
 /** Remove a single recent file (and its thumb). Pinned or not — user wins. */
 export function removeRecent(path: string) {
   const cur = read();

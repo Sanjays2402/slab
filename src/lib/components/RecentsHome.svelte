@@ -23,6 +23,7 @@
     removeRecent,
     clearRecent,
     reorderPinned,
+    clearPinOrder,
     type RecentFile,
   } from "$lib/recent";
   import {
@@ -45,6 +46,8 @@
     pinnedStripEdges,
     orderPinnedStrip,
     movePinned,
+    anyPinOrder,
+    describeResetPinOrder,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { notify } from "$lib/notify";
@@ -129,6 +132,13 @@
    *  pinOrder. */
   const stripReorderable = $derived(!filtering && sortMode === "recent" && pinned.length > 1);
 
+  /** Slice 9: whether the strip carries a manual drag order, so the "reset
+      order" affordance shows only once a user has rearranged it — and only
+      in the reorderable resting state where a reset is meaningful. */
+  const canResetPinOrder = $derived(stripReorderable && anyPinOrder(pinned));
+  /** The reset-order button label ("Reset order (N)"), or "" to hide it. */
+  const resetPinOrderLabel = $derived(canResetPinOrder ? describeResetPinOrder(pinned.length) : "");
+
   // Pinned-strip overflow affordance (this round): the strip scrolls
   // horizontally but gave no hint when it overflowed. Track its live scroll
   // geometry; pinnedStripEdges turns it into {overflowing, atStart, atEnd}
@@ -176,6 +186,14 @@
     if (!stripReorderable) return;
     const order = movePinned(pinned, from, to);
     if (order.length > 0) reorderPinned(order);
+  }
+
+  /** Slice 9: drop the strip back to the store's natural pinned-first /
+      openedAt-desc order by clearing every pinOrder stamp. Guarded on
+      canResetPinOrder so it's a no-op when there's no manual order. */
+  function resetPinOrder(): void {
+    if (!canResetPinOrder) return;
+    clearPinOrder();
   }
 
   function onDragStart(e: DragEvent, i: number): void {
@@ -583,6 +601,16 @@
       <header class="row-head">
         <span class="row-label">Pinned</span>
         <span class="row-hint">{pinned.length} file{pinned.length === 1 ? "" : "s"}</span>
+        {#if resetPinOrderLabel}
+          <button
+            type="button"
+            class="rh-reset-order"
+            onclick={resetPinOrder}
+            title="Drop the strip back to its natural order (clears your manual arrangement)"
+          >
+            {resetPinOrderLabel}
+          </button>
+        {/if}
       </header>
       <div
         class="strip-wrap"
@@ -980,6 +1008,31 @@
     opacity: 0.6;
   }
   .row-hint { font-size: 0.75rem; opacity: 0.45; }
+
+  /* Slice 9: reset-pin-order affordance. A quiet text button that appears in
+     the Pinned header only once the strip carries a manual drag order;
+     clicking drops it back to the natural order. */
+  .rh-reset-order {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    color: var(--text-2, #9aa0aa);
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 5px;
+    transition: color 90ms ease, background 90ms ease;
+  }
+  .rh-reset-order:hover {
+    color: var(--accent, #7c8cff);
+    background: color-mix(in srgb, var(--accent, #7c8cff) 10%, transparent);
+  }
+  .rh-reset-order:focus-visible {
+    outline: 2px solid var(--accent, #7c8cff);
+    outline-offset: 1px;
+  }
 
   .row-strip {
     display: flex; gap: 0.75rem; overflow-x: auto; padding: 0.25rem 0 0.5rem;
