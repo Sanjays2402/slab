@@ -32,11 +32,14 @@
     isEveryGroupCollapsed,
     describeCollapseState,
     soloExpandGroup,
+    toggleCommandPin,
+    isCommandPinned,
     type PaletteRange,
     type PaletteFallback,
     type RecentProgress,
   } from "$lib/paletteSearch";
   import { loadCollapsedGroups, saveCollapsedGroups } from "$lib/paletteCollapsed";
+  import { loadPinnedCommands, savePinnedCommands } from "$lib/cmdPins";
   import { prettyBindingFor, keymapView, type ActionId } from "$lib/keymap";
   import { get } from "svelte/store";
 
@@ -822,10 +825,22 @@
   // the scoped term so a bare ">" / "@" / "#" still shows the MRU header.
   let grouped = $derived.by(() => {
     const map = new Map<string, Action[]>();
-    const showMruHeader = !scopeParse.term.trim() && Object.keys(mru).length > 0;
+    const browse = !scopeParse.term.trim();
+    const showMruHeader = browse && Object.keys(mru).length > 0;
+    const pinSet = new Set(pinnedCmds);
     let mruShown = 0;
     const mruCap = 6;
     for (const a of filtered) {
+      // Pinned commands ride a sticky group above everything in browse mode,
+      // surviving frecency churn (Raycast/Arc favourites). A pinned command
+      // is shown ONLY in the Pinned group (not also in Recently used / its
+      // own group) so it appears exactly once.
+      if (browse && pinSet.has(a.id)) {
+        const key = "Pinned";
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(a);
+        continue;
+      }
       if (showMruHeader && a.id in mru && mruShown < mruCap) {
         const key = "Recently used";
         if (!map.has(key)) map.set(key, []);
@@ -836,7 +851,10 @@
       if (!map.has(a.group)) map.set(a.group, []);
       map.get(a.group)!.push(a);
     }
-    return Array.from(map.entries());
+    // Pinned floats to the very top, ahead of Recently used.
+    const entries = Array.from(map.entries());
+    entries.sort((x, y) => (x[0] === "Pinned" ? -1 : y[0] === "Pinned" ? 1 : 0));
+    return entries;
   });
 
   // Lumen III Slice 1: group collapse. In browse (empty-query) mode the
@@ -848,6 +866,14 @@
   // group during search would hide matching results, which is a footgun —
   // so the effective set is empty then.
   let collapsedGroups = $state<Set<string>>(loadCollapsedGroups());
+  // Round 52: pinned commands ride a sticky "Pinned" group at the very top
+  // of browse, surviving frecency churn. Seeded from localStorage; written
+  // back on every toggle. isCommandPinned/toggleCommandPin are the tested core.
+  let pinnedCmds = $state<string[]>(loadPinnedCommands());
+  function togglePin(id: string): void {
+    pinnedCmds = toggleCommandPin(pinnedCmds, id);
+    savePinnedCommands(pinnedCmds);
+  }
   const collapseActive = $derived(!scopeParse.term.trim());
   let collapsedView = $derived(
     partitionCollapsedGroups(
@@ -1127,6 +1153,8 @@
           {#each section.items as a (a.id)}
             {@const idx = visibleList.indexOf(a)}
             {@const chord = rowChord(a)}
+            {@const pinned = isCommandPinned(pinnedCmds, a.id)}
+            <div class="palette-item-wrap" class:active={idx === selected}>
             <button
               class="palette-item"
               class:active={idx === selected}
@@ -1158,6 +1186,15 @@
               {#if chord}<span class="palette-chord" aria-label={`Shortcut ${chord}`}>{chord}</span>{/if}
               {#if idx === selected}<span class="palette-enter">↵</span>{/if}
             </button>
+            <button
+              class="palette-pin"
+              class:pinned
+              title={pinned ? "Unpin from top" : "Pin to top"}
+              aria-label={pinned ? `Unpin ${a.title}` : `Pin ${a.title} to top`}
+              aria-pressed={pinned}
+              onclick={(e: MouseEvent) => { e.stopPropagation(); togglePin(a.id); }}
+            >{pinned ? "\u2605" : "\u2606"}</button>
+            </div>
           {/each}
         {/each}
       {/if}
@@ -1347,6 +1384,11 @@
   .palette-group-toggle.collapsed .palette-group-name {
     opacity: 0.75;
   }
+  .palette-item-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
   .palette-item {
     width: 100%;
     background: transparent;
@@ -1362,6 +1404,31 @@
   }
   .palette-item.active {
     background: var(--bg-3);
+    color: var(--text);
+  }
+  .palette-pin {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+    padding: 4px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, color 0.12s ease;
+  }
+  .palette-item-wrap.active .palette-pin,
+  .palette-item-wrap:hover .palette-pin,
+  .palette-pin.pinned {
+    opacity: 1;
+  }
+  .palette-pin.pinned {
+    color: var(--accent);
+  }
+  .palette-pin:hover {
     color: var(--text);
   }
   .palette-icon {

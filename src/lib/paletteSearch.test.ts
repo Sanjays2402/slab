@@ -35,6 +35,9 @@ import {
   isEveryGroupCollapsed,
   describeCollapseState,
   soloExpandGroup,
+  isCommandPinned,
+  toggleCommandPin,
+  countPinnedCommands,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -982,6 +985,33 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(soloExpandGroup(grouped, new Set<string>(), "").size === 0, "solo: blank group name -> empty");
   // @ts-expect-error — garbage collapsed arg
   expect(soloExpandGroup(grouped, null, "Library").has("Appearance"), "solo: null set treated as all-open");
+}
+
+// --- pinned commands (round 52) --------------------------------------
+{
+  expect(isCommandPinned([], "a") === false, "pin: empty list -> not pinned");
+  expect(isCommandPinned(["a", "b"], "b") === true, "pin: member -> pinned");
+  expect(isCommandPinned(["a"], "") === false, "pin: blank id -> never pinned");
+
+  // toggle on appends to the end (oldest-first), off removes.
+  const p1 = toggleCommandPin([], "panel:reader");
+  expect(p1.length === 1 && p1[0] === "panel:reader", "pin: toggle on appends");
+  const p2 = toggleCommandPin(p1, "accent:blue");
+  expect(p2.join(",") === "panel:reader,accent:blue", "pin: second pin keeps order");
+  const p3 = toggleCommandPin(p2, "panel:reader");
+  expect(p3.join(",") === "accent:blue", "pin: toggle off removes");
+  expect(toggleCommandPin(["a"], "").join(",") === "a", "pin: blank id no-op");
+
+  // dedupe defensive: a duplicate-laden input collapses.
+  expect(toggleCommandPin(["a", "a", "b"], "c").join(",") === "a,b,c", "pin: dedupe input");
+
+  // count distinct.
+  expect(countPinnedCommands(["a", "b", "a"]) === 2, "pin: count distinct");
+  expect(countPinnedCommands([]) === 0, "pin: count empty");
+  // @ts-expect-error — garbage input
+  expect(countPinnedCommands(null) === 0, "pin: count null-safe");
+  // @ts-expect-error — garbage input
+  expect(toggleCommandPin(null, "a").join(",") === "a", "pin: null list-safe");
 }
 
 // eslint-disable-next-line no-console

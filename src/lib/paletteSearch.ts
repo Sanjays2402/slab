@@ -1136,3 +1136,40 @@ export function soloExpandGroup<T>(
   return out;
 }
 
+// --- pinned commands -----------------------------------------------------
+// Frecency (cmdMru) floats your most-used actions, but it's a moving target:
+// a command you reach for daily can drop out of the browse "Recently used"
+// row after a burst of other work. Pinning lets a user HARD-pin a favourite
+// to a sticky "Pinned" section at the very top of browse, surviving frecency
+// churn — the same toggle/normalize/dedupe contract as savedSearches, but
+// keyed on the stable command id. Pin order is insertion order (oldest pin
+// first) so a user's deliberate arrangement holds. Pure; the localStorage
+// shell (cmdPins.ts) only persists WHICH ids are pinned.
+
+/** Whether `id` is in the pinned set. Empty/garbage id is never pinned. */
+export function isCommandPinned(pinned: readonly string[], id: string): boolean {
+  if (typeof id !== "string" || !id) return false;
+  return Array.isArray(pinned) && pinned.includes(id);
+}
+
+/**
+ * Toggle `id` in the pinned list, returning a NEW array (never mutates).
+ * Pinning appends to the END (oldest-pin-first order, stable); unpinning
+ * removes it. A blank/garbage id is a no-op. Duplicates are collapsed so the
+ * list can never hold the same command twice.
+ */
+export function toggleCommandPin(pinned: readonly string[], id: string): string[] {
+  const base = (Array.isArray(pinned) ? pinned : []).filter(
+    (p) => typeof p === "string" && p.length > 0,
+  );
+  if (typeof id !== "string" || !id) return [...new Set(base)];
+  if (base.includes(id)) return [...new Set(base.filter((p) => p !== id))];
+  return [...new Set([...base, id])];
+}
+
+/** Count of distinct pinned commands — drives the section subtitle. */
+export function countPinnedCommands(pinned: readonly string[]): number {
+  return new Set((Array.isArray(pinned) ? pinned : []).filter((p) => typeof p === "string" && p)).size;
+}
+
+
