@@ -976,3 +976,47 @@ export function partitionCollapsedGroups<T>(
   return { display, visible, starts };
 }
 
+/**
+ * Collapse-all: return the set of EVERY group name present in `grouped`,
+ * so the palette can fold every section at once. Pure; never mutates the
+ * input. A null/garbage grouped list -> empty set. Used by the
+ * collapse-all/expand-all toggle so a power user can clear the whole
+ * browse surface to its headers in one keystroke, then drill back in.
+ */
+export function collapseAllGroups<T>(
+  grouped: readonly (readonly [string, T[]])[],
+): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(grouped)) return out;
+  for (const entry of grouped) {
+    if (!Array.isArray(entry)) continue;
+    const group = entry[0];
+    if (typeof group === "string" && group.length > 0) out.add(group);
+  }
+  return out;
+}
+
+/**
+ * Whether EVERY group in `grouped` is currently collapsed — drives the
+ * toggle's two-way state (an all-collapsed palette offers "Expand all",
+ * otherwise "Collapse all"). True only when there is at least one group
+ * and every one of them is in `collapsed`. An empty/garbage grouped list
+ * -> false (nothing to expand). Pure.
+ */
+export function isEveryGroupCollapsed<T>(
+  grouped: readonly (readonly [string, T[]])[],
+  collapsed: ReadonlySet<string>,
+): boolean {
+  if (!Array.isArray(grouped) || grouped.length === 0) return false;
+  const folded = collapsed instanceof Set ? collapsed : new Set<string>();
+  let groupCount = 0;
+  for (const entry of grouped) {
+    if (!Array.isArray(entry)) continue;
+    const group = entry[0];
+    if (typeof group !== "string" || group.length === 0) continue;
+    groupCount++;
+    if (!folded.has(group)) return false;
+  }
+  return groupCount > 0;
+}
+

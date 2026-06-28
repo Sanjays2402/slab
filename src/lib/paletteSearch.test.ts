@@ -31,6 +31,8 @@ import {
   paletteActionVerb,
   toggleCollapsedGroup,
   partitionCollapsedGroups,
+  collapseAllGroups,
+  isEveryGroupCollapsed,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -833,6 +835,53 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(partitionCollapsedGroups(null, new Set()).visible.length === 0, "collapse: null grouped -> empty");
   // @ts-expect-error — garbage collapsed arg
   expect(partitionCollapsedGroups(grouped, null).visible.length === 6, "collapse: null set treated as nothing folded");
+}
+
+// --- collapseAllGroups + isEveryGroupCollapsed ------------------------
+{
+  const grouped: [string, { id: string }[]][] = [
+    ["Panels", [{ id: "p1" }, { id: "p2" }]],
+    ["Appearance", [{ id: "a1" }]],
+    ["Library", [{ id: "l1" }]],
+  ];
+
+  // collapseAllGroups returns every group name.
+  const all = collapseAllGroups(grouped);
+  expect(all.size === 3, "collapse-all: every group name captured");
+  expect(all.has("Panels") && all.has("Appearance") && all.has("Library"), "collapse-all: names present");
+
+  // isEveryGroupCollapsed: true only when the set covers every group.
+  expect(isEveryGroupCollapsed(grouped, all) === true, "all-collapsed: full set -> true");
+  expect(
+    isEveryGroupCollapsed(grouped, new Set(["Panels", "Appearance"])) === false,
+    "all-collapsed: missing one group -> false",
+  );
+  expect(isEveryGroupCollapsed(grouped, new Set()) === false, "all-collapsed: empty set -> false");
+
+  // A superset (a stale collapsed name no longer present) still counts as
+  // all-collapsed, since every CURRENT group is folded.
+  expect(
+    isEveryGroupCollapsed(grouped, new Set(["Panels", "Appearance", "Library", "Gone"])) === true,
+    "all-collapsed: superset still all-collapsed",
+  );
+
+  // Empty grouped list -> nothing to collapse / expand.
+  expect(collapseAllGroups([]).size === 0, "collapse-all: empty -> empty set");
+  expect(isEveryGroupCollapsed([], new Set()) === false, "all-collapsed: empty grouped -> false");
+
+  // Round-trips with the real collapse partition: collapse-all then
+  // partition yields zero visible rows but every header.
+  const folded = partitionCollapsedGroups(grouped, collapseAllGroups(grouped));
+  expect(folded.visible.length === 0, "collapse-all: partitions to empty cursor space");
+  expect(folded.display.length === 3, "collapse-all: every header still renders");
+
+  // Garbage tolerant.
+  // @ts-expect-error — garbage grouped list
+  expect(collapseAllGroups(null).size === 0, "collapse-all: null grouped -> empty");
+  // @ts-expect-error — garbage grouped list
+  expect(isEveryGroupCollapsed(null, new Set(["x"])) === false, "all-collapsed: null grouped -> false");
+  // @ts-expect-error — garbage collapsed arg
+  expect(isEveryGroupCollapsed(grouped, null) === false, "all-collapsed: null set -> false");
 }
 
 // eslint-disable-next-line no-console

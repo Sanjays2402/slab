@@ -28,6 +28,8 @@
     paletteActionVerb,
     toggleCollapsedGroup,
     partitionCollapsedGroups,
+    collapseAllGroups,
+    isEveryGroupCollapsed,
     type PaletteRange,
     type PaletteFallback,
     type RecentProgress,
@@ -864,6 +866,25 @@
     selected = 0;
   }
 
+  // Lumen III Slice 2: collapse-all / expand-all. With per-group fold +
+  // cross-session persistence in place, a power user wants to clear the
+  // whole browse surface to its headers in one keystroke (Cmd/Ctrl+E) or
+  // a header-bar toggle, then drill back. `allCollapsed` tracks whether
+  // every CURRENT group is folded so the control flips between "Collapse
+  // all" and "Expand all". Only meaningful in browse mode (collapse is
+  // disabled during search), so it reads the same grouped list collapse
+  // applies to.
+  const allCollapsed = $derived(
+    collapseActive && isEveryGroupCollapsed(grouped, collapsedGroups),
+  );
+
+  function toggleAllGroups(): void {
+    // Fold everything, or — when already all-folded — clear the set open.
+    collapsedGroups = allCollapsed ? new Set<string>() : collapseAllGroups(grouped);
+    saveCollapsedGroups(collapsedGroups);
+    selected = 0;
+  }
+
   // Lumen II Slice 3: flat start index of each rendered group, so
   // Cmd/Ctrl+Arrow can leap the cursor between section heads. With
   // collapse applied, the heads come straight from the visible-list
@@ -960,6 +981,18 @@
       selected = nextGroupIndex(groupStarts, selected, groupIntent, visibleList.length);
       scrollSelectedIntoView();
       return;
+    }
+    // Lumen III Slice 2: Cmd/Ctrl+E folds every section to its header, or
+    // — when already all-folded — expands them all. Only in browse mode
+    // (collapse is disabled during search). Checked before the modifier
+    // bail so the chord isn't swallowed.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E")) {
+      if (collapseActive) {
+        e.preventDefault();
+        toggleAllGroups();
+        scrollSelectedIntoView();
+        return;
+      }
     }
     // Lumen Slice 3: Raycast-grade list movement. Arrows wrap at the
     // ends, Home/End leap to either extreme, PageUp/PageDown page through
@@ -1105,11 +1138,27 @@
       {/if}
     </div>
     <div class="palette-footer">
-      <span class="palette-footer-count">{resultCountLabel}</span>
+      {#if collapseActive && collapsedView.display.length > 1}
+        <button
+          type="button"
+          class="palette-foldall"
+          onclick={() => {
+            toggleAllGroups();
+            scrollSelectedIntoView();
+          }}
+          title={allCollapsed ? "Expand all sections (⌘E)" : "Collapse all sections (⌘E)"}
+          aria-label={allCollapsed ? "Expand all sections" : "Collapse all sections"}
+        >
+          <span class="palette-foldall-glyph" aria-hidden="true">{allCollapsed ? "▸" : "▾"}</span>
+          {allCollapsed ? "Expand all" : "Collapse all"}
+        </button>
+      {:else}
+        <span class="palette-footer-count">{resultCountLabel}</span>
+      {/if}
       <span class="palette-footer-keys">
         <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
         <span><kbd>⌘</kbd><kbd>↑</kbd><kbd>↓</kbd> section</span>
-        <span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>
+        {#if collapseActive}<span><kbd>⌘</kbd><kbd>E</kbd> fold all</span>{:else}<span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>{/if}
         <span><kbd>↵</kbd> {enterVerb || "select"}</span>
         <span><kbd>esc</kbd> close</span>
       </span>
@@ -1400,6 +1449,31 @@
     flex-shrink: 0;
     color: var(--text-2);
     font-variant-numeric: tabular-nums;
+  }
+  /* Lumen III Slice 2: collapse-all / expand-all toggle, replacing the
+     count in browse mode. A quiet text button matching the footer scale. */
+  .palette-foldall {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-2);
+    cursor: pointer;
+    padding: 0;
+    transition: color 80ms;
+  }
+  .palette-foldall:hover {
+    color: var(--accent, #7c8cff);
+  }
+  .palette-foldall-glyph {
+    font-size: 9px;
+    line-height: 1;
   }
   .palette-footer-keys {
     display: flex;
