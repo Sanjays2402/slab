@@ -1004,3 +1004,81 @@ export function suggestEmptyQueries<T extends RecentChipLike & { id: number; que
     resultCount: chip.resultCount,
   }));
 }
+
+// --- Pinned (saved) searches ------------------------------------------
+//
+// The recent-search strip is a rolling log — the backend evicts the oldest
+// queries, so a search you run often but not recently disappears. Pinning
+// promotes a query to a sticky saved-search chip persisted in localStorage
+// (see savedSearches.ts), surviving that eviction. This pure core owns the
+// normalize / membership / toggle / label math; the storage shell only
+// reads + writes the resulting string list, and the panel renders it.
+
+/**
+ * Normalize a query for pinning: collapse internal runs of whitespace to a
+ * single space and trim the ends, so "  tax   2024 " and "tax 2024" pin to
+ * the same chip. A null/garbage/blank value -> "". Pure.
+ */
+export function normalizePinnedQuery(query: string | null | undefined): string {
+  if (typeof query !== "string") return "";
+  return query.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Whether a query is already pinned, matched case-insensitively against the
+ * normalized form (so casing/spacing variants don't double-pin). A
+ * blank/garbage query or list -> false. Pure.
+ */
+export function isPinnedSearch(pinned: readonly string[], query: string): boolean {
+  const q = normalizePinnedQuery(query).toLowerCase();
+  if (!q || !Array.isArray(pinned)) return false;
+  return pinned.some((p) => normalizePinnedQuery(p).toLowerCase() === q);
+}
+
+/**
+ * Toggle a query's pinned state, returning a NEW newest-first list (never
+ * mutates the input). Pinning prepends the normalized query (newest first)
+ * and drops any prior case-insensitive duplicate; unpinning removes every
+ * case-insensitive match. The result is capped at `limit` (default 32) so
+ * the strip can't grow without bound — the oldest pins fall off the end. A
+ * blank/garbage query returns the list unchanged (normalized). Pure.
+ */
+export function togglePinnedSearch(
+  pinned: readonly string[],
+  query: string,
+  limit: number = 32,
+): string[] {
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 32;
+  const list = Array.isArray(pinned) ? pinned : [];
+  const q = normalizePinnedQuery(query);
+  // Rebuild the existing list normalized + de-duped (preserves order).
+  const seen = new Set<string>();
+  const base: string[] = [];
+  for (const p of list) {
+    const np = normalizePinnedQuery(p);
+    if (!np) continue;
+    const key = np.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    base.push(np);
+  }
+  if (!q) return base.slice(0, cap);
+  const qKey = q.toLowerCase();
+  if (seen.has(qKey)) {
+    // Already pinned -> unpin (remove every match).
+    return base.filter((p) => p.toLowerCase() !== qKey);
+  }
+  // Not pinned -> prepend (newest first), capped.
+  return [q, ...base].slice(0, cap);
+}
+
+/**
+ * Narrate the pinned strip for an aria-live label, e.g. "3 saved searches"
+ * / "1 saved search". Returns "" when nothing is pinned (the strip hides).
+ * Pure (locale grouping via toLocaleString).
+ */
+export function describePinnedSearches(pinned: readonly string[]): string {
+  const n = Array.isArray(pinned) ? pinned.filter((p) => normalizePinnedQuery(p)).length : 0;
+  if (n <= 0) return "";
+  return `${n.toLocaleString()} saved ${n === 1 ? "search" : "searches"}`;
+}

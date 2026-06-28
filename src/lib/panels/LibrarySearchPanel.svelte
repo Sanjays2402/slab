@@ -63,11 +63,15 @@
     recentChipSortLabel,
     RECENT_CHIP_SORT_MODES,
     suggestEmptyQueries,
+    isPinnedSearch,
+    togglePinnedSearch,
+    describePinnedSearches,
     type RecentChipSortMode,
     SEARCH_SORT_MODES,
     type SearchSortMode,
     type SearchGroupLike,
   } from "$lib/librarySearchView";
+  import { loadPinnedSearches, savePinnedSearches } from "$lib/savedSearches";
 
   let query = $state("");
   let hits = $state<SearchHit[]>([]);
@@ -78,6 +82,12 @@
   /** Newest-first rolling log of the user's prior searches. Refreshed
    *  after every successful run + on mount. */
   let recents = $state<RecentSearch[]>([]);
+  /** Pinned (saved) searches — a sticky strip of queries promoted out of the
+      rolling recent-search log so they survive its eviction. Persisted in
+      localStorage (savedSearches.ts), newest-pinned first. Seeded on mount. */
+  let pinned = $state<string[]>([]);
+  /** aria-live label for the saved-search strip ("3 saved searches"). */
+  let pinnedSummary = $derived(describePinnedSearches(pinned));
   /** Slice 6: flat horizontal cursor over the recent-search chip strip
    *  (-1 = none focused). Left/Right walk it, Enter runs the chip. Lives
    *  only in the empty-query state where the strip is shown. */
@@ -170,6 +180,24 @@
     chipCursor = -1; // leaving the empty-query strip; park the chip cursor
     void runSearch(r.query);
     inputEl?.focus();
+  }
+
+  /** Run a pinned (saved) search — same as runRecent but keyed off the
+      stored query string rather than a backend row. */
+  function runPinned(q: string): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    query = q;
+    chipCursor = -1;
+    void runSearch(q);
+    inputEl?.focus();
+  }
+
+  /** Pin / unpin a query: flip its membership in the saved-search list and
+      persist. The pure togglePinnedSearch owns the newest-first + dedupe +
+      cap math; this just commits the result + writes it through. */
+  function togglePin(q: string): void {
+    pinned = togglePinnedSearch(pinned, q);
+    savePinnedSearches(pinned);
   }
 
   /** Run a bare query string — the empty-state recovery suggestions pivot
@@ -509,6 +537,7 @@
 
   onMount(() => {
     inputEl?.focus();
+    pinned = loadPinnedSearches();
     void refreshRecents();
     void refreshFolders();
     void refreshIndexStats();
@@ -695,6 +724,59 @@
           relevance. Adobe Acrobat charges $239/yr for this — Slab keeps it
           free and local.
         </p>
+        {#if pinned.length > 0}
+          <section class="saved" aria-label="Saved searches">
+            <header class="recents-head">
+              <span class="recents-label">Saved searches</span>
+              <span class="saved-count" aria-live="polite">{pinnedSummary}</span>
+            </header>
+            <ul class="recents-list" aria-label="Saved searches">
+              {#each pinned as pq (pq)}
+                <li role="presentation" class="recent-chip-wrap">
+                  <button
+                    type="button"
+                    class="recent-chip saved-chip"
+                    onclick={() => runPinned(pq)}
+                    title={`Run saved search "${pq}"`}
+                  >
+                    <span class="saved-pin-glyph" aria-hidden="true">
+                      <svg viewBox="0 0 16 16" width="10" height="10">
+                        <path
+                          d="M9.5 1.5l5 5-2 .5-3.5 3.5L8 14l-2-2-3 1 1-3-2-2 3.5-1L9 2z"
+                          stroke="currentColor"
+                          stroke-width="1.3"
+                          stroke-linejoin="round"
+                          fill="currentColor"
+                        />
+                      </svg>
+                    </span>
+                    <span class="recent-query">{pq}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="recent-chip-del"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      togglePin(pq);
+                    }}
+                    title="Unpin this search"
+                    aria-label={`Unpin "${pq}"`}
+                  >
+                    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                      <path
+                        d="M4 4l8 8M12 4l-8 8"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        fill="none"
+                      />
+                    </svg>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
         {#if recents.length > 0}
           <section class="recents" aria-label="Recent searches">
             <header class="recents-head">
@@ -749,6 +831,28 @@
                     <span class="recent-query">{r.query}</span>
                     <span class="recent-age">{formatRelativeAge(r.ts, nowSec)}</span>
                     <span class="recent-meta">{r.resultCount}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="recent-chip-pin"
+                    class:pinned={isPinnedSearch(pinned, r.query)}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      togglePin(r.query);
+                    }}
+                    title={isPinnedSearch(pinned, r.query) ? "Unpin this search" : "Pin this search so it survives history eviction"}
+                    aria-label={isPinnedSearch(pinned, r.query) ? `Unpin "${r.query}"` : `Pin "${r.query}"`}
+                    aria-pressed={isPinnedSearch(pinned, r.query)}
+                  >
+                    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                      <path
+                        d="M9.5 1.5l5 5-2 .5-3.5 3.5L8 14l-2-2-3 1 1-3-2-2 3.5-1L9 2z"
+                        stroke="currentColor"
+                        stroke-width="1.3"
+                        stroke-linejoin="round"
+                        fill={isPinnedSearch(pinned, r.query) ? "currentColor" : "none"}
+                      />
+                    </svg>
                   </button>
                   <button
                     type="button"
@@ -1691,6 +1795,11 @@
   .recent-chip-wrap .recent-chip {
     padding-right: 24px;
   }
+  /* Recent chips carry BOTH a pin and a delete button on the right, so widen
+     the query padding to clear two glyphs. Saved chips have only an unpin. */
+  .recents .recent-chip-wrap .recent-chip:not(.saved-chip) {
+    padding-right: 44px;
+  }
   .recent-chip-del {
     position: absolute;
     right: 4px;
@@ -1720,6 +1829,63 @@
     background: var(--danger-fade, rgba(229, 72, 77, 0.16));
     color: var(--danger, #e5484d);
     outline: none;
+  }
+  /* Pin toggle on a recent chip: sits just left of the delete x. Quiet until
+     hover/focus, but a PINNED chip keeps its accent glyph always visible so
+     the saved state reads at a glance even when not hovered. */
+  .recent-chip-pin {
+    position: absolute;
+    right: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--fg-muted, #888);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 80ms, background 80ms, color 80ms;
+  }
+  .recent-chip-wrap:hover .recent-chip-pin,
+  .recent-chip.cursor ~ .recent-chip-pin,
+  .recent-chip-pin.pinned {
+    opacity: 1;
+  }
+  .recent-chip-pin.pinned {
+    color: var(--accent, #7c8cff);
+  }
+  .recent-chip-pin:hover,
+  .recent-chip-pin:focus-visible {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent, #7c8cff) 16%, transparent);
+    color: var(--accent, #7c8cff);
+    outline: none;
+  }
+  /* Saved-search strip: an accent-tinted variant of the recent chip so the
+     promoted (sticky) searches read as distinct from the rolling log. */
+  .saved {
+    margin-bottom: 14px;
+  }
+  .saved-count {
+    font-size: 11px;
+    color: var(--fg-muted, #888);
+  }
+  .saved-chip {
+    border-color: color-mix(in srgb, var(--accent, #7c8cff) 32%, var(--border, rgba(0, 0, 0, 0.1)));
+    background: color-mix(in srgb, var(--accent, #7c8cff) 8%, transparent);
+  }
+  .saved-pin-glyph {
+    display: inline-flex;
+    align-items: center;
+    color: var(--accent, #7c8cff);
+    margin-right: 2px;
+    flex-shrink: 0;
   }
   .recents-hint {
     margin: 8px 0 0;

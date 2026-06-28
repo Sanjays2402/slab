@@ -36,6 +36,10 @@ import {
   recentChipSortLabel,
   RECENT_CHIP_SORT_MODES,
   suggestEmptyQueries,
+  normalizePinnedQuery,
+  isPinnedSearch,
+  togglePinnedSearch,
+  describePinnedSearches,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -810,6 +814,58 @@ const group = (
     suggestEmptyQueries([rec(1, "fail", 5), rec(2, "dead", 0)], "fail").length === 0,
     "suggest: nothing eligible -> []",
   );
+}
+
+// --- Pinned (saved) searches ------------------------------------------
+{
+  // normalizePinnedQuery: collapse internal whitespace + trim.
+  expect(normalizePinnedQuery("  tax   2024 ") === "tax 2024", "pin-norm: collapse + trim");
+  expect(normalizePinnedQuery("plain") === "plain", "pin-norm: already clean");
+  expect(normalizePinnedQuery("") === "", "pin-norm: empty -> ''");
+  expect(normalizePinnedQuery("   ") === "", "pin-norm: blank -> ''");
+  expect(normalizePinnedQuery(null) === "", "pin-norm: null -> ''");
+  expect(normalizePinnedQuery(undefined) === "", "pin-norm: undefined -> ''");
+
+  // isPinnedSearch: case/space-insensitive membership.
+  const list = ["invoices 2024", "tax final"];
+  expect(isPinnedSearch(list, "invoices 2024") === true, "pin-is: exact match");
+  expect(isPinnedSearch(list, "INVOICES 2024") === true, "pin-is: case-insensitive");
+  expect(isPinnedSearch(list, "  tax   final ") === true, "pin-is: spacing-insensitive");
+  expect(isPinnedSearch(list, "missing") === false, "pin-is: absent -> false");
+  expect(isPinnedSearch(list, "") === false, "pin-is: blank -> false");
+  expect(isPinnedSearch(null as unknown as string[], "x") === false, "pin-is: null list -> false");
+
+  // togglePinnedSearch: pin prepends (newest first), drops dup, caps.
+  {
+    const after = togglePinnedSearch(["a", "b"], "c");
+    expect(after.join() === "c,a,b", "pin-toggle: new pin prepends");
+    // Pinning an existing (case/space variant) unpins it.
+    expect(togglePinnedSearch(["a", "b"], "A").join() === "b", "pin-toggle: re-pin variant unpins");
+    expect(togglePinnedSearch(["a", "b"], "  b ").join() === "a", "pin-toggle: unpin by spacing variant");
+    // Normalizes on pin.
+    expect(togglePinnedSearch(["a"], "  hello   world ").join() === "hello world,a", "pin-toggle: normalizes new pin");
+    // Existing dups in the base list collapse (keeping first).
+    expect(togglePinnedSearch(["a", "A", "b"], "z").join() === "z,a,b", "pin-toggle: base dups collapse");
+    // Blank query -> list returned normalized, unchanged otherwise.
+    expect(togglePinnedSearch(["a", "b"], "   ").join() === "a,b", "pin-toggle: blank -> unchanged");
+    // Garbage list -> safe.
+    expect(togglePinnedSearch(null as unknown as string[], "x").join() === "x", "pin-toggle: null list -> [q]");
+  }
+
+  // togglePinnedSearch: cap drops the oldest when over the limit.
+  {
+    const full = ["p1", "p2", "p3"];
+    const capped = togglePinnedSearch(full, "new", 3);
+    expect(capped.join() === "new,p1,p2", "pin-toggle: cap drops oldest");
+    expect(togglePinnedSearch(full, "new", 0).length === 4, "pin-toggle: garbage cap -> default 32 keeps all");
+  }
+
+  // describePinnedSearches: pluralized count, "" when empty.
+  expect(describePinnedSearches(["a", "b", "c"]) === "3 saved searches", "pin-desc: plural");
+  expect(describePinnedSearches(["only"]) === "1 saved search", "pin-desc: singular");
+  expect(describePinnedSearches([]) === "", "pin-desc: empty -> ''");
+  expect(describePinnedSearches(["", "  "]) === "", "pin-desc: only-blanks -> ''");
+  expect(describePinnedSearches(null as unknown as string[]) === "", "pin-desc: null -> ''");
 }
 
 // eslint-disable-next-line no-console
