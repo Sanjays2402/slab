@@ -21,6 +21,7 @@ import {
   sortRecentView,
   flattenRecentCards,
   classifyRecentKey,
+  recentCardScrollOptions,
   moveRecentCursor,
   clampRecentCursor,
   countInProgress,
@@ -228,6 +229,25 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   expect(classifyRecentKey({ key: "Enter", altKey: true }) === null, "key: Alt+Enter falls through");
   expect(classifyRecentKey(null as never) === null, "key: null -> null");
   expect(classifyRecentKey({ key: 5 as never }) === null, "key: non-string -> null");
+
+  // Slice 8: horizontal axis. Left/Right walk the flat cursor too, so the
+  // pinned strip is keyboard-reachable along its natural axis.
+  const right = classifyRecentKey({ key: "ArrowRight" });
+  expect(right?.kind === "move" && right.intent === "next", "key: ArrowRight -> move next");
+  const left = classifyRecentKey({ key: "ArrowLeft" });
+  expect(left?.kind === "move" && left.intent === "prev", "key: ArrowLeft -> move prev");
+  // Still modifier-gated so app chords win.
+  expect(classifyRecentKey({ key: "ArrowRight", metaKey: true }) === null, "key: Cmd+Right falls through");
+  expect(classifyRecentKey({ key: "ArrowLeft", altKey: true }) === null, "key: Alt+Left falls through");
+
+  // Slice 8: per-section scroll alignment. Pinned scrolls horizontally
+  // (inline center) so the next card peeks in; grid scrolls vertically.
+  const pinScroll = recentCardScrollOptions("pinned");
+  expect(pinScroll.inline === "center" && pinScroll.block === "nearest", "scroll: pinned -> inline center");
+  const gridScroll = recentCardScrollOptions("others");
+  expect(gridScroll.inline === "nearest" && gridScroll.block === "nearest", "scroll: others -> nearest");
+  // Unknown section is safe.
+  expect(recentCardScrollOptions("mystery").inline === "nearest", "scroll: unknown -> nearest fallback");
 
   // moveRecentCursor: unselected (-1) seeds first/last by direction.
   expect(moveRecentCursor("next", -1, 3) === 0, "cursor: next from -1 -> 0");

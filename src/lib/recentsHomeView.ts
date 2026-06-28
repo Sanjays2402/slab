@@ -338,6 +338,14 @@ export interface RecentKeyEvent {
  * the board owns no modifier chords, so ⌘0 / ⌘O / ⌘K all fall through.
  * Arrow/Home/End/PageUp/PageDown -> move (palette nav core); Enter ->
  * open; P -> pin; Backspace/Delete -> remove; Escape -> clear.
+ *
+ * Left/Right map to prev/next just like Up/Down: the rendered board is a
+ * horizontal pinned STRIP followed by a grid, so a single flat cursor
+ * reads most naturally when EITHER axis advances it — a user walking the
+ * pinned strip presses Right, a user in the grid presses Down, and both
+ * land on the next card. (ArrowLeft/Right aren't part of the shared
+ * `classifyPaletteNav` vocabulary — the palette list is strictly
+ * vertical — so they're mapped here, local to the board.)
  */
 export function classifyRecentKey(ev: RecentKeyEvent): RecentCardAction {
   if (!ev || typeof ev.key !== "string") return null;
@@ -345,6 +353,10 @@ export function classifyRecentKey(ev: RecentKeyEvent): RecentCardAction {
   const nav = classifyPaletteNav(ev);
   if (nav) return { kind: "move", intent: nav };
   switch (ev.key) {
+    case "ArrowRight":
+      return { kind: "move", intent: "next" };
+    case "ArrowLeft":
+      return { kind: "move", intent: "prev" };
     case "Enter":
       return { kind: "open" };
     case "p":
@@ -358,6 +370,27 @@ export function classifyRecentKey(ev: RecentKeyEvent): RecentCardAction {
     default:
       return null;
   }
+}
+
+/** Where a focused card should sit after a scroll-into-view, per axis. */
+export interface RecentScrollOptions {
+  block: "nearest" | "center";
+  inline: "nearest" | "center";
+}
+
+/**
+ * The `scrollIntoView` alignment for a focused card, tuned to its
+ * section. A pinned card lives in a horizontally-OVERFLOWING strip, so
+ * the focus walk needs to scroll it along the INLINE (horizontal) axis —
+ * centered, so the next/previous card peeks into view as you arrow
+ * across a long strip. A grid card scrolls along the BLOCK (vertical)
+ * axis, nearest, like any list. Returning a structural object (not a
+ * DOM call) keeps this pure + unit-testable. An unknown section falls
+ * back to the safe nearest/nearest. Pure.
+ */
+export function recentCardScrollOptions(section: "pinned" | "others" | string): RecentScrollOptions {
+  if (section === "pinned") return { block: "nearest", inline: "center" };
+  return { block: "nearest", inline: "nearest" };
 }
 
 /**

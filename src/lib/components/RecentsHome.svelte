@@ -33,6 +33,7 @@
     RECENT_SORT_MODES,
     flattenRecentCards,
     classifyRecentKey,
+    recentCardScrollOptions,
     moveRecentCursor,
     clampRecentCursor,
     summarizeRecents,
@@ -163,7 +164,13 @@
   function scrollCursorIntoView() {
     queueMicrotask(() => {
       const el = cardEls[cursor];
-      el?.scrollIntoView({ block: "nearest" });
+      if (!el) return;
+      // A pinned card lives in a horizontally-overflowing strip, so scroll
+      // it along the inline (horizontal) axis; a grid card scrolls
+      // vertically. The view-core decides the alignment per section.
+      const row = cursor >= 0 ? flatRows[cursor] : null;
+      const opts = recentCardScrollOptions(row?.section ?? "others");
+      el.scrollIntoView({ block: opts.block, inline: opts.inline });
     });
   }
 
@@ -187,6 +194,13 @@
     // From inside the filter box, only let movement + open through — pin /
     // remove / clear would hijack the user's typing.
     if (inFilter && action.kind !== "move" && action.kind !== "open") return false;
+    // ...and inside the filter box, leave the HORIZONTAL arrows to the
+    // text caret (Left/Right move within the typed query); only the
+    // vertical arrows cross into the card grid. Outside the filter, both
+    // axes walk the cursor (so the pinned strip is reachable with Right).
+    if (inFilter && action.kind === "move" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      return false;
+    }
 
     const row = cursor >= 0 ? flatRows[cursor] : null;
     switch (action.kind) {
