@@ -853,6 +853,67 @@ export function describeRunRemaining(impact: OcrImpact): string {
   return label;
 }
 
+// --- Slice 5e: resume a canceled Requeue-all ("Retry remaining") -------
+//
+// The failure-inbox "Re-queue all failed" loop is the twin of Run-all but
+// shipped all-or-nothing: it fired a single blanket backend call with no
+// progress, no cancel, and no resume. This round gives it the same per-doc
+// loop the Run-all has — so a 500-failure requeue can be canceled and then
+// resumed from exactly where it stopped. The CARVE reuses the generic
+// `planRunRemaining` (it slices any OcrDocLike tail + measures it); only
+// the human label differs ("Retry remaining N" vs "Run remaining N"), so
+// there is no second carve engine to drift.
+
+/**
+ * Compose the "Retry remaining" resume affordance label from a canceled
+ * Requeue-all's un-run plan impact, e.g. "Retry remaining 34" or
+ * "Retry remaining 34 \u00b7 1,200 pages". Returns "" when nothing remains
+ * (so the component hides the button). The twin of `describeRunRemaining`
+ * with the requeue verb. Pure (locale grouping via toLocaleString).
+ */
+export function describeRequeueRemaining(impact: OcrImpact): string {
+  const docs = Math.max(0, Math.floor(impact?.docs ?? 0));
+  if (docs <= 0) return "";
+  const pages = Math.max(0, Math.floor(impact?.pages ?? 0));
+  let label = `Retry remaining ${docs.toLocaleString()}`;
+  if (pages > 0) label += ` \u00b7 ${pages.toLocaleString()} page${pages === 1 ? "" : "s"}`;
+  return label;
+}
+
+/**
+ * Build the completion summary for a Requeue-all batch — the requeue twin
+ * of `describeRunAllOutcome`. A requeue either re-queues a doc (success)
+ * or throws (fail); a run canceled before every doc finished is `partial`
+ * and names how far it got ("\u2026 canceled (13 of 47)"), while a finished
+ * run reads "Re-queued N of M". Counts are clamped so a stray tally can't
+ * exceed the total. Pure; tolerant of garbage numbers.
+ */
+export function describeRequeueAllOutcome(
+  ok: number,
+  fail: number,
+  total: number,
+  canceled: boolean,
+): RunAllOutcome {
+  const t = Math.max(0, Math.floor(Number.isFinite(total) ? total : 0));
+  const o = Math.max(0, Math.floor(Number.isFinite(ok) ? ok : 0));
+  const f = Math.max(0, Math.floor(Number.isFinite(fail) ? fail : 0));
+  const done = Math.min(t, o + f);
+  const canceledFlag = !!canceled;
+  const partial = canceledFlag && done < t;
+  let label: string;
+  if (f > 0) {
+    label = `OCR queue: re-queued ${o.toLocaleString()}, ${f.toLocaleString()} failed`;
+  } else {
+    label = `OCR queue: re-queued ${o.toLocaleString()}`;
+  }
+  if (partial) {
+    label += ` \u2014 canceled (${done.toLocaleString()} of ${t.toLocaleString()})`;
+  } else {
+    label += ` (of ${t.toLocaleString()})`;
+  }
+  return { ok: o, fail: f, done, total: t, canceled: canceledFlag, partial, label };
+}
+
 /** The live state the footer narrates. */
 export interface OcrViewState {
   /** Failure rows currently shown (after reason facet + search). */

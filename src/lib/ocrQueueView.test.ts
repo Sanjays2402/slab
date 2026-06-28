@@ -37,6 +37,8 @@ import {
   describeRunAllOutcome,
   planRunRemaining,
   describeRunRemaining,
+  describeRequeueRemaining,
+  describeRequeueAllOutcome,
   OCR_REASON_UNKNOWN,
   type OcrDocLike,
   type OcrSort,
@@ -723,6 +725,59 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(describeRunRemaining({ docs: 1, pages: 1 }) === "Run remaining 1 \u00b7 1 page", "remaining-label: singular page");
   expect(describeRunRemaining({ docs: 0, pages: 0 }) === "", "remaining-label: empty -> '' (hide button)");
   expect(describeRunRemaining({ docs: -2, pages: 5 } as never) === "", "remaining-label: negative docs -> ''");
+}
+
+// --- Slice 5e: describeRequeueRemaining / describeRequeueAllOutcome ----
+{
+  // The requeue-remaining label is the twin of run-remaining with the
+  // "Retry" verb; same pages/singular/hide-when-empty rules.
+  expect(
+    describeRequeueRemaining({ docs: 34, pages: 1200 }) === "Retry remaining 34 \u00b7 1,200 pages",
+    "requeue-remaining: docs + pages",
+  );
+  expect(describeRequeueRemaining({ docs: 5, pages: 0 }) === "Retry remaining 5", "requeue-remaining: zero pages drops out");
+  expect(describeRequeueRemaining({ docs: 1, pages: 1 }) === "Retry remaining 1 \u00b7 1 page", "requeue-remaining: singular page");
+  expect(describeRequeueRemaining({ docs: 0, pages: 0 }) === "", "requeue-remaining: empty -> '' (hide button)");
+  expect(describeRequeueRemaining({ docs: -2, pages: 5 } as never) === "", "requeue-remaining: negative docs -> ''");
+
+  // A clean requeue completion with no failures: "re-queued N (of M)".
+  const done = describeRequeueAllOutcome(13, 0, 13, false);
+  expect(done.done === 13 && done.total === 13, "requeue-outcome: done counts ok+fail");
+  expect(!done.canceled && !done.partial, "requeue-outcome: completed run not canceled/partial");
+  expect(
+    done.label === "OCR queue: re-queued 13 (of 13)",
+    "requeue-outcome: clean label, no failures",
+  );
+
+  // Some failures surface in the label.
+  const withFail = describeRequeueAllOutcome(11, 2, 13, false);
+  expect(
+    withFail.label === "OCR queue: re-queued 11, 2 failed (of 13)",
+    "requeue-outcome: failures named",
+  );
+
+  // Canceled midway -> partial, names how far it got.
+  const cut = describeRequeueAllOutcome(10, 0, 47, true);
+  expect(cut.done === 10 && cut.partial, "requeue-outcome: canceled before end is partial");
+  expect(
+    cut.label === "OCR queue: re-queued 10 \u2014 canceled (10 of 47)",
+    "requeue-outcome: partial label names progress",
+  );
+
+  // Cancel flag set but loop already finished -> reads as a normal finish.
+  const onLast = describeRequeueAllOutcome(47, 0, 47, true);
+  expect(onLast.done === 47 && !onLast.partial, "requeue-outcome: cancel on last doc not partial");
+  expect(onLast.label === "OCR queue: re-queued 47 (of 47)", "requeue-outcome: full-but-flagged reads as finish");
+
+  // Thousands grouping + clamp + garbage safety.
+  const big = describeRequeueAllOutcome(1000, 234, 5000, true);
+  expect(
+    big.label === "OCR queue: re-queued 1,000, 234 failed \u2014 canceled (1,234 of 5,000)",
+    "requeue-outcome: thousands-grouped",
+  );
+  expect(describeRequeueAllOutcome(99, 99, 10, false).done === 10, "requeue-outcome: done clamps to total");
+  const junk = describeRequeueAllOutcome(NaN, NaN, NaN, true);
+  expect(junk.total === 0 && junk.done === 0 && !junk.partial, "requeue-outcome: NaN -> zeros, no partial");
 }
 
 // eslint-disable-next-line no-console

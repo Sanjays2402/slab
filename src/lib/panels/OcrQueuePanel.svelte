@@ -32,7 +32,6 @@
     ocrQueueListFailed,
     ocrQueueRunOne,
     ocrQueueRequeue,
-    ocrQueueRequeueAllFailed,
     ocrQueueStats,
     type DocumentRecord,
     type OcrQueueResult,
@@ -65,6 +64,8 @@
     describeRunAllOutcome,
     planRunRemaining,
     describeRunRemaining,
+    describeRequeueRemaining,
+    describeRequeueAllOutcome,
     describeOcrView,
     type OcrSort,
     type OcrSortField,
@@ -103,6 +104,19 @@
       Powers the one-click "Run remaining (N)" resume affordance. */
   let resumeBatch = $state<DocumentRecord[]>([]);
   let requeueingAll = $state(false);
+  /** Slice 5e: set true when the user hits Cancel mid Requeue-all; the
+      per-doc loop checks it before each iteration and breaks. The twin of
+      cancelRequested for the failure-inbox bulk retry. */
+  let cancelRequeue = $state(false);
+  /** Slice 5e: live Requeue-all progress (docs done / total) so the bulk
+      retry shows a REAL determinate bar like Run-all. */
+  let requeueDone = $state(0);
+  let requeueTotal = $state(0);
+  /** Slice 5e: the un-run tail of the last canceled Requeue-all (the failed
+      docs the loop never reached). Non-empty only after a cancel stopped a
+      bulk retry early; cleared when a fresh requeue starts or it is resumed.
+      Powers the one-click "Retry remaining (N)" resume affordance. */
+  let requeueResumeBatch = $state<DocumentRecord[]>([]);
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -287,23 +301,67 @@
     }
   }
 
-  async function requeueAllFailed() {
-    if (requeueingAll || failed.length === 0) return;
+  async function requeueAllFailed(explicitBatch?: DocumentRecord[]) {
+    // Slice 5e: a resume passes the snapshotted un-run tail; a fresh
+    // Requeue-all reads the live failure inbox. Per-doc loop (not the
+    // blanket backend call) so the bar can tick a REAL determinate
+    // progress AND a Cancel can break between docs.
+    const isResume = Array.isArray(explicitBatch) && explicitBatch.length > 0;
+    if (requeueingAll) return;
+    const batch = isResume ? explicitBatch.slice() : failed.slice();
+    if (batch.length === 0) return;
+    // Starting any requeue clears a stale resume offer — this supersedes it.
+    requeueResumeBatch = [];
+    requeueDone = 0;
+    requeueTotal = batch.length;
+    cancelRequeue = false;
     requeueingAll = true;
     error = null;
+    let ok = 0;
+    let fail = 0;
     try {
-      const n = await ocrQueueRequeueAllFailed();
-      showToast(
-        n === 0
-          ? "Nothing failed to re-queue"
-          : `Re-queued ${n} failed ${n === 1 ? "doc" : "docs"}`,
-      );
+      for (const doc of batch) {
+        // Honour a Cancel requested since the last doc.
+        if (cancelRequeue) break;
+        try {
+          await ocrQueueRequeue(doc.id);
+          ok++;
+        } catch {
+          fail++;
+        }
+        requeueDone++;
+      }
+      // If a Cancel stopped the loop early, capture the un-run tail of THIS
+      // batch so the user can resume exactly where it left off. Reuses the
+      // generic planRunRemaining carve (it slices any OcrDocLike tail).
+      if (cancelRequeue) {
+        requeueResumeBatch = planRunRemaining(batch, requeueDone).remaining;
+      }
+      // describeRequeueAllOutcome names a canceled-before-end run honestly.
+      showToast(describeRequeueAllOutcome(ok, fail, batch.length, cancelRequeue).label);
       await refresh();
     } catch (e) {
       error = (e as Error).message;
     } finally {
       requeueingAll = false;
+      cancelRequeue = false;
     }
+  }
+
+  /** Slice 5e: resume a canceled Requeue-all — re-run exactly the un-run
+      failed tail captured when Cancel stopped the loop. No-op when nothing
+      is pending resume or a requeue is already in flight. */
+  function requeueRemaining() {
+    if (requeueingAll || requeueResumeBatch.length === 0) return;
+    void requeueAllFailed(requeueResumeBatch);
+  }
+
+  /** Slice 5e: request cancellation of the in-flight Requeue-all. The loop
+      checks the flag before its next doc and stops. Idempotent + a no-op
+      when nothing runs. */
+  function cancelRequeueAll() {
+    if (!requeueingAll) return;
+    cancelRequeue = true;
   }
 
   /** True while a per-reason "Retry all <reason>" loop is in flight. */
@@ -442,6 +500,12 @@
       the snapshotted workload) — drives the overlay bar + label. */
   const runAllProgress = $derived(
     describeRunAllProgress(runAllDone, runAllTotal, runAllPagesDone, runAllPagesTotal),
+  );
+  /** Slice 5e: determinate Requeue-all progress (docs done vs total) —
+      drives the failure-inbox bulk-retry bar + label. Pages aren't part of
+      a requeue (it just flips state) so the model tracks docs only. */
+  const requeueProgress = $derived(
+    describeRunAllProgress(requeueDone, requeueTotal, 0, 0),
   );
   /** Compose both facets (failure-reason + pending-state) into one footer
       narration slot — they live in different sections but the footer is a
@@ -782,15 +846,72 @@
                   {#if isFiltering}({sortedFailed.length} of {failed.length}){:else}({failed.length}){/if}
                 </span>
               </h3>
-              <button
-                class="oq-btn small danger"
-                onclick={requeueAllFailed}
-                disabled={requeueingAll}
-                title="Flip every failed doc back to scanned so the queue retries them all"
-              >
-                {requeueingAll ? "Re-queueing…" : "Retry all"}
-              </button>
+              {#if requeueingAll}
+                <!-- Slice 5e: in-flight Requeue-all shows a determinate bar
+                     + a Cancel, mirroring Run-all. -->
+                <div
+                  class="oq-requeue-progress"
+                  role="progressbar"
+                  aria-label="Re-queuing failed documents"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={requeueProgress.percent}
+                  aria-valuetext={requeueProgress.label}
+                >
+                  <div class="oq-requeue-track">
+                    <div class="oq-requeue-fill" style={`width:${requeueProgress.percent}%`}></div>
+                  </div>
+                  <span class="oq-requeue-label tabular">{requeueProgress.label}</span>
+                  <button
+                    type="button"
+                    class="oq-requeue-cancel"
+                    onclick={cancelRequeueAll}
+                    disabled={cancelRequeue}
+                    title="Stop after the current document is re-queued"
+                  >
+                    {cancelRequeue ? "Stopping…" : "Cancel"}
+                  </button>
+                </div>
+              {:else}
+                <button
+                  class="oq-btn small danger"
+                  onclick={() => requeueAllFailed()}
+                  title="Flip every failed doc back to scanned so the queue retries them all"
+                >
+                  Retry all
+                </button>
+              {/if}
             </header>
+
+            {#if !requeueingAll && requeueResumeBatch.length > 0}
+              <!-- Slice 5e: a canceled Requeue-all left an un-run tail. Offer
+                   a one-click resume of exactly those failed docs, plus a
+                   dismiss — the twin of the Run-all resume banner. -->
+              <div class="oq-resume" role="status">
+                <span class="oq-resume-text">
+                  Canceled with {requeueResumeBatch.length}
+                  {requeueResumeBatch.length === 1 ? "document" : "documents"} left to retry.
+                </span>
+                <div class="oq-resume-actions">
+                  <button
+                    type="button"
+                    class="oq-btn primary sm"
+                    onclick={requeueRemaining}
+                    title="Resume re-queuing the documents the canceled retry never reached"
+                  >
+                    {describeRequeueRemaining(summarizePending(requeueResumeBatch))}
+                  </button>
+                  <button
+                    type="button"
+                    class="oq-btn ghost sm"
+                    onclick={() => (requeueResumeBatch = [])}
+                    title="Dismiss this resume prompt"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            {/if}
 
             {#if reasonBuckets.length > 1}
               <div class="oq-reasons" role="group" aria-label="Filter by failure reason">
@@ -1185,6 +1306,61 @@
     border-color: color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
   }
   .oq-runall-cancel:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  /* Slice 5e: inline Requeue-all progress. A compact determinate bar that
+     replaces the failure-inbox "Retry all" button while the per-doc bulk
+     retry runs, with a Cancel escape hatch — the failure-section twin of
+     the Run-all overlay bar, sized to sit in the section header. */
+  .oq-requeue-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 200px;
+  }
+  .oq-requeue-track {
+    flex: 1;
+    height: 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--fg, #fff) 12%, transparent);
+    overflow: hidden;
+  }
+  .oq-requeue-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--danger, #e5484d) 70%, transparent),
+      var(--danger, #e5484d)
+    );
+    transition: width 200ms ease;
+  }
+  .oq-requeue-label {
+    font-size: 11px;
+    color: var(--fg-muted, #9aa0aa);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .oq-requeue-cancel {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 7px;
+    border: 1px solid color-mix(in srgb, var(--danger, #e5484d) 35%, transparent);
+    background: color-mix(in srgb, var(--danger, #e5484d) 10%, transparent);
+    color: color-mix(in srgb, var(--danger, #e5484d) 90%, var(--fg, #fff));
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .oq-requeue-cancel:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
+    border-color: color-mix(in srgb, var(--danger, #e5484d) 55%, transparent);
+  }
+  .oq-requeue-cancel:disabled {
     opacity: 0.55;
     cursor: default;
   }
