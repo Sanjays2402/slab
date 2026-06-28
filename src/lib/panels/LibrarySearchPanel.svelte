@@ -54,6 +54,9 @@
     summarizeSearchResults,
     pageSpread,
     buildSnippetSpans,
+    classifyRecentChipKey,
+    nextChipCursor,
+    clampChipCursor,
     SEARCH_SORT_MODES,
     type SearchSortMode,
     type SearchGroupLike,
@@ -68,6 +71,11 @@
   /** Newest-first rolling log of the user's prior searches. Refreshed
    *  after every successful run + on mount. */
   let recents = $state<RecentSearch[]>([]);
+  /** Slice 6: flat horizontal cursor over the recent-search chip strip
+   *  (-1 = none focused). Left/Right walk it, Enter runs the chip. Lives
+   *  only in the empty-query state where the strip is shown. */
+  let chipCursor = $state(-1);
+  let chipEls = $state<(HTMLButtonElement | null)[]>([]);
   /** Toggle for the "clear history" affordance shown when recents>0. */
   let clearing = $state(false);
   /** Every indexed folder; loaded once on mount. The picker is only shown
@@ -134,6 +142,7 @@
   function runRecent(r: RecentSearch): void {
     if (debounceTimer) clearTimeout(debounceTimer);
     query = r.query;
+    chipCursor = -1; // leaving the empty-query strip; park the chip cursor
     void runSearch(r.query);
     inputEl?.focus();
   }
@@ -307,6 +316,13 @@
     }
   });
 
+  // Slice 6: keep the chip cursor in range as the recents strip refreshes
+  // (a run bubbles a query to the head; clearing empties it). A stale
+  // cursor past the new end snaps back; an empty strip parks it at -1.
+  $effect(() => {
+    chipCursor = clampChipCursor(chipCursor, recents.length);
+  });
+
   function moveCursor(intent: Parameters<typeof nextSearchCursor>[0]): void {
     if (flatCount === 0) return;
     const start = cursor < 0 ? 0 : cursor;
@@ -327,6 +343,45 @@
 
   /** Window-level keydown: drive the results cursor when the list has hits. */
   function onResultsKey(e: KeyboardEvent): void {
+    // Slice 6: in the empty-query state the recent-search chip strip owns
+    // the keyboard — Left/Right walk it, Enter runs the focused chip,
+    // Escape parks it. This can't collide with the results cursor (there
+    // are no results to walk when the query is empty). Only active when
+    // the strip is actually shown.
+    if (!query.trim() && recents.length > 0) {
+      const chipAction = classifyRecentChipKey(e);
+      if (chipAction) {
+        if (chipAction.kind === "move") {
+          // Don't steal Home/End from the search input's caret unless a
+          // chip is already focused; Left/Right are free (the empty input
+          // has no horizontal caret meaning worth preserving here).
+          const fromInput = (e.target as HTMLElement | null) === inputEl;
+          if (fromInput && chipCursor < 0 && (e.key === "Home" || e.key === "End")) return;
+          e.preventDefault();
+          const start = chipCursor < 0 ? 0 : chipCursor;
+          chipCursor =
+            chipCursor < 0 && (e.key === "ArrowLeft" || e.key === "ArrowRight")
+              ? e.key === "ArrowRight"
+                ? 0
+                : recents.length - 1
+              : nextChipCursor(chipAction.intent, start, recents.length);
+          chipEls[chipCursor]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+          chipEls[chipCursor]?.focus();
+          return;
+        }
+        if (chipAction.kind === "run" && chipCursor >= 0 && chipCursor < recents.length) {
+          e.preventDefault();
+          runRecent(recents[chipCursor]);
+          return;
+        }
+        if (chipAction.kind === "clear" && chipCursor >= 0) {
+          e.preventDefault();
+          chipCursor = -1;
+          inputEl?.focus();
+          return;
+        }
+      }
+    }
     // Only when there are results to walk; let the inputs own typing.
     if (flatCount === 0) return;
     // Cmd/Ctrl+Up/Down leaps between document groups (Linear/Finder-style).
@@ -576,13 +631,18 @@
                 {clearing ? "Clearing…" : "Clear history"}
               </button>
             </header>
-            <ul class="recents-list">
-              {#each recents as r (r.id)}
-                <li>
+            <ul class="recents-list" role="listbox" aria-label="Recent searches — arrow keys to navigate, Enter to run">
+              {#each recents as r, ci (r.id)}
+                <li role="presentation">
                   <button
+                    bind:this={chipEls[ci]}
                     type="button"
                     class="recent-chip"
+                    class:cursor={ci === chipCursor}
+                    role="option"
+                    aria-selected={ci === chipCursor}
                     onclick={() => runRecent(r)}
+                    onmouseenter={() => (chipCursor = ci)}
                     title={r.resultCount > 0
                       ? `${r.resultCount} match${r.resultCount === 1 ? "" : "es"} last run`
                       : "No matches last run"}
@@ -593,6 +653,9 @@
                 </li>
               {/each}
             </ul>
+            <p class="recents-hint" aria-hidden="true">
+              <kbd>←</kbd><kbd>→</kbd> to browse · <kbd>Enter</kbd> to run
+            </p>
           </section>
         {/if}
         <ul class="tips">
@@ -1370,6 +1433,30 @@
     border-color: var(--accent, #4a72ff);
     background: var(--bg-hover, rgba(74, 114, 255, 0.06));
     color: var(--fg, #111);
+  }
+  /* Slice 6: keyboard cursor ring on the focused recent-search chip. */
+  .recent-chip.cursor {
+    border-color: var(--accent, #4a72ff);
+    background: var(--accent-fade, rgba(74, 114, 255, 0.15));
+    color: var(--fg, #111);
+    box-shadow: 0 0 0 2px var(--accent-fade, rgba(74, 114, 255, 0.25));
+  }
+  .recent-chip.cursor:focus {
+    outline: none;
+  }
+  .recents-hint {
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: var(--fg-muted, #888);
+  }
+  .recents-hint kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    padding: 1px 5px;
+    margin: 0 1px;
+    border-radius: 4px;
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
   }
   .recent-query {
     overflow: hidden;

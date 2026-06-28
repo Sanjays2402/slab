@@ -760,3 +760,80 @@ export function pageSpread(hits: readonly SearchHitLike[]): string {
   if (min === max) return `p. ${min}`;
   return `pp. ${min}\u2013${max}`;
 }
+
+// --- Slice 6: recent-search chips keyboard navigation ----------------
+//
+// The empty-query state shows a strip of "recent searches" chips, but it
+// was mouse-only — a keyboard user landing on the panel with no query
+// had to reach for the pointer to re-run a prior search. This adds a flat
+// HORIZONTAL cursor over the chip row: Left/Right walk it (wrapping),
+// Home/End leap to either end, Enter runs the focused chip, Escape parks
+// the cursor. The chips are a single row so the natural axis is
+// left/right (unlike the vertical results list, which owns up/down) —
+// keeping the two cursors on different axes means neither steals the
+// other's keys. The index math REUSES the tested palette nav core
+// (nextPaletteIndex) so wrap/clamp behaviour matches every other surface.
+
+/** What a keypress over the recent-search chip strip should do. */
+export type RecentChipAction =
+  | { kind: "move"; intent: PaletteNavIntent }
+  | { kind: "run" }
+  | { kind: "clear" }
+  | null;
+
+/**
+ * Classify a keypress over the recent-search chip strip into an action,
+ * or null if it isn't a chip key (so it falls through to the search
+ * input / browser). Any modifier (Cmd/Ctrl/Alt) disqualifies so app
+ * chords keep priority. ArrowLeft/Right map to prev/next (the strip is a
+ * horizontal row); Home/End leap; Enter runs the focused chip; Escape
+ * parks the cursor. ArrowUp/Down are deliberately NOT claimed — they
+ * belong to the results cursor — so the two never collide.
+ */
+export function classifyRecentChipKey(ev: SearchKeyEvent): RecentChipAction {
+  if (!ev) return null;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return null;
+  switch (ev.key) {
+    case "ArrowLeft":
+      return { kind: "move", intent: "prev" };
+    case "ArrowRight":
+      return { kind: "move", intent: "next" };
+    case "Home":
+      return { kind: "move", intent: "first" };
+    case "End":
+      return { kind: "move", intent: "last" };
+    case "Enter":
+      return { kind: "run" };
+    case "Escape":
+      return { kind: "clear" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve the next chip-cursor index for a move over `count` chips. Thin
+ * adapter over the tested `nextPaletteIndex` so the chip strip and the
+ * palette share one wrap/clamp contract (Left/Right wrap; Home/End jump).
+ * Empty strip -> 0.
+ */
+export function nextChipCursor(
+  intent: PaletteNavIntent,
+  current: number,
+  count: number,
+): number {
+  return nextPaletteIndex(intent, current, count);
+}
+
+/**
+ * Clamp a stored chip cursor into a freshly-(re)built strip. The recent
+ * list refreshes after every search (a run bubbles a query to the head,
+ * or clearing empties it), so a cursor parked at index 7 must snap back.
+ * Returns -1 (no chip focused) for an empty strip or a negative cursor,
+ * else clamps into [0, count-1].
+ */
+export function clampChipCursor(current: number, count: number): number {
+  if (!Number.isFinite(count) || count <= 0) return -1;
+  if (!Number.isFinite(current) || current < 0) return -1;
+  return Math.min(count - 1, Math.floor(current));
+}

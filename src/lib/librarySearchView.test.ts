@@ -28,6 +28,9 @@ import {
   describeSortMode,
   summarizeSearchResults,
   pageSpread,
+  classifyRecentChipKey,
+  nextChipCursor,
+  clampChipCursor,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -575,6 +578,58 @@ const group = (
   expect(nextGroupIndex(starts, 6, "group-prev", 9) === 5, "jump: below head -> section top first");
   expect(nextGroupIndex(starts, 5, "group-prev", 9) === 3, "jump: at head -> previous head");
   expect(nextGroupIndex(starts, 0, "group-prev", 9) === 0, "jump: top stays at 0");
+}
+
+// --- Slice 6: recent-search chips keyboard navigation ----------------
+{
+  // Horizontal axis: Left/Right map to prev/next, Home/End leap.
+  expect(
+    JSON.stringify(classifyRecentChipKey({ key: "ArrowRight" })) ===
+      JSON.stringify({ kind: "move", intent: "next" }),
+    "chip: Right -> next",
+  );
+  expect(
+    JSON.stringify(classifyRecentChipKey({ key: "ArrowLeft" })) ===
+      JSON.stringify({ kind: "move", intent: "prev" }),
+    "chip: Left -> prev",
+  );
+  expect(
+    JSON.stringify(classifyRecentChipKey({ key: "Home" })) ===
+      JSON.stringify({ kind: "move", intent: "first" }),
+    "chip: Home -> first",
+  );
+  expect(
+    JSON.stringify(classifyRecentChipKey({ key: "End" })) ===
+      JSON.stringify({ kind: "move", intent: "last" }),
+    "chip: End -> last",
+  );
+  // Enter runs, Escape parks.
+  expect(classifyRecentChipKey({ key: "Enter" })?.kind === "run", "chip: Enter -> run");
+  expect(classifyRecentChipKey({ key: "Escape" })?.kind === "clear", "chip: Escape -> clear");
+  // Up/Down are NOT claimed — they belong to the results cursor.
+  expect(classifyRecentChipKey({ key: "ArrowUp" }) === null, "chip: Up not claimed (results owns it)");
+  expect(classifyRecentChipKey({ key: "ArrowDown" }) === null, "chip: Down not claimed");
+  // Modifiers disqualify so app chords win.
+  expect(classifyRecentChipKey({ key: "ArrowRight", metaKey: true }) === null, "chip: Cmd+Right falls through");
+  expect(classifyRecentChipKey({ key: "ArrowLeft", ctrlKey: true }) === null, "chip: Ctrl+Left falls through");
+  expect(classifyRecentChipKey({ key: "Enter", altKey: true }) === null, "chip: Alt+Enter falls through");
+  expect(classifyRecentChipKey({ key: "x" }) === null, "chip: a letter is not a chip key");
+  // @ts-expect-error — garbage event
+  expect(classifyRecentChipKey(null) === null, "chip: null event -> null");
+
+  // Cursor wraps over a strip of 5 chips (palette nav contract).
+  expect(nextChipCursor("next", 4, 5) === 0, "chip: next past end wraps to 0");
+  expect(nextChipCursor("prev", 0, 5) === 4, "chip: prev before start wraps to last");
+  expect(nextChipCursor("first", 3, 5) === 0, "chip: first -> 0");
+  expect(nextChipCursor("last", 1, 5) === 4, "chip: last -> end");
+
+  // Clamp snaps a stale cursor into a refreshed strip; -1 = nothing focused.
+  expect(clampChipCursor(7, 5) === 4, "chip: clamp 7 into 5 -> 4");
+  expect(clampChipCursor(2, 5) === 2, "chip: clamp in-range unchanged");
+  expect(clampChipCursor(0, 0) === -1, "chip: empty strip -> -1");
+  expect(clampChipCursor(-1, 5) === -1, "chip: negative cursor -> -1 (unfocused)");
+  // @ts-expect-error — garbage count
+  expect(clampChipCursor(3, NaN) === -1, "chip: NaN count -> -1");
 }
 
 // eslint-disable-next-line no-console
