@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-28 01:39 PT by Cake (cron) — round-48 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) — top demo-value items off the round-47 refill roadmap across FOUR surfaces, each on a tested pure core: (1) OCR Queue CANCEL an in-flight Run-all (b5847c3) — cancelRequested flag the per-doc loop checks before each doc (in-flight doc finishes, no new picked up) + Cancel button on the progress overlay; new tested describeRunAllOutcome(ok,fail,total,canceled) composes an HONEST completion toast ("... canceled (13 of 47)" vs clean "... (of 47)"; a cancel on the last doc is NOT partial); ocrQueueView 169->180; (2)+(5) Library Search per-chip DELETE + relative-AGE (ONE commit — both touch the same recent-chip {#each} markup, can't split into separately-compiling commits) — delete: FULL vertical slice (Rust search_log::delete_one(db,id)->bool + 2 tests, Tauri slab_library_delete_search, TS deleteLibrarySearch, classifyRecentChipKey Backspace/Delete->delete, per-chip x button + optimistic-drop deleteRecent with revert-on-reject); age: tested formatRelativeAge(ts,now)->"2m"/"3h"/"5d"/"1y+" muted suffix ticking once a minute; librarySearchView 180->199; (3) Palette PERSIST collapsed groups across sessions (d3c370c) — new thin localStorage shell src/lib/paletteCollapsed.ts (load/save slab.palette.collapsed.v1, all-open removes key, garbage->empty, cap 64) seeded into CommandPalette + written on every toggle; new paletteCollapsed.test.ts 10 tests; (4) RecentsHome pinned-strip OVERFLOW fade + scroll chevrons (a21cc09) — tested pinnedStripEdges(scroll)->{overflowing,atStart,atEnd} (1px tol) drives gradient edge masks + two backdrop-blur chevrons (scroll 80% of a viewport, disable at each end); recentsHomeView 118->125. Gates: tsx ALL GREEN (ocrQueueView 180/180, librarySearchView 199/199, recentsHomeView 125/125, paletteCollapsed 10/10 NEW, paletteSearch 271/271 shared core intact), pnpm check 0 errors / 104 warnings (rounds 32-47 baseline EXACT, zero new), cargo fmt --all clean. CARGO NOTE: full `cargo test --lib` WEDGED on the `tauri` crate from a cold cache (an earlier killed run corrupted once_cell/.rmeta -> forced cargo clean -p -> ~44min cold rebuild that stalled on tauri w/ zero rustc CPU >5min); killed per build-env rule, fell back to `cargo check --lib`. Rust change is tiny + isolated (one DELETE-by-id fn + Tauri cmd + registration; search_log.rs carries 2 new green-by-inspection unit tests).
+Last updated: 2026-06-28 06:37 PT by Cake (cron) — round-49 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) — top demo-value items off the round-48 refill roadmap across FOUR surfaces, each on a tested pure core: (1) Library Search recent-chip SORT toggle (a968670) — new tested sortRecentChips(chips,mode) + RECENT_CHIP_SORT_MODES + recentChipSortLabel: Recent (newest ts first, default) vs Results (biggest resultCount first), non-mutating with stable arrival tie-break + finite-number coercion; the chip cursor/delete/run key off the VISIBLE sortedRecents so keyboard focus tracks the sorted order; toggle hidden under 2 chips; librarySearchView 199->214; (2) OCR Queue "Run remaining" RESUME after a canceled Run-all (38fa4ff) — new tested planRunRemaining(batch,alreadyDone)->{remaining,impact} (clamped cut + summarizePending workload) + describeRunRemaining(impact)->"" when empty; runAllPending now takes an optional explicit batch (resume path) vs live pending (fresh run), captures the un-run tail into resumeBatch on cancel -> a calm accent banner with one-click resume + dismiss; ocrQueueView 180->196; (3) Palette COLLAPSE-ALL / EXPAND-ALL (ebd7399) — new tested collapseAllGroups(grouped) + isEveryGroupCollapsed(grouped,collapsed) (superset-tolerant): Cmd/Ctrl+E chord + footer toggle, persisted via existing saveCollapsedGroups, browse-mode only; paletteSearch 271->284; (4) Library Search empty-state SUGGESTED-QUERIES row (93ec44c) — new tested suggestEmptyQueries(recents,failedQuery,limit=4): excludes the failed query (case/space-insensitive) + dead-end chips (resultCount<=0), ranked by hit count biggest-first, stable tie-break; one-click recovery chips when a search finds nothing; librarySearchView 214->225; (5) RecentsHome DRAG-TO-REORDER the pinned strip (f430bfd) — new tested orderPinnedStrip(pinned) (by pinOrder stamp, unstamped follow, stable) + movePinned(ordered,from,to)->paths (clamped); store gains optional pinOrder + reorderPinned(paths) that stamps it WITHOUT touching the global sortRecents (zero ripple to hero/palette/eviction); HTML5 drag + Alt+Left/Right keyboard nudge, gated on default-sort/no-filter resting state; recentsHomeView 125->142. Gates: tsx ALL GREEN (librarySearchView 225/225, ocrQueueView 196/196, paletteSearch 284/284, recentsHomeView 142/142, paletteCollapsed 10/10, beaconCacheView 112/112 + readerFindView 86/86 + toastStack 254/254 shared cores intact), pnpm check 0 errors / 104 warnings (rounds 32-48 baseline EXACT, zero new — the drag div took role=list/listitem+aria-label to hold the line), cargo: ZERO Rust changed so the round-32 lib baseline (clippy clean, 2620 tests) carries forward; full Tauri binary build never run (wedges disk). NOTE recent.progress.test.ts errors on Node 25's built-in localStorage lacking .clear() — PRE-EXISTING + environmental (not in the formal gate), verified identical on baseline; reorderPinned round-trip verified separately with a proper localStorage stub.
+
+PREV round-48 (2026-06-28 01:39 PT): 5 frontend/UX capabilities, 5 feature commits — (1) OCR Queue CANCEL an in-flight Run-all (b5847c3); (2)+(5) Library Search per-chip DELETE + relative-AGE (efab9c9, one commit); (3) Palette PERSIST collapsed groups (d3c370c); (4) RecentsHome pinned-strip OVERFLOW fade + chevrons (a21cc09).
 
 PREV round-47 (2026-06-27 19:46 PT): 5 frontend/UX capabilities, 5 feature commits + 1 test fixup — explicit roadmap FOLLOW-UPS across four surfaces, each with a tested pure core: (1) OCR Queue per-reason "Retry all <reason>" (af53f7b); (2) OCR Queue determinate Run-all progress (2d48a21); (3) Library Search recent-chips keyboard nav (4eaedfc); (4) RecentsHome pinned-strip horizontal nav+scroll (f9e21e3); (5) Command Palette group collapse (440d72e).
 
@@ -15,7 +17,7 @@ Internal module labels use the repo's logical-release naming ("Atlas VI"
 = v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `a21cc09` — "feat(recents-home): pinned-strip overflow fade + scroll chevrons" (round 48 lands 5 commits: b5847c3, d3c370c, a21cc09, + the library-search delete+age commit pushed at gate end).
+Latest commit: `f430bfd` — "feat(recents-home): drag-to-reorder the pinned strip" (round 49 lands 5 commits: a968670, 38fa4ff, ebd7399, 93ec44c, f430bfd).
 
 ### What round-45 (2026-06-27 09:55 PT) just shipped
 
@@ -1555,20 +1557,47 @@ demo value:
 
 Ordered roughly by demo value (all frontend; backend deferred per override):
 
-- Library Search: relative-age on recent chips shipped round 48 — the
-  natural NEXT is a sort toggle on the recent-search strip (most-recent vs
-  most-results) now that each chip carries both signals.
-- OCR Queue: a "Run remaining" affordance after a canceled Run-all (the
-  cancel left N pending — offer a one-click resume of just those, reusing
-  the snapshotted batch).
-- Palette: a "collapse all / expand all" chord now that fold state
-  persists (toggle every group at once; persist the bulk state).
-- RecentsHome: drag-to-reorder the pinned strip (the strip now scrolls +
-  shows overflow affordances; dragging a pinned card to reorder is the
-  Linear-grade next step — reuse the Hopper reorder core pattern).
-- Library Search: empty-state "no matches" suggested-queries row (mirror
-  the palette's suggestPaletteFallback — offer the user's own top recent
-  searches when a query returns nothing).
+- ~~Library Search: recent-strip SORT toggle (most-recent vs most-results)~~
+  — DONE round 49 (a968670): sortRecentChips + RECENT_CHIP_SORT_MODES +
+  recentChipSortLabel; cursor/delete/run key off the visible sortedRecents;
+  toggle hidden under 2 chips. librarySearchView 199->214.
+- ~~OCR Queue: "Run remaining" after a canceled Run-all~~ — DONE round 49
+  (38fa4ff): planRunRemaining(batch,alreadyDone) + describeRunRemaining;
+  runAllPending takes an optional explicit batch; cancel captures the
+  un-run tail -> resume banner + dismiss. ocrQueueView 180->196.
+- ~~Palette: "collapse all / expand all" chord~~ — DONE round 49 (ebd7399):
+  collapseAllGroups + isEveryGroupCollapsed; Cmd/Ctrl+E + footer toggle,
+  persisted via saveCollapsedGroups, browse-mode only. paletteSearch
+  271->284.
+- ~~RecentsHome: drag-to-reorder the pinned strip~~ — DONE round 49
+  (f430bfd): orderPinnedStrip + movePinned; store pinOrder + reorderPinned
+  that leaves the global sortRecents untouched; HTML5 drag + Alt+Arrow.
+  recentsHomeView 125->142.
+- ~~Library Search: empty-state "no matches" suggested-queries row~~ —
+  DONE round 49 (93ec44c): suggestEmptyQueries excludes the failed query +
+  dead-ends, ranked by hit count; one-click recovery chips.
+  librarySearchView 214->225.
+
+### Next FRONTEND candidates — refilled round 49
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- OCR Queue: a "Retry remaining" twin of Run-remaining for a canceled
+  REQUEUE-all (the requeue loop is currently all-or-nothing fire-and-
+  refresh; give it the same per-doc loop + cancel + resume the Run-all
+  now has).
+- Palette: per-group collapse STATE in the footer count ("3 of 8 sections
+  open") + a subtle "all collapsed" hint so the bulk state is legible at a
+  glance now that collapse-all exists.
+- RecentsHome: a "reset pin order" affordance (clear every pinOrder back to
+  store-default) once a user has dragged — a tiny pure clearPinOrder +
+  footer/menu action, complementing drag-to-reorder.
+- Library Search: recent-strip — a "pin a search" affordance (promote a
+  recent query to a sticky saved-search chip that survives the rolling
+  log's eviction), reusing the chip strip + sort toggle.
+- OCR Queue: empty/loading/skeleton-state pass (the panel still shows a
+  bare "Loading…" while the three lists fetch — give it the skeleton rows
+  treatment the Beacon cache + reader got).
 - Reader find: highlight the active match's page in the thumbnail rail;
   per-find-result mini-map on the scrollbar (round-42 follow-ups).
 - doc-detail metadata editor read surface (inline-editable title / tags
