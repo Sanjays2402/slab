@@ -31,6 +31,7 @@
     collapseAllGroups,
     isEveryGroupCollapsed,
     describeCollapseState,
+    soloExpandGroup,
     type PaletteRange,
     type PaletteFallback,
     type RecentProgress,
@@ -867,6 +868,17 @@
     selected = 0;
   }
 
+  // Round 51 Slice 2: Alt-click a header to SOLO-expand it — fold every
+  // other section so one group fills the surface (the inverse of
+  // collapse-all). Re-Alt-clicking an already-solo group pops everything
+  // back open. soloExpandGroup owns the symmetric toggle; the component
+  // just persists + re-seeds the cursor, exactly like toggleGroup.
+  function soloGroup(group: string): void {
+    collapsedGroups = soloExpandGroup(grouped, collapsedGroups, group);
+    saveCollapsedGroups(collapsedGroups);
+    selected = 0;
+  }
+
   // Lumen III Slice 2: collapse-all / expand-all. With per-group fold +
   // cross-session persistence in place, a power user wants to clear the
   // whole browse surface to its headers in one keystroke (Cmd/Ctrl+E) or
@@ -1099,11 +1111,11 @@
             class:collapsed={section.collapsed}
             aria-expanded={!section.collapsed}
             disabled={!collapseActive}
-            onclick={() => toggleGroup(section.group)}
+            onclick={(e: MouseEvent) => (e.altKey ? soloGroup(section.group) : toggleGroup(section.group))}
             title={collapseActive
               ? section.collapsed
-                ? `Expand ${section.group}`
-                : `Collapse ${section.group}`
+                ? `Expand ${section.group} (Alt-click: show only this)`
+                : `Collapse ${section.group} (Alt-click: show only this)`
               : section.group}
           >
             {#if collapseActive}

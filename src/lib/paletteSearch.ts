@@ -1085,3 +1085,54 @@ export function describeCollapseState<T>(
   return { total, open, collapsed: foldedCount, allCollapsed, noneCollapsed, label };
 }
 
+// --- Solo-expand a group (round 51) ----------------------------------
+//
+// Collapse-all folds every section; the inverse a power user reaches for
+// is "show me ONLY this one" — fold every OTHER section so a single group
+// fills the surface. Alt-clicking a header drives this (a plain click
+// still toggles just that one). The toggle is symmetric: if a group is
+// ALREADY solo (it's open and every other group is folded), Alt-clicking
+// it again expands everything back open — so the same gesture drills in
+// and pops back out. Mirrors the group-iteration discipline of
+// `collapseAllGroups` / `isEveryGroupCollapsed`; never mutates its input.
+
+/**
+ * Compute the collapsed-set that leaves `group` the only OPEN section —
+ * folding every other named group. If `group` is already solo (open while
+ * all its siblings are folded), returns an EMPTY set instead, so the same
+ * Alt-click that drilled into a group pops the whole surface back open.
+ * A group not present in `grouped`, or a null/garbage grouped list, yields
+ * the empty set (nothing to solo -> all open). Pure; never mutates.
+ */
+export function soloExpandGroup<T>(
+  grouped: readonly (readonly [string, T[]])[],
+  collapsed: ReadonlySet<string>,
+  group: string,
+): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(grouped) || typeof group !== "string" || group.length === 0) {
+    return out;
+  }
+  const folded = collapsed instanceof Set ? collapsed : new Set<string>();
+  // Gather the real named groups + whether the target is present.
+  const names: string[] = [];
+  let hasTarget = false;
+  for (const entry of grouped) {
+    if (!Array.isArray(entry)) continue;
+    const name = entry[0];
+    if (typeof name !== "string" || name.length === 0) continue;
+    names.push(name);
+    if (name === group) hasTarget = true;
+  }
+  if (!hasTarget) return out; // target absent -> nothing to solo, all open
+  // Already solo? (target open, every sibling folded.) Toggle back to all-open.
+  const targetOpen = !folded.has(group);
+  const siblingsAllFolded = names.every((n) => n === group || folded.has(n));
+  if (targetOpen && siblingsAllFolded && names.length > 1) return out;
+  // Otherwise fold every sibling, leaving only the target open.
+  for (const n of names) {
+    if (n !== group) out.add(n);
+  }
+  return out;
+}
+

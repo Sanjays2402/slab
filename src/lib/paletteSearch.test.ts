@@ -34,6 +34,7 @@ import {
   collapseAllGroups,
   isEveryGroupCollapsed,
   describeCollapseState,
+  soloExpandGroup,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -932,6 +933,55 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(describeCollapseState(null, new Set()).label === "", "collapse-state: null grouped -> empty label");
   // @ts-expect-error — garbage collapsed arg
   expect(describeCollapseState(grouped, null).label === "", "collapse-state: null set -> none folded -> empty label");
+}
+
+// --- soloExpandGroup (round 51 slice 2) ------------------------------
+{
+  const grouped: [string, { id: string }[]][] = [
+    ["Appearance", [{ id: "a" }]],
+    ["Library", [{ id: "b" }]],
+    ["Reader", [{ id: "c" }]],
+  ];
+
+  // From all-open, solo "Library" -> fold every OTHER group.
+  const solo = soloExpandGroup(grouped, new Set<string>(), "Library");
+  expect(
+    solo.has("Appearance") && solo.has("Reader") && !solo.has("Library"),
+    "solo: folds every sibling, keeps target open",
+  );
+  expect(solo.size === 2, "solo: exactly the two siblings folded");
+
+  // Already solo (target open, siblings folded) -> Alt-click again expands all.
+  const back = soloExpandGroup(grouped, new Set(["Appearance", "Reader"]), "Library");
+  expect(back.size === 0, "solo: re-soloing an already-solo group expands everything");
+
+  // Solo a DIFFERENT group while another is solo -> re-folds around the new target.
+  const reSolo = soloExpandGroup(grouped, new Set(["Appearance", "Reader"]), "Appearance");
+  expect(
+    reSolo.has("Library") && reSolo.has("Reader") && !reSolo.has("Appearance"),
+    "solo: switching solo target re-folds around the new group",
+  );
+
+  // Target currently folded -> solo opens it, folds the rest.
+  const fromFolded = soloExpandGroup(grouped, new Set(["Library"]), "Library");
+  expect(
+    fromFolded.has("Appearance") && fromFolded.has("Reader") && !fromFolded.has("Library"),
+    "solo: a folded target opens and its siblings fold",
+  );
+
+  // A group not present -> empty set (nothing to solo, all open).
+  expect(soloExpandGroup(grouped, new Set<string>(), "Nope").size === 0, "solo: absent group -> all open");
+
+  // Single-group list: nothing to solo against -> folds nothing (all open).
+  const one: [string, { id: string }[]][] = [["Only", [{ id: "x" }]]];
+  expect(soloExpandGroup(one, new Set<string>(), "Only").size === 0, "solo: single group -> nothing to fold");
+
+  // Garbage safety.
+  // @ts-expect-error — null grouped
+  expect(soloExpandGroup(null, new Set(), "x").size === 0, "solo: null grouped -> empty");
+  expect(soloExpandGroup(grouped, new Set<string>(), "").size === 0, "solo: blank group name -> empty");
+  // @ts-expect-error — garbage collapsed arg
+  expect(soloExpandGroup(grouped, null, "Library").has("Appearance"), "solo: null set treated as all-open");
 }
 
 // eslint-disable-next-line no-console
