@@ -974,3 +974,38 @@ export function describeOcrView(state: OcrViewState): string {
   if (inFlight > 0) base += ` \u00b7 ${inFlight.toLocaleString()} in flight`;
   return base;
 }
+
+// --- Slice 1 (round 51): name the in-flight doc under the bulk bar ----
+//
+// Both the Run-all and the Requeue-all loops tick a determinate bar
+// ("12 / 47 docs"), but the bar is ANONYMOUS — it never says WHICH doc
+// is being worked right now. On a long batch that lands on one slow,
+// scanned PDF the bar can sit visibly stalled for many seconds with no
+// hint of what it's chewing on, reading as a hang. The per-doc loops
+// already hold the current doc each iteration; this pure helper turns
+// that doc's path + the action into a live "Running <name>…" /
+// "Re-queuing <name>…" line the component renders under the bar. Reuses
+// `ocrBasename` so the name shown matches every other row in the panel.
+
+/** Which bulk action the in-flight line narrates (verb differs only). */
+export type OcrBulkAction = "run" | "requeue";
+
+/**
+ * Compose the live "current document" line shown under a determinate
+ * Run-all / Requeue-all bar, e.g. "Running invoice.pdf\u2026" or
+ * "Re-queuing scan 2.pdf\u2026". `action` picks the verb ("run" -> OCR is
+ * processing the doc; "requeue" -> the failure inbox is flipping it back
+ * to scanned). The display name is the path's basename (via ocrBasename)
+ * so it matches the row labels exactly. Returns "" when no doc is in
+ * flight (a null/blank path, or a path that is only separators) so the
+ * component hides the line cleanly between docs. Pure + DOM-free.
+ */
+export function describeInFlightDoc(
+  path: string | null | undefined,
+  action: OcrBulkAction,
+): string {
+  const name = typeof path === "string" ? ocrBasename(path) : "";
+  if (!name) return "";
+  const verb = action === "requeue" ? "Re-queuing" : "Running";
+  return `${verb} ${name}\u2026`;
+}

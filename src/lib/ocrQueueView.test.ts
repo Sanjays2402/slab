@@ -39,6 +39,7 @@ import {
   describeRunRemaining,
   describeRequeueRemaining,
   describeRequeueAllOutcome,
+  describeInFlightDoc,
   OCR_REASON_UNKNOWN,
   type OcrDocLike,
   type OcrSort,
@@ -778,6 +779,37 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(describeRequeueAllOutcome(99, 99, 10, false).done === 10, "requeue-outcome: done clamps to total");
   const junk = describeRequeueAllOutcome(NaN, NaN, NaN, true);
   expect(junk.total === 0 && junk.done === 0 && !junk.partial, "requeue-outcome: NaN -> zeros, no partial");
+}
+
+// --- describeInFlightDoc (round 51 slice 1) --------------------------
+{
+  expect(
+    describeInFlightDoc("/a/b/invoice.pdf", "run") === "Running invoice.pdf\u2026",
+    "in-flight: run names the basename with an ellipsis",
+  );
+  expect(
+    describeInFlightDoc("/a/b/scan 2.pdf", "requeue") === "Re-queuing scan 2.pdf\u2026",
+    "in-flight: requeue uses the re-queuing verb",
+  );
+  expect(
+    describeInFlightDoc("C:\\docs\\report.pdf", "run") === "Running report.pdf\u2026",
+    "in-flight: windows path -> basename",
+  );
+  expect(
+    describeInFlightDoc("loose.pdf", "requeue") === "Re-queuing loose.pdf\u2026",
+    "in-flight: bare filename",
+  );
+  expect(describeInFlightDoc("", "run") === "", "in-flight: empty path -> '' (hide line)");
+  expect(describeInFlightDoc(null, "run") === "", "in-flight: null path -> ''");
+  expect(describeInFlightDoc(undefined, "requeue") === "", "in-flight: undefined path -> ''");
+  expect(
+    describeInFlightDoc("/trailing/", "run") === "",
+    "in-flight: path that is only separators -> '' (no name)",
+  );
+  expect(
+    describeInFlightDoc(42 as never, "run") === "",
+    "in-flight: non-string path -> '' (garbage-safe)",
+  );
 }
 
 // eslint-disable-next-line no-console

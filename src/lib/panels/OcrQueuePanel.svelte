@@ -66,6 +66,7 @@
     describeRunRemaining,
     describeRequeueRemaining,
     describeRequeueAllOutcome,
+    describeInFlightDoc,
     describeOcrView,
     type OcrSort,
     type OcrSortField,
@@ -117,6 +118,11 @@
       bulk retry early; cleared when a fresh requeue starts or it is resumed.
       Powers the one-click "Retry remaining (N)" resume affordance. */
   let requeueResumeBatch = $state<DocumentRecord[]>([]);
+  /** Slice 1 (round 51): the path of the doc CURRENTLY being processed by
+      a Run-all / Requeue-all loop, or null between docs. Drives the live
+      "Running <name>…" / "Re-queuing <name>…" line under the determinate
+      bar so a long batch never reads as an anonymous hang. */
+  let currentDocPath = $state<string | null>(null);
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -242,6 +248,9 @@
         // currently in flight always finishes (OCR has no mid-page abort);
         // we just stop picking up new ones.
         if (cancelRequested) break;
+        // Slice 1 (round 51): name the doc now in flight so the bar isn't
+        // an anonymous "12 / 47" while one slow PDF holds it for seconds.
+        currentDocPath = doc.path;
         try {
           const r: OcrQueueResult = await ocrQueueRunOne(doc.id, null);
           if (r.state_after === "ocr_failed" || r.error) fail++;
@@ -267,6 +276,7 @@
     } finally {
       runningAll = false;
       cancelRequested = false;
+      currentDocPath = null;
     }
   }
 
@@ -323,6 +333,8 @@
       for (const doc of batch) {
         // Honour a Cancel requested since the last doc.
         if (cancelRequeue) break;
+        // Slice 1 (round 51): name the failed doc now being re-queued.
+        currentDocPath = doc.path;
         try {
           await ocrQueueRequeue(doc.id);
           ok++;
@@ -345,6 +357,7 @@
     } finally {
       requeueingAll = false;
       cancelRequeue = false;
+      currentDocPath = null;
     }
   }
 
@@ -507,6 +520,11 @@
   const requeueProgress = $derived(
     describeRunAllProgress(requeueDone, requeueTotal, 0, 0),
   );
+  /** Slice 1 (round 51): the live "Running <name>…" / "Re-queuing <name>…"
+      line for whichever bulk loop is in flight. Empty string between docs
+      so the line hides cleanly. */
+  const runAllInFlight = $derived(describeInFlightDoc(currentDocPath, "run"));
+  const requeueInFlight = $derived(describeInFlightDoc(currentDocPath, "requeue"));
   /** Slice 5f: first-load skeleton gate. True only on the very first fetch
       — before any stats/lists have ever arrived — so the panel shows
       shimmer placeholders instead of a bare "Loading…". A reopen keeps the
@@ -717,6 +735,11 @@
             {cancelRequested ? "Stopping…" : "Cancel"}
           </button>
         </div>
+        {#if runAllInFlight}
+          <!-- Slice 1 (round 51): name the doc currently in flight so the
+               determinate bar above never reads as an anonymous hang. -->
+          <p class="oq-inflight" aria-live="polite">{runAllInFlight}</p>
+        {/if}
       {/if}
 
       {#if !runningAll && resumeBatch.length > 0}
@@ -905,6 +928,11 @@
                     {cancelRequeue ? "Stopping…" : "Cancel"}
                   </button>
                 </div>
+                {#if requeueInFlight}
+                  <!-- Slice 1 (round 51): name the doc currently being
+                       re-queued so the bar above isn't an anonymous tick. -->
+                  <p class="oq-inflight" aria-live="polite">{requeueInFlight}</p>
+                {/if}
               {:else}
                 <button
                   class="oq-btn small danger"
@@ -1342,6 +1370,20 @@
   .oq-runall-cancel:disabled {
     opacity: 0.55;
     cursor: default;
+  }
+  /* Slice 1 (round 51): the live "Running <name>…" / "Re-queuing <name>…"
+     line shown under a determinate bar. A muted, truncating caption so a
+     long filename never wraps the bulk bar; the leading dot ties it to the
+     bar above as a continuation. */
+  .oq-inflight {
+    margin: 4px 0 0;
+    padding-left: 2px;
+    font-size: 11px;
+    color: var(--fg-muted, #9aa0aa);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* Slice 5e: inline Requeue-all progress. A compact determinate bar that
