@@ -35,6 +35,8 @@ import {
   describeRunAllProgress,
   describeOcrView,
   describeRunAllOutcome,
+  planRunRemaining,
+  describeRunRemaining,
   OCR_REASON_UNKNOWN,
   type OcrDocLike,
   type OcrSort,
@@ -664,6 +666,63 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(empty.done === 0 && !empty.partial, "outcome: empty batch safe");
   const junk = describeRunAllOutcome(NaN, NaN, NaN, true);
   expect(junk.total === 0 && junk.done === 0 && !junk.partial, "outcome: NaN -> zeros, no partial");
+}
+
+// --- planRunRemaining + describeRunRemaining --------------------------
+{
+  const batch = [
+    doc({ id: 1, path: "/a.pdf", pages: 10 }),
+    doc({ id: 2, path: "/b.pdf", pages: 20 }),
+    doc({ id: 3, path: "/c.pdf", pages: 30 }),
+    doc({ id: 4, path: "/d.pdf", pages: 40 }),
+  ];
+
+  // Canceled after 2 of 4: the un-run tail is the last two docs.
+  {
+    const plan = planRunRemaining(batch, 2);
+    expect(plan.remaining.length === 2, "remaining: 2-of-4 leaves 2");
+    expect(plan.remaining[0].id === 3 && plan.remaining[1].id === 4, "remaining: tail preserved in order");
+    expect(plan.impact.docs === 2 && plan.impact.pages === 70, "remaining: workload summed (30+40)");
+  }
+
+  // Nothing done yet -> the whole batch remains.
+  {
+    const plan = planRunRemaining(batch, 0);
+    expect(plan.remaining.length === 4, "remaining: 0 done -> whole batch");
+    expect(plan.impact.pages === 100, "remaining: full workload (10+20+30+40)");
+  }
+
+  // Fully finished (done == length) -> empty plan.
+  {
+    const plan = planRunRemaining(batch, 4);
+    expect(plan.remaining.length === 0, "remaining: all done -> empty");
+    expect(plan.impact.docs === 0 && plan.impact.pages === 0, "remaining: all done -> zero impact");
+  }
+
+  // Over-count clamps to the end (never slices out of range).
+  {
+    const plan = planRunRemaining(batch, 99);
+    expect(plan.remaining.length === 0, "remaining: over-count clamps to empty");
+  }
+
+  // Negative / garbage done coerces to 0 (whole batch remains).
+  {
+    expect(planRunRemaining(batch, -3).remaining.length === 4, "remaining: negative done -> 0");
+    expect(planRunRemaining(batch, NaN).remaining.length === 4, "remaining: NaN done -> 0");
+  }
+
+  // Null / garbage batch -> empty plan.
+  {
+    const plan = planRunRemaining(null as unknown as OcrDocLike[], 1);
+    expect(plan.remaining.length === 0 && plan.impact.docs === 0, "remaining: null batch -> empty");
+  }
+
+  // describeRunRemaining label composition.
+  expect(describeRunRemaining({ docs: 34, pages: 1200 }) === "Run remaining 34 \u00b7 1,200 pages", "remaining-label: docs + pages");
+  expect(describeRunRemaining({ docs: 5, pages: 0 }) === "Run remaining 5", "remaining-label: zero pages drops out");
+  expect(describeRunRemaining({ docs: 1, pages: 1 }) === "Run remaining 1 \u00b7 1 page", "remaining-label: singular page");
+  expect(describeRunRemaining({ docs: 0, pages: 0 }) === "", "remaining-label: empty -> '' (hide button)");
+  expect(describeRunRemaining({ docs: -2, pages: 5 } as never) === "", "remaining-label: negative docs -> ''");
 }
 
 // eslint-disable-next-line no-console

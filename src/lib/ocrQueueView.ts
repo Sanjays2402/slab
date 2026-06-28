@@ -800,6 +800,59 @@ export function describeRunAllOutcome(
   return { ok: o, fail: f, done, total: t, canceled: canceledFlag, partial, label };
 }
 
+// --- Slice 5d: resume a canceled Run-all ("Run remaining") -------------
+//
+// Canceling a Run-all stops the loop between docs, leaving the un-run
+// tail of the snapshotted batch still pending. Before this the only way
+// back was a full "Run all" again — which re-measures the LIVE pending
+// list (now possibly seeded with docs scanned since) and re-runs from the
+// top. This pure helper carves out exactly the remaining tail of the
+// ORIGINAL snapshot (the docs the canceled run never reached) plus its
+// workload, so the component can offer a one-click "Run remaining (N)"
+// that resumes precisely where the cancel left off.
+
+/** The un-run tail of a canceled batch + its measured workload. */
+export interface RunRemainingPlan<T> {
+  /** The docs the canceled run never reached (the snapshot's tail). */
+  remaining: T[];
+  /** Footprint (docs + pages) of `remaining`, via summarizePending. */
+  impact: OcrImpact;
+}
+
+/**
+ * Carve the un-run tail out of a canceled Run-all snapshot. `batch` is
+ * the docs the run set out to process (captured up front); `alreadyDone`
+ * is how many the loop finished before the cancel broke it. Returns the
+ * slice from `alreadyDone` to the end plus its measured workload. The
+ * cut point is clamped into [0, batch.length] so a stray over/under count
+ * can't slice out of range; a fully-finished batch (alreadyDone >= length)
+ * yields an empty plan. A null/garbage batch -> empty plan. Pure.
+ */
+export function planRunRemaining<T extends OcrDocLike>(
+  batch: readonly T[],
+  alreadyDone: number,
+): RunRemainingPlan<T> {
+  const list = Array.isArray(batch) ? batch.filter(Boolean) : [];
+  const done = Math.max(0, Math.min(list.length, Math.floor(Number.isFinite(alreadyDone) ? alreadyDone : 0)));
+  const remaining = list.slice(done);
+  return { remaining, impact: summarizePending(remaining) };
+}
+
+/**
+ * Compose the "Run remaining" affordance label from the un-run plan's
+ * impact, e.g. "Run remaining 34" or "Run remaining 34 · 1,200 pages".
+ * Returns "" when nothing remains (so the component hides the button).
+ * Pure (locale grouping via toLocaleString).
+ */
+export function describeRunRemaining(impact: OcrImpact): string {
+  const docs = Math.max(0, Math.floor(impact?.docs ?? 0));
+  if (docs <= 0) return "";
+  const pages = Math.max(0, Math.floor(impact?.pages ?? 0));
+  let label = `Run remaining ${docs.toLocaleString()}`;
+  if (pages > 0) label += ` \u00b7 ${pages.toLocaleString()} page${pages === 1 ? "" : "s"}`;
+  return label;
+}
+
 /** The live state the footer narrates. */
 export interface OcrViewState {
   /** Failure rows currently shown (after reason facet + search). */

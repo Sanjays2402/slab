@@ -63,6 +63,8 @@
     describeOcrImpact,
     describeRunAllProgress,
     describeRunAllOutcome,
+    planRunRemaining,
+    describeRunRemaining,
     describeOcrView,
     type OcrSort,
     type OcrSortField,
@@ -95,6 +97,11 @@
   let runAllPagesDone = $state(0);
   let runAllTotal = $state(0);
   let runAllPagesTotal = $state(0);
+  /** Slice 5d: the un-run tail of the last canceled Run-all (the docs the
+      loop never reached). Non-empty only after a cancel stopped a batch
+      early; cleared when a fresh Run-all starts or the remainder is run.
+      Powers the one-click "Run remaining (N)" resume affordance. */
+  let resumeBatch = $state<DocumentRecord[]>([]);
   let requeueingAll = $state(false);
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -188,12 +195,19 @@
     }
   }
 
-  async function runAllPending() {
-    if (runningAll || (stats?.pending_total ?? 0) === 0) return;
+  async function runAllPending(explicitBatch?: DocumentRecord[]) {
+    // A resume passes the snapshotted un-run tail; a fresh Run-all reads
+    // the live pending list. Guard on the live queue only for a fresh run
+    // (a resume's batch is already captured + may outlive a stats refresh).
+    const isResume = Array.isArray(explicitBatch) && explicitBatch.length > 0;
+    if (runningAll) return;
+    if (!isResume && (stats?.pending_total ?? 0) === 0) return;
     // Snapshot the queue up front so the bar's denominator is fixed even
     // as rows hop buckets; measure the true page workload for the label.
-    const batch = pending.slice();
+    const batch = isResume ? explicitBatch.slice() : pending.slice();
     if (batch.length === 0) return;
+    // Starting any run clears a stale resume offer — this batch supersedes it.
+    resumeBatch = [];
     const workload = summarizePending(batch);
     runAllDone = 0;
     runAllPagesDone = 0;
@@ -224,6 +238,12 @@
         runAllDone++;
         if (typeof doc.pages === "number" && doc.pages > 0) runAllPagesDone += doc.pages;
       }
+      // Slice 5d: if a Cancel stopped the loop early, capture the un-run
+      // tail of THIS batch so the user can resume exactly where it left
+      // off (planRunRemaining clamps the cut + measures the remainder).
+      if (cancelRequested) {
+        resumeBatch = planRunRemaining(batch, runAllDone).remaining;
+      }
       // describeRunAllOutcome names a canceled-before-end run honestly
       // ("… canceled (13 of 47)") vs a clean finish ("… (of 47)").
       showToast(describeRunAllOutcome(ok, fail, batch.length, cancelRequested).label);
@@ -234,6 +254,14 @@
       runningAll = false;
       cancelRequested = false;
     }
+  }
+
+  /** Slice 5d: resume a canceled Run-all — re-run exactly the un-run tail
+      captured when Cancel stopped the loop. A no-op when nothing is
+      pending resume or a run is already in flight. */
+  function runRemaining() {
+    if (runningAll || resumeBatch.length === 0) return;
+    void runAllPending(resumeBatch);
   }
 
   /** Slice 5c: request cancellation of the in-flight Run-all. The loop
@@ -568,7 +596,7 @@
         <div class="oq-actions">
           <button
             class="oq-btn primary"
-            onclick={runAllPending}
+            onclick={() => runAllPending()}
             disabled={runningAll || (stats?.pending_total ?? 0) === 0}
             title="Run OCR on every scanned/mixed document in the queue"
           >
@@ -618,6 +646,36 @@
           >
             {cancelRequested ? "Stopping…" : "Cancel"}
           </button>
+        </div>
+      {/if}
+
+      {#if !runningAll && resumeBatch.length > 0}
+        <!-- Slice 5d: a canceled Run-all left an un-run tail. Offer a
+             one-click resume of exactly those docs (planRunRemaining's
+             snapshot), plus a dismiss to forget the offer. -->
+        <div class="oq-resume" role="status">
+          <span class="oq-resume-text">
+            Canceled with {resumeBatch.length}
+            {resumeBatch.length === 1 ? "document" : "documents"} left to run.
+          </span>
+          <div class="oq-resume-actions">
+            <button
+              type="button"
+              class="oq-btn primary sm"
+              onclick={runRemaining}
+              title="Resume OCR on the documents the canceled run never reached"
+            >
+              {describeRunRemaining(summarizePending(resumeBatch))}
+            </button>
+            <button
+              type="button"
+              class="oq-btn ghost sm"
+              onclick={() => (resumeBatch = [])}
+              title="Dismiss this resume prompt"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       {/if}
 
@@ -1129,6 +1187,36 @@
   .oq-runall-cancel:disabled {
     opacity: 0.55;
     cursor: default;
+  }
+
+  /* Slice 5d: resume-a-canceled-run banner. A calm info strip that sits
+     where the progress bar was, offering a one-click "Run remaining" of
+     the un-run tail plus a dismiss. */
+  .oq-resume {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 10px 22px 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--accent, #7c8cff) 28%, transparent);
+    background: color-mix(in srgb, var(--accent, #7c8cff) 8%, transparent);
+  }
+  .oq-resume-text {
+    font-size: 12px;
+    color: var(--fg, #e8eaed);
+  }
+  .oq-resume-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* Compact variant of oq-btn for the inline resume actions. */
+  .oq-btn.sm {
+    font-size: 11px;
+    padding: 4px 10px;
   }
 
   .oq-body {
