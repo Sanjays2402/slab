@@ -32,6 +32,7 @@
     type PaletteFallback,
     type RecentProgress,
   } from "$lib/paletteSearch";
+  import { loadCollapsedGroups, saveCollapsedGroups } from "$lib/paletteCollapsed";
   import { prettyBindingFor, keymapView, type ActionId } from "$lib/keymap";
   import { get } from "svelte/store";
 
@@ -836,11 +837,13 @@
 
   // Lumen III Slice 1: group collapse. In browse (empty-query) mode the
   // user can FOLD a section header so its rows tuck away; the set of
-  // collapsed group names lives here and persists across opens within a
-  // session (Raycast-style muscle memory). Collapse is DISABLED while a
-  // query is active — folding a group during search would hide matching
-  // results, which is a footgun — so the effective set is empty then.
-  let collapsedGroups = $state<Set<string>>(new Set());
+  // collapsed group names lives here and now PERSISTS across sessions
+  // (v3.57.0 — seeded from localStorage on mount, written back on every
+  // toggle) so a folded "Appearance" stays folded after a restart, exactly
+  // like Raycast. Collapse is DISABLED while a query is active — folding a
+  // group during search would hide matching results, which is a footgun —
+  // so the effective set is empty then.
+  let collapsedGroups = $state<Set<string>>(loadCollapsedGroups());
   const collapseActive = $derived(!scopeParse.term.trim());
   let collapsedView = $derived(
     partitionCollapsedGroups(
@@ -854,6 +857,8 @@
 
   function toggleGroup(group: string): void {
     collapsedGroups = toggleCollapsedGroup(collapsedGroups, group);
+    // Persist the new fold set so it survives a restart (best-effort).
+    saveCollapsedGroups(collapsedGroups);
     // Re-seed the cursor to the top so it can't strand on a now-hidden row
     // (the clamp effect would also catch it, but this keeps it predictable).
     selected = 0;
