@@ -59,6 +59,10 @@
     nextChipCursor,
     clampChipCursor,
     formatRelativeAge,
+    sortRecentChips,
+    recentChipSortLabel,
+    RECENT_CHIP_SORT_MODES,
+    type RecentChipSortMode,
     SEARCH_SORT_MODES,
     type SearchSortMode,
     type SearchGroupLike,
@@ -78,6 +82,15 @@
    *  only in the empty-query state where the strip is shown. */
   let chipCursor = $state(-1);
   let chipEls = $state<(HTMLButtonElement | null)[]>([]);
+  /** Sort mode for the recent-search chip strip: Recent (newest first,
+   *  default) vs Results (biggest last-run hit count first). Each chip
+   *  carries both signals (ts + resultCount); the toggle flips which one
+   *  orders the strip. */
+  let chipSort = $state<RecentChipSortMode>("recent");
+  /** The chips actually rendered — the raw newest-first log reordered by
+   *  the active sort toggle. The cursor + delete + run all key off THIS
+   *  array (its index space) so keyboard focus tracks the visible order. */
+  let sortedRecents = $derived(sortRecentChips(recents, chipSort));
   /** Reactive "now" (unix seconds) for the per-chip relative-age suffix.
    *  Ticks once a minute — the ages are coarse (m/h/d/w) so a minute is
    *  plenty fresh, and an empty-query strip is the only place it's read. */
@@ -180,12 +193,17 @@
       shrunken strip. Reverts the optimistic drop if the backend rejects. */
   async function deleteRecent(r: RecentSearch): Promise<void> {
     const prev = recents;
-    const idx = recents.findIndex((x) => x.id === r.id);
-    if (idx < 0) return;
+    // The chip cursor walks the VISIBLE (sorted) strip, so anchor on the
+    // visible slot the deleted chip occupies — not its index in the raw
+    // newest-first log, which can differ under the Results sort.
+    const visIdx = sortedRecents.findIndex((x) => x.id === r.id);
+    if (visIdx < 0) return;
     recents = recents.filter((x) => x.id !== r.id);
     // Keep focus on the slot the deleted chip occupied (now the next chip),
     // clamped into the shrunken strip; -1 when the strip is now empty.
-    chipCursor = clampChipCursor(idx, recents.length);
+    // recents and sortedRecents share cardinality, so recents.length is the
+    // new visible count.
+    chipCursor = clampChipCursor(visIdx, recents.length);
     try {
       await deleteLibrarySearch(r.id);
       if (recents.length === 0) inputEl?.focus();
@@ -193,7 +211,7 @@
     } catch (e) {
       // Backend rejected — restore the chip so the UI never lies.
       recents = prev;
-      chipCursor = clampChipCursor(idx, recents.length);
+      chipCursor = clampChipCursor(visIdx, recents.length);
       error = e instanceof Error ? e.message : String(e);
     }
   }
@@ -401,16 +419,16 @@
           chipEls[chipCursor]?.focus();
           return;
         }
-        if (chipAction.kind === "run" && chipCursor >= 0 && chipCursor < recents.length) {
+        if (chipAction.kind === "run" && chipCursor >= 0 && chipCursor < sortedRecents.length) {
           e.preventDefault();
-          runRecent(recents[chipCursor]);
+          runRecent(sortedRecents[chipCursor]);
           return;
         }
-        if (chipAction.kind === "delete" && chipCursor >= 0 && chipCursor < recents.length) {
+        if (chipAction.kind === "delete" && chipCursor >= 0 && chipCursor < sortedRecents.length) {
           // Backspace / Delete on the focused chip drops just that one
           // recent search (the per-chip x button's keyboard twin).
           e.preventDefault();
-          void deleteRecent(recents[chipCursor]);
+          void deleteRecent(sortedRecents[chipCursor]);
           return;
         }
         if (chipAction.kind === "clear" && chipCursor >= 0) {
@@ -665,19 +683,39 @@
           <section class="recents" aria-label="Recent searches">
             <header class="recents-head">
               <span class="recents-label">Recent searches</span>
-              <button
-                type="button"
-                class="recents-clear"
-                onclick={clearHistory}
-                disabled={clearing}
-                title="Clear your search history"
-                aria-label="Clear recent searches"
-              >
-                {clearing ? "Clearing…" : "Clear history"}
-              </button>
+              <div class="recents-head-actions">
+                {#if recents.length > 1}
+                  <div class="chip-sort-seg" role="group" aria-label="Sort recent searches">
+                    {#each RECENT_CHIP_SORT_MODES as m (m)}
+                      <button
+                        type="button"
+                        class="chip-sort-btn"
+                        class:active={chipSort === m}
+                        aria-pressed={chipSort === m}
+                        onclick={() => (chipSort = m)}
+                        title={m === "recent"
+                          ? "Most recent first"
+                          : "Most results first"}
+                      >
+                        {recentChipSortLabel(m)}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+                <button
+                  type="button"
+                  class="recents-clear"
+                  onclick={clearHistory}
+                  disabled={clearing}
+                  title="Clear your search history"
+                  aria-label="Clear recent searches"
+                >
+                  {clearing ? "Clearing…" : "Clear history"}
+                </button>
+              </div>
             </header>
             <ul class="recents-list" role="listbox" aria-label="Recent searches — arrow keys to navigate, Enter to run, Backspace to delete">
-              {#each recents as r, ci (r.id)}
+              {#each sortedRecents as r, ci (r.id)}
                 <li role="presentation" class="recent-chip-wrap">
                   <button
                     bind:this={chipEls[ci]}
@@ -1444,6 +1482,45 @@
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 6px;
+  }
+  .recents-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  /* Recent-chip sort toggle — a compact segmented control mirroring the
+     results sort-seg, letting the strip flip between newest-first and
+     most-results-first ordering. */
+  .chip-sort-seg {
+    display: inline-flex;
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .chip-sort-btn {
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+    font: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    color: var(--fg-muted, #888);
+    cursor: pointer;
+    padding: 3px 8px;
+    transition: background 80ms, color 80ms;
+  }
+  .chip-sort-btn:last-child {
+    border-right: none;
+  }
+  .chip-sort-btn:hover:not(.active) {
+    color: var(--fg, #111);
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.04));
+  }
+  .chip-sort-btn.active {
+    background: var(--accent, #4a72ff);
+    color: #fff;
   }
   .recents-label {
     font-size: 11px;

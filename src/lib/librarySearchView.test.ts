@@ -32,9 +32,13 @@ import {
   nextChipCursor,
   clampChipCursor,
   formatRelativeAge,
+  sortRecentChips,
+  recentChipSortLabel,
+  RECENT_CHIP_SORT_MODES,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
+  type RecentChipLike,
 } from "./librarySearchView";
 
 let passed = 0;
@@ -660,6 +664,82 @@ const group = (
   // Garbage is safe.
   expect(formatRelativeAge(NaN, NOW) === "just now", "age: NaN ts -> just now");
   expect(formatRelativeAge(NOW, NaN) === "just now", "age: NaN now -> just now");
+}
+
+// --- sortRecentChips + labels -----------------------------------------
+{
+  const chip = (ts: number, resultCount: number): RecentChipLike => ({ ts, resultCount });
+
+  // Mode metadata: two modes in display order, with sensible labels.
+  expect(RECENT_CHIP_SORT_MODES.length === 2, "chip-sort: two modes");
+  expect(RECENT_CHIP_SORT_MODES[0] === "recent", "chip-sort: recent leads");
+  expect(RECENT_CHIP_SORT_MODES[1] === "results", "chip-sort: results second");
+  expect(recentChipSortLabel("recent") === "Recent", "chip-sort: recent label");
+  expect(recentChipSortLabel("results") === "Results", "chip-sort: results label");
+  // Unknown mode degrades to the raw string (never throws / blanks).
+  expect(
+    recentChipSortLabel("bogus" as RecentChipSortMode) === "bogus",
+    "chip-sort: unknown label passthrough",
+  );
+
+  // Recent mode: newest ts first.
+  {
+    const chips = [chip(100, 5), chip(300, 1), chip(200, 9)];
+    const out = sortRecentChips(chips, "recent");
+    expect(
+      out.map((c) => c.ts).join(",") === "300,200,100",
+      "chip-sort: recent orders newest ts first",
+    );
+    // Non-mutating: the input keeps its original order.
+    expect(chips[0].ts === 100, "chip-sort: input not mutated (recent)");
+  }
+
+  // Results mode: biggest resultCount first.
+  {
+    const chips = [chip(100, 5), chip(300, 1), chip(200, 9)];
+    const out = sortRecentChips(chips, "results");
+    expect(
+      out.map((c) => c.resultCount).join(",") === "9,5,1",
+      "chip-sort: results orders biggest count first",
+    );
+  }
+
+  // Stable arrival tie-break: equal ts keeps incoming order under recent.
+  {
+    const a = chip(500, 1);
+    const b = chip(500, 2);
+    const c = chip(500, 3);
+    const out = sortRecentChips([a, b, c], "recent");
+    expect(out[0] === a && out[1] === b && out[2] === c, "chip-sort: stable on equal ts");
+  }
+
+  // Stable arrival tie-break: equal resultCount keeps incoming order.
+  {
+    const a = chip(100, 7);
+    const b = chip(200, 7);
+    const c = chip(300, 7);
+    const out = sortRecentChips([a, b, c], "results");
+    expect(out[0] === a && out[1] === b && out[2] === c, "chip-sort: stable on equal count");
+  }
+
+  // Garbage numbers coerce to 0 (no NaN-driven jitter), input order kept.
+  {
+    const chips = [
+      { ts: NaN, resultCount: 3 } as RecentChipLike,
+      { ts: 100, resultCount: NaN } as RecentChipLike,
+    ];
+    const out = sortRecentChips(chips, "recent");
+    expect(out.length === 2, "chip-sort: garbage ts handled without dropping rows");
+    // ts=100 outranks ts=NaN(->0) under recent.
+    expect(out[0].ts === 100, "chip-sort: finite ts outranks NaN ts");
+  }
+
+  // Empty + garbage inputs -> [].
+  expect(sortRecentChips([], "recent").length === 0, "chip-sort: empty -> []");
+  expect(
+    sortRecentChips(null as unknown as RecentChipLike[], "results").length === 0,
+    "chip-sort: null -> []",
+  );
 }
 
 // eslint-disable-next-line no-console

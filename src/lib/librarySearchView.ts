@@ -875,3 +875,79 @@ export function formatRelativeAge(ts: number, now: number): string {
   if (weeks < 52) return `${weeks}w`;
   return "1y+";
 }
+
+// --- Recent-chip sort toggle ------------------------------------------
+//
+// The recent-search strip carries two signals per chip — WHEN it was last
+// run (ts, now shown as a relative age) and HOW MANY hits it produced
+// (resultCount). The strip only ever ordered newest-first, so the query
+// that historically found the most documents (your richest saved search)
+// was buried wherever it happened to fall chronologically. This adds a
+// two-mode sort toggle over the strip — Recent (newest ts first, the
+// shipped default) vs Results (biggest resultCount first) — so a user can
+// flip the strip to surface their highest-yield prior searches. Pure +
+// non-mutating, with a stable arrival tie-break so equal chips never
+// jitter between renders, mirroring the result-group sort discipline.
+
+/** A sort mode for the recent-search chip strip. */
+export type RecentChipSortMode = "recent" | "results";
+
+/** Every chip sort mode, in display order (drives the segmented control). */
+export const RECENT_CHIP_SORT_MODES: readonly RecentChipSortMode[] = [
+  "recent",
+  "results",
+];
+
+/** Human label for a chip sort mode (segmented-control button text). */
+export function recentChipSortLabel(mode: RecentChipSortMode): string {
+  switch (mode) {
+    case "recent":
+      return "Recent";
+    case "results":
+      return "Results";
+    default:
+      return mode;
+  }
+}
+
+/** The minimum shape a recent-search chip needs to be sorted. */
+export interface RecentChipLike {
+  /** Unix-seconds timestamp of the last run. */
+  ts: number;
+  /** How many hits the query produced last time it ran. */
+  resultCount: number;
+}
+
+/** Coerce a possibly-garbage numeric field to a finite number (0 fallback). */
+function chipNum(n: unknown): number {
+  return typeof n === "number" && Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Sort the recent-search chips by the active mode, returning a NEW array
+ * (never mutates the input). `recent` orders newest-`ts` first — the
+ * shipped default, matching the backend's newest-first log order;
+ * `results` orders biggest-`resultCount` first so the highest-yield prior
+ * searches lead. Every comparison falls back to the original arrival
+ * index as a stable tie-break, so two chips with the same age (or the
+ * same hit count) keep their incoming order rather than jittering. A
+ * null/garbage list -> []. Pure + DOM-free.
+ */
+export function sortRecentChips<T extends RecentChipLike>(
+  chips: readonly T[],
+  mode: RecentChipSortMode,
+): T[] {
+  if (!Array.isArray(chips)) return [];
+  const indexed = chips.map((chip, index) => ({ chip, index }));
+  indexed.sort((a, b) => {
+    let cmp = 0;
+    if (mode === "results") {
+      cmp = chipNum(b.chip.resultCount) - chipNum(a.chip.resultCount);
+    } else {
+      cmp = chipNum(b.chip.ts) - chipNum(a.chip.ts);
+    }
+    if (cmp !== 0) return cmp;
+    return a.index - b.index; // stable arrival tie-break
+  });
+  return indexed.map((x) => x.chip);
+}
