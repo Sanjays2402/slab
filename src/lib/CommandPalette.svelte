@@ -30,6 +30,7 @@
     partitionCollapsedGroups,
     collapseAllGroups,
     isEveryGroupCollapsed,
+    describeCollapseState,
     type PaletteRange,
     type PaletteFallback,
     type RecentProgress,
@@ -878,6 +879,18 @@
     collapseActive && isEveryGroupCollapsed(grouped, collapsedGroups),
   );
 
+  // Lumen III Slice 3: legible bulk-collapse state in the footer. With
+  // collapse-all in place, a power user wants to know at a glance how much
+  // of the surface is folded — describeCollapseState turns the grouped list
+  // + fold set into "N of M sections open" (or "All M collapsed"). Only
+  // meaningful in browse mode; "" when nothing is folded so the footer
+  // falls back to its result count.
+  const collapseState = $derived(
+    collapseActive
+      ? describeCollapseState(grouped, collapsedGroups)
+      : describeCollapseState([], new Set<string>()),
+  );
+
   function toggleAllGroups(): void {
     // Fold everything, or — when already all-folded — clear the set open.
     collapsedGroups = allCollapsed ? new Set<string>() : collapseAllGroups(grouped);
@@ -1139,19 +1152,24 @@
     </div>
     <div class="palette-footer">
       {#if collapseActive && collapsedView.display.length > 1}
-        <button
-          type="button"
-          class="palette-foldall"
-          onclick={() => {
-            toggleAllGroups();
-            scrollSelectedIntoView();
-          }}
-          title={allCollapsed ? "Expand all sections (⌘E)" : "Collapse all sections (⌘E)"}
-          aria-label={allCollapsed ? "Expand all sections" : "Collapse all sections"}
-        >
-          <span class="palette-foldall-glyph" aria-hidden="true">{allCollapsed ? "▸" : "▾"}</span>
-          {allCollapsed ? "Expand all" : "Collapse all"}
-        </button>
+        <span class="palette-foldall-group">
+          <button
+            type="button"
+            class="palette-foldall"
+            onclick={() => {
+              toggleAllGroups();
+              scrollSelectedIntoView();
+            }}
+            title={allCollapsed ? "Expand all sections (⌘E)" : "Collapse all sections (⌘E)"}
+            aria-label={allCollapsed ? "Expand all sections" : "Collapse all sections"}
+          >
+            <span class="palette-foldall-glyph" aria-hidden="true">{allCollapsed ? "▸" : "▾"}</span>
+            {allCollapsed ? "Expand all" : "Collapse all"}
+          </button>
+          {#if collapseState.label}
+            <span class="palette-foldall-count" aria-live="polite">{collapseState.label}</span>
+          {/if}
+        </span>
       {:else}
         <span class="palette-footer-count">{resultCountLabel}</span>
       {/if}
@@ -1474,6 +1492,22 @@
   .palette-foldall-glyph {
     font-size: 9px;
     line-height: 1;
+  }
+  /* Lumen III Slice 3: bulk-collapse legibility. The fold-all button + a
+     live "N of M sections open" count sit together so the fold state is
+     legible at a glance. */
+  .palette-foldall-group {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .palette-foldall-count {
+    font-size: 10px;
+    letter-spacing: 0.4px;
+    color: var(--text-3, var(--text-2));
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .palette-footer-keys {
     display: flex;

@@ -33,6 +33,7 @@ import {
   partitionCollapsedGroups,
   collapseAllGroups,
   isEveryGroupCollapsed,
+  describeCollapseState,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -882,6 +883,55 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(isEveryGroupCollapsed(null, new Set(["x"])) === false, "all-collapsed: null grouped -> false");
   // @ts-expect-error — garbage collapsed arg
   expect(isEveryGroupCollapsed(grouped, null) === false, "all-collapsed: null set -> false");
+}
+
+// --- describeCollapseState (footer collapse legibility) ---------------
+{
+  const grouped: [string, { id: string }[]][] = [
+    ["Panels", [{ id: "p1" }, { id: "p2" }]],
+    ["Appearance", [{ id: "a1" }]],
+    ["Library", [{ id: "l1" }]],
+    ["Tools", [{ id: "t1" }]],
+  ];
+
+  // Nothing folded -> empty label (footer falls back to its count), but
+  // the counts are still exposed for any caller that wants them.
+  const none = describeCollapseState(grouped, new Set());
+  expect(none.total === 4 && none.open === 4 && none.collapsed === 0, "collapse-state: none folded counts");
+  expect(none.noneCollapsed && !none.allCollapsed, "collapse-state: none folded flags");
+  expect(none.label === "", "collapse-state: none folded -> empty label");
+
+  // Some folded -> "N of M sections open".
+  const some = describeCollapseState(grouped, new Set(["Appearance", "Tools"]));
+  expect(some.open === 2 && some.collapsed === 2, "collapse-state: some folded counts");
+  expect(!some.allCollapsed && !some.noneCollapsed, "collapse-state: some folded flags");
+  expect(some.label === "2 of 4 sections open", "collapse-state: some folded label");
+
+  // All folded -> "All M collapsed".
+  const all = describeCollapseState(grouped, collapseAllGroups(grouped));
+  expect(all.open === 0 && all.allCollapsed, "collapse-state: all folded flags");
+  expect(all.label === "All 4 collapsed", "collapse-state: all folded label");
+
+  // A stale folded name (group no longer present) is ignored.
+  const stale = describeCollapseState(grouped, new Set(["Appearance", "Ghost"]));
+  expect(stale.total === 4 && stale.collapsed === 1, "collapse-state: stale fold ignored");
+  expect(stale.label === "3 of 4 sections open", "collapse-state: stale fold label");
+
+  // Thousands grouping holds for a large surface.
+  const many: [string, { id: string }[]][] = Array.from({ length: 1200 }, (_, i) => [
+    `G${i}`,
+    [{ id: `x${i}` }],
+  ]);
+  const big = describeCollapseState(many, collapseAllGroups(many));
+  expect(big.label === "All 1,200 collapsed", "collapse-state: thousands-grouped all");
+
+  // Empty / garbage grouped list -> all-zero, empty label.
+  const empty = describeCollapseState([], new Set(["x"]));
+  expect(empty.total === 0 && empty.label === "" && empty.noneCollapsed, "collapse-state: empty grouped safe");
+  // @ts-expect-error — garbage grouped list
+  expect(describeCollapseState(null, new Set()).label === "", "collapse-state: null grouped -> empty label");
+  // @ts-expect-error — garbage collapsed arg
+  expect(describeCollapseState(grouped, null).label === "", "collapse-state: null set -> none folded -> empty label");
 }
 
 // eslint-disable-next-line no-console

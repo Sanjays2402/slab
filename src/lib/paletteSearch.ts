@@ -1020,3 +1020,68 @@ export function isEveryGroupCollapsed<T>(
   return groupCount > 0;
 }
 
+/** The legible collapse state of the browse surface (drives the footer). */
+export interface CollapseState {
+  /** Total named groups present. */
+  total: number;
+  /** Groups currently OPEN (total minus folded). */
+  open: number;
+  /** Groups currently folded. */
+  collapsed: number;
+  /** True when every group is folded (`total > 0` && open === 0). */
+  allCollapsed: boolean;
+  /** True when no group is folded. */
+  noneCollapsed: boolean;
+  /** Footer phrase, e.g. "3 of 8 sections open" / "All 8 collapsed". */
+  label: string;
+}
+
+/**
+ * Summarize how much of the grouped browse surface is folded, for the
+ * palette footer — so the bulk collapse/expand state is legible at a
+ * glance now that collapse-all exists. Counts only real named groups
+ * (mirrors `collapseAllGroups`/`isEveryGroupCollapsed`); a folded set
+ * entry for a group no longer present is ignored. The label reads
+ * "N of M sections open" while some are folded, "All M collapsed" when
+ * every one is folded, and "" when nothing is folded (the footer falls
+ * back to its result count then). A null/empty grouped list -> all-zero,
+ * "" label. Pure + DOM-free.
+ */
+export function describeCollapseState<T>(
+  grouped: readonly (readonly [string, T[]])[],
+  collapsed: ReadonlySet<string>,
+): CollapseState {
+  const empty: CollapseState = {
+    total: 0,
+    open: 0,
+    collapsed: 0,
+    allCollapsed: false,
+    noneCollapsed: true,
+    label: "",
+  };
+  if (!Array.isArray(grouped) || grouped.length === 0) return empty;
+  const folded = collapsed instanceof Set ? collapsed : new Set<string>();
+  let total = 0;
+  let foldedCount = 0;
+  for (const entry of grouped) {
+    if (!Array.isArray(entry)) continue;
+    const group = entry[0];
+    if (typeof group !== "string" || group.length === 0) continue;
+    total++;
+    if (folded.has(group)) foldedCount++;
+  }
+  if (total === 0) return empty;
+  const open = total - foldedCount;
+  const allCollapsed = foldedCount === total;
+  const noneCollapsed = foldedCount === 0;
+  let label: string;
+  if (noneCollapsed) {
+    label = "";
+  } else if (allCollapsed) {
+    label = `All ${total.toLocaleString()} collapsed`;
+  } else {
+    label = `${open.toLocaleString()} of ${total.toLocaleString()} sections open`;
+  }
+  return { total, open, collapsed: foldedCount, allCollapsed, noneCollapsed, label };
+}
+
