@@ -200,6 +200,16 @@ export type RecentSortMode = "recent" | "name" | "progress" | "pages";
 /** Every sort mode, in display order (drives the segmented control). */
 export const RECENT_SORT_MODES: readonly RecentSortMode[] = ["recent", "name", "progress", "pages"];
 
+/**
+ * Whether `x` is a valid RecentSortMode — the type guard shared by the
+ * component and the persistence shell (recentsView.ts) so a corrupt /
+ * stale stored value decodes back to the default instead of poisoning the
+ * segmented control. Pure; anything not in RECENT_SORT_MODES -> false.
+ */
+export function isRecentSortMode(x: unknown): x is RecentSortMode {
+  return typeof x === "string" && (RECENT_SORT_MODES as readonly string[]).includes(x);
+}
+
 /** Short label for a sort mode (segmented-control button text). */
 export function recentSortLabel(mode: RecentSortMode): string {
   switch (mode) {

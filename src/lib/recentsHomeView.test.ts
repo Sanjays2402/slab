@@ -15,6 +15,7 @@ import {
   filterRecents,
   highlightRecentName,
   RECENT_SORT_MODES,
+  isRecentSortMode,
   recentSortLabel,
   describeRecentSort,
   cycleRecentSort,
@@ -498,6 +499,23 @@ const mk = (over: Partial<RecentLike> = {}): RecentLike => ({
   expect(describeResetPinOrder(1500) === "Reset order (1,500)", "reset-label: thousands-grouped");
   expect(describeResetPinOrder(NaN) === "", "reset-label: NaN -> '' safe");
   expect(describeResetPinOrder(-3) === "", "reset-label: negative -> '' safe");
+}
+
+// --- isRecentSortMode (round 51 slice 3) -----------------------------
+{
+  // Every real mode validates.
+  for (const m of RECENT_SORT_MODES) {
+    expect(isRecentSortMode(m), `sort-guard: '${m}' is valid`);
+  }
+  // Unknown strings + garbage reject (so a stale/corrupt store decodes to default).
+  expect(!isRecentSortMode("frecency"), "sort-guard: unknown mode -> false");
+  expect(!isRecentSortMode("Recent"), "sort-guard: wrong case -> false");
+  expect(!isRecentSortMode(""), "sort-guard: empty -> false");
+  expect(!isRecentSortMode(null), "sort-guard: null -> false");
+  expect(!isRecentSortMode(undefined), "sort-guard: undefined -> false");
+  expect(!isRecentSortMode(0), "sort-guard: number -> false");
+  expect(!isRecentSortMode({}), "sort-guard: object -> false");
+  expect(!isRecentSortMode(["name"]), "sort-guard: array -> false");
 }
 
 // eslint-disable-next-line no-console

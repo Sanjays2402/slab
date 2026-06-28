@@ -50,6 +50,7 @@
     describeResetPinOrder,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
+  import { loadRecentSort, saveRecentSort } from "$lib/recentsView";
   import { notify } from "$lib/notify";
   import { basename } from "$lib/types";
   import { onMount, onDestroy } from "svelte";
@@ -94,7 +95,19 @@
   // The segmented control cycles Recent / Name / Progress / Pages via the
   // tested sortRecentView, applied to BOTH rendered grids (pinned + others)
   // so the whole board re-orders together.
-  let sortMode = $state<RecentSortMode>("recent");
+  // Round 51 Slice 3: the choice now PERSISTS across sessions — seeded from
+  // localStorage (loadRecentSort, default "recent") and written back on
+  // every change via setSort, so a user who always wants their library
+  // alphabetised gets it without re-picking every launch. (The filter query
+  // is intentionally NOT persisted — a stale term would hide recents behind
+  // a forgotten filter on reopen.)
+  let sortMode = $state<RecentSortMode>(loadRecentSort());
+
+  /** Set the active sort and persist it (best-effort). */
+  function setSort(mode: RecentSortMode): void {
+    sortMode = mode;
+    saveRecentSort(mode);
+  }
 
   // The "Continue reading" hero card surfaces the single most useful next
   // action: the file with the freshest reading momentum. The selection +
@@ -528,7 +541,7 @@
           <button
             class="sort-btn"
             class:active={sortMode === mode}
-            onclick={() => (sortMode = mode)}
+            onclick={() => setSort(mode)}
             aria-pressed={sortMode === mode}
             title={`Sort by ${recentSortLabel(mode)}`}
           >{recentSortLabel(mode)}</button>
