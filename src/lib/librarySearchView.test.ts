@@ -35,10 +35,12 @@ import {
   sortRecentChips,
   recentChipSortLabel,
   RECENT_CHIP_SORT_MODES,
+  suggestEmptyQueries,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
   type RecentChipLike,
+  type RecentChipSortMode,
 } from "./librarySearchView";
 
 let passed = 0;
@@ -739,6 +741,74 @@ const group = (
   expect(
     sortRecentChips(null as unknown as RecentChipLike[], "results").length === 0,
     "chip-sort: null -> []",
+  );
+}
+
+// --- suggestEmptyQueries ----------------------------------------------
+{
+  type Rec = RecentChipLike & { id: number; query: string };
+  const rec = (id: number, query: string, resultCount: number, ts = id): Rec => ({
+    id,
+    query,
+    resultCount,
+    ts,
+  });
+
+  // Ranks by hit count, biggest first; excludes the failed query.
+  {
+    const recents = [
+      rec(1, "invoices", 3),
+      rec(2, "contracts", 42),
+      rec(3, "receipts", 12),
+    ];
+    const out = suggestEmptyQueries(recents, "zzznope");
+    expect(out.map((s) => s.query).join(",") === "contracts,receipts,invoices", "suggest: ranked by hit count");
+    expect(out[0].resultCount === 42, "suggest: carries the result count");
+  }
+
+  // Excludes the exact failed query (case + whitespace insensitive).
+  {
+    const recents = [rec(1, "Contracts", 42), rec(2, "receipts", 12)];
+    const out = suggestEmptyQueries(recents, "  contracts ");
+    expect(out.length === 1 && out[0].query === "receipts", "suggest: drops the failed query (case/space-insensitive)");
+  }
+
+  // Skips dead-end chips (a recent that itself found nothing).
+  {
+    const recents = [rec(1, "ghost", 0), rec(2, "real", 5)];
+    const out = suggestEmptyQueries(recents, "x");
+    expect(out.length === 1 && out[0].query === "real", "suggest: skips zero-result chips");
+  }
+
+  // Stable arrival tie-break on equal counts.
+  {
+    const a = rec(1, "aa", 7, 100);
+    const b = rec(2, "bb", 7, 200);
+    const out = suggestEmptyQueries([a, b], "x");
+    expect(out[0].query === "aa" && out[1].query === "bb", "suggest: stable on equal counts");
+  }
+
+  // Cap honoured; default is 4.
+  {
+    const recents = [
+      rec(1, "a", 10),
+      rec(2, "b", 9),
+      rec(3, "c", 8),
+      rec(4, "d", 7),
+      rec(5, "e", 6),
+    ];
+    expect(suggestEmptyQueries(recents, "x").length === 4, "suggest: default cap 4");
+    expect(suggestEmptyQueries(recents, "x", 2).length === 2, "suggest: explicit cap 2");
+    expect(suggestEmptyQueries(recents, "x", 0).length === 4, "suggest: garbage cap -> default 4");
+  }
+
+  // Empty / garbage inputs -> [].
+  expect(suggestEmptyQueries([], "x").length === 0, "suggest: empty -> []");
+  expect(suggestEmptyQueries(null as unknown as Rec[], "x").length === 0, "suggest: null -> []");
+  // A list where every chip is dead-end or the failed query -> [].
+  expect(
+    suggestEmptyQueries([rec(1, "fail", 5), rec(2, "dead", 0)], "fail").length === 0,
+    "suggest: nothing eligible -> []",
   );
 }
 

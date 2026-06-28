@@ -62,6 +62,7 @@
     sortRecentChips,
     recentChipSortLabel,
     RECENT_CHIP_SORT_MODES,
+    suggestEmptyQueries,
     type RecentChipSortMode,
     SEARCH_SORT_MODES,
     type SearchSortMode,
@@ -91,6 +92,11 @@
    *  the active sort toggle. The cursor + delete + run all key off THIS
    *  array (its index space) so keyboard focus tracks the visible order. */
   let sortedRecents = $derived(sortRecentChips(recents, chipSort));
+  /** Recovery suggestions for the no-matches empty state: the user's own
+   *  highest-yield prior searches (excluding the one that just failed and
+   *  any that themselves found nothing), so a dead-end query turns into a
+   *  one-click pivot. Capped at 4. */
+  let emptySuggestions = $derived(suggestEmptyQueries(recents, lastQuery));
   /** Reactive "now" (unix seconds) for the per-chip relative-age suffix.
    *  Ticks once a minute — the ages are coarse (m/h/d/w) so a minute is
    *  plenty fresh, and an empty-query strip is the only place it's read. */
@@ -163,6 +169,16 @@
     query = r.query;
     chipCursor = -1; // leaving the empty-query strip; park the chip cursor
     void runSearch(r.query);
+    inputEl?.focus();
+  }
+
+  /** Run a bare query string — the empty-state recovery suggestions pivot
+      the failed search to one of the user's prior productive queries. */
+  function runSuggestion(q: string): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    query = q;
+    chipCursor = -1;
+    void runSearch(q);
     inputEl?.focus();
   }
 
@@ -793,6 +809,28 @@
             you expect this PDF to live in.
           {/if}
         </p>
+        {#if emptySuggestions.length > 0}
+          <!-- Recovery row: the user's own highest-yield prior searches,
+               so a dead-end query is one click from a productive one. -->
+          <div class="empty-suggest" aria-label="Try one of your recent searches">
+            <span class="empty-suggest-label">Try one of your recent searches</span>
+            <ul class="empty-suggest-list">
+              {#each emptySuggestions as s (s.id)}
+                <li>
+                  <button
+                    type="button"
+                    class="empty-suggest-chip"
+                    onclick={() => runSuggestion(s.query)}
+                    title={`${s.resultCount} match${s.resultCount === 1 ? "" : "es"} last run`}
+                  >
+                    <span class="empty-suggest-query">{s.query}</span>
+                    <span class="empty-suggest-meta">{s.resultCount}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
       </div>
     {:else}
       <div class="refine-bar">
@@ -1466,6 +1504,62 @@
   }
   .state.error {
     color: var(--danger, #c0392b);
+  }
+
+  /* Empty-state recovery suggestions — the user's own highest-yield prior
+     searches, offered as one-click pivots when a query finds nothing. */
+  .empty-suggest {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .empty-suggest-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-muted, #888);
+    font-weight: 600;
+  }
+  .empty-suggest-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+  }
+  .empty-suggest-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-panel, #fff);
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+    border-radius: 999px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--fg, #222);
+    cursor: pointer;
+    transition: border-color 80ms, background 80ms, color 80ms;
+    max-width: 280px;
+  }
+  .empty-suggest-chip:hover {
+    border-color: var(--accent, #4a72ff);
+    background: var(--bg-hover, rgba(74, 114, 255, 0.06));
+    color: var(--fg, #111);
+  }
+  .empty-suggest-query {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .empty-suggest-meta {
+    font-size: 11px;
+    color: var(--fg-muted, #888);
+    font-variant-numeric: tabular-nums;
   }
 
   /* Recent-searches chip strip — surfaces the rolling library_search_log

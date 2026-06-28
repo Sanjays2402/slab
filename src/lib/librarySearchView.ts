@@ -951,3 +951,56 @@ export function sortRecentChips<T extends RecentChipLike>(
   });
   return indexed.map((x) => x.chip);
 }
+
+// --- Empty-state suggested queries ------------------------------------
+//
+// When a search returns zero hits the panel showed only a "try shorter
+// words" paragraph — a dead end. But the user's own recent-search log is
+// a rich source of queries that DID find something: surfacing the
+// highest-yield prior searches (that aren't the one that just failed)
+// turns the empty state into a one-click recovery, mirroring the
+// palette's suggestPaletteFallback. This picks the best recent searches
+// to offer, ranked by last-run hit count so the most productive queries
+// lead.
+
+/** A suggested recovery query for the no-matches empty state. */
+export interface EmptyQuerySuggestion {
+  id: number;
+  query: string;
+  resultCount: number;
+}
+
+/**
+ * Choose recovery suggestions for a no-matches empty state from the
+ * recent-search log. Excludes the query that just failed (case-insensitive,
+ * trimmed) and any chip that itself last found nothing (resultCount <= 0 —
+ * suggesting another dead end helps no one). Ranks by last-run hit count
+ * (biggest first) with a stable arrival tie-break, capped at `limit`
+ * (default 4). A null/garbage list -> []. Pure + DOM-free.
+ */
+export function suggestEmptyQueries<T extends RecentChipLike & { id: number; query: string }>(
+  recents: readonly T[],
+  failedQuery: string,
+  limit: number = 4,
+): EmptyQuerySuggestion[] {
+  if (!Array.isArray(recents)) return [];
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 4;
+  const failed = (failedQuery ?? "").trim().toLowerCase();
+  const eligible = recents
+    .map((chip, index) => ({ chip, index }))
+    .filter(({ chip }) => {
+      if (!chip || typeof chip.query !== "string") return false;
+      if (chipNum(chip.resultCount) <= 0) return false; // never suggest a dead end
+      return chip.query.trim().toLowerCase() !== failed; // not the one that just failed
+    });
+  eligible.sort((a, b) => {
+    const cmp = chipNum(b.chip.resultCount) - chipNum(a.chip.resultCount);
+    if (cmp !== 0) return cmp;
+    return a.index - b.index; // stable arrival tie-break
+  });
+  return eligible.slice(0, cap).map(({ chip }) => ({
+    id: chip.id,
+    query: chip.query,
+    resultCount: chip.resultCount,
+  }));
+}
