@@ -507,6 +507,12 @@
   const requeueProgress = $derived(
     describeRunAllProgress(requeueDone, requeueTotal, 0, 0),
   );
+  /** Slice 5f: first-load skeleton gate. True only on the very first fetch
+      — before any stats/lists have ever arrived — so the panel shows
+      shimmer placeholders instead of a bare "Loading…". A reopen keeps the
+      prior data (then refreshes in place), so the skeleton never flashes
+      over real content. */
+  const firstLoad = $derived(loading && stats === null && failed.length === 0 && pending.length === 0);
   /** Compose both facets (failure-reason + pending-state) into one footer
       narration slot — they live in different sections but the footer is a
       single line, so join them when both happen to be active. */
@@ -748,6 +754,33 @@
       {/if}
 
       <div class="oq-body">
+        {#if firstLoad}
+          <!-- Slice 5f: first-load skeleton. Shimmer placeholders standing
+               in for the stats strip + both lists while the very first
+               fetch resolves, instead of a bare "Loading…". aria-busy +
+               an SR-only live label keep it announced; aria-hidden on the
+               shimmer bars so a screen reader isn't read fake rows. -->
+          <div class="oq-skeleton" aria-busy="true" aria-label="Loading the OCR queue">
+            <span class="oq-sr-only" role="status">Loading the OCR queue…</span>
+            <div class="oq-skel-stats" aria-hidden="true">
+              {#each Array(6) as _, i (i)}
+                <div class="oq-skel-stat">
+                  <span class="oq-skel-bar num"></span>
+                  <span class="oq-skel-bar lbl"></span>
+                </div>
+              {/each}
+            </div>
+            <div class="oq-skel-section" aria-hidden="true">
+              <span class="oq-skel-bar head"></span>
+              {#each Array(4) as _, i (i)}
+                <div class="oq-skel-row">
+                  <span class="oq-skel-bar name"></span>
+                  <span class="oq-skel-bar meta"></span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {:else}
         {#if stats}
           <section class="oq-stats" aria-label="OCR queue counts">
             <div class="stat">
@@ -1125,6 +1158,7 @@
             {/if}
           {/if}
         </section>
+        {/if}
       </div>
 
       <footer class="oq-foot">
@@ -1402,6 +1436,78 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
+  }
+
+  /* ----- Slice 5f: first-load skeleton ----- */
+  .oq-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .oq-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .oq-skel-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(98px, 1fr));
+    gap: 8px;
+  }
+  .oq-skel-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 12px 10px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--fg, #fff) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--fg, #fff) 7%, transparent);
+  }
+  .oq-skel-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .oq-skel-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 4px;
+    border-bottom: 1px solid color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+  }
+  .oq-skel-bar {
+    display: block;
+    height: 11px;
+    border-radius: 6px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--fg, #fff) 8%, transparent) 0%,
+      color-mix(in srgb, var(--accent, #7c8cff) 16%, transparent) 50%,
+      color-mix(in srgb, var(--fg, #fff) 8%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: oq-shimmer 1.4s ease-in-out infinite;
+  }
+  .oq-skel-bar.num { width: 42%; height: 18px; }
+  .oq-skel-bar.lbl { width: 70%; height: 9px; }
+  .oq-skel-bar.head { width: 120px; height: 13px; margin-bottom: 4px; }
+  .oq-skel-bar.name { width: 58%; }
+  .oq-skel-bar.meta { width: 34%; height: 9px; }
+  @keyframes oq-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oq-skel-bar {
+      animation: none;
+      background-position: 50% 0;
+    }
   }
 
   /* ----- stats grid ----- */
