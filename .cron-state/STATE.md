@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-27 19:46 PT by Cake (cron) — round-47 BATCH shipped (5 frontend/UX capabilities, 5 feature commits + 1 test fixup) — explicit roadmap FOLLOW-UPS across four surfaces, each with a tested pure core: (1) OCR Queue per-reason "Retry all <reason>" (af53f7b) — collectReasonRetryIds/describeReasonRetry back a constructive-accent button in the failure-reason facet row that re-queues ONLY the active bucket via a looped ocrQueueRequeue, leaving every other root cause untouched; (2) OCR Queue determinate Run-all progress (2d48a21) — switched Run-all from blanket ocrQueueRunAll to a per-doc ocrQueueRunOne loop ticking a REAL role=progressbar bar after each doc, backed by new describeRunAllProgress (clamped {fraction,percent,label,finished}); workload snapshotted up front, per-doc failures tallied not thrown; (3) Library Search recent-chips keyboard nav (4eaedfc) — classifyRecentChipKey/nextChipCursor/clampChipCursor give the empty-query chip strip a flat HORIZONTAL cursor (Left/Right wrap, Home/End, Enter runs, Esc parks) on a different axis from the vertical results cursor so neither steals the other's keys; strip is now role=listbox; (4) RecentsHome pinned-strip horizontal nav+scroll (f9e21e3) — classifyRecentKey now maps ArrowLeft/Right to prev/next and recentCardScrollOptions(section) returns per-axis scrollIntoView alignment so a pinned card scrolls inline-center while a grid card scrolls vertically (horizontal arrows stay with the filter-box caret); (5) Command Palette group collapse (440d72e) — toggleCollapsedGroup/partitionCollapsedGroups make each section header a real toggle button that folds its rows; returns BOTH the render structure (headers always shown w/ true count + chevron) and the flat VISIBLE cursor list so arrows + Cmd-arrow jump never land on a hidden row; collapse disabled during search; cursor now indexes the visible list (a bonus: cursor order == render order, fixing the old filtered.indexOf divergence). Gates: ocrQueueView 141->169, librarySearchView 158->180, recentsHomeView 110->117, paletteSearch 253->271 (74 new tests); pnpm check 0 errors / 104 warnings (rounds 32-46 baseline preserved EXACTLY); cargo fmt --all --check clean, ZERO Rust files changed (round-32 lib baseline carries forward). COMMIT STRUCTURE: 5 separate feature commits (each compiles + gates green standalone) + 1 tiny test fixup (dropped two unused @ts-expect-error directives — NaN is type number so the calls are valid TS).
+Last updated: 2026-06-28 01:39 PT by Cake (cron) — round-48 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) — top demo-value items off the round-47 refill roadmap across FOUR surfaces, each on a tested pure core: (1) OCR Queue CANCEL an in-flight Run-all (b5847c3) — cancelRequested flag the per-doc loop checks before each doc (in-flight doc finishes, no new picked up) + Cancel button on the progress overlay; new tested describeRunAllOutcome(ok,fail,total,canceled) composes an HONEST completion toast ("... canceled (13 of 47)" vs clean "... (of 47)"; a cancel on the last doc is NOT partial); ocrQueueView 169->180; (2)+(5) Library Search per-chip DELETE + relative-AGE (ONE commit — both touch the same recent-chip {#each} markup, can't split into separately-compiling commits) — delete: FULL vertical slice (Rust search_log::delete_one(db,id)->bool + 2 tests, Tauri slab_library_delete_search, TS deleteLibrarySearch, classifyRecentChipKey Backspace/Delete->delete, per-chip x button + optimistic-drop deleteRecent with revert-on-reject); age: tested formatRelativeAge(ts,now)->"2m"/"3h"/"5d"/"1y+" muted suffix ticking once a minute; librarySearchView 180->199; (3) Palette PERSIST collapsed groups across sessions (d3c370c) — new thin localStorage shell src/lib/paletteCollapsed.ts (load/save slab.palette.collapsed.v1, all-open removes key, garbage->empty, cap 64) seeded into CommandPalette + written on every toggle; new paletteCollapsed.test.ts 10 tests; (4) RecentsHome pinned-strip OVERFLOW fade + scroll chevrons (a21cc09) — tested pinnedStripEdges(scroll)->{overflowing,atStart,atEnd} (1px tol) drives gradient edge masks + two backdrop-blur chevrons (scroll 80% of a viewport, disable at each end); recentsHomeView 118->125. Gates: tsx ALL GREEN (ocrQueueView 180/180, librarySearchView 199/199, recentsHomeView 125/125, paletteCollapsed 10/10 NEW, paletteSearch 271/271 shared core intact), pnpm check 0 errors / 104 warnings (rounds 32-47 baseline EXACT, zero new), cargo fmt --all clean. CARGO NOTE: full `cargo test --lib` WEDGED on the `tauri` crate from a cold cache (an earlier killed run corrupted once_cell/.rmeta -> forced cargo clean -p -> ~44min cold rebuild that stalled on tauri w/ zero rustc CPU >5min); killed per build-env rule, fell back to `cargo check --lib`. Rust change is tiny + isolated (one DELETE-by-id fn + Tauri cmd + registration; search_log.rs carries 2 new green-by-inspection unit tests).
+
+PREV round-47 (2026-06-27 19:46 PT): 5 frontend/UX capabilities, 5 feature commits + 1 test fixup — explicit roadmap FOLLOW-UPS across four surfaces, each with a tested pure core: (1) OCR Queue per-reason "Retry all <reason>" (af53f7b); (2) OCR Queue determinate Run-all progress (2d48a21); (3) Library Search recent-chips keyboard nav (4eaedfc); (4) RecentsHome pinned-strip horizontal nav+scroll (f9e21e3); (5) Command Palette group collapse (440d72e).
 
 PREV round-46 (2026-06-27 14:55 PT): 5 frontend/UX capabilities across three surfaces (5 commits) — Library Search snippet refine-highlight (98b7c5f), Cmd/Ctrl+Up/Down group-jump (a6262b2), OCR Queue pending-state facet (4bbaf51), RecentsHome clear-unpinned footer (e048678) + thumbnail progress overlay (bb1594e).
 
@@ -13,7 +15,7 @@ Internal module labels use the repo's logical-release naming ("Atlas VI"
 = v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `bb1594e` — "feat(recents-home): reading-progress overlay on card thumbnails".
+Latest commit: `a21cc09` — "feat(recents-home): pinned-strip overflow fade + scroll chevrons" (round 48 lands 5 commits: b5847c3, d3c370c, a21cc09, + the library-search delete+age commit pushed at gate end).
 
 ### What round-45 (2026-06-27 09:55 PT) just shipped
 
@@ -1529,19 +1531,52 @@ Refilled frontend-first per the override (backend/infra items
 deferred until the override block is removed). Ordered roughly by
 demo value:
 
-- OCR Queue: cancel an in-flight Run-all (the per-doc loop now ticks a
-  determinate bar — add a Cancel button that breaks the loop after the
-  current doc; needs a cancel flag the loop checks each iteration).
-- Library Search: recent-chip delete affordance (an x on each chip /
-  Backspace on the focused chip to drop ONE recent search, complementing
-  the all-or-nothing "Clear history"). Pairs with the round-47 chip
-  cursor — Backspace on the focused chip is the natural chord.
-- Palette: remember collapsed groups across SESSIONS (round 47 holds the
-  fold set in component state — persist it to localStorage so a folded
-  Appearance stays folded after a restart; a tiny store like cmdMru).
-- RecentsHome: pinned-strip overflow fade/scroll-affordance (now that
-  Left/Right scroll it horizontally, add a gradient mask + chevrons at
-  the strip edges when it overflows so the affordance is discoverable).
+- ~~OCR Queue: cancel an in-flight Run-all~~ — DONE round 48 (b5847c3):
+  cancelRequested flag the per-doc loop checks before each doc (in-flight
+  doc finishes); Cancel button on the progress overlay; new tested
+  describeRunAllOutcome composes an honest "... canceled (13 of 47)"
+  toast. ocrQueueView 169->180.
+- ~~Library Search: recent-chip delete affordance~~ — DONE round 48
+  (library-search delete+age commit): Rust search_log::delete_one + Tauri
+  slab_library_delete_search + TS deleteLibrarySearch; classifyRecentChipKey
+  Backspace/Delete->delete; per-chip x button + optimistic deleteRecent
+  with revert-on-reject. librarySearchView chip suite.
+- ~~Palette: remember collapsed groups across SESSIONS~~ — DONE round 48
+  (d3c370c): new thin localStorage shell src/lib/paletteCollapsed.ts
+  (slab.palette.collapsed.v1; all-open removes key; garbage->empty; cap 64);
+  CommandPalette seeds from load, writes on toggle. paletteCollapsed.test.ts
+  10 tests.
+- ~~RecentsHome: pinned-strip overflow fade/scroll-affordance~~ — DONE
+  round 48 (a21cc09): tested pinnedStripEdges->{overflowing,atStart,atEnd}
+  (1px tol) drives gradient edge masks + two backdrop-blur chevrons (scroll
+  80% of a viewport, disable at each end). recentsHomeView 118->125.
+
+### Next FRONTEND candidates — refilled round 48
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- Library Search: relative-age on recent chips shipped round 48 — the
+  natural NEXT is a sort toggle on the recent-search strip (most-recent vs
+  most-results) now that each chip carries both signals.
+- OCR Queue: a "Run remaining" affordance after a canceled Run-all (the
+  cancel left N pending — offer a one-click resume of just those, reusing
+  the snapshotted batch).
+- Palette: a "collapse all / expand all" chord now that fold state
+  persists (toggle every group at once; persist the bulk state).
+- RecentsHome: drag-to-reorder the pinned strip (the strip now scrolls +
+  shows overflow affordances; dragging a pinned card to reorder is the
+  Linear-grade next step — reuse the Hopper reorder core pattern).
+- Library Search: empty-state "no matches" suggested-queries row (mirror
+  the palette's suggestPaletteFallback — offer the user's own top recent
+  searches when a query returns nothing).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- doc-detail metadata editor read surface (inline-editable title / tags
+  with optimistic save + rollback toast — toast actions already exist).
+- histogram hover-tooltip on bar segments (per-segment count + label on
+  hover/focus, keyboard-reachable).
+- empty/loading/skeleton-state pass across panels still showing a bare
+  spinner (Signet verify, Quill queue).
 
 - ~~OCR Queue: per-reason "Retry all <reason>" button~~ — DONE round 47
   (af53f7b): collectReasonRetryIds + describeReasonRetry back a
