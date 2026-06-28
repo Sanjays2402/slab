@@ -74,6 +74,7 @@
     type SearchGroupLike,
   } from "$lib/librarySearchView";
   import { loadPinnedSearches, savePinnedSearches } from "$lib/savedSearches";
+  import { loadLibrarySort, saveLibrarySort } from "$lib/librarySortStore";
 
   let query = $state("");
   let hits = $state<SearchHit[]>([]);
@@ -394,7 +395,7 @@
   // Document (title A->Z), or Matches (hit count, biggest first). Stable,
   // so equal groups never jitter. The cursor flat-index space is rebuilt
   // off this sorted order so keyboard nav follows what the eye sees.
-  let sortMode = $state<SearchSortMode>("relevance");
+  let sortMode = $state<SearchSortMode>(loadLibrarySort());
   const groups = $derived(
     sortSearchGroups(rawGroups as SearchGroupLike<SearchHit>[], sortMode) as DocGroup[],
   );
@@ -1096,7 +1097,7 @@
               class="sort-btn"
               class:active={sortMode === m}
               aria-pressed={sortMode === m}
-              onclick={() => (sortMode = m)}
+              onclick={() => { sortMode = m; saveLibrarySort(m); }}
               title="Sort by {searchSortLabel(m).toLowerCase()}"
             >
               {searchSortLabel(m)}

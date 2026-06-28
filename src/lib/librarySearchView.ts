@@ -654,6 +654,16 @@ export function cycleSearchSort(current: SearchSortMode): SearchSortMode {
 }
 
 /**
+ * Whether `x` is a valid SearchSortMode. The type guard shared by the panel
+ * and the localStorage shell (librarySortStore.ts) so a corrupt or schema-
+ * drifted persisted value can never seat itself into the panel's sort state.
+ * Pure, garbage-safe.
+ */
+export function isSearchSortMode(x: unknown): x is SearchSortMode {
+  return typeof x === "string" && SEARCH_SORT_MODES.includes(x as SearchSortMode);
+}
+
+/**
  * Sort document groups by the given mode, returning a NEW array (input is
  * never mutated). "relevance" preserves arrival order (already bm25); the
  * other modes fall back to arrival index as a stable tie-break so equal
