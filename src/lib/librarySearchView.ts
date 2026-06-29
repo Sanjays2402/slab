@@ -1417,3 +1417,55 @@ export function describeSweep(results: readonly SweepResult[]): string {
   if (dry === n) return n === 1 ? "1 search came up empty" : `all ${n} came up empty`;
   return `${sLbl}, ${hLbl}, ${dry === 1 ? "1 came up empty" : `${dry} came up empty`}`;
 }
+
+// --- Per-pin sweep recency -------------------------------------------
+//
+// The yield badge (pinYieldBadge) tells you a pin's LAST hit count, but a
+// stale "84" from a sweep two weeks ago reads identically to one swept a
+// minute ago — so a user can't tell whether the number is fresh enough to
+// trust before re-running. relativeSweptAge turns a stored sweep timestamp
+// into a compact "3h ago" suffix, mirroring recent.ts formatRelTime so the
+// whole app speaks one recency dialect. Pure + DOM-free (now is injected).
+
+/**
+ * Compact relative age of a pin's last sweep: "" when never swept (no
+ * timestamp), "just now" under a minute, then "Nm/Nh/Nd ago", falling back
+ * to an absolute locale date past a week — the same ladder recent.ts uses.
+ * A future or garbage timestamp clamps to "just now" so the badge never
+ * shows a negative age. `now` is injected so the math tests without a clock.
+ */
+export function relativeSweptAge(
+  sweptAt: number | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (typeof sweptAt !== "number" || !Number.isFinite(sweptAt) || sweptAt <= 0) return "";
+  const ref = Number.isFinite(now) ? now : Date.now();
+  const diff = Math.max(0, ref - sweptAt);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(sweptAt).toLocaleDateString();
+}
+
+/**
+ * Full title for a swept pin's yield badge: the hit-count phrase plus the
+ * recency suffix when known, e.g. "84 matches last sweep · swept 3h ago"
+ * or just "84 matches last sweep" when the timestamp is missing. `count`
+ * is the badge value; a null count (never swept) -> "". Pure + DOM-free.
+ */
+export function describePinSweepBadge(
+  count: number | null,
+  sweptAt: number | null | undefined,
+  now: number = Date.now(),
+): string {
+  if (typeof count !== "number" || !Number.isFinite(count)) return "";
+  const c = Math.max(0, Math.trunc(count));
+  const base = `${c} match${c === 1 ? "" : "es"} last sweep`;
+  const age = relativeSweptAge(sweptAt, now);
+  return age ? `${base} · swept ${age}` : base;
+}

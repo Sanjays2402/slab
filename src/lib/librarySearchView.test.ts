@@ -52,6 +52,8 @@ import {
   describeClearDryPins,
   rankSweepResults,
   describeSweep,
+  relativeSweptAge,
+  describePinSweepBadge,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -1063,6 +1065,40 @@ const group = (
   expect(describeSweep([{ query: "a", count: 0 }, { query: "b", count: 0 }]) === "all 2 came up empty", "sweep: all dry");
   expect(describeSweep([{ query: "a", count: 1 }]) === "1 search, 1 hit", "sweep: singular");
   expect(describeSweep([]) === "No saved searches to run", "sweep: empty");
+}
+
+// --- per-pin sweep recency -------------------------------------------
+{
+  const t0 = 1_700_000_000_000; // fixed "now" so the ladder tests deterministically
+  const MIN = 60_000;
+  const HR = 60 * MIN;
+  const DAY = 24 * HR;
+  // never-swept / garbage -> empty suffix
+  expect(relativeSweptAge(null, t0) === "", "age: null -> empty");
+  expect(relativeSweptAge(undefined, t0) === "", "age: undefined -> empty");
+  expect(relativeSweptAge(0, t0) === "", "age: zero -> empty");
+  expect(relativeSweptAge(-5 as number, t0) === "", "age: negative -> empty");
+  expect(relativeSweptAge(NaN as number, t0) === "", "age: NaN -> empty");
+  // ladder buckets
+  expect(relativeSweptAge(t0 - 30_000, t0) === "just now", "age: <1m -> just now");
+  expect(relativeSweptAge(t0 - 5 * MIN, t0) === "5m ago", "age: minutes");
+  expect(relativeSweptAge(t0 - 3 * HR, t0) === "3h ago", "age: hours");
+  expect(relativeSweptAge(t0 - 2 * DAY, t0) === "2d ago", "age: days");
+  expect(relativeSweptAge(t0 - 10 * DAY, t0) === new Date(t0 - 10 * DAY).toLocaleDateString(), "age: >1w -> date");
+  // future timestamp clamps to "just now" (never negative)
+  expect(relativeSweptAge(t0 + HR, t0) === "just now", "age: future -> just now");
+  // boundary: exactly 60m reads as 1h, 24h as 1d
+  expect(relativeSweptAge(t0 - 60 * MIN, t0) === "1h ago", "age: 60m boundary -> 1h");
+  expect(relativeSweptAge(t0 - 24 * HR, t0) === "1d ago", "age: 24h boundary -> 1d");
+
+  // describePinSweepBadge composes count phrase + recency suffix
+  expect(describePinSweepBadge(84, t0 - 3 * HR, t0) === "84 matches last sweep · swept 3h ago", "badge: plural + age");
+  expect(describePinSweepBadge(1, t0 - 5 * MIN, t0) === "1 match last sweep · swept 5m ago", "badge: singular + age");
+  expect(describePinSweepBadge(0, t0 - 2 * DAY, t0) === "0 matches last sweep · swept 2d ago", "badge: dry pin keeps age");
+  expect(describePinSweepBadge(12, null, t0) === "12 matches last sweep", "badge: no timestamp -> no suffix");
+  expect(describePinSweepBadge(null, t0, t0) === "", "badge: null count -> empty");
+  expect(describePinSweepBadge(NaN as number, t0, t0) === "", "badge: NaN count -> empty");
+  expect(describePinSweepBadge(-4 as number, null, t0) === "0 matches last sweep", "badge: negative count floors to 0");
 }
 
 // eslint-disable-next-line no-console

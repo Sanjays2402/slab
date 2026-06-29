@@ -76,6 +76,9 @@
     dryPinQueries,
     describeClearDryPins,
     rankSweepResults,
+    describePinSweepBadge,
+    relativeSweptAge,
+    normalizePinnedQuery,
     describeSweep,
     moveSavedSearch,
     type RecentChipSortMode,
@@ -84,7 +87,7 @@
     type SearchGroupLike,
   } from "$lib/librarySearchView";
   import { loadPinnedSearches, savePinnedSearches } from "$lib/savedSearches";
-  import { loadPinYields, savePinYields } from "$lib/pinYields";
+  import { loadPinYields, savePinYields, loadPinSwept, savePinSwept, stampPinSwept } from "$lib/pinYields";
   import { loadLibrarySort, saveLibrarySort } from "$lib/librarySortStore";
 
   let query = $state("");
@@ -225,6 +228,10 @@
   let sweepDigest = $state("");
   /** Persisted per-pin last-sweep yields so a dry pin shows "0" on open. */
   let pinYields = $state<Record<string, number>>({});
+  /** Persisted per-pin last-sweep timestamps so the yield badge can wear a
+      "swept 3h ago" recency suffix — a stale count shouldn't read as fresh.
+      Kept in a parallel store so the yield-map contract stays untouched. */
+  let pinSwept = $state<Record<string, number>>({});
   async function runAllSaved(): Promise<void> {
     if (sweeping || pinned.length === 0) return;
     sweeping = true;
@@ -244,6 +251,10 @@
       // Persist each pin's yield so the badges survive a panel re-open.
       pinYields = mergeSweepYields(pinYields, out);
       savePinYields(pinYields);
+      // Stamp every just-swept pin so the badge can show how fresh it is.
+      pinSwept = stampPinSwept(pinSwept, out.map((r) => r.query), Date.now());
+      savePinSwept(pinSwept);
+      nowSec = Math.floor(Date.now() / 1000); // refresh the age suffix immediately
       if (ranked.length > 0) runPinned(ranked[0].query);
       void refreshRecents();
     } finally {
@@ -269,12 +280,17 @@
     pinned = clearDryPins(pinned, pinYields);
     savePinnedSearches(pinned);
     const kept: Record<string, number> = {};
+    const keptSwept: Record<string, number> = {};
     for (const p of pinned) {
       const y = pinYieldBadge(p, pinYields);
       if (y !== null) kept[p] = y;
+      const t = pinSwept[normalizePinnedQuery(p)];
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) keptSwept[normalizePinnedQuery(p)] = t;
     }
     pinYields = kept;
     savePinYields(pinYields);
+    pinSwept = keptSwept;
+    savePinSwept(pinSwept);
     sweepDigest = "";
   }
 
@@ -740,6 +756,7 @@
     inputEl?.focus();
     pinned = loadPinnedSearches();
     pinYields = loadPinYields();
+    pinSwept = loadPinSwept();
     void refreshRecents();
     void refreshFolders();
     void refreshIndexStats();
@@ -998,8 +1015,8 @@
                       <span
                         class="recent-meta"
                         class:dry={pinYieldBadge(pq, pinYields) === 0}
-                        title={`${pinYieldBadge(pq, pinYields)} match${pinYieldBadge(pq, pinYields) === 1 ? "" : "es"} last sweep`}
-                      >{pinYieldBadge(pq, pinYields)}</span>
+                        title={describePinSweepBadge(pinYieldBadge(pq, pinYields), pinSwept[normalizePinnedQuery(pq)], nowSec * 1000)}
+                      >{pinYieldBadge(pq, pinYields)}{#if relativeSweptAge(pinSwept[normalizePinnedQuery(pq)], nowSec * 1000)}<span class="sweep-age"> · {relativeSweptAge(pinSwept[normalizePinnedQuery(pq)], nowSec * 1000)}</span>{/if}</span>
                     {/if}
                   </button>
                   <button
@@ -2251,6 +2268,13 @@
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
     white-space: nowrap;
+  }
+  /* Sweep recency suffix inside a pin's yield badge ("· 3h ago") — a quiet
+     tabular hint so a stale count never reads as fresh. Dimmed against the
+     pill so the number stays primary; inherits the .dry amber on dry pins. */
+  .sweep-age {
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
   }
 
   @media (prefers-color-scheme: dark) {
