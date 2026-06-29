@@ -1280,3 +1280,51 @@ export function savedSearchHitCount(
   }
   return null;
 }
+
+// --- Run-all-saved sweep summary -------------------------------------
+//
+// A user with several saved searches wants a one-shot health check: run
+// every pin, see which still find hits and which have gone dry, without
+// clicking each chip. The panel does the actual sequential runs; this is
+// the pure summary core that turns the per-pin yields into a sorted,
+// labeled report (biggest yield first, dry pins last) plus a one-line
+// digest, so a dead pin ("0 hits") jumps out.
+
+/** One pin's sweep result: its query + how many hits the run returned. */
+export interface SweepResult {
+  query: string;
+  count: number;
+}
+
+/**
+ * Sort sweep results biggest-yield first, dry pins (0) last, stable
+ * alphabetical tie-break — so the most productive saved searches lead and
+ * any dead query sinks to the bottom where it's obvious. Returns a NEW
+ * array; never mutates. Negative/garbage counts floor to 0; blank queries
+ * dropped. Null/empty -> []. Pure + DOM-free.
+ */
+export function rankSweepResults(results: readonly SweepResult[]): SweepResult[] {
+  if (!Array.isArray(results)) return [];
+  const clean = results
+    .filter((r) => r && typeof r.query === "string" && r.query.trim().length > 0)
+    .map((r) => ({ query: r.query, count: Math.max(0, Math.trunc(Number(r.count) || 0)) }));
+  return clean.sort((a, b) => b.count - a.count || a.query.localeCompare(b.query));
+}
+
+/**
+ * One-line digest of a finished sweep: total hits across pins, count of
+ * dry pins, e.g. "5 searches, 84 hits, 1 came up empty" / "all 3 came up
+ * empty". Empty input -> "No saved searches to run". Pure.
+ */
+export function describeSweep(results: readonly SweepResult[]): string {
+  const ranked = rankSweepResults(results);
+  const n = ranked.length;
+  if (n === 0) return "No saved searches to run";
+  const hits = ranked.reduce((s, r) => s + r.count, 0);
+  const dry = ranked.filter((r) => r.count === 0).length;
+  const sLbl = n === 1 ? "1 search" : `${n} searches`;
+  const hLbl = hits === 1 ? "1 hit" : `${hits} hits`;
+  if (dry === 0) return `${sLbl}, ${hLbl}`;
+  if (dry === n) return n === 1 ? "1 search came up empty" : `all ${n} came up empty`;
+  return `${sLbl}, ${hLbl}, ${dry === 1 ? "1 came up empty" : `${dry} came up empty`}`;
+}

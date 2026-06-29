@@ -45,6 +45,8 @@ import {
   classifyJumpSavedKey,
   nextSavedIndex,
   savedSearchHitCount,
+  rankSweepResults,
+  describeSweep,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -1006,6 +1008,25 @@ const group = (
   expect(nextSavedIndex(1, 3, 1) === 2, "next: middle forward");
   expect(nextSavedIndex(0, 0, 1) === -1, "next: empty -> -1");
   expect(nextSavedIndex(9, 3, 1) === 0, "next: out-of-range clamps then wraps");
+}
+
+// --- run-all-saved sweep summary -------------------------------------
+{
+  const ranked = rankSweepResults([
+    { query: "alpha", count: 0 },
+    { query: "beta", count: 40 },
+    { query: "gamma", count: 3 },
+  ]);
+  expect(ranked[0].query === "beta" && ranked[2].query === "alpha", "sweep: biggest first, dry last");
+  expect(rankSweepResults([{ query: "z", count: 2 }, { query: "a", count: 2 }])[0].query === "a", "sweep: tie alpha");
+  expect(rankSweepResults([{ query: " ", count: 5 }]).length === 0, "sweep: blank query dropped");
+  expect(rankSweepResults([{ query: "x", count: -3 }])[0].count === 0, "sweep: negative floors to 0");
+  expect(rankSweepResults(null as never).length === 0, "sweep: garbage -> []");
+  expect(describeSweep([{ query: "a", count: 5 }, { query: "b", count: 3 }]) === "2 searches, 8 hits", "sweep: clean digest");
+  expect(describeSweep([{ query: "a", count: 5 }, { query: "b", count: 0 }]) === "2 searches, 5 hits, 1 came up empty", "sweep: one dry");
+  expect(describeSweep([{ query: "a", count: 0 }, { query: "b", count: 0 }]) === "all 2 came up empty", "sweep: all dry");
+  expect(describeSweep([{ query: "a", count: 1 }]) === "1 search, 1 hit", "sweep: singular");
+  expect(describeSweep([]) === "No saved searches to run", "sweep: empty");
 }
 
 // eslint-disable-next-line no-console

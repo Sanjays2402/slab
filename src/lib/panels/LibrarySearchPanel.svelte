@@ -70,6 +70,8 @@
     togglePinnedSearch,
     describePinnedSearches,
     savedSearchHitCount,
+    rankSweepResults,
+    describeSweep,
     moveSavedSearch,
     type RecentChipSortMode,
     SEARCH_SORT_MODES,
@@ -207,6 +209,35 @@
     const next = nextSavedIndex(lastSavedIdx, pinned.length, dir);
     if (next < 0) return;
     runPinned(pinned[next]);
+  }
+
+  // Run-all-saved sweep: a one-shot health check across every pin. Runs
+  // each saved search sequentially (no live render churn), records its hit
+  // count, then surfaces a ranked digest so a dry pin stands out. The pure
+  // rankSweepResults/describeSweep own the math; this just drives the calls.
+  let sweeping = $state(false);
+  let sweepDigest = $state("");
+  async function runAllSaved(): Promise<void> {
+    if (sweeping || pinned.length === 0) return;
+    sweeping = true;
+    sweepDigest = "";
+    try {
+      const out = [];
+      for (const pq of pinned) {
+        try {
+          const res = await librarySearch(pq.trim(), 50, scopeFolderId);
+          out.push({ query: pq, count: res.length });
+        } catch {
+          out.push({ query: pq, count: 0 });
+        }
+      }
+      const ranked = rankSweepResults(out);
+      sweepDigest = describeSweep(ranked);
+      if (ranked.length > 0) runPinned(ranked[0].query);
+      void refreshRecents();
+    } finally {
+      sweeping = false;
+    }
   }
 
   /** Pin / unpin a query: flip its membership in the saved-search list and
@@ -868,7 +899,14 @@
           <section class="saved" aria-label="Saved searches">
             <header class="recents-head">
               <span class="recents-label">Saved searches</span>
-              <span class="saved-count" aria-live="polite">{pinnedSummary}</span>
+              <span class="saved-count" aria-live="polite">{sweepDigest || pinnedSummary}</span>
+              <button
+                type="button"
+                class="saved-sweep-btn"
+                onclick={runAllSaved}
+                disabled={sweeping}
+                title="Run every saved search and rank them by hits"
+              >{sweeping ? "Running…" : "Run all"}</button>
               {#if pinned.length > 1}
                 <span class="saved-cycle-hint" title="Cycle through saved searches">Cycle <kbd>⌘[</kbd> <kbd>⌘]</kbd></span>
               {/if}
@@ -2056,8 +2094,26 @@
     font-size: 11px;
     color: var(--fg-muted, #888);
   }
-  .saved-cycle-hint {
+  .saved-sweep-btn {
     margin-left: auto;
+    font-size: 10px;
+    padding: 2px 9px;
+    border-radius: 5px;
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+    color: var(--fg, #ddd);
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .saved-sweep-btn:hover:not(:disabled) {
+    background: var(--accent-soft, rgba(80, 130, 255, 0.16));
+    border-color: var(--accent, #5082ff);
+  }
+  .saved-sweep-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .saved-cycle-hint {
     font-size: 10px;
     color: var(--fg-muted, #888);
     display: inline-flex;
