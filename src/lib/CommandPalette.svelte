@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
+  import { listRecent, formatRelTime, getRecentThumb, type RecentFile } from "$lib/recent";
   import { setUiConfig, ACCENT_COLORS, BUILT_IN_THEMES, type Density } from "$lib/theme";
   import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
   import { openPanelWindow } from "$lib/windows";
@@ -74,6 +74,9 @@
     keywords?: string;
     // Lumen II Slice 4: optional reading-progress chip for recent-file rows.
     progress?: RecentProgress;
+    // Round 54: recent-file rows carry a cached page thumbnail so the
+    // palette browse list shows the document, not a generic glyph.
+    thumb?: string;
   };
 
   type Props = {
@@ -263,21 +266,9 @@
     });
     // Pinned + recent files become direct palette entries — opens are
     // dispatched through the same `slab:open-recent` channel the
-    // ReaderPanel already listens on.
-    try {
-      const recents = listRecent();
-      for (const r of recents.slice(0, 20)) {
-        out.push({
-          id: `recent:${r.path}`,
-          title: `Open ${r.name}`,
-          subtitle: r.path,
-          icon: r.pinned ? "📌" : "📄",
-          group: r.pinned ? "Pinned" : "Recent",
-          run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
-          keywords: `${r.name} ${r.path} ${r.pinned ? "pinned" : "recent"} open file`,
-        });
-      }
-    } catch { /* recent module not loadable — skip dynamic entries */ }
+    // ReaderPanel already listens on. The single source for these rows is
+    // the loop below (group "Recent files") which now carries thumbnails;
+    // the old emoji-glyph duplicate was dead (same id, overwritten).
 
 
     // v3.29.0: replay the Forms onboarding tour from anywhere. This is
@@ -328,6 +319,7 @@
         run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
         keywords: `${r.name} ${r.path} pdf recent`,
         progress: prog.hasProgress ? prog : undefined,
+        thumb: getRecentThumb(r.path),
       });
     }
     // Theme quick actions
@@ -1158,7 +1150,7 @@
                 runFallback(a);
               }}
             >
-              <span class="palette-icon">{a.icon}</span>
+              <span class="palette-icon">{#if a.thumb}<img class="palette-thumb" src={a.thumb} alt="" loading="lazy" />{:else}{a.icon}{/if}</span>
               <span class="palette-text">
                 <span class="palette-title">{a.title}</span>
                 {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
@@ -1203,7 +1195,7 @@
                 runSelected();
               }}
             >
-              <span class="palette-icon">{a.icon}</span>
+              <span class="palette-icon">{#if a.thumb}<img class="palette-thumb" src={a.thumb} alt="" loading="lazy" />{:else}{a.icon}{/if}</span>
               <span class="palette-text">
                 <span class="palette-title">{#each titleSegments(a) as seg}{#if seg.hit}<mark class="palette-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
                 {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
@@ -1475,6 +1467,18 @@
     text-align: center;
     color: var(--accent);
     font-size: 14px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .palette-thumb {
+    width: 20px;
+    height: 26px;
+    object-fit: cover;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px var(--border, rgba(255, 255, 255, 0.1));
+    background: var(--bg-subtle, rgba(255, 255, 255, 0.04));
   }
   .palette-text {
     flex: 1;
