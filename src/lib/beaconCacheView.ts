@@ -531,6 +531,36 @@ export function nextBeaconCursor(
 }
 
 /**
+ * Compute the new pinned-model order after moving the entry at `from` to
+ * index `to`. Returns a NEW de-duped list (input never mutated), ready for
+ * savePinnedModels — the movePinnedCommand pattern (splice from -> to) on the
+ * model-name list, so there's no second reorder engine; the most-used quick
+ * filter sits first. Blank/garbage names dropped; out-of-range / no-op moves
+ * return the cleaned list unchanged. A null/garbage list -> []. Pure + DOM-free.
+ */
+export function movePinnedModel(
+  pinned: readonly string[],
+  from: number,
+  to: number,
+): string[] {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const p of Array.isArray(pinned) ? pinned : []) {
+    if (typeof p !== "string" || !p || seen.has(p)) continue;
+    seen.add(p);
+    list.push(p);
+  }
+  const n = list.length;
+  if (n < 2) return list;
+  const f = Math.max(0, Math.min(n - 1, Math.trunc(from)));
+  const t = Math.max(0, Math.min(n - 1, Math.trunc(to)));
+  if (f === t) return list;
+  const [moved] = list.splice(f, 1);
+  list.splice(t, 0, moved);
+  return list;
+}
+
+/**
  * Clamp a stored cursor index into a freshly-(re)filtered list. After a
  * search/sort/facet change the row count shrinks or the order moves, so
  * a cursor parked at index 40 must snap back into range. Returns 0 for

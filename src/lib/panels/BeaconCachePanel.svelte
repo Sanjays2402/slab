@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { loadPinnedModels, savePinnedModels } from "$lib/beaconPins";
   import { splitHighlight } from "$lib/paletteSearch";
   import { loadBeaconSort, saveBeaconSort } from "$lib/beaconSortStore";
@@ -86,6 +86,32 @@
   function toggleModelPinned(model: string) {
     pinnedModels = toggleModelPin(pinnedModels, model);
     savePinnedModels(pinnedModels);
+  }
+  // Drag-reorder the pinned-model strip so the most-used quick filter sits
+  // first, the same splice from->to as the saved-search strip + palette pins
+  // via the tested movePinnedModel core. dragIdx is the chip being dragged.
+  let dragIdx = $state(-1);
+  let dragOverIdx = $state(-1);
+  function reorderPinned(fromModel: string, toModel: string) {
+    const f = pinnedModels.indexOf(fromModel);
+    const t = pinnedModels.indexOf(toModel);
+    if (f < 0 || t < 0) return;
+    pinnedModels = movePinnedModel(pinnedModels, f, t);
+    savePinnedModels(pinnedModels);
+  }
+  function onPinDragStart(e: DragEvent, i: number, m: string) {
+    dragIdx = i;
+    e.dataTransfer?.setData("text/plain", m);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+  }
+  function onPinDragOver(e: DragEvent, i: number) {
+    if (dragIdx >= 0) { e.preventDefault(); dragOverIdx = i; }
+  }
+  function onPinDrop(e: DragEvent, i: number) {
+    e.preventDefault();
+    if (dragIdx >= 0 && dragIdx !== i) reorderPinned(livePins[dragIdx], livePins[i]);
+    dragIdx = -1;
+    dragOverIdx = -1;
   }
 
   const totalPdfs = $derived(pdfs.length);
@@ -490,14 +516,21 @@
       {#if livePins.length > 0}
         <section class="bc-pinned" aria-label="Pinned model filters">
           <span class="bc-pinned-label">Pinned</span>
-          {#each livePins as m (m)}
+          {#each livePins as m, i (m)}
             <button
               type="button"
               class="bc-pinned-chip"
               class:active={modelFacet === m}
+              class:dragging={dragIdx === i}
+              class:dragover={dragOverIdx === i && dragIdx !== i}
               aria-pressed={modelFacet === m}
+              draggable="true"
+              ondragstart={(e) => onPinDragStart(e, i, m)}
+              ondragover={(e) => onPinDragOver(e, i)}
+              ondrop={(e) => onPinDrop(e, i)}
+              ondragend={() => { dragIdx = -1; dragOverIdx = -1; }}
               onclick={() => toggleModelFacet(m)}
-              title={modelFacet === m ? `Showing only ${m} — click to clear` : `Quick-filter to ${m}`}
+              title={modelFacet === m ? `Showing only ${m} — click to clear; drag to reorder` : `Quick-filter to ${m} · drag to reorder`}
             >{m}</button>
           {/each}
         </section>
@@ -957,6 +990,15 @@
   .bc-pinned-chip.active {
     background: color-mix(in srgb, #79c0ff 26%, transparent);
     border-color: color-mix(in srgb, #79c0ff 60%, transparent);
+  }
+  .bc-pinned-chip[draggable="true"] { cursor: grab; }
+  .bc-pinned-chip.dragging {
+    opacity: 0.45;
+    cursor: grabbing;
+  }
+  .bc-pinned-chip.dragover {
+    border-color: color-mix(in srgb, #79c0ff 80%, transparent);
+    box-shadow: -2px 0 0 0 #79c0ff;
   }
   .bc-tile-num {
     font-size: 20px;

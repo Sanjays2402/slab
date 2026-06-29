@@ -19,6 +19,7 @@ import {
   isModelPinned,
   toggleModelPin,
   livePinnedModels,
+  movePinnedModel,
   summarizeSelection,
   describeImpact,
   describeBeaconView,
@@ -478,6 +479,32 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   expect(clampBeaconCursor(-2, 10) === 0, "clamp: negative cursor floored to 0");
   expect(clampBeaconCursor(NaN, 10) === 0, "clamp: NaN cursor -> 0");
   expect(clampBeaconCursor(2.9, 10) === 2, "clamp: fractional cursor floored");
+}
+
+// --- movePinnedModel (drag-reorder pinned strip) ---------------------
+{
+  expect(
+    JSON.stringify(movePinnedModel(["a", "b", "c"], 0, 2)) === JSON.stringify(["b", "c", "a"]),
+    "move: front to back",
+  );
+  expect(
+    JSON.stringify(movePinnedModel(["a", "b", "c"], 2, 0)) === JSON.stringify(["c", "a", "b"]),
+    "move: back to front",
+  );
+  expect(
+    JSON.stringify(movePinnedModel(["a", "b", "c"], 1, 1)) === JSON.stringify(["a", "b", "c"]),
+    "move: no-op move preserved",
+  );
+  expect(
+    JSON.stringify(movePinnedModel(["a", "b", "c"], 0, 9)) === JSON.stringify(["b", "c", "a"]),
+    "move: to clamps to last",
+  );
+  expect(
+    JSON.stringify(movePinnedModel(["a", "a", "b"], 0, 1)) === JSON.stringify(["b", "a"]),
+    "move: de-dupes before reordering",
+  );
+  expect(JSON.stringify(movePinnedModel(["a"], 0, 0)) === JSON.stringify(["a"]), "move: single stays");
+  expect(JSON.stringify(movePinnedModel(null as never, 0, 1)) === "[]", "move: garbage -> []");
 }
 
 // eslint-disable-next-line no-console
