@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-28 18:45 PT by Cake (cron) — round-53 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FOUR surfaces, each on a tested pure core, all from the round-52 candidates list. Shipped: (1) OCR pending-KIND share bar (a5bff53) — new tested stateShareBars(fraction/scaled/percent) mirrors round-52's failure histogram onto the Image-only/Mixed pills so the dominant pending kind reads biggest; ocrQueueView 232->242; (2) Library Search saved-chip COUNT badge (57bf6bf) — savedSearchHitCount recovers a pin's last-run resultCount from the recent log by normalized case-insensitive match, real-0 vs null-unknown so a stale pin shows no misleading 0; librarySearchView 281->286; (3) Palette REORDER pinned commands (e35516a) — movePinnedCommand core + Alt+Arrow reorder of focused pinned row, Pinned group renders by saved index so it sticks; paletteSearch 320->327; (4) Beacon PIN-A-MODEL facet (1f2d919) — isModelPinned/toggleModelPin/livePinnedModels + beaconPins.ts shell, star toggle per tile + distinct Pinned chip strip, dead-model auto-drop; beaconCacheView 113->123 + 7 store; (5) RecentsHome COLLAPSIBLE pinned strip (2a71c6c) — recentsPinsCollapsed.ts shell + fold chevron, default expanded; 6 store. Gates: all core+regression tsx suites green, pnpm check 0 errors/104 warnings (baseline exact), zero Rust changed. SHAs a5bff53,57bf6bf,e35516a,1f2d919,2a71c6c.
+Last updated: 2026-06-28 21:30 PT by Cake (cron) — round-54 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces, each on a tested pure core where logic exists, all from the round-53 candidates list. Shipped: (1) Beacon drag-reorder pinned-model strip (c42aa93) — movePinnedModel splice+dedupe so the most-used quick filter sits first; HTML5 drag with dragging/dragover, beaconCacheView 124->130; (2) Library Search jump-to-next-saved chord (4422bc3) — Cmd/Ctrl+]/[ cycles pinned searches with wrap via nextSavedIndex+classifyJumpSavedKey, discoverable cycle hint, librarySearchView 287->299; (3) OCR per-reason share tooltip (ee76448) — describeReasonShare (count/total/percent) on each pill aria-label/title + hover/focus inline percent + focus ring, ocrQueueView 243->247; (4) Palette recent-file thumbnails (3d49002) — getRecentThumb shown in browse rows, removed dead emoji-glyph duplicate block; (5) Signet verify skeleton (568837c) — sig-card shimmer + aria-busy while verifying, reduced-motion fallback. Gates: 6 core suites green (1256 tests), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs c42aa93,4422bc3,ee76448,3d49002,568837c.
+
+PREV round-53 (2026-06-28 18:45 PT): 5 frontend/UX capabilities — OCR pending-KIND share bar (a5bff53); Library Search saved-chip COUNT badge (57bf6bf); Palette REORDER pinned commands (e35516a); Beacon PIN-A-MODEL facet (1f2d919); RecentsHome COLLAPSIBLE pinned strip (2a71c6c).
 
 PREV round-52 (2026-06-28 15:48 PT): 5 frontend/UX capabilities, 5 feature commits — OCR Queue persist sort (5aa65e2); Beacon persist sort (136a1d1); Library Search persist sort mode (2632899); Palette pin-a-command (d9ef0f7); OCR per-reason share bar (69f0595). [opened with a repo-volume disk emergency, freed via stale-tmp + pnpm-store deletion.]
 
@@ -25,7 +27,7 @@ Internal module labels use the repo's logical-release naming ("Atlas VI"
 = v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `2a71c6c` — "feat(recents-home): collapsible pinned strip" (round 53 lands 5 commits: a5bff53, 57bf6bf, e35516a, 1f2d919, 2a71c6c).
+Latest commit: `568837c` — "feat(signet): signature-card skeleton while verifying" (round 54 lands 5 commits: c42aa93, 4422bc3, ee76448, 3d49002, 568837c).
 
 ### What round-45 (2026-06-27 09:55 PT) just shipped
 
@@ -1710,21 +1712,42 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   optimistic save + rollback toast — toast actions already exist).
 - Reader find: highlight the active match's page in the thumbnail rail;
   per-find-result mini-map on the scrollbar (round-42 follow-ups).
-- histogram hover-tooltip on bar segments (per-segment count + label on
-  hover/focus, keyboard-reachable).
 - empty/loading/skeleton-state pass across panels still showing a bare
-  spinner (Signet verify, Quill queue) — OCR-Queue round-50 skeleton pattern.
-- Palette: recent-files thumbnails in the browse list (getRecentThumb data
-  URLs exist; the palette shows none).
-- Beacon: drag-reorder the pinned model strip (movePinnedCommand pattern on
-  the model list) so the most-used quick-filter sits first.
-- RecentsHome: surface the existing Cmd+0 "jump to continue-reading hero"
-  chord in the UI (a discoverable affordance, not just a hidden chord).
-- OCR Queue: a per-reason sparkline / mini histogram of failure ages so a
-  recurring root cause is visible at a glance.
-- Library Search: "run all saved searches" cycle, or jump-to-next-saved chord.
+  spinner (Quill queue) — OCR-Queue round-50 skeleton pattern.
 - Palette: per-section count badges in collapsed-all view so a folded
   section's size reads without expanding.
+- ~~Beacon: drag-reorder the pinned model strip~~ — DONE round 54 (c42aa93):
+  movePinnedModel splice; HTML5 drag + dragging/dragover. 124->130.
+- ~~Library Search: jump-to-next-saved chord~~ — DONE round 54 (4422bc3):
+  Cmd/Ctrl+]/[ cycle, nextSavedIndex+classifyJumpSavedKey. 287->299.
+- ~~OCR Queue: per-reason histogram detail~~ — DONE round 54 (ee76448):
+  describeReasonShare tooltip + hover/focus percent. 243->247.
+- ~~Palette: recent-files thumbnails in browse~~ — DONE round 54 (3d49002):
+  getRecentThumb in rows; killed dead emoji-dup block.
+- ~~skeleton pass: Signet verify~~ — DONE round 54 (568837c): sig-card shimmer.
+
+### Next FRONTEND candidates — refilled round 54
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- doc-detail metadata editor read surface (inline-editable title / tags with
+  optimistic save + rollback toast — toast actions already exist).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- Palette: per-section count badges in collapsed-all view so a folded
+  section's size reads without expanding.
+- empty/loading/skeleton-state pass: Quill queue panel (the last bare
+  spinner) — OCR-Queue round-50 skeleton pattern.
+- RecentsHome: surface the existing Cmd+0 hero chord as a discoverable
+  affordance (badge/hint) rather than a hidden chord.
+- Beacon: keyboard reorder of the pinned-model strip (Alt+Arrow twin of the
+  round-54 drag, the saved-search slice-5 pattern).
+- Library Search: "run all saved searches" sweep summarizing each yield.
+- OCR Queue: collapse the pending-state + failure facets into one segmented
+  control so both filters read at a glance.
+- Palette: thumbnails for the continue-reading + pinned-file rows too
+  (round-54 added Recent; Home/Pinned still glyph).
+- Reader: page-thumbnail rail hover-zoom preview.
 
 ### Next FRONTEND candidates — refilled round 51
 
