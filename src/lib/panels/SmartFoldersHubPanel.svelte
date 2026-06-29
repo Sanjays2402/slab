@@ -387,7 +387,17 @@
       {/if}
 
       {#if loading && entries.length === 0}
-        <div class="hub-empty">Loading…</div>
+        <!-- First-load skeleton: shimmer rows in the hub-row icon+name shape so
+             the hub settles in place instead of flashing a bare "Loading…".
+             Decorative; one SR label carries the loading state. -->
+        <div class="sf-skeleton" aria-busy="true" aria-label="Loading smart folders">
+          {#each Array(6) as _, i (i)}
+            <div class="sf-skel-row">
+              <span class="sf-skel-icon"></span>
+              <span class="sf-skel-bar" style="width: {58 - i * 6}%"></span>
+            </div>
+          {/each}
+        </div>
       {:else if filtered.length === 0}
         <div class="hub-empty">
           {#if query}
@@ -677,6 +687,51 @@
     opacity: 0.55;
     font-size: 13px;
   }
+
+  /* First-load skeleton — hub-row icon+name shapes, shimmer matches the
+     Collections sidebar so the two loaders feel like one app. */
+  .sf-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 20px;
+  }
+  .sf-skel-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+  .sf-skel-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+  .sf-skel-bar {
+    height: 12px;
+    border-radius: 6px;
+  }
+  .sf-skel-icon,
+  .sf-skel-bar {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 8%, transparent) 0%,
+      color-mix(in srgb, var(--accent, #7c8cff) 16%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 8%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: sf-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes sf-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sf-skel-icon,
+    .sf-skel-bar { animation: none; }
+  }
+
 
   .hub-list {
     list-style: none;
