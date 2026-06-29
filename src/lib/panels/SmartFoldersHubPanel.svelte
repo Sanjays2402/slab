@@ -22,6 +22,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
+  import { quintOut } from "svelte/easing";
   import {
     smartFoldersList,
     smartFoldersReorder,
@@ -316,7 +317,32 @@
     if (menuRowKey !== null) menuRowKey = null;
   }
 
+  // Round 59: respect the OS reduced-motion setting so the hub-list entrance
+  // stagger (rowIn below) no-ops for users who asked for less movement.
+  // Snapshotted once at mount, mirroring SuggestedFolders' suggested-strip
+  // stagger (round 58) so the two sections animate by the same rule.
+  let reduceMotion = $state(false);
+
+  /** Per-row entrance: a brief upward fly with a capped stagger so the smart
+      folders list settles in on first paint instead of snapping in fully
+      formed -- the main-list twin of the round-58 suggested-strip stagger.
+      Index-keyed delay; collapses to a no-op when reduced-motion is set.
+      Keyed rows mean only genuinely new rows animate (a drag-reorder moves
+      existing nodes, which don't re-introduce). */
+  function rowIn(_node: Element, { index }: { index: number }) {
+    if (reduceMotion) return { duration: 0 };
+    return {
+      delay: Math.min(index, 6) * 45,
+      duration: 300,
+      easing: quintOut,
+      css: (t: number, u: number) => `opacity: ${t}; transform: translateY(${u * 7}px);`,
+    };
+  }
+
   onMount(() => {
+    if (typeof window !== "undefined" && window.matchMedia) {
+      reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
     refresh();
     window.addEventListener("keydown", handleKey);
     window.addEventListener("click", handleBodyClick);
@@ -417,6 +443,7 @@
               class:personal={e.kind === "personal"}
               class:menu-open={menuRowKey === rowKey(e)}
               class:row-busy={busyRowKey === rowKey(e)}
+              in:rowIn={{ index: i }}
               draggable={renameId === Number(e.id) && e.kind === "personal" ? "false" : "true"}
               ondragstart={(ev) => onDragStart(i, ev)}
               ondragover={(ev) => onDragOver(i, ev)}
