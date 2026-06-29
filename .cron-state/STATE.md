@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-28 15:48 PT by Cake (cron) — round-52 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FOUR surfaces, each on a tested pure core. NOTE: this tick opened with a REPO-VOLUME DISK EMERGENCY: /Volumes/Projects (the 15Gi repo disk, NOT SlabBuild) was at 99-100% full and writes failed mid-edit ("No space left on device"). Freed it: rm /Volumes/Projects/.vitest-tmp (462M stale) + rm /Volumes/Projects/.pnpm-store (1.5G regenerable cache; pnpm rehydrates from registry). Hit a classic APFS 0-byte deletion deadlock (rm needs free blocks to write metadata) — broke it with a 50x retry loop that ground from 0Bi up to 7.5Gi free, then all edits + gates ran clean. Shipped all 5: (1) OCR Queue persist SORT (5aa65e2) — isOcrSort guard in core + ocrSortStore.ts shell (default name-asc clears key), panel seeds+persists; search/facet stay transient; 16 store tests; (2) Beacon persist SORT (136a1d1) — isBeaconSort + beaconSortStore.ts (default indexed-desc), same pattern; 14 tests; (3) Library Search persist SORT mode (2632899) — isSearchSortMode + librarySortStore.ts (default relevance), segmented control persists; 10 tests; (4) Palette PIN-A-COMMAND (d9ef0f7) — isCommandPinned/toggleCommandPin/countPinnedCommands core + cmdPins.ts shell + sticky "Pinned" group at top of browse ahead of Recently-used + per-row star toggle (hover/active), shown once; paletteSearch 308->320; (5) OCR Queue per-reason SHARE BAR (69f0595) — reasonShareBars(fraction/scaled/percent) + 2px proportional inset bar on each facet pill so dominant cause reads biggest; ocrQueueView 221->231. Gates: all 8 tsx suites green, pnpm check 0 errors/104 warnings (baseline exact), zero Rust changed.
+Last updated: 2026-06-28 18:45 PT by Cake (cron) — round-53 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FOUR surfaces, each on a tested pure core, all from the round-52 candidates list. Shipped: (1) OCR pending-KIND share bar (a5bff53) — new tested stateShareBars(fraction/scaled/percent) mirrors round-52's failure histogram onto the Image-only/Mixed pills so the dominant pending kind reads biggest; ocrQueueView 232->242; (2) Library Search saved-chip COUNT badge (57bf6bf) — savedSearchHitCount recovers a pin's last-run resultCount from the recent log by normalized case-insensitive match, real-0 vs null-unknown so a stale pin shows no misleading 0; librarySearchView 281->286; (3) Palette REORDER pinned commands (e35516a) — movePinnedCommand core + Alt+Arrow reorder of focused pinned row, Pinned group renders by saved index so it sticks; paletteSearch 320->327; (4) Beacon PIN-A-MODEL facet (1f2d919) — isModelPinned/toggleModelPin/livePinnedModels + beaconPins.ts shell, star toggle per tile + distinct Pinned chip strip, dead-model auto-drop; beaconCacheView 113->123 + 7 store; (5) RecentsHome COLLAPSIBLE pinned strip (2a71c6c) — recentsPinsCollapsed.ts shell + fold chevron, default expanded; 6 store. Gates: all core+regression tsx suites green, pnpm check 0 errors/104 warnings (baseline exact), zero Rust changed. SHAs a5bff53,57bf6bf,e35516a,1f2d919,2a71c6c.
+
+PREV round-52 (2026-06-28 15:48 PT): 5 frontend/UX capabilities, 5 feature commits — OCR Queue persist sort (5aa65e2); Beacon persist sort (136a1d1); Library Search persist sort mode (2632899); Palette pin-a-command (d9ef0f7); OCR per-reason share bar (69f0595). [opened with a repo-volume disk emergency, freed via stale-tmp + pnpm-store deletion.]
 
 PREV round-51 (2026-06-28 11:40 PT): 5 frontend/UX capabilities, 5 feature commits across FOUR surfaces. (1) OCR Queue in-flight doc name (eac91db); (2) Palette Alt-click solo-expand (a82b520); (3) RecentsHome persist sort (60105a3); (4) Library Search drag-reorder saved-searches (5493b3e); (5) Library Search keyboard cursor saved-searches (d465273). [opened with a disk emergency: stale sparseimage mappings, recovered via detach+reattach.]
 
@@ -23,7 +25,7 @@ Internal module labels use the repo's logical-release naming ("Atlas VI"
 = v3.56.0) which runs ahead of the package version; NOT bumped this round
 (zero Rust/build-config changes — pure frontend on the existing app).
 
-Latest commit: `d465273` — "feat(library-search): keyboard cursor over the Saved-searches strip" (round 51 lands 5 commits: eac91db, a82b520, 60105a3, 5493b3e, d465273).
+Latest commit: `2a71c6c` — "feat(recents-home): collapsible pinned strip" (round 53 lands 5 commits: a5bff53, 57bf6bf, e35516a, 1f2d919, 2a71c6c).
 
 ### What round-45 (2026-06-27 09:55 PT) just shipped
 
@@ -1686,14 +1688,43 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
 - OCR Queue: proportional share bar follow-up — same histogram on the pending
   STATE facet pills (image-only/mixed), mirroring the round-52 failure bar.
 
-- ~~OCR Queue: persist the sort column + direction~~ — DONE round 52
-  (5aa65e2): isOcrSort guard + ocrSortStore.ts; 16 tests.
-- ~~Beacon cache inspector: persist sort~~ — DONE round 52 (136a1d1):
-  isBeaconSort + beaconSortStore.ts; 14 tests.
-- ~~Library Search: persist sort mode~~ — DONE round 52 (2632899):
-  isSearchSortMode + librarySortStore.ts; 10 tests.
-- ~~Palette: pin-a-command~~ — DONE round 52 (d9ef0f7): sticky Pinned group +
-  star toggle + cmdPins.ts; paletteSearch 320 tests.
+- ~~OCR Queue: proportional share bar follow-up~~ — DONE round 53 (a5bff53):
+  stateShareBars on pending KIND pills (Image-only/mixed), mirroring round-52
+  failure bar. ocrQueueView 232->242.
+- ~~Library Search: count badge per saved chip~~ — DONE round 53 (57bf6bf):
+  savedSearchHitCount recovers last-run count from recent log; null=unknown,
+  real 0 distinct. librarySearchView 281->286.
+- ~~Palette: reorder pinned commands~~ — DONE round 53 (e35516a):
+  movePinnedCommand + Alt+Arrow; Pinned group renders by saved index. 320->327.
+- ~~Beacon cache inspector: pin a model/folder facet combo~~ — DONE round 53
+  (1f2d919): isModelPinned/toggleModelPin/livePinnedModels + beaconPins.ts;
+  star per tile + Pinned chip strip. beaconCacheView 113->123 + 7 store.
+- ~~RecentsHome: persist pinned-strip collapsed/expanded~~ — DONE round 53
+  (2a71c6c): recentsPinsCollapsed.ts + fold chevron, default expanded. 6 store.
+
+### Next FRONTEND candidates — refilled round 53
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- doc-detail metadata editor read surface (inline-editable title / tags with
+  optimistic save + rollback toast — toast actions already exist).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- histogram hover-tooltip on bar segments (per-segment count + label on
+  hover/focus, keyboard-reachable).
+- empty/loading/skeleton-state pass across panels still showing a bare
+  spinner (Signet verify, Quill queue) — OCR-Queue round-50 skeleton pattern.
+- Palette: recent-files thumbnails in the browse list (getRecentThumb data
+  URLs exist; the palette shows none).
+- Beacon: drag-reorder the pinned model strip (movePinnedCommand pattern on
+  the model list) so the most-used quick-filter sits first.
+- RecentsHome: surface the existing Cmd+0 "jump to continue-reading hero"
+  chord in the UI (a discoverable affordance, not just a hidden chord).
+- OCR Queue: a per-reason sparkline / mini histogram of failure ages so a
+  recurring root cause is visible at a glance.
+- Library Search: "run all saved searches" cycle, or jump-to-next-saved chord.
+- Palette: per-section count badges in collapsed-all view so a folded
+  section's size reads without expanding.
 
 ### Next FRONTEND candidates — refilled round 51
 
