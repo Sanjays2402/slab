@@ -13,10 +13,12 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { writeFile } from "@tauri-apps/plugin-fs";
   import { onMount } from "svelte";
+  import { flip } from "svelte/animate";
   import JSZip from "jszip";
   import { PDFDocument } from "pdf-lib";
   import { idle, basename, stripExt, type Status } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
+  import { moveItem, isReorder } from "$lib/convertReorder";
 
   // ---- PDF.js (only the lib API, no viewer chrome needed here) ----
   type PdfjsModule = typeof import("pdfjs-dist");
@@ -49,8 +51,11 @@
   let imgRangeText = $state("");
 
   // ---- Images → PDF state ----
-  type ImgFile = { name: string; path: string | null; bytes: Uint8Array; type: string };
+  type ImgFile = { uid: number; name: string; path: string | null; bytes: Uint8Array; type: string };
   let images = $state<ImgFile[]>([]);
+  /** Monotonic id so each row keeps a STABLE key across reorders — required
+      for animate:flip to track a moved row instead of cross-fading by index. */
+  let imgUid = 0;
   let pdfSizing = $state<"fit" | "original">("fit");
   let pdfPageSize = $state<"letter" | "a4" | "auto">("letter");
 
@@ -237,6 +242,7 @@
       for (const p of arr) {
         const bytes = await readFile(p);
         next.push({
+          uid: imgUid++,
           name: basename(p),
           path: p,
           bytes,
@@ -256,6 +262,7 @@
       const next: ImgFile[] = [];
       for (const f of files) {
         next.push({
+          uid: imgUid++,
           name: f.name,
           path: null,
           bytes: new Uint8Array(await f.arrayBuffer()),
@@ -280,17 +287,48 @@
   }
 
   function moveImgUp(i: number) {
-    if (i === 0) return;
-    const next = [...images];
-    [next[i - 1], next[i]] = [next[i], next[i - 1]];
-    images = next;
+    images = moveItem(images, i, i - 1);
   }
 
   function moveImgDown(i: number) {
-    if (i === images.length - 1) return;
-    const next = [...images];
-    [next[i + 1], next[i]] = [next[i], next[i + 1]];
-    images = next;
+    images = moveItem(images, i, i + 1);
+  }
+
+  // ---- Drag-to-reorder (the dropzone has always promised this) ----
+  /** Index of the row being dragged, or -1. Drives the drag-source dimming. */
+  let dragImg = $state(-1);
+  /** Index the dragged row is hovering over (drop target), or -1. */
+  let dragOverImg = $state(-1);
+
+  function onImgDragStart(i: number, ev: DragEvent) {
+    dragImg = i;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = "move";
+      // Firefox needs data set for a drag to actually start.
+      try { ev.dataTransfer.setData("text/plain", String(i)); } catch { /* ignore */ }
+    }
+  }
+
+  function onImgDragOver(i: number, ev: DragEvent) {
+    if (dragImg < 0) return;
+    ev.preventDefault(); // allow the drop
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+    dragOverImg = i;
+  }
+
+  function onImgDrop(i: number, ev: DragEvent) {
+    if (dragImg < 0) return;
+    ev.preventDefault();
+    if (isReorder(images.length, dragImg, i)) {
+      images = moveItem(images, dragImg, i);
+    }
+    dragImg = -1;
+    dragOverImg = -1;
+  }
+
+  function onImgDragEnd() {
+    dragImg = -1;
+    dragOverImg = -1;
   }
 
   async function decodeWebpToPng(bytes: Uint8Array): Promise<Uint8Array> {
@@ -548,15 +586,25 @@
       </button>
     {:else}
       <ul class="file-list">
-        {#each images as img, i (img.name + i)}
-          <li class="file-row">
-            <span class="row-handle" aria-hidden="true">⋮⋮</span>
+        {#each images as img, i (img.uid)}
+          <li
+            class="file-row"
+            class:dragging={dragImg === i}
+            class:dragover={dragOverImg === i && dragImg >= 0 && dragImg !== i}
+            draggable="true"
+            animate:flip={{ duration: 180 }}
+            ondragstart={(ev) => onImgDragStart(i, ev)}
+            ondragover={(ev) => onImgDragOver(i, ev)}
+            ondrop={(ev) => onImgDrop(i, ev)}
+            ondragend={onImgDragEnd}
+          >
+            <span class="row-handle" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
             <span class="row-idx">{i + 1}</span>
             <span class="row-name" title={img.path ?? img.name}>{img.name}</span>
             <span class="row-meta">{(img.bytes.length / 1024).toFixed(1)} KB</span>
             <div class="row-actions">
-              <button class="ghost" onclick={() => moveImgUp(i)} aria-label="Up">↑</button>
-              <button class="ghost" onclick={() => moveImgDown(i)} aria-label="Down">↓</button>
+              <button class="ghost" onclick={() => moveImgUp(i)} disabled={i === 0} aria-label="Move up">↑</button>
+              <button class="ghost" onclick={() => moveImgDown(i)} disabled={i === images.length - 1} aria-label="Move down">↓</button>
               <button class="ghost remove" onclick={() => removeImg(i)} aria-label="Remove">✕</button>
             </div>
           </li>
@@ -727,8 +775,22 @@
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--r-md);
+    cursor: grab;
+    transition: opacity 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
   }
-  .row-handle { color: var(--text-3); font-size: 11px; user-select: none; }
+  .file-row:active { cursor: grabbing; }
+  /* Drag source: dim + lift so it reads as "in hand". */
+  .file-row.dragging {
+    opacity: 0.45;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  /* Drop target: accent ring so the landing slot is unmistakable. */
+  .file-row.dragover {
+    border-color: var(--accent, #5e6ad2);
+    background: color-mix(in srgb, var(--accent, #5e6ad2) 10%, var(--bg-2));
+    box-shadow: inset 0 0 0 1px var(--accent, #5e6ad2);
+  }
+  .row-handle { color: var(--text-3); font-size: 11px; user-select: none; cursor: grab; }
   .row-idx {
     width: 22px;
     height: 22px;
