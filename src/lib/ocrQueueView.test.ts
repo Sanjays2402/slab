@@ -25,6 +25,7 @@ import {
   describeReasonRetry,
   groupPendingStates,
   filterByPendingState,
+  stateShareBars,
   reconcilePendingStateFacet,
   pendingStateLabel,
   flattenOcrRows,
@@ -567,6 +568,28 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   expect(reconcilePendingStateFacet("scanned", buckets) === "scanned", "pstate: live facet kept");
   expect(reconcilePendingStateFacet("gone", buckets) === null, "pstate: vanished facet cleared");
   expect(reconcilePendingStateFacet(null, buckets) === null, "pstate: null facet stays null");
+}
+
+// --- stateShareBars: proportional pending-kind histogram -------------
+{
+  const bars = stateShareBars([
+    { state: "scanned", count: 6 },
+    { state: "mixed", count: 3 },
+    { state: "unknown", count: 1 },
+  ]);
+  expect(bars.length === 3, "sstate-share: one bar per bucket");
+  expect(bars[0].state === "scanned", "sstate-share: preserves bucket order");
+  expect(bars[0].scaled === 1, "sstate-share: dominant kind fills bar");
+  expect(bars[1].scaled === 0.5, "sstate-share: half-size kind scales to 0.5");
+  expect(bars[0].percent === 60, "sstate-share: 6 of 10 -> 60 percent");
+  expect(bars[2].percent === 10, "sstate-share: 1 of 10 -> 10 percent");
+  expect(Math.abs(bars[1].fraction - 0.3) < 1e-9, "sstate-share: fraction is share of total");
+  // Garbage / empty safety mirrors reasonShareBars.
+  expect(stateShareBars([]).length === 0, "sstate-share: empty -> []");
+  expect(stateShareBars(null as never).length === 0, "sstate-share: null -> []");
+  expect(stateShareBars([{ state: "x", count: 0 }]).length === 0, "sstate-share: all-zero -> []");
+  const mixedShare = stateShareBars([{ state: "a", count: 4 }, { state: "b", count: -2 } as never]);
+  expect(mixedShare.length === 1 && mixedShare[0].percent === 100, "sstate-share: garbage count dropped, sole bucket 100");
 }
 
 // --- Slice 3c: per-reason "Retry all <reason>" -----------------------

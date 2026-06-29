@@ -53,6 +53,7 @@
     describeReasonRetry,
     groupPendingStates,
     filterByPendingState,
+    stateShareBars,
     reconcilePendingStateFacet,
     pendingStateLabel,
     flattenOcrRows,
@@ -478,6 +479,9 @@
 
   /** Slice 3b: pending-state buckets (image-only/mixed, dominant first). */
   const pendingStateBuckets = $derived(groupPendingStates(pending));
+  const stateShares = $derived(
+    new Map(stateShareBars(pendingStateBuckets).map((s) => [s.state, s])),
+  );
 
   /** Slice 3 then 1 then 2: failures after reason facet -> search -> sort. */
   const facetedFailed = $derived(filterByReason(failed, reasonFacet));
@@ -1106,6 +1110,7 @@
           {#if pendingStateBuckets.length > 1}
             <div class="oq-reasons" role="group" aria-label="Filter pending by kind">
               {#each pendingStateBuckets as bucket (bucket.state)}
+                {@const share = stateShares.get(bucket.state)}
                 <button
                   class="oq-reason"
                   class:active={pendingStateFacet === bucket.state}
@@ -1113,10 +1118,17 @@
                   aria-pressed={pendingStateFacet === bucket.state}
                   title={pendingStateFacet === bucket.state
                     ? `Showing only ${pendingStateLabel(bucket.state)} — click to clear`
-                    : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that are ${pendingStateLabel(bucket.state)}`}
+                    : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that are ${pendingStateLabel(bucket.state)}${share ? ` (${share.percent}% of pending)` : ""}`}
                 >
                   {pendingStateLabel(bucket.state)}
                   <span class="oq-reason-count tabular">{bucket.count}</span>
+                  {#if share}
+                    <span
+                      class="oq-reason-bar"
+                      style={`--share:${(share.scaled * 100).toFixed(1)}%`}
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
                 </button>
               {/each}
             </div>

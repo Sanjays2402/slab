@@ -556,6 +556,40 @@ export function filterByPendingState<T extends OcrDocLike>(
   return pending.filter((d) => d && (d.ocr_state || "unknown") === state);
 }
 
+/** A pending-state bucket annotated with its share-of-total for a mini bar. */
+export interface OcrStateShare extends OcrStateBucket {
+  /** This bucket's count over the TOTAL pending, 0..1. */
+  fraction: number;
+  /** This bucket's count over the LARGEST bucket, 0..1 (bar width). */
+  scaled: number;
+  /** Rounded whole-percent of total, for the SR label. */
+  percent: number;
+}
+
+/**
+ * Annotate pending-state buckets with proportional shares so the kind pills
+ * (Image-only / Mixed pages) render the same mini bar the failure-reason
+ * pills already carry — turning equal-looking pills into a histogram where
+ * the dominant kind reads biggest at a glance. `fraction` is share of total;
+ * `scaled` is share of the largest bucket. Stable order (reuses
+ * groupPendingStates sorting). Empty/garbage -> [].
+ */
+export function stateShareBars(buckets: readonly OcrStateBucket[]): OcrStateShare[] {
+  if (!Array.isArray(buckets) || buckets.length === 0) return [];
+  const total = buckets.reduce((s, b) => s + (b?.count > 0 ? b.count : 0), 0);
+  const max = buckets.reduce((m, b) => Math.max(m, b?.count > 0 ? b.count : 0), 0);
+  if (total <= 0 || max <= 0) return [];
+  return buckets
+    .filter((b) => b && b.count > 0)
+    .map((b) => ({
+      state: b.state,
+      count: b.count,
+      fraction: b.count / total,
+      scaled: b.count / max,
+      percent: Math.round((b.count / total) * 100),
+    }));
+}
+
 /**
  * Reconcile an active pending-state facet against the live bucket list.
  * If the faceted state no longer exists (its last pending doc was run, or
