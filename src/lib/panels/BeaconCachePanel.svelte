@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, classifyPinReorderKey, nextPinIndex, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, filterDeadWeight, dominantModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, classifyPinReorderKey, nextPinIndex, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { loadPinnedModels, savePinnedModels } from "$lib/beaconPins";
   import { splitHighlight } from "$lib/paletteSearch";
   import { loadBeaconSort, saveBeaconSort } from "$lib/beaconSortStore";
@@ -79,6 +79,10 @@
 
   /** Slice 3: active model facet (one embed_model) or null for "all". */
   let modelFacet = $state<string | null>(null);
+  /** Dead-weight mode: show only PDFs Beacon ignores (non-dominant models). */
+  let deadWeightOnly = $state(false);
+  /** The model Beacon actually queries; non-dominant rows are dead weight. */
+  const deadModel = $derived(dominantModel(pdfs));
   /** Pinned model names (sticky strip), seeded from localStorage. */
   let pinnedModels = $state<string[]>(loadPinnedModels());
   /** Pinned models that still exist in the live index, in pin order. */
@@ -146,14 +150,14 @@
   const selectedCount = $derived(selected.size);
 
   /** Rows after the model facet (slice 3) then the search (slice 1). */
-  const facetedPdfs = $derived(filterByModel(pdfs, modelFacet));
+  const facetedPdfs = $derived(deadWeightOnly ? filterDeadWeight(pdfs) : filterByModel(pdfs, modelFacet));
   const searchHits = $derived(searchIndexedPdfs(facetedPdfs, search));
   /** hash -> highlight ranges, so the row template can paint the match. */
   const nameRangesByHash = $derived(
     new Map(searchHits.map((h) => [h.record.pdf_hash, h.nameRanges])),
   );
   /** True when any filter (search text OR model facet) is narrowing. */
-  const isFiltering = $derived(search.trim().length > 0 || modelFacet !== null);
+  const isFiltering = $derived(search.trim().length > 0 || modelFacet !== null || deadWeightOnly);
 
   /** Faceted + searched subset, sorted by the active column. */
   const sortedPdfs = $derived(
@@ -181,7 +185,12 @@
   }
 
   function toggleModelFacet(model: string) {
+    deadWeightOnly = false;
     modelFacet = modelFacet === model ? null : model;
+  }
+  function toggleDeadWeight() {
+    modelFacet = null;
+    deadWeightOnly = !deadWeightOnly;
   }
 
   /** Slice 5: keyboard cursor index into the visible (sorted) rows. */
@@ -568,6 +577,16 @@
           Beacon's query path silently skips dim-mismatched chunks, so the
           loser is effectively dead weight. Forget one bucket to reclaim
           space — re-index runs will pick up the active model.
+          <button
+            type="button"
+            class="bc-deadweight-chip"
+            class:active={deadWeightOnly}
+            onclick={toggleDeadWeight}
+            aria-pressed={deadWeightOnly}
+            title={deadWeightOnly ? "Showing only dead weight — click to clear" : "Show only the dead-weight PDFs"}
+          >
+            {deadWeightOnly ? "Showing dead weight" : "Show dead weight"}{#if deadModel} (not {deadModel}){/if}
+          </button>
         </div>
       {/if}
 
@@ -679,6 +698,7 @@
               onclick={() => {
                 search = "";
                 modelFacet = null;
+                deadWeightOnly = false;
               }}
             >Clear filters</button>
           </div>
@@ -1049,6 +1069,25 @@
     border-radius: 8px;
     font-size: 12px;
     line-height: 1.5;
+  }
+  .bc-deadweight-chip {
+    margin-left: 6px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, #f5c518 50%, transparent);
+    background: transparent;
+    color: #fff2b8;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .bc-deadweight-chip:hover { background: color-mix(in srgb, #f5c518 18%, transparent); }
+  .bc-deadweight-chip.active {
+    background: color-mix(in srgb, #f5c518 30%, transparent);
+    border-color: #f5c518;
+    color: #fffbe6;
   }
   .bc-warn strong {
     color: #f5c518;

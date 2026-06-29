@@ -298,6 +298,42 @@ export function reconcileModelFacet(
   return models.includes(active) ? active : null;
 }
 
+// --- Mixed-model dead-weight facet -------------------------------------
+//
+// In a mixed-model index Beacon's query path only uses the dominant model;
+// every other bucket is dead weight wasting space. The warning banner says
+// so but gives no one-click way to SEE just those rows. dominantModel +
+// filterDeadWeight back a single chip that filters the table to exactly
+// the forgettable PDFs, so triage is select-all -> forget.
+
+/**
+ * The embed_model carrying the most chunks (the one Beacon actually
+ * queries) — biggest-chunks-first, alphabetical tie-break for stability.
+ * Empty/single-model/garbage -> null. Pure.
+ */
+export function dominantModel<T extends BeaconPdfLike>(pdfs: readonly T[]): string | null {
+  if (!Array.isArray(pdfs) || pdfs.length === 0) return null;
+  const chunks = new Map<string, number>();
+  for (const p of pdfs) {
+    if (!p || typeof p.embed_model !== "string" || !p.embed_model) continue;
+    chunks.set(p.embed_model, (chunks.get(p.embed_model) ?? 0) + Math.max(0, p.chunks || 0));
+  }
+  if (chunks.size <= 1) return null;
+  return [...chunks.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+}
+
+/**
+ * Rows NOT in the dominant model — the dead-weight Beacon ignores. When
+ * the index is single-model (no dominant) nothing is dead weight, so ->
+ * []. Always a new array. Null list -> []. Pure.
+ */
+export function filterDeadWeight<T extends BeaconPdfLike>(pdfs: readonly T[]): T[] {
+  if (!Array.isArray(pdfs)) return [];
+  const keep = dominantModel(pdfs);
+  if (!keep) return [];
+  return pdfs.filter((p) => p && p.embed_model !== keep);
+}
+
 // --- Pinned model facets -----------------------------------------------
 //
 // The model tiles are a click-to-filter facet, but the choice is

@@ -15,6 +15,8 @@ import {
   beaconDefaultDir,
   beaconSortLabel,
   filterByModel,
+  filterDeadWeight,
+  dominantModel,
   reconcileModelFacet,
   isModelPinned,
   toggleModelPin,
@@ -301,6 +303,26 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   // Defensive.
   // @ts-expect-error null tolerance
   expect(filterByModel(null, "x").length === 0, "facet: null list -> []");
+}
+
+// --- dominantModel + filterDeadWeight --------------------------------
+{
+  const mixed = [
+    pdf({ pdf_hash: "a", embed_model: "nomic-embed-text", chunks: 100 }),
+    pdf({ pdf_hash: "b", embed_model: "mxbai-embed-large", chunks: 20 }),
+    pdf({ pdf_hash: "c", embed_model: "nomic-embed-text", chunks: 80 }),
+  ];
+  expect(dominantModel(mixed) === "nomic-embed-text", "dominant: most-chunks model wins");
+  const dead = filterDeadWeight(mixed);
+  expect(dead.length === 1 && dead[0].pdf_hash === "b", "deadweight: only non-dominant rows");
+  expect(dead !== mixed, "deadweight: new array");
+  // Single-model index: nothing is dead weight.
+  const single = [pdf({ pdf_hash: "a", embed_model: "nomic-embed-text", chunks: 5 })];
+  expect(dominantModel(single) === null, "dominant: single model -> null");
+  expect(filterDeadWeight(single).length === 0, "deadweight: single model -> []");
+  expect(filterDeadWeight([]).length === 0, "deadweight: empty -> []");
+  // @ts-expect-error null tolerance
+  expect(dominantModel(null) === null, "dominant: null -> null");
 }
 
 // --- reconcileModelFacet ---------------------------------------------
