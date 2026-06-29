@@ -245,7 +245,7 @@
       id: "home:open",
       title: "Go to Recents Home",
       subtitle: "Hero card · Continue reading · pinned & recent files",
-      icon: "🏠",
+      icon: "⌂",
       group: "Home",
       run: () => {
         // Closing the active document falls back to RecentsHome.
@@ -263,6 +263,9 @@
         window.dispatchEvent(new CustomEvent("slab:home-continue"));
       },
       keywords: "resume continue last opened recent reading",
+      // Show the cover of the doc you'd resume so the entry is recognisable
+      // at a glance, not just a generic play glyph.
+      thumb: recents[0] ? getRecentThumb(recents[0].path) : undefined,
     });
     // Pinned + recent files become direct palette entries — opens are
     // dispatched through the same `slab:open-recent` channel the
@@ -431,7 +434,7 @@
       id: "library:smart-folders-hub",
       title: "Smart Folders Hub…",
       subtitle: "Manage built-in + personal smart folders — pin, reorder, export pack (⇧⌘F)",
-      icon: "🗂",
+      icon: "▦",
       group: "Library",
       run: () => {
         onSelectPanel("library");
@@ -526,7 +529,7 @@
       id: "stack:export",
       title: "Stack: Export diff report (PDF)",
       subtitle: "Save the current diff as a shareable PDF report",
-      icon: "📄",
+      icon: "⎙",
       group: "Stack",
       run: () => {
         onSelectPanel("diff");
@@ -597,7 +600,7 @@
       id: "theater:open",
       title: "Start Theater (presenter mode)",
       subtitle: "Turn the current PDF into slides — laser, ink, blackout (⇧⌘T)",
-      icon: "🎬",
+      icon: "◳",
       group: "Theater",
       run: () => onSelectPanel("theater"),
       keywords:
