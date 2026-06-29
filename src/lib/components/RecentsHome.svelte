@@ -51,6 +51,7 @@
     type RecentSortMode,
   } from "$lib/recentsHomeView";
   import { loadRecentSort, saveRecentSort } from "$lib/recentsView";
+  import { loadPinsCollapsed, savePinsCollapsed } from "$lib/recentsPinsCollapsed";
   import { notify } from "$lib/notify";
   import { basename } from "$lib/types";
   import { onMount, onDestroy } from "svelte";
@@ -102,6 +103,14 @@
   // is intentionally NOT persisted — a stale term would hide recents behind
   // a forgotten filter on reopen.)
   let sortMode = $state<RecentSortMode>(loadRecentSort());
+  // The pinned strip can fold away so a many-pin board doesn't push recents
+  // off-screen; persisted (loadPinsCollapsed, default expanded) so the choice
+  // survives a restart, like the sort mode above.
+  let pinsCollapsed = $state<boolean>(loadPinsCollapsed());
+  function togglePinsCollapsed() {
+    pinsCollapsed = !pinsCollapsed;
+    savePinsCollapsed(pinsCollapsed);
+  }
 
   /** Set the active sort and persist it (best-effort). */
   function setSort(mode: RecentSortMode): void {
@@ -612,9 +621,18 @@
   {#if pinned.length > 0}
     <section class="row">
       <header class="row-head">
-        <span class="row-label">Pinned</span>
+        <button
+          type="button"
+          class="rh-pins-toggle"
+          aria-expanded={!pinsCollapsed}
+          onclick={togglePinsCollapsed}
+          title={pinsCollapsed ? "Show pinned documents" : "Hide pinned documents"}
+        >
+          <span class="rh-pins-chevron" aria-hidden="true">{pinsCollapsed ? "\u25B8" : "\u25BE"}</span>
+          <span class="row-label">Pinned</span>
+        </button>
         <span class="row-hint">{pinned.length} file{pinned.length === 1 ? "" : "s"}</span>
-        {#if resetPinOrderLabel}
+        {#if resetPinOrderLabel && !pinsCollapsed}
           <button
             type="button"
             class="rh-reset-order"
@@ -625,6 +643,7 @@
           </button>
         {/if}
       </header>
+      {#if !pinsCollapsed}
       <div
         class="strip-wrap"
         class:has-start={stripEdges.atStart}
@@ -718,6 +737,7 @@
         {/each}
         </div>
       </div>
+      {/if}
     </section>
   {/if}
 
@@ -1021,6 +1041,31 @@
     opacity: 0.6;
   }
   .row-hint { font-size: 0.75rem; opacity: 0.45; }
+
+  /* Pinned-strip collapse toggle: the row label becomes a fold control with
+     a leading chevron, matching the palette's foldable sections. */
+  .rh-pins-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+  }
+  .rh-pins-chevron {
+    font-size: 0.7rem;
+    opacity: 0.55;
+    transition: opacity 120ms;
+  }
+  .rh-pins-toggle:hover .rh-pins-chevron,
+  .rh-pins-toggle:hover .row-label { opacity: 0.9; }
+  .rh-pins-toggle:focus-visible {
+    outline: 2px solid color-mix(in srgb, #79c0ff 60%, transparent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 
   /* Slice 9: reset-pin-order affordance. A quiet text button that appears in
      the Pinned header only once the strip carries a manual drag order;
