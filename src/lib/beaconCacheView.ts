@@ -298,6 +298,55 @@ export function reconcileModelFacet(
   return models.includes(active) ? active : null;
 }
 
+// --- Pinned model facets -----------------------------------------------
+//
+// The model tiles are a click-to-filter facet, but the choice is
+// transient — refresh or reopen and you re-pick. A user who lives in one
+// embed model (the rest are dead weight to ignore) wants that model pinned
+// to a sticky strip so it's one tap to refilter, exactly as the library
+// search pins a query. The pin MATH lives here (toggle / membership / order)
+// keyed on the model name; the localStorage shell only persists the names.
+
+/** Whether `model` is in the pinned set. Empty/garbage model is never pinned. */
+export function isModelPinned(pinned: readonly string[], model: string): boolean {
+  if (typeof model !== "string" || !model) return false;
+  return Array.isArray(pinned) && pinned.includes(model);
+}
+
+/**
+ * Toggle `model` in the pinned list, returning a NEW de-duped array (never
+ * mutates). Pinning appends to the END (oldest-pin-first, stable); unpinning
+ * removes it. A blank/garbage model is a no-op. Duplicates collapse so the
+ * list can never hold the same model twice.
+ */
+export function toggleModelPin(pinned: readonly string[], model: string): string[] {
+  const base = (Array.isArray(pinned) ? pinned : []).filter(
+    (p) => typeof p === "string" && p.length > 0,
+  );
+  if (typeof model !== "string" || !model) return [...new Set(base)];
+  if (base.includes(model)) return [...new Set(base.filter((p) => p !== model))];
+  return [...new Set([...base, model])];
+}
+
+/**
+ * Pinned models that still exist in the live index, in pin order. A pin whose
+ * model was fully forgotten drops off the strip (no dead chip), but stays in
+ * the persisted list only if still present — so the strip mirrors reality.
+ * Both args null/garbage -> []. Pure.
+ */
+export function livePinnedModels(pinned: readonly string[], models: readonly string[]): string[] {
+  if (!Array.isArray(pinned) || !Array.isArray(models)) return [];
+  const live = new Set(models);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of pinned) {
+    if (typeof p !== "string" || !p || seen.has(p) || !live.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
 // --- Slice 4: selection impact + context-aware footer ------------------
 //
 // Forgetting cache entries is destructive: it drops every embedding

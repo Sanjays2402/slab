@@ -43,7 +43,8 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { loadPinnedModels, savePinnedModels } from "$lib/beaconPins";
   import { splitHighlight } from "$lib/paletteSearch";
   import { loadBeaconSort, saveBeaconSort } from "$lib/beaconSortStore";
 
@@ -78,6 +79,14 @@
 
   /** Slice 3: active model facet (one embed_model) or null for "all". */
   let modelFacet = $state<string | null>(null);
+  /** Pinned model names (sticky strip), seeded from localStorage. */
+  let pinnedModels = $state<string[]>(loadPinnedModels());
+  /** Pinned models that still exist in the live index, in pin order. */
+  const livePins = $derived(livePinnedModels(pinnedModels, buckets.map((b) => b.embed_model)));
+  function toggleModelPinned(model: string) {
+    pinnedModels = toggleModelPin(pinnedModels, model);
+    savePinnedModels(pinnedModels);
+  }
 
   const totalPdfs = $derived(pdfs.length);
   const totalChunks = $derived(
@@ -446,6 +455,7 @@
           <div class="bc-tile-label">chunks stored</div>
         </div>
         {#each buckets as b (b.embed_model)}
+          <div class="bc-tile-wrap">
           <button
             type="button"
             class="bc-tile bc-tile-model bc-tile-facet"
@@ -464,8 +474,34 @@
               <span class="bc-tile-facet-pill">Filtering</span>
             {/if}
           </button>
+          <button
+            type="button"
+            class="bc-tile-pin"
+            class:pinned={isModelPinned(pinnedModels, b.embed_model)}
+            aria-pressed={isModelPinned(pinnedModels, b.embed_model)}
+            aria-label={isModelPinned(pinnedModels, b.embed_model) ? `Unpin ${b.embed_model}` : `Pin ${b.embed_model} to quick filters`}
+            title={isModelPinned(pinnedModels, b.embed_model) ? "Unpin from quick filters" : "Pin to quick filters"}
+            onclick={(e) => { e.stopPropagation(); toggleModelPinned(b.embed_model); }}
+          >{isModelPinned(pinnedModels, b.embed_model) ? "\u2605" : "\u2606"}</button>
+          </div>
         {/each}
       </section>
+
+      {#if livePins.length > 0}
+        <section class="bc-pinned" aria-label="Pinned model filters">
+          <span class="bc-pinned-label">Pinned</span>
+          {#each livePins as m (m)}
+            <button
+              type="button"
+              class="bc-pinned-chip"
+              class:active={modelFacet === m}
+              aria-pressed={modelFacet === m}
+              onclick={() => toggleModelFacet(m)}
+              title={modelFacet === m ? `Showing only ${m} — click to clear` : `Quick-filter to ${m}`}
+            >{m}</button>
+          {/each}
+        </section>
+      {/if}
 
       {#if isMixedModel}
         <div class="bc-warn" role="status">
@@ -858,6 +894,69 @@
     border-radius: 999px;
     background: color-mix(in srgb, #79c0ff 30%, transparent);
     color: #d6e9ff;
+  }
+  .bc-tile-wrap {
+    position: relative;
+    display: flex;
+  }
+  .bc-tile-wrap .bc-tile {
+    flex: 1;
+  }
+  .bc-tile-pin {
+    position: absolute;
+    bottom: 6px;
+    right: 8px;
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: color-mix(in srgb, white 40%, transparent);
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms, color 120ms;
+  }
+  .bc-tile-wrap:hover .bc-tile-pin,
+  .bc-tile-pin.pinned,
+  .bc-tile-pin:focus-visible {
+    opacity: 1;
+  }
+  .bc-tile-pin.pinned {
+    color: #79c0ff;
+  }
+  .bc-pinned {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 0 22px 6px;
+  }
+  .bc-pinned-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.5;
+    margin-right: 2px;
+  }
+  .bc-pinned-chip {
+    appearance: none;
+    font: inherit;
+    font-size: 11px;
+    color: #d6e9ff;
+    border: 1px solid color-mix(in srgb, #79c0ff 30%, transparent);
+    background: color-mix(in srgb, #79c0ff 8%, transparent);
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms;
+  }
+  .bc-pinned-chip:hover {
+    background: color-mix(in srgb, #79c0ff 16%, transparent);
+  }
+  .bc-pinned-chip.active {
+    background: color-mix(in srgb, #79c0ff 26%, transparent);
+    border-color: color-mix(in srgb, #79c0ff 60%, transparent);
   }
   .bc-tile-num {
     font-size: 20px;

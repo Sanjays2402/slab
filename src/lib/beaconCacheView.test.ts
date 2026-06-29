@@ -16,6 +16,9 @@ import {
   beaconSortLabel,
   filterByModel,
   reconcileModelFacet,
+  isModelPinned,
+  toggleModelPin,
+  livePinnedModels,
   summarizeSelection,
   describeImpact,
   describeBeaconView,
@@ -311,6 +314,23 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   expect(reconcileModelFacet("x", []) === null, "reconcile: empty model list clears any facet");
   // @ts-expect-error null tolerance
   expect(reconcileModelFacet("x", null) === null, "reconcile: null model list clears facet");
+}
+
+// --- pinned model facets ---------------------------------------------
+{
+  expect(isModelPinned(["nomic"], "nomic") === true, "pin: member is pinned");
+  expect(isModelPinned(["nomic"], "mxbai") === false, "pin: non-member not pinned");
+  expect(isModelPinned([], "") === false, "pin: blank never pinned");
+  expect(toggleModelPin(["a"], "b").join(",") === "a,b", "pin: append oldest-first");
+  expect(toggleModelPin(["a", "b"], "a").join(",") === "b", "pin: toggle off removes");
+  expect(toggleModelPin(["a", "a"], "b").join(",") === "a,b", "pin: dedupes input");
+  expect(toggleModelPin(["a"], "").join(",") === "a", "pin: blank toggle no-op");
+  // livePinnedModels drops pins whose model vanished, keeps pin order.
+  expect(livePinnedModels(["a", "b", "c"], ["c", "a"]).join(",") === "a,c", "pin: only live, pin order");
+  expect(livePinnedModels(["a", "a", "b"], ["a", "b"]).join(",") === "a,b", "pin: dedupe live");
+  expect(livePinnedModels(["x"], []).length === 0, "pin: no live models -> []");
+  // @ts-expect-error garbage
+  expect(livePinnedModels(null, ["a"]).length === 0, "pin: null pinned -> []");
 }
 
 // --- summarizeSelection ----------------------------------------------
