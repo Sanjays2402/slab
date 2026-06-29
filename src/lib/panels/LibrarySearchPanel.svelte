@@ -57,6 +57,8 @@
     buildSnippetSpans,
     classifyRecentChipKey,
     classifySavedSearchKey,
+    classifyJumpSavedKey,
+    nextSavedIndex,
     nextChipCursor,
     clampChipCursor,
     formatRelativeAge,
@@ -192,8 +194,19 @@
     if (debounceTimer) clearTimeout(debounceTimer);
     query = q;
     chipCursor = -1;
+    lastSavedIdx = pinned.indexOf(q);
     void runSearch(q);
     inputEl?.focus();
+  }
+
+  // Cmd/Ctrl+]/[ cycles through saved searches without reaching for the
+  // strip; lastSavedIdx tracks which one ran so the next jump steps from
+  // there, wrapping via the tested nextSavedIndex.
+  let lastSavedIdx = $state(-1);
+  function jumpSaved(dir: -1 | 1): void {
+    const next = nextSavedIndex(lastSavedIdx, pinned.length, dir);
+    if (next < 0) return;
+    runPinned(pinned[next]);
   }
 
   /** Pin / unpin a query: flip its membership in the saved-search list and
@@ -507,6 +520,18 @@
 
   /** Window-level keydown: drive the results cursor when the list has hits. */
   function onResultsKey(e: KeyboardEvent): void {
+    // Cmd/Ctrl+]/[ cycles the saved searches from ANYWHERE in the panel —
+    // no need to reach the strip. Checked first so it never collides with
+    // the per-chip arrow strip (which bails on meta/ctrl). No-op when none
+    // are pinned, so a regular ]/[ in a search box is never stolen.
+    if (pinned.length > 0) {
+      const jump = classifyJumpSavedKey(e);
+      if (jump) {
+        e.preventDefault();
+        jumpSaved(jump.dir);
+        return;
+      }
+    }
     // Round 51 Slice 5: when a SAVED-search chip holds the keyboard cursor
     // (reached via Tab, then tracked by savedCursor), the saved strip owns
     // the keys: Left/Right walk it, Alt+Left/Right reorder it, Enter runs,
@@ -844,6 +869,9 @@
             <header class="recents-head">
               <span class="recents-label">Saved searches</span>
               <span class="saved-count" aria-live="polite">{pinnedSummary}</span>
+              {#if pinned.length > 1}
+                <span class="saved-cycle-hint" title="Cycle through saved searches">Cycle <kbd>⌘[</kbd> <kbd>⌘]</kbd></span>
+              {/if}
             </header>
             <ul class="recents-list" role="listbox" aria-label="Saved searches — arrow keys to navigate, Enter to run, Alt+arrows to reorder, Backspace to unpin">
               {#each pinned as pq, i (pq)}
@@ -2027,6 +2055,23 @@
   .saved-count {
     font-size: 11px;
     color: var(--fg-muted, #888);
+  }
+  .saved-cycle-hint {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--fg-muted, #888);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    opacity: 0.78;
+  }
+  .saved-cycle-hint kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
   }
   .saved-chip {
     border-color: color-mix(in srgb, var(--accent, #7c8cff) 32%, var(--border, rgba(0, 0, 0, 0.1)));

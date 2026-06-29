@@ -42,6 +42,8 @@ import {
   describePinnedSearches,
   moveSavedSearch,
   classifySavedSearchKey,
+  classifyJumpSavedKey,
+  nextSavedIndex,
   savedSearchHitCount,
   SEARCH_SORT_MODES,
   type SearchHitLike,
@@ -986,6 +988,24 @@ const group = (
   expect(savedSearchHitCount("never run", recents) === null, "saved-count: pin not in log -> null");
   expect(savedSearchHitCount("", recents) === null, "saved-count: blank query -> null");
   expect(savedSearchHitCount("x", null as never) === null, "saved-count: null list -> null");
+}
+
+// --- jump-to-next-saved chord ----------------------------------------
+{
+  expect(JSON.stringify(classifyJumpSavedKey({ key: "]", metaKey: true })) === JSON.stringify({ dir: 1 }), "jump: cmd+] -> next");
+  expect(JSON.stringify(classifyJumpSavedKey({ key: "[", ctrlKey: true })) === JSON.stringify({ dir: -1 }), "jump: ctrl+[ -> prev");
+  expect(classifyJumpSavedKey({ key: "]" }) === null, "jump: bare ] not claimed");
+  expect(classifyJumpSavedKey({ key: "]", metaKey: true, altKey: true }) === null, "jump: alt disqualifies");
+  expect(classifyJumpSavedKey({ key: "]", metaKey: true, shiftKey: true }) === null, "jump: shift disqualifies");
+  expect(classifyJumpSavedKey({ key: "a", metaKey: true }) === null, "jump: other key -> null");
+  // nextSavedIndex wrapping
+  expect(nextSavedIndex(-1, 3, 1) === 0, "next: none + forward -> 0");
+  expect(nextSavedIndex(-1, 3, -1) === 2, "next: none + back -> last");
+  expect(nextSavedIndex(2, 3, 1) === 0, "next: last forward wraps to 0");
+  expect(nextSavedIndex(0, 3, -1) === 2, "next: first back wraps to last");
+  expect(nextSavedIndex(1, 3, 1) === 2, "next: middle forward");
+  expect(nextSavedIndex(0, 0, 1) === -1, "next: empty -> -1");
+  expect(nextSavedIndex(9, 3, 1) === 0, "next: out-of-range clamps then wraps");
 }
 
 // eslint-disable-next-line no-console

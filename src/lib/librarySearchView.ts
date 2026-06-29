@@ -1199,6 +1199,49 @@ export function classifySavedSearchKey(ev: SearchKeyEvent): SavedSearchAction {
   }
 }
 
+// --- Jump-to-next-saved chord ----------------------------------------
+//
+// The saved-search strip is reachable by Tab + arrows, but a power user
+// living in two or three saved queries wants to CYCLE them without
+// reaching for the strip: Cmd/Ctrl+] runs the next saved search, +[
+// the previous. nextSavedIndex computes the landing index given how many
+// are pinned and which (if any) just ran, wrapping at both ends so the
+// cycle never dead-ends. The chord classifier keeps it distinct from the
+// per-chip arrow strip so the two can't collide.
+
+/** Direction a jump-saved chord steps through the pinned list. */
+export type SavedJump = { dir: -1 | 1 } | null;
+
+/**
+ * Classify a global keypress into a saved-search jump, or null. Cmd/Ctrl+]
+ * steps to the next saved search, Cmd/Ctrl+[ to the previous (Finder/IDE
+ * tab-cycle convention). Requires exactly the platform meta/ctrl modifier;
+ * Alt/Shift disqualify so it never collides with the per-chip Alt+Arrow
+ * reorder or app chords. Pure + DOM-free.
+ */
+export function classifyJumpSavedKey(ev: SearchKeyEvent): SavedJump {
+  if (!ev) return null;
+  if (!(ev.metaKey || ev.ctrlKey)) return null;
+  if (ev.altKey || ev.shiftKey) return null;
+  if (ev.key === "]") return { dir: 1 };
+  if (ev.key === "[") return { dir: -1 };
+  return null;
+}
+
+/**
+ * Next pinned index after a jump, wrapping at both ends. `current` is the
+ * index of the saved search that ran last (-1 = none yet: a forward jump
+ * starts at 0, a backward jump at the last). An empty list -> -1 (nothing
+ * to run). Always returns an in-range index for a non-empty list. Pure.
+ */
+export function nextSavedIndex(current: number, count: number, dir: -1 | 1): number {
+  if (!Number.isFinite(count) || count <= 0) return -1;
+  const n = Math.floor(count);
+  if (!Number.isFinite(current) || current < 0) return dir > 0 ? 0 : n - 1;
+  const cur = Math.min(n - 1, Math.floor(current));
+  return ((cur + dir) % n + n) % n;
+}
+
 // --- Saved-chip last-run hit count -----------------------------------
 //
 // The recent-search chips show a per-chip count (how many hits the query
