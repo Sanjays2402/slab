@@ -33,6 +33,7 @@
     describeCollapseState,
     soloExpandGroup,
     toggleCommandPin,
+    movePinnedCommand,
     isCommandPinned,
     type PaletteRange,
     type PaletteFallback,
@@ -853,6 +854,12 @@
     }
     // Pinned floats to the very top, ahead of Recently used.
     const entries = Array.from(map.entries());
+    const pin = map.get("Pinned");
+    if (pin) {
+      // Order pinned rows by the user's saved arrangement (pinnedCmds index),
+      // not frecency, so Alt+Arrow reordering sticks.
+      pin.sort((x, y) => pinnedCmds.indexOf(x.id) - pinnedCmds.indexOf(y.id));
+    }
     entries.sort((x, y) => (x[0] === "Pinned" ? -1 : y[0] === "Pinned" ? 1 : 0));
     return entries;
   });
@@ -872,6 +879,15 @@
   let pinnedCmds = $state<string[]>(loadPinnedCommands());
   function togglePin(id: string): void {
     pinnedCmds = toggleCommandPin(pinnedCmds, id);
+    savePinnedCommands(pinnedCmds);
+  }
+  // Reorder a pinned command by dir (-1 left/up, +1 right/down) within the
+  // pinned list, persisting the arrangement. Alt+Arrow keyboard twin of a
+  // drag; reuses the tested movePinnedCommand core.
+  function reorderPin(id: string, dir: -1 | 1): void {
+    const from = pinnedCmds.indexOf(id);
+    if (from < 0) return;
+    pinnedCmds = movePinnedCommand(pinnedCmds, from, from + dir);
     savePinnedCommands(pinnedCmds);
   }
   const collapseActive = $derived(!scopeParse.term.trim());
@@ -1033,6 +1049,29 @@
       scrollSelectedIntoView();
       return;
     }
+    // Reorder a pinned command with Alt+ArrowUp/Down (Alt+Left/Right too) —
+    // the keyboard twin of dragging. Only when the focused row is pinned and
+    // in browse mode; reuses movePinnedCommand. Checked before the modifier
+    // bail so Alt+Arrow isn't swallowed by plain-cursor nav.
+    if (
+      collapseActive &&
+      e.altKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")
+    ) {
+      const cur = visibleList[selected];
+      if (cur && isCommandPinned(pinnedCmds, cur.id)) {
+        e.preventDefault();
+        reorderPin(cur.id, e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 1);
+        queueMicrotask(() => {
+          const ni = visibleList.indexOf(cur);
+          if (ni >= 0) selected = ni;
+          scrollSelectedIntoView();
+        });
+        return;
+      }
+    }
     // Lumen III Slice 2: Cmd/Ctrl+E folds every section to its header, or
     // — when already all-folded — expands them all. Only in browse mode
     // (collapse is disabled during search). Checked before the modifier
@@ -1189,7 +1228,7 @@
             <button
               class="palette-pin"
               class:pinned
-              title={pinned ? "Unpin from top" : "Pin to top"}
+              title={pinned ? "Unpin from top (Alt+Arrow to reorder)" : "Pin to top"}
               aria-label={pinned ? `Unpin ${a.title}` : `Pin ${a.title} to top`}
               aria-pressed={pinned}
               onclick={(e: MouseEvent) => { e.stopPropagation(); togglePin(a.id); }}

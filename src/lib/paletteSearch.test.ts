@@ -38,6 +38,7 @@ import {
   isCommandPinned,
   toggleCommandPin,
   countPinnedCommands,
+  movePinnedCommand,
   type PaletteRange,
   type FrecencyRecord,
   type PaletteFallbackEntry,
@@ -1012,6 +1013,16 @@ function pick(text: string, ranges: PaletteRange[]): string {
   expect(countPinnedCommands(null) === 0, "pin: count null-safe");
   // @ts-expect-error — garbage input
   expect(toggleCommandPin(null, "a").join(",") === "a", "pin: null list-safe");
+
+  // reorder: splice from -> to, dedupe, never mutate.
+  expect(movePinnedCommand(["a", "b", "c"], 0, 2).join(",") === "b,c,a", "pin-move: front to back");
+  expect(movePinnedCommand(["a", "b", "c"], 2, 0).join(",") === "c,a,b", "pin-move: back to front");
+  expect(movePinnedCommand(["a", "b", "c"], 1, 1).join(",") === "a,b,c", "pin-move: no-op stays");
+  expect(movePinnedCommand(["a", "b", "c"], 0, 9).join(",") === "b,c,a", "pin-move: clamp to end");
+  expect(movePinnedCommand(["a", "a", "b"], 0, 1).join(",") === "b,a", "pin-move: dedupe then move");
+  expect(movePinnedCommand(["x"], 0, 0).join(",") === "x", "pin-move: single stays");
+  // @ts-expect-error — garbage input
+  expect(movePinnedCommand(null, 0, 1).length === 0, "pin-move: null list -> []");
 }
 
 // eslint-disable-next-line no-console
