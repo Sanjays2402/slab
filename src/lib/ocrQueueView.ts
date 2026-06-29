@@ -397,6 +397,27 @@ export function reasonShareBars(buckets: readonly OcrReasonBucket[]): OcrReasonS
 }
 
 /**
+ * Compose a full hover/focus tooltip for one reason share, e.g.
+ * "Tesseract not installed: 190 of 240 failures (79%)". Numbers are
+ * grouped (1,234) and the failure noun pluralizes. With a single bucket
+ * the "of total" is dropped (it's redundant). A null share -> "". This is
+ * the keyboard-reachable detail behind a pill that otherwise shows just
+ * its bar + count, so the exact weight reads on hover/focus. Pure.
+ */
+export function describeReasonShare(
+  share: OcrReasonShare | null | undefined,
+  total: number,
+): string {
+  if (!share || !(share.count > 0)) return "";
+  const t = Number.isFinite(total) && total > 0 ? Math.floor(total) : share.count;
+  const noun = t === 1 ? "failure" : "failures";
+  if (share.count >= t) {
+    return `${share.reason}: all ${t.toLocaleString()} ${noun}`;
+  }
+  return `${share.reason}: ${share.count.toLocaleString()} of ${t.toLocaleString()} ${noun} (${share.percent}%)`;
+}
+
+/**
  * Filter `failed` to rows whose canonical reason equals `reason`. A
  * null/empty reason (no facet) passes every row through unchanged. The
  * returned array is always a new array (never the input reference) so

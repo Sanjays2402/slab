@@ -46,6 +46,7 @@
     OCR_SORT_FIELDS,
     groupFailureReasons,
     reasonShareBars,
+    describeReasonShare,
     filterByReason,
     reconcileReasonFacet,
     describeDominantReason,
@@ -468,6 +469,8 @@
   const reasonShares = $derived(
     new Map(reasonShareBars(reasonBuckets).map((s) => [s.reason, s])),
   );
+  /** Round 54: total failures for the per-pill share tooltip ("190 of 240"). */
+  const totalReasonFails = $derived(reasonBuckets.reduce((n, b) => n + b.count, 0));
   const dominantReason = $derived(describeDominantReason(reasonBuckets));
 
   /** Slice 3c: how many failures the active reason facet covers + its
@@ -990,14 +993,18 @@
                 <span class="oq-reasons-lede" title={dominantReason}>{dominantReason}</span>
                 {#each reasonBuckets as bucket (bucket.reason)}
                   {@const share = reasonShares.get(bucket.reason)}
+                  {@const shareLabel = describeReasonShare(share, totalReasonFails)}
                   <button
                     class="oq-reason"
                     class:active={reasonFacet === bucket.reason}
                     onclick={() => toggleReasonFacet(bucket.reason)}
                     aria-pressed={reasonFacet === bucket.reason}
+                    aria-label={shareLabel || bucket.reason}
                     title={reasonFacet === bucket.reason
                       ? `Showing only “${bucket.reason}” — click to clear`
-                      : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that failed: ${bucket.reason}${share ? ` (${share.percent}% of failures)` : ""}`}
+                      : shareLabel
+                        ? `${shareLabel} — click to show only these`
+                        : `Show only the ${bucket.count} ${bucket.count === 1 ? "doc" : "docs"} that failed: ${bucket.reason}`}
                   >
                     {bucket.reason}
                     <span class="oq-reason-count tabular">{bucket.count}</span>
@@ -1007,6 +1014,7 @@
                         style={`--share:${(share.scaled * 100).toFixed(1)}%`}
                         aria-hidden="true"
                       ></span>
+                      <span class="oq-reason-pct tabular" aria-hidden="true">{share.percent}%</span>
                     {/if}
                   </button>
                 {/each}
@@ -1887,6 +1895,29 @@
   }
   .oq-reason.active .oq-reason-bar {
     background: color-mix(in srgb, #fff 75%, transparent);
+  }
+  /* Round 54: exact share percent, revealed on hover/focus so resting pills
+     stay clean but the precise weight is one keystroke/hover away. */
+  .oq-reason-pct {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    max-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    color: color-mix(in srgb, #ffc4c4 90%, transparent);
+    transition: opacity 120ms, max-width 120ms, margin 120ms;
+  }
+  .oq-reason:hover .oq-reason-pct,
+  .oq-reason:focus-visible .oq-reason-pct,
+  .oq-reason.active .oq-reason-pct {
+    opacity: 0.85;
+    max-width: 44px;
+    margin-left: -2px;
+  }
+  .oq-reason:focus-visible {
+    outline: 2px solid color-mix(in srgb, #ff7474 70%, transparent);
+    outline-offset: 1px;
   }
   .oq-reason:hover {
     background: color-mix(in srgb, #ff7474 16%, transparent);

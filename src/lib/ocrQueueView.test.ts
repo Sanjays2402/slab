@@ -18,6 +18,7 @@ import {
   canonicalizeOcrError,
   groupFailureReasons,
   reasonShareBars,
+  describeReasonShare,
   filterByReason,
   reconcileReasonFacet,
   describeDominantReason,
@@ -316,6 +317,26 @@ function doc(over: Partial<OcrDocLike> & { id: number; path: string }): OcrDocLi
   // Negative/garbage counts are dropped, not summed.
   const mixed = reasonShareBars([{ reason: "a", count: 4 }, { reason: "b", count: -2 } as never]);
   expect(mixed.length === 1 && mixed[0].percent === 100, "share: garbage count dropped, sole bucket = 100");
+}
+
+// --- describeReasonShare: keyboard-reachable pill tooltip ------------
+{
+  const bars = reasonShareBars([
+    { reason: "Tesseract not installed", count: 190 },
+    { reason: "Encrypted PDF", count: 50 },
+  ]);
+  expect(
+    describeReasonShare(bars[0], 240) === "Tesseract not installed: 190 of 240 failures (79%)",
+    "reason-share: count + total + percent",
+  );
+  expect(
+    describeReasonShare(bars[1], 240) === "Encrypted PDF: 50 of 240 failures (21%)",
+    "reason-share: minority bucket",
+  );
+  const sole = reasonShareBars([{ reason: "Damaged PDF", count: 1 }]);
+  expect(describeReasonShare(sole[0], 1) === "Damaged PDF: all 1 failure", "reason-share: sole bucket drops total, singular");
+  expect(describeReasonShare(null, 10) === "", "reason-share: null -> empty");
+  expect(describeReasonShare(sole[0], 0) === "Damaged PDF: all 1 failure", "reason-share: bad total falls back to count");
 }
 
 // --- Slice 3: reconcileReasonFacet / describeDominantReason ----------
