@@ -1198,3 +1198,42 @@ export function classifySavedSearchKey(ev: SearchKeyEvent): SavedSearchAction {
       return null;
   }
 }
+
+// --- Saved-chip last-run hit count -----------------------------------
+//
+// The recent-search chips show a per-chip count (how many hits the query
+// found last time it ran); the SAVED chips show nothing. But a pinned
+// query is exactly the kind a user runs often, so the same yield badge
+// matters MORE there — a saved chip stuck at "0" tells you that query
+// stopped finding anything. The hit count isn't stored with the pin (the
+// pinned list is just query strings); we recover it by matching the pin
+// against the live recent log, which carries resultCount. A pin that's
+// fallen out of the rolling log has no known count -> null (no badge),
+// rather than a misleading "0".
+
+/** Minimum shape needed to look up a query's last-run hit count. */
+export interface RecentCountLike {
+  query: string;
+  resultCount: number;
+}
+
+/**
+ * Last-known hit count for a saved query, recovered from the recent log
+ * by case-insensitive normalized-query match. Returns null when the query
+ * isn't in the log (count genuinely unknown — show no badge) so a pin that
+ * predates the rolling window never displays a misleading 0. Garbage/empty
+ * query or list -> null. Pure + DOM-free.
+ */
+export function savedSearchHitCount(
+  query: string,
+  recents: readonly RecentCountLike[],
+): number | null {
+  const q = normalizePinnedQuery(query).toLowerCase();
+  if (!q || !Array.isArray(recents)) return null;
+  for (const r of recents) {
+    if (r && normalizePinnedQuery(r.query).toLowerCase() === q) {
+      return chipNum(r.resultCount);
+    }
+  }
+  return null;
+}

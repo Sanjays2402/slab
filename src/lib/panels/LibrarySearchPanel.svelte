@@ -67,6 +67,7 @@
     isPinnedSearch,
     togglePinnedSearch,
     describePinnedSearches,
+    savedSearchHitCount,
     moveSavedSearch,
     type RecentChipSortMode,
     SEARCH_SORT_MODES,
@@ -881,6 +882,12 @@
                       </svg>
                     </span>
                     <span class="recent-query">{pq}</span>
+                    {#if savedSearchHitCount(pq, recents) !== null}
+                      <span
+                        class="recent-meta"
+                        title={`${savedSearchHitCount(pq, recents)} match${savedSearchHitCount(pq, recents) === 1 ? "" : "es"} last run`}
+                      >{savedSearchHitCount(pq, recents)}</span>
+                    {/if}
                   </button>
                   <button
                     type="button"

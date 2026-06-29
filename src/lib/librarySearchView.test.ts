@@ -42,6 +42,7 @@ import {
   describePinnedSearches,
   moveSavedSearch,
   classifySavedSearchKey,
+  savedSearchHitCount,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -970,6 +971,21 @@ const group = (
   // A letter is not a strip key; null event safe.
   expect(classifySavedSearchKey({ key: "p" }) === null, "saved-key: a letter is not a strip key");
   expect(classifySavedSearchKey(null as never) === null, "saved-key: null event -> null");
+}
+
+// --- savedSearchHitCount: recover a pin's last-run yield -------------
+{
+  const recents = [
+    { query: "invoices 2024", resultCount: 42 },
+    { query: "Tax Final", resultCount: 0 },
+    { query: "contracts", resultCount: 7 },
+  ];
+  expect(savedSearchHitCount("invoices 2024", recents) === 42, "saved-count: exact match");
+  expect(savedSearchHitCount("  INVOICES 2024 ", recents) === 42, "saved-count: case+trim insensitive");
+  expect(savedSearchHitCount("tax final", recents) === 0, "saved-count: known zero is a real 0, not null");
+  expect(savedSearchHitCount("never run", recents) === null, "saved-count: pin not in log -> null");
+  expect(savedSearchHitCount("", recents) === null, "saved-count: blank query -> null");
+  expect(savedSearchHitCount("x", null as never) === null, "saved-count: null list -> null");
 }
 
 // eslint-disable-next-line no-console
