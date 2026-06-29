@@ -9,6 +9,7 @@
   import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
   import RecentsHome from "$lib/components/RecentsHome.svelte";
   import { clampFlyoutTop, shouldShowPreview, previewLabel, classifyThumbPreviewKey, nextPreviewPage } from "$lib/readerThumbView";
+  import { filterOutlineTree, describeOutlineFilter, countOutlineNodes, type FilteredOutlineNode } from "$lib/readerOutlineView";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -179,6 +180,14 @@
   let outline = $state<OutlineNode[]>([]);
   let outlineLoading = $state(false);
   let outlineEditorOpen = $state(false);
+  // Round 59: filter-as-you-type over the outline tree. A long PDF can carry
+  // 100+ nested headings; outlineFilter drives the pure filterOutlineTree
+  // (keep a branch if it OR a descendant matches, ancestors force-expanded,
+  // matched span <mark>-highlighted). A null result = no filter active, so
+  // the normal expand/collapse tree renders unchanged.
+  let outlineFilter = $state("");
+  const filteredOutline = $derived(filterOutlineTree(outline, outlineFilter));
+  const outlineNodeCount = $derived(countOutlineNodes(outline));
   let annotMode = $state<AnnotMode>("off");
   let ocrRunning = $state(false);
   let ocrStatus = $state<string>("");
@@ -1564,6 +1573,33 @@
   </ul>
 {/snippet}
 
+{#snippet filteredOutlineList(nodes: FilteredOutlineNode<OutlineNode>[], depth: number)}
+  <ul class="outline-list" class:nested={depth > 0}>
+    {#each nodes as fn, i (fn.node.title + i + depth)}
+      <li class="outline-item">
+        <div class="outline-row" style="padding-left: {depth * 12}px">
+          {#if fn.items.length > 0}
+            <span class="outline-twist open" aria-hidden="true">▸</span>
+          {:else}
+            <span class="outline-twist spacer" aria-hidden="true"></span>
+          {/if}
+          <button
+            class="outline-label"
+            class:match={fn.selfMatch}
+            onclick={() => jumpToOutline(fn.node)}
+            title={fn.node.title}
+          >
+            {#each fn.segments as seg}{#if seg.hit}<mark class="outline-hit">{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+          </button>
+        </div>
+        {#if fn.items.length > 0}
+          {@render filteredOutlineList(fn.items, depth + 1)}
+        {/if}
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
 <header class="content-header reader-header">
   <h1>Reader</h1>
   <p class="subtitle">
@@ -1795,9 +1831,45 @@
             <button class="outline-add-btn" onclick={() => (outlineEditorOpen = true)}>+ Create outline</button>
           </div>
         {:else}
-          <nav class="outline-tree">
-            {@render outlineList(outline, 0)}
-          </nav>
+          <div class="outline-filter">
+            <svg class="outline-filter-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.4" stroke="currentColor" stroke-width="1.3" fill="none" />
+              <path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+            </svg>
+            <input
+              type="text"
+              class="outline-filter-input"
+              placeholder={outlineNodeCount > 0 ? `Filter ${outlineNodeCount} heading${outlineNodeCount === 1 ? "" : "s"}…` : "Filter outline…"}
+              bind:value={outlineFilter}
+              aria-label="Filter outline"
+              onkeydown={(e) => { if (e.key === "Escape") { e.stopPropagation(); outlineFilter = ""; } }}
+            />
+            {#if outlineFilter.trim()}
+              <button
+                class="outline-filter-clear"
+                onclick={() => (outlineFilter = "")}
+                title="Clear filter"
+                aria-label="Clear outline filter"
+              >×</button>
+            {/if}
+          </div>
+          {#if filteredOutline !== null && describeOutlineFilter(filteredOutline)}
+            <div class="outline-filter-count" role="status" aria-live="polite">{describeOutlineFilter(filteredOutline)}</div>
+          {/if}
+          {#if filteredOutline === null}
+            <nav class="outline-tree">
+              {@render outlineList(outline, 0)}
+            </nav>
+          {:else if filteredOutline.length === 0}
+            <div class="outline-empty outline-no-match">
+              <p>No headings match “{outlineFilter.trim()}”.</p>
+              <button class="outline-add-btn" onclick={() => (outlineFilter = "")}>Clear filter</button>
+            </div>
+          {:else}
+            <nav class="outline-tree">
+              {@render filteredOutlineList(filteredOutline, 0)}
+            </nav>
+          {/if}
         {/if}
       </aside>
     {:else if thumbsOpen && doc}
@@ -2695,6 +2767,78 @@
     overflow-y: auto;
     padding: 6px 6px 14px;
     flex: 1;
+  }
+  /* Round 59 — outline filter input. Compact palette-grade filter bar that
+     sits under the outline header; matches the dark-first input styling used
+     across Slab's search surfaces. */
+  .outline-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 8px 6px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    background: var(--bg-2, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+    transition: border-color 0.12s ease;
+  }
+  .outline-filter:focus-within {
+    border-color: color-mix(in srgb, var(--accent, #7c8cff) 55%, transparent);
+  }
+  .outline-filter-icon {
+    flex: none;
+    color: var(--text-3, #888);
+  }
+  .outline-filter-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-1, #fff);
+    font-size: 12px;
+    padding: 1px 0;
+  }
+  .outline-filter-input::placeholder {
+    color: var(--text-3, #888);
+  }
+  .outline-filter-clear {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-3, #888);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .outline-filter-clear:hover {
+    background: var(--bg-3, rgba(255, 255, 255, 0.08));
+    color: var(--text-1, #fff);
+  }
+  .outline-filter-count {
+    font-size: 10.5px;
+    color: var(--text-3, #888);
+    padding: 0 12px 4px;
+  }
+  .outline-no-match {
+    padding-top: 6px;
+  }
+  .outline-label.match {
+    color: var(--text-1, #fff);
+  }
+  .outline-hit {
+    background: color-mix(in srgb, var(--accent, #7c8cff) 32%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
   }
   /* First-load skeleton — indented shimmer bars matching the outline tree.
      Same shimmer family as SmartFolders/Convert so loaders feel like one app. */
