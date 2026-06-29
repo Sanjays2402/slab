@@ -572,3 +572,43 @@ export function clampBeaconCursor(current: number, count: number): number {
   const last = count - 1;
   return Math.min(last, Math.floor(current));
 }
+
+// --- Pinned-strip keyboard reorder ------------------------------------
+//
+// Round 54 shipped drag-to-reorder the pinned-model strip; a power user
+// on the keyboard wants the same arrangement without a mouse. Alt+Arrow
+// nudges the focused chip one slot — the exact twin of the palette pin
+// reorder (movePinnedCommand) and the saved-search strip's Alt+Arrow.
+// Pure classifier so there's no fourth bespoke reorder keymap.
+
+/** A focused pinned-chip move by Alt+Arrow, or null. */
+export type PinReorder = { dir: -1 | 1 } | null;
+
+/**
+ * Classify a keypress while a pinned chip is focused into a one-slot
+ * move (Alt+ArrowLeft/-1, Alt+ArrowRight/+1). The strip is horizontal so
+ * Left/Right are primary, with Up/Down accepted as twins. Requires Alt
+ * and rejects meta/ctrl/shift so it never collides with the model-facet
+ * cycle or app chords. Any other key -> null. Pure + DOM-free.
+ */
+export function classifyPinReorderKey(ev: BeaconKeyEvent): PinReorder {
+  if (!ev || !ev.altKey) return null;
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey) return null;
+  if (ev.key === "ArrowLeft" || ev.key === "ArrowUp") return { dir: -1 };
+  if (ev.key === "ArrowRight" || ev.key === "ArrowDown") return { dir: 1 };
+  return null;
+}
+
+/**
+ * Landing index after nudging the chip at `from` by `dir`, clamped to
+ * [0, count-1] so a move off either end is a no-op (returns `from`). An
+ * empty/single list or out-of-range cursor -> from. Pure.
+ */
+export function nextPinIndex(from: number, count: number, dir: -1 | 1): number {
+  if (!Number.isFinite(count) || count <= 1) return Math.max(0, Math.trunc(from || 0));
+  if (!Number.isFinite(from) || from < 0) return 0;
+  const f = Math.min(count - 1, Math.floor(from));
+  const t = f + dir;
+  if (t < 0 || t >= count) return f;
+  return t;
+}

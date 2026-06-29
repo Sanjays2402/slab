@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, classifyPinReorderKey, nextPinIndex, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { loadPinnedModels, savePinnedModels } from "$lib/beaconPins";
   import { splitHighlight } from "$lib/paletteSearch";
   import { loadBeaconSort, saveBeaconSort } from "$lib/beaconSortStore";
@@ -92,6 +92,7 @@
   // via the tested movePinnedModel core. dragIdx is the chip being dragged.
   let dragIdx = $state(-1);
   let dragOverIdx = $state(-1);
+  let pinStripEl = $state<HTMLElement | null>(null);
   function reorderPinned(fromModel: string, toModel: string) {
     const f = pinnedModels.indexOf(fromModel);
     const t = pinnedModels.indexOf(toModel);
@@ -112,6 +113,29 @@
     if (dragIdx >= 0 && dragIdx !== i) reorderPinned(livePins[dragIdx], livePins[i]);
     dragIdx = -1;
     dragOverIdx = -1;
+  }
+  // Alt+Arrow keyboard twin of the drag reorder: nudge the focused chip one
+  // slot, persist, and keep DOM focus on the moved chip so a power user can
+  // arrange the strip without a mouse. classifyPinReorderKey + nextPinIndex
+  // are the tested core; same movePinnedModel splice as the drag path.
+  function onPinKey(e: KeyboardEvent, i: number, m: string) {
+    const mv = classifyPinReorderKey(e);
+    if (mv) {
+      e.preventDefault();
+      const to = nextPinIndex(i, livePins.length, mv.dir);
+      if (to !== i) {
+        reorderPinned(m, livePins[to]);
+        requestAnimationFrame(() => {
+          const sel = pinStripEl?.querySelectorAll<HTMLButtonElement>(".bc-pinned-chip");
+          sel?.[to]?.focus();
+        });
+      }
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleModelFacet(m);
+    }
   }
 
   const totalPdfs = $derived(pdfs.length);
@@ -514,7 +538,7 @@
       </section>
 
       {#if livePins.length > 0}
-        <section class="bc-pinned" aria-label="Pinned model filters">
+        <section class="bc-pinned" aria-label="Pinned model filters" bind:this={pinStripEl}>
           <span class="bc-pinned-label">Pinned</span>
           {#each livePins as m, i (m)}
             <button
@@ -529,8 +553,9 @@
               ondragover={(e) => onPinDragOver(e, i)}
               ondrop={(e) => onPinDrop(e, i)}
               ondragend={() => { dragIdx = -1; dragOverIdx = -1; }}
+              onkeydown={(e) => onPinKey(e, i, m)}
               onclick={() => toggleModelFacet(m)}
-              title={modelFacet === m ? `Showing only ${m} — click to clear; drag to reorder` : `Quick-filter to ${m} · drag to reorder`}
+              title={modelFacet === m ? `Showing only ${m} — click to clear; drag or Alt+Arrow to reorder` : `Quick-filter to ${m} · drag or Alt+Arrow to reorder`}
             >{m}</button>
           {/each}
         </section>

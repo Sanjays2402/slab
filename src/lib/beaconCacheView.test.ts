@@ -26,9 +26,12 @@ import {
   classifyBeaconTableKey,
   nextBeaconCursor,
   clampBeaconCursor,
+  classifyPinReorderKey,
+  nextPinIndex,
   BEACON_SORT_FIELDS,
   type BeaconPdfLike,
   type BeaconSort,
+  type BeaconKeyEvent,
 } from "./beaconCacheView";
 
 let passed = 0;
@@ -505,6 +508,27 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   );
   expect(JSON.stringify(movePinnedModel(["a"], 0, 0)) === JSON.stringify(["a"]), "move: single stays");
   expect(JSON.stringify(movePinnedModel(null as never, 0, 1)) === "[]", "move: garbage -> []");
+}
+
+// --- classifyPinReorderKey / nextPinIndex (Alt+Arrow chip reorder) ---
+{
+  const k = (key: string, m: Partial<BeaconKeyEvent> = {}) =>
+    ({ key, altKey: true, metaKey: false, ctrlKey: false, shiftKey: false, ...m }) as BeaconKeyEvent;
+  expect(classifyPinReorderKey(k("ArrowLeft"))?.dir === -1, "pin: Alt+Left -> -1");
+  expect(classifyPinReorderKey(k("ArrowRight"))?.dir === 1, "pin: Alt+Right -> +1");
+  expect(classifyPinReorderKey(k("ArrowUp"))?.dir === -1, "pin: Alt+Up twin -1");
+  expect(classifyPinReorderKey(k("ArrowDown"))?.dir === 1, "pin: Alt+Down twin +1");
+  expect(classifyPinReorderKey(k("ArrowLeft", { altKey: false })) === null, "pin: no Alt -> null");
+  expect(classifyPinReorderKey(k("ArrowLeft", { metaKey: true })) === null, "pin: meta disqualifies");
+  expect(classifyPinReorderKey(k("ArrowLeft", { shiftKey: true })) === null, "pin: shift disqualifies");
+  expect(classifyPinReorderKey(k("a")) === null, "pin: other key null");
+  expect(classifyPinReorderKey(null as never) === null, "pin: garbage null");
+  expect(nextPinIndex(0, 3, 1) === 1, "pin idx: 0 +1 -> 1");
+  expect(nextPinIndex(2, 3, 1) === 2, "pin idx: last +1 clamps");
+  expect(nextPinIndex(0, 3, -1) === 0, "pin idx: first -1 clamps");
+  expect(nextPinIndex(1, 3, -1) === 0, "pin idx: 1 -1 -> 0");
+  expect(nextPinIndex(0, 1, 1) === 0, "pin idx: single no-op");
+  expect(nextPinIndex(5, 3, 1) === 2, "pin idx: out-of-range to last");
 }
 
 // eslint-disable-next-line no-console
