@@ -54,6 +54,10 @@ import {
   describeSweep,
   relativeSweptAge,
   describePinSweepBadge,
+  isStalePin,
+  countStalePins,
+  describeStaleNudge,
+  STALE_PIN_MS,
   SEARCH_SORT_MODES,
   type SearchHitLike,
   type SearchGroupLike,
@@ -1099,6 +1103,69 @@ const group = (
   expect(describePinSweepBadge(null, t0, t0) === "", "badge: null count -> empty");
   expect(describePinSweepBadge(NaN as number, t0, t0) === "", "badge: NaN count -> empty");
   expect(describePinSweepBadge(-4 as number, null, t0) === "0 matches last sweep", "badge: negative count floors to 0");
+}
+
+// --- stale-pin nudge -------------------------------------------------
+{
+  const t0 = 1_700_000_000_000;
+  const DAY = 24 * 60 * 60 * 1000;
+  // never-swept (null/garbage) is NOT stale — staleness is about an aged sweep
+  expect(isStalePin(null, t0) === false, "stale: null -> not stale");
+  expect(isStalePin(undefined, t0) === false, "stale: undefined -> not stale");
+  expect(isStalePin(0, t0) === false, "stale: zero -> not stale");
+  expect(isStalePin(NaN as number, t0) === false, "stale: NaN -> not stale");
+  // boundary: exactly one week is NOT yet stale (strictly older than threshold)
+  expect(isStalePin(t0 - STALE_PIN_MS, t0) === false, "stale: exactly 1w -> not stale");
+  expect(isStalePin(t0 - STALE_PIN_MS - 1, t0) === true, "stale: 1w+1ms -> stale");
+  expect(isStalePin(t0 - 8 * DAY, t0) === true, "stale: 8d -> stale");
+  expect(isStalePin(t0 - 2 * DAY, t0) === false, "stale: 2d -> fresh");
+  // future timestamp never stale
+  expect(isStalePin(t0 + DAY, t0) === false, "stale: future -> not stale");
+  // custom threshold honoured
+  expect(isStalePin(t0 - 2 * DAY, t0, DAY) === true, "stale: 2d under 1d threshold -> stale");
+  expect(isStalePin(t0 - 12 * 60 * 60 * 1000, t0, DAY) === false, "stale: 12h under 1d -> fresh");
+
+  // countStalePins tallies over a pin list using a swept-timestamp map
+  const swept: Record<string, number> = {
+    "old query": t0 - 10 * DAY, // stale
+    "fresh query": t0 - 1 * DAY, // fresh
+    "ancient one": t0 - 30 * DAY, // stale
+    // "never swept" deliberately absent -> not stale
+  };
+  expect(
+    countStalePins(["old query", "fresh query", "ancient one", "never swept"], swept, t0) === 2,
+    "count: 2 of 4 pins stale",
+  );
+  expect(countStalePins([], swept, t0) === 0, "count: empty pin list -> 0");
+  expect(countStalePins(["fresh query"], swept, t0) === 0, "count: all fresh -> 0");
+  // case/spacing-insensitive de-dupe so a doubled pin isn't double-counted
+  expect(
+    countStalePins(["old query", "Old  Query"], swept, t0) === 1,
+    "count: de-dupes case/spacing variants",
+  );
+  // garbage map -> 0, never throws
+  expect(countStalePins(["x"], null as unknown as Record<string, number>, t0) === 0, "count: null map -> 0");
+
+  // describeStaleNudge copy — singular/plural + threshold phrasing
+  expect(describeStaleNudge(0) === "", "nudge: 0 -> empty (no banner)");
+  expect(
+    describeStaleNudge(1) === "1 saved search hasn't been swept in over a week",
+    "nudge: singular",
+  );
+  expect(
+    describeStaleNudge(3) === "3 saved searches haven't been swept in over a week",
+    "nudge: plural",
+  );
+  expect(
+    describeStaleNudge(2, DAY) === "2 saved searches haven't been swept in over 1 day",
+    "nudge: custom 1-day window phrasing",
+  );
+  expect(
+    describeStaleNudge(5, 3 * DAY) === "5 saved searches haven't been swept in over 3 days",
+    "nudge: custom 3-day window phrasing",
+  );
+  expect(describeStaleNudge(-2) === "", "nudge: negative -> empty");
+  expect(describeStaleNudge(NaN as number) === "", "nudge: NaN -> empty");
 }
 
 // eslint-disable-next-line no-console

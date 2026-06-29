@@ -1469,3 +1469,87 @@ export function describePinSweepBadge(
   const age = relativeSweptAge(sweptAt, now);
   return age ? `${base} · swept ${age}` : base;
 }
+
+// --- Stale-pin nudge (round 59 follow-up to per-pin recency) ---------
+//
+// Round 58 added a per-pin "swept Nh ago" recency suffix, but a user with
+// a dozen saved searches still can't tell at a glance WHICH pins have gone
+// stale — a pin last swept three weeks ago is exactly the one whose hit
+// count you should distrust, yet it reads the same as a fresh one in a busy
+// strip. This pairs with relativeSweptAge: isStalePin flags a pin whose
+// last sweep is older than a threshold (default 7 days), and countStalePins
+// / describeStaleNudge drive a single dismissible "N saved searches haven't
+// been swept in over a week — re-run sweep?" nudge above the strip. The
+// nudge reuses the existing run-all-sweep action; this is purely the
+// detection + copy. Pure + DOM-free (now + threshold injected so the
+// boundary math tests without a clock).
+
+/** A week in milliseconds — the default staleness threshold. */
+export const STALE_PIN_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a pin's last-sweep timestamp is older than `thresholdMs` (default
+ * one week). A never-swept pin (null/zero/garbage timestamp) is NOT stale —
+ * it has simply never been swept, which the dry-pin / yield machinery owns;
+ * this flag is specifically about a sweep that has aged out. A future
+ * timestamp is never stale. Pure.
+ */
+export function isStalePin(
+  sweptAt: number | null | undefined,
+  now: number = Date.now(),
+  thresholdMs: number = STALE_PIN_MS,
+): boolean {
+  if (typeof sweptAt !== "number" || !Number.isFinite(sweptAt) || sweptAt <= 0) {
+    return false;
+  }
+  const ref = Number.isFinite(now) ? now : Date.now();
+  const limit = Number.isFinite(thresholdMs) && thresholdMs > 0 ? thresholdMs : STALE_PIN_MS;
+  return ref - sweptAt > limit;
+}
+
+/**
+ * Count how many of the given pins are stale (swept longer ago than the
+ * threshold). `sweptAt` looks up each pin's last-sweep timestamp by its
+ * normalized query; a pin with no entry is never-swept and so never counts.
+ * Pure — iterates the pin list, never mutates.
+ */
+export function countStalePins(
+  pinned: readonly string[],
+  sweptAt: Readonly<Record<string, number>>,
+  now: number = Date.now(),
+  thresholdMs: number = STALE_PIN_MS,
+): number {
+  if (!Array.isArray(pinned) || pinned.length === 0) return 0;
+  const map = sweptAt && typeof sweptAt === "object" ? sweptAt : {};
+  let n = 0;
+  const seen = new Set<string>();
+  for (const p of pinned) {
+    const key = normalizePinnedQuery(p).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const ts = map[normalizePinnedQuery(p)];
+    if (isStalePin(ts, now, thresholdMs)) n++;
+  }
+  return n;
+}
+
+/**
+ * Human copy for the stale-pin nudge banner, or "" when nothing is stale
+ * (so the caller renders no banner). Singular/plural aware:
+ *   1  -> "1 saved search hasn't been swept in over a week"
+ *   3  -> "3 saved searches haven't been swept in over a week"
+ * The threshold phrase tracks the injected window so a custom threshold
+ * still reads correctly (week / N days). Pure.
+ */
+export function describeStaleNudge(
+  count: number,
+  thresholdMs: number = STALE_PIN_MS,
+): string {
+  const c = typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (c === 0) return "";
+  const limit = Number.isFinite(thresholdMs) && thresholdMs > 0 ? thresholdMs : STALE_PIN_MS;
+  const days = Math.round(limit / (24 * 60 * 60 * 1000));
+  const window = days === 7 ? "a week" : `${days} day${days === 1 ? "" : "s"}`;
+  const noun = c === 1 ? "saved search hasn't" : "saved searches haven't";
+  return `${c} ${noun} been swept in over ${window}`;
+}

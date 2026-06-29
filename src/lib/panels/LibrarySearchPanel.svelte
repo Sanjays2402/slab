@@ -78,6 +78,8 @@
     rankSweepResults,
     describePinSweepBadge,
     relativeSweptAge,
+    countStalePins,
+    describeStaleNudge,
     normalizePinnedQuery,
     describeSweep,
     moveSavedSearch,
@@ -293,6 +295,19 @@
     savePinSwept(pinSwept);
     sweepDigest = "";
   }
+
+  // Round 59: stale-pin nudge. Once a sweep stamps each pin's recency
+  // (round 58), pins whose last sweep has aged past a week are exactly the
+  // ones whose yield badge you should distrust — but in a busy strip they
+  // look identical to fresh ones. countStalePins (pure) tallies them; a
+  // single dismissible banner above the strip surfaces the count and offers
+  // the existing Run-all sweep as the one-click fix. Dismissal is keyed to
+  // the current stale COUNT so a freshly-aged pin re-raises the nudge after
+  // you've dismissed an earlier one, but re-running the sweep (which resets
+  // the count to 0) clears it without a lingering dismissed flag.
+  const staleCount = $derived(countStalePins(pinned, pinSwept, nowSec * 1000));
+  let staleDismissedAt = $state(-1);
+  const showStaleNudge = $derived(staleCount > 0 && staleDismissedAt !== staleCount);
 
   // Round 51 Slice 4: drag-to-reorder the Saved-searches strip. The strip
   // rendered newest-pinned-first with no way to arrange it. dragIndex
@@ -968,6 +983,33 @@
                 <span class="saved-cycle-hint" title="Cycle through saved searches">Cycle <kbd>⌘[</kbd> <kbd>⌘]</kbd></span>
               {/if}
             </header>
+            {#if showStaleNudge}
+              <div class="stale-nudge" role="status" aria-live="polite">
+                <svg class="stale-nudge-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" fill="none" />
+                  <path d="M8 4.6v3.6l2.2 1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none" />
+                </svg>
+                <span class="stale-nudge-text">{describeStaleNudge(staleCount)}</span>
+                <button
+                  type="button"
+                  class="stale-nudge-action"
+                  onclick={runAllSaved}
+                  disabled={sweeping}
+                  title="Re-run every saved search to refresh their hit counts"
+                >{sweeping ? "Running…" : "Re-sweep"}</button>
+                <button
+                  type="button"
+                  class="stale-nudge-dismiss"
+                  onclick={() => (staleDismissedAt = staleCount)}
+                  title="Dismiss this reminder"
+                  aria-label="Dismiss stale-pin reminder"
+                >
+                  <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" />
+                  </svg>
+                </button>
+              </div>
+            {/if}
             <ul class="recents-list" role="listbox" aria-label="Saved searches — arrow keys to navigate, Enter to run, Alt+arrows to reorder, Backspace to unpin">
               {#each pinned as pq, i (pq)}
                 <li
@@ -2212,6 +2254,70 @@
     border-radius: 4px;
     background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
     border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  }
+  /* Round 59 — stale-pin nudge banner. Amber warning palette matching the
+     dry-pins button so the "your saved counts have aged" signal reads as a
+     gentle caution, not an error. Sits between the saved header and strip. */
+  .stale-nudge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 8px;
+    padding: 6px 9px;
+    border-radius: 7px;
+    background: color-mix(in srgb, #f5c518 9%, transparent);
+    border: 1px solid color-mix(in srgb, #f5c518 32%, transparent);
+    font-size: 11.5px;
+    color: var(--fg, #e8e8ec);
+  }
+  .stale-nudge-icon {
+    flex: none;
+    color: #f5c518;
+    opacity: 0.92;
+  }
+  .stale-nudge-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: color-mix(in srgb, #fff2b8 88%, var(--fg, #e8e8ec));
+  }
+  .stale-nudge-action {
+    flex: none;
+    font-size: 10.5px;
+    padding: 2px 10px;
+    border-radius: 5px;
+    background: transparent;
+    border: 1px solid color-mix(in srgb, #f5c518 50%, transparent);
+    color: #fff2b8;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .stale-nudge-action:hover:not(:disabled) {
+    background: color-mix(in srgb, #f5c518 18%, transparent);
+    border-color: #f5c518;
+  }
+  .stale-nudge-action:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .stale-nudge-dismiss {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-radius: 5px;
+    background: transparent;
+    border: none;
+    color: var(--fg-muted, #888);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .stale-nudge-dismiss:hover {
+    background: color-mix(in srgb, #f5c518 14%, transparent);
+    color: #fff2b8;
   }
   .saved-chip {
     border-color: color-mix(in srgb, var(--accent, #7c8cff) 32%, var(--border, rgba(0, 0, 0, 0.1)));
