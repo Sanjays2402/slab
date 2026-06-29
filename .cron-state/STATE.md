@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-28 21:30 PT by Cake (cron) — round-54 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces, each on a tested pure core where logic exists, all from the round-53 candidates list. Shipped: (1) Beacon drag-reorder pinned-model strip (c42aa93) — movePinnedModel splice+dedupe so the most-used quick filter sits first; HTML5 drag with dragging/dragover, beaconCacheView 124->130; (2) Library Search jump-to-next-saved chord (4422bc3) — Cmd/Ctrl+]/[ cycles pinned searches with wrap via nextSavedIndex+classifyJumpSavedKey, discoverable cycle hint, librarySearchView 287->299; (3) OCR per-reason share tooltip (ee76448) — describeReasonShare (count/total/percent) on each pill aria-label/title + hover/focus inline percent + focus ring, ocrQueueView 243->247; (4) Palette recent-file thumbnails (3d49002) — getRecentThumb shown in browse rows, removed dead emoji-glyph duplicate block; (5) Signet verify skeleton (568837c) — sig-card shimmer + aria-busy while verifying, reduced-motion fallback. Gates: 6 core suites green (1256 tests), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs c42aa93,4422bc3,ee76448,3d49002,568837c.
+Last updated: 2026-06-28 23:50 PT by Cake (cron) — round-55 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces, each on a tested pure core where logic exists, from the round-54 candidates list. Shipped: (1) Beacon Alt+Arrow keyboard pin-reorder (1d28abf) — classifyPinReorderKey+nextPinIndex twin of the drag, focus follows the moved chip, beaconCacheView 130->145; (2) Library run-all-saved sweep (b3ca692) — rankSweepResults+describeSweep ranked digest ("5 searches, 84 hits, 1 came up empty"), Run-all btn, librarySearchView 299->309; (3) Reader thumbnail hover-zoom preview (e3bf920) — new readerThumbView.ts (16 tests) clampFlyoutTop/shouldShowPreview/previewLabel, 280px on-demand render flyout; (4) Palette monochrome chrome + Continue cover (657e0c9) — killed 5 color-emoji icons, Continue-reading carries the resume doc cover; (5) Collections sidebar first-load shimmer skeleton (93328b7). Gates: 6 core suites green (1211 tests), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs 1d28abf,b3ca692,e3bf920,657e0c9,93328b7.
+
+PREV round-54 (2026-06-28 21:30 PT): 5 frontend/UX capabilities — Beacon drag-reorder pinned strip (c42aa93); Library jump-to-next-saved chord (4422bc3); OCR per-reason share tooltip (ee76448); Palette recent-file thumbnails (3d49002); Signet verify skeleton (568837c).
 
 PREV round-53 (2026-06-28 18:45 PT): 5 frontend/UX capabilities — OCR pending-KIND share bar (a5bff53); Library Search saved-chip COUNT badge (57bf6bf); Palette REORDER pinned commands (e35516a); Beacon PIN-A-MODEL facet (1f2d919); RecentsHome COLLAPSIBLE pinned strip (2a71c6c).
 
@@ -1726,7 +1728,7 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   getRecentThumb in rows; killed dead emoji-dup block.
 - ~~skeleton pass: Signet verify~~ — DONE round 54 (568837c): sig-card shimmer.
 
-### Next FRONTEND candidates — refilled round 54
+### Next FRONTEND candidates — refilled round 55
 
 Ordered roughly by demo value (all frontend; backend deferred per override):
 
@@ -1734,20 +1736,36 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   optimistic save + rollback toast — toast actions already exist).
 - Reader find: highlight the active match's page in the thumbnail rail;
   per-find-result mini-map on the scrollbar (round-42 follow-ups).
-- Palette: per-section count badges in collapsed-all view so a folded
-  section's size reads without expanding.
+- empty/loading/skeleton-state pass: remaining bare "Loading…" panels
+  (Forms, Metadata, SmartFolders hub) — collections shimmer pattern.
+- Reader: thumbnail-rail keyboard arrows now lack a hover-preview twin —
+  Up/Down should drive the round-55 preview while focused.
+- Palette: thumbnails for pinned-file rows too (Continue + Recent done).
+- Library Search: persist the run-all-sweep digest as a per-pin yield badge
+  so a dry pin shows even before re-running.
+- Beacon: filter the table to only mixed-model dead-weight in one chip.
+- OCR Queue: collapse pending-state + failure facets into one segmented bar.
+- Convert panel: drop-zone skeleton while pdf.js loads (bare "Loading…").
+- RecentsHome: cover-flow hover-zoom on pinned cards (reader-preview twin).
+
+### Next FRONTEND candidates — refilled round 54 (round 55 picks struck)
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- doc-detail metadata editor read surface (inline-editable title / tags with
+  optimistic save + rollback toast — toast actions already exist).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- ~~Palette: per-section count badges in collapsed-all view~~ — already shipped.
 - empty/loading/skeleton-state pass: Quill queue panel (the last bare
   spinner) — OCR-Queue round-50 skeleton pattern.
-- RecentsHome: surface the existing Cmd+0 hero chord as a discoverable
-  affordance (badge/hint) rather than a hidden chord.
-- Beacon: keyboard reorder of the pinned-model strip (Alt+Arrow twin of the
-  round-54 drag, the saved-search slice-5 pattern).
-- Library Search: "run all saved searches" sweep summarizing each yield.
+- ~~RecentsHome: surface Cmd+0 hero chord as a discoverable affordance~~ — shipped.
+- ~~Beacon: keyboard reorder of the pinned-model strip~~ — DONE round 55 (1d28abf).
+- ~~Library Search: "run all saved searches" sweep~~ — DONE round 55 (b3ca692).
 - OCR Queue: collapse the pending-state + failure facets into one segmented
   control so both filters read at a glance.
-- Palette: thumbnails for the continue-reading + pinned-file rows too
-  (round-54 added Recent; Home/Pinned still glyph).
-- Reader: page-thumbnail rail hover-zoom preview.
+- ~~Palette: thumbnails for continue-reading rows~~ — DONE round 55 (657e0c9, Continue).
+- ~~Reader: page-thumbnail rail hover-zoom preview~~ — DONE round 55 (e3bf920).
 
 ### Next FRONTEND candidates — refilled round 51
 
