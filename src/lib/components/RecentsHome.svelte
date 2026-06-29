@@ -170,10 +170,12 @@
   let stripEl = $state<HTMLDivElement | null>(null);
   let stripEdges = $state(pinnedStripEdges(null));
 
-  // Cover-flow hover-zoom: hovering a pinned card pops its full cover beside
-  // the strip so a small thumbnail is recognisable without opening the doc —
-  // the twin of the reader rail's hover preview, reusing the tested
-  // clampFlyoutTop so the flyout never spills off the top/bottom edge.
+  // Cover-flow hover-zoom: hovering a pinned card OR a recents-grid card pops
+  // its full cover beside the board so a small thumbnail is recognisable
+  // without opening the doc — the twin of the reader rail's hover preview,
+  // reusing the tested clampFlyoutTop so the flyout never spills off the
+  // top/bottom edge. The flyout is hoisted to board level (position:fixed)
+  // so one render serves both the strip and the grid.
   let coverPreviewPath = $state<string | null>(null);
   let coverPreviewTop = $state(0);
   const COVER_PREVIEW_H = 280;
@@ -760,11 +762,6 @@
         {/each}
         </div>
       </div>
-      {#if coverPreviewPath}
-        <div class="cover-preview" style="top: {coverPreviewTop}px" aria-hidden="true">
-          <img src={getRecentThumb(coverPreviewPath)} alt="" />
-        </div>
-      {/if}
       {/if}
     </section>
   {/if}
@@ -784,7 +781,7 @@
             class:cursor={listFocused && cursor === flatIdx}
             bind:this={cardEls[flatIdx]}
           >
-            <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
+            <button class="card-body" onclick={() => onOpen(r)} onmouseenter={(e) => showCoverPreview(e, r.path)} onmouseleave={hideCoverPreview} title={r.path}>
               <div class="card-thumb">
                 {#if thumb}
                   <img src={thumb} alt="" loading="lazy" />
@@ -840,6 +837,16 @@
         <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>P</kbd> pin · <kbd>⌫</kbd> remove
       </span>
     </footer>
+  {/if}
+
+  <!-- Cover-flow hover-zoom flyout. Hoisted to board level (round 58) so it
+       pops for BOTH the pinned strip AND the recents grid — position:fixed
+       (right-anchored, clampFlyoutTop vertical) makes it placement-agnostic.
+       Pointer-transparent so it never steals the hover that drives it. -->
+  {#if coverPreviewPath}
+    <div class="cover-preview" style="top: {coverPreviewTop}px" aria-hidden="true">
+      <img src={getRecentThumb(coverPreviewPath)} alt="" />
+    </div>
   {/if}
 </div>
 
