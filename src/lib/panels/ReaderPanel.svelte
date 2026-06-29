@@ -8,7 +8,7 @@
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
   import RecentsHome from "$lib/components/RecentsHome.svelte";
-  import { clampFlyoutTop, shouldShowPreview, previewLabel } from "$lib/readerThumbView";
+  import { clampFlyoutTop, shouldShowPreview, previewLabel, classifyThumbPreviewKey, nextPreviewPage } from "$lib/readerThumbView";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -1481,6 +1481,18 @@
     void renderPreview(n);
   }
   function onThumbLeave() { previewPage = 0; }
+  // Keyboard twin of hover: a focused rail thumb drives the SAME preview
+  // flyout with Up/Down (prev/next), Home/End to ends, Esc to dismiss —
+  // tested by classifyThumbPreviewKey + nextPreviewPage.
+  function onThumbKey(n: number, e: KeyboardEvent) {
+    const action = classifyThumbPreviewKey(e);
+    if (!action) return;
+    e.preventDefault();
+    if (action === "dismiss") { previewPage = 0; return; }
+    const target = nextPreviewPage(previewPage || n, doc?.pageCount ?? 0, action);
+    const btn = thumbButtons.get(target);
+    if (btn) { btn.focus(); onThumbHover(target, btn); }
+  }
   async function renderPreview(n: number) {
     if (!pdfDocument || !previewVisible) return;
     await new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -1790,6 +1802,7 @@
             onclick={() => jumpTo(n)}
             onmouseenter={(e) => onThumbHover(n, e.currentTarget)}
             onfocus={(e) => onThumbHover(n, e.currentTarget)}
+            onkeydown={(e) => onThumbKey(n, e)}
             use:attachThumbBtn={n}
           >
             <canvas use:attachThumb={n}></canvas>

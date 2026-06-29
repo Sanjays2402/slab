@@ -3,7 +3,13 @@
 // Style matches beaconCacheView.test.ts — no test runner, an inline
 // `expect`. Run with:  tsx src/lib/readerThumbView.test.ts
 
-import { clampFlyoutTop, shouldShowPreview, previewLabel } from "./readerThumbView";
+import {
+  clampFlyoutTop,
+  shouldShowPreview,
+  previewLabel,
+  classifyThumbPreviewKey,
+  nextPreviewPage,
+} from "./readerThumbView";
 
 let passed = 0;
 let failed = 0;
@@ -51,6 +57,32 @@ function expect(cond: boolean, label: string) {
   expect(previewLabel(200, 96) === "Page 96 of 96", "label: clamps high");
   expect(previewLabel(0, 96) === "Page 1 of 96", "label: clamps low");
   expect(previewLabel(1, 0) === "", "label: no count -> empty");
+}
+
+// --- classifyThumbPreviewKey ------------------------------------------
+{
+  expect(classifyThumbPreviewKey({ key: "ArrowUp" }) === "prev", "key: up -> prev");
+  expect(classifyThumbPreviewKey({ key: "ArrowDown" }) === "next", "key: down -> next");
+  expect(classifyThumbPreviewKey({ key: "Home" }) === "first", "key: home -> first");
+  expect(classifyThumbPreviewKey({ key: "End" }) === "last", "key: end -> last");
+  expect(classifyThumbPreviewKey({ key: "Escape" }) === "dismiss", "key: esc -> dismiss");
+  expect(classifyThumbPreviewKey({ key: "ArrowUp", metaKey: true }) === null, "key: meta disqualifies");
+  expect(classifyThumbPreviewKey({ key: "ArrowDown", shiftKey: true }) === null, "key: shift disqualifies");
+  expect(classifyThumbPreviewKey({ key: "x" }) === null, "key: other null");
+  expect(classifyThumbPreviewKey(null) === null, "key: garbage null");
+}
+
+// --- nextPreviewPage --------------------------------------------------
+{
+  expect(nextPreviewPage(5, 96, "prev") === 4, "page: prev");
+  expect(nextPreviewPage(5, 96, "next") === 6, "page: next");
+  expect(nextPreviewPage(1, 96, "prev") === 1, "page: prev clamps low");
+  expect(nextPreviewPage(96, 96, "next") === 96, "page: next clamps high");
+  expect(nextPreviewPage(5, 96, "first") === 1, "page: first");
+  expect(nextPreviewPage(5, 96, "last") === 96, "page: last");
+  expect(nextPreviewPage(5, 96, "dismiss") === 5, "page: dismiss keeps");
+  expect(nextPreviewPage(5, 0, "next") === 1, "page: no doc -> 1");
+  expect(nextPreviewPage(200, 96, "next") === 96, "page: clamps oob current");
 }
 
 // eslint-disable-next-line no-console

@@ -61,3 +61,70 @@ export function previewLabel(page: number, pageCount: number): string {
   const p = Math.min(n, Math.max(1, Math.trunc(Number.isFinite(page) ? page : 1)));
   return `Page ${p} of ${n}`;
 }
+
+// --- Keyboard preview navigation --------------------------------------
+//
+// The hover-zoom preview is mouse-only: it follows the pointer. But the
+// rail is keyboard-reachable, so a focused rail should drive the SAME
+// flyout with Up/Down (prev/next page) — the keyboard twin of hover.
+// Home/End leap to the first/last page; Esc dismisses. Logic is pure so
+// it tests without a DOM, same discipline as the rest of this module.
+
+export type ThumbPreviewAction = "prev" | "next" | "first" | "last" | "dismiss" | null;
+
+/** Minimal keyboard event the rail forwards (DOM-free, easy to test). */
+export interface ThumbKeyEvent {
+  key: string;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
+}
+
+/**
+ * Classify a keypress while the thumbnail rail is focused into a preview
+ * move: ArrowUp/-> prev, ArrowDown/-> next, Home/End to ends, Escape
+ * dismisses. Any modifier disqualifies so app chords (Cmd+F, etc.) win.
+ * Other keys -> null. Pure + DOM-free.
+ */
+export function classifyThumbPreviewKey(ev: ThumbKeyEvent | null | undefined): ThumbPreviewAction {
+  if (!ev || ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return null;
+  switch (ev.key) {
+    case "ArrowUp":
+      return "prev";
+    case "ArrowDown":
+      return "next";
+    case "Home":
+      return "first";
+    case "End":
+      return "last";
+    case "Escape":
+      return "dismiss";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Page a preview lands on after `action` from `page`, clamped to
+ * [1, pageCount] so the ends never wrap (matches the rail's own bounds).
+ * "first"->1, "last"->count. dismiss/null/no-doc -> current clamped.
+ * Garbage -> 1. Pure.
+ */
+export function nextPreviewPage(page: number, pageCount: number, action: ThumbPreviewAction): number {
+  const n = Number.isFinite(pageCount) && pageCount > 0 ? Math.trunc(pageCount) : 0;
+  if (n <= 0) return 1;
+  const cur = Math.min(n, Math.max(1, Math.trunc(Number.isFinite(page) ? page : 1)));
+  switch (action) {
+    case "prev":
+      return Math.max(1, cur - 1);
+    case "next":
+      return Math.min(n, cur + 1);
+    case "first":
+      return 1;
+    case "last":
+      return n;
+    default:
+      return cur;
+  }
+}
