@@ -8,6 +8,7 @@
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
   import RecentsHome from "$lib/components/RecentsHome.svelte";
+  import { clampFlyoutTop, shouldShowPreview, previewLabel } from "$lib/readerThumbView";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -1464,6 +1465,45 @@
     };
   }
 
+  // Hover-zoom preview: hovering a rail thumbnail pops a larger render
+  // beside it so you can read the page before clicking. Top is clamped on
+  // screen by the tested clampFlyoutTop; gated by shouldShowPreview (open
+  // rail, multi-page doc, in range). previewCanvas renders on demand.
+  let previewPage = $state(0);
+  let previewTop = $state(8);
+  let previewCanvas = $state<HTMLCanvasElement | null>(null);
+  const previewVisible = $derived(shouldShowPreview(previewPage, doc?.pageCount ?? 0, thumbsOpen));
+  function onThumbHover(n: number, el: HTMLElement) {
+    if (!shouldShowPreview(n, doc?.pageCount ?? 0, thumbsOpen)) return;
+    previewPage = n;
+    const r = el.getBoundingClientRect();
+    previewTop = clampFlyoutTop({ top: r.top, height: r.height }, 360, window.innerHeight);
+    void renderPreview(n);
+  }
+  function onThumbLeave() { previewPage = 0; }
+  async function renderPreview(n: number) {
+    if (!pdfDocument || !previewVisible) return;
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    const c = previewCanvas;
+    if (!c || previewPage !== n) return;
+    try {
+      const page = await pdfDocument.getPage(n);
+      if (previewPage !== n) return;
+      const base = page.getViewport({ scale: 1 });
+      const scale = 280 / base.width;
+      const vp = page.getViewport({ scale });
+      const dpr = window.devicePixelRatio || 1;
+      c.width = Math.floor(vp.width * dpr);
+      c.height = Math.floor(vp.height * dpr);
+      c.style.width = `${vp.width}px`;
+      c.style.height = `${vp.height}px`;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      await page.render({ canvasContext: ctx, viewport: vp, canvas: c }).promise;
+    } catch { /* preview is best-effort */ }
+  }
+
   // Auto-scroll thumbnail sidebar when currentPage changes
   $effect(() => {
     const n = currentPage;
@@ -1742,12 +1782,14 @@
         {/if}
       </aside>
     {:else if thumbsOpen && doc}
-      <aside class="thumbs">
+      <aside class="thumbs" onmouseleave={onThumbLeave}>
         {#each Array.from({ length: doc.pageCount }, (_, i) => i + 1) as n (n)}
           <button
             class="thumb"
             class:active={n === currentPage}
             onclick={() => jumpTo(n)}
+            onmouseenter={(e) => onThumbHover(n, e.currentTarget)}
+            onfocus={(e) => onThumbHover(n, e.currentTarget)}
             use:attachThumbBtn={n}
           >
             <canvas use:attachThumb={n}></canvas>
@@ -1755,6 +1797,12 @@
           </button>
         {/each}
       </aside>
+      {#if previewVisible}
+        <div class="thumb-preview" style="top: {previewTop}px" role="presentation">
+          <canvas bind:this={previewCanvas}></canvas>
+          <span class="thumb-preview-cap">{previewLabel(previewPage, doc.pageCount)}</span>
+        </div>
+      {/if}
     {/if}
 
     <div class="pdfjs-container" class:invert class:jump-halo={jumpHalo} bind:this={containerEl}>
@@ -2273,6 +2321,42 @@
     color: var(--text-3);
   }
   .thumb.active .thumb-num { color: var(--accent); }
+
+  /* Hover-zoom preview: a larger render beside the rail (round 55). Fixed
+     so the inline top (from clampFlyoutTop vs innerHeight) is viewport-
+     relative; left sits just past the ~150px rail. */
+  .thumb-preview {
+    position: fixed;
+    left: 156px;
+    z-index: 40;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    pointer-events: none;
+    animation: thumb-preview-in 0.1s ease-out;
+  }
+  .thumb-preview canvas {
+    background: white;
+    border-radius: 2px;
+    max-height: 360px;
+  }
+  .thumb-preview-cap {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  @keyframes thumb-preview-in {
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thumb-preview { animation: none; }
+  }
 
   /* PDFViewer needs its container to be position:relative or absolute */
   .pdfjs-container {
