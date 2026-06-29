@@ -1281,6 +1281,51 @@ export function savedSearchHitCount(
   return null;
 }
 
+/**
+ * Persisted-yield badge for a saved pin: the last-known sweep hit count
+ * (including 0 for a dry pin), or null when never swept so the chip shows
+ * no badge. Lookup is normalized + case-insensitive. Pure + DOM-free.
+ */
+export function pinYieldBadge(
+  query: string,
+  yields: Readonly<Record<string, number>> | null | undefined,
+): number | null {
+  const q = normalizePinnedQuery(query);
+  if (!q || !yields || typeof yields !== "object") return null;
+  const direct = yields[q];
+  if (typeof direct === "number" && Number.isFinite(direct)) return Math.max(0, Math.trunc(direct));
+  const lower = q.toLowerCase();
+  for (const [k, v] of Object.entries(yields)) {
+    if (normalizePinnedQuery(k).toLowerCase() === lower && typeof v === "number" && Number.isFinite(v)) {
+      return Math.max(0, Math.trunc(v));
+    }
+  }
+  return null;
+}
+
+/**
+ * Fold a finished sweep's results into the persisted yield map: each
+ * result's normalized query -> count, overwriting prior values, dropping
+ * blanks. Returns a NEW object; never mutates. Tolerant of garbage. Pure.
+ */
+export function mergeSweepYields(
+  prior: Readonly<Record<string, number>> | null | undefined,
+  results: readonly SweepResult[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (prior && typeof prior === "object") {
+    for (const [k, v] of Object.entries(prior)) {
+      const q = normalizePinnedQuery(k);
+      if (q && typeof v === "number" && Number.isFinite(v)) out[q] = Math.max(0, Math.trunc(v));
+    }
+  }
+  for (const r of Array.isArray(results) ? results : []) {
+    const q = normalizePinnedQuery(r?.query ?? "");
+    if (q) out[q] = Math.max(0, Math.trunc(Number(r.count) || 0));
+  }
+  return out;
+}
+
 // --- Run-all-saved sweep summary -------------------------------------
 //
 // A user with several saved searches wants a one-shot health check: run

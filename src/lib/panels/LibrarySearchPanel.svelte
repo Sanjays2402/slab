@@ -70,6 +70,8 @@
     togglePinnedSearch,
     describePinnedSearches,
     savedSearchHitCount,
+    pinYieldBadge,
+    mergeSweepYields,
     rankSweepResults,
     describeSweep,
     moveSavedSearch,
@@ -79,6 +81,7 @@
     type SearchGroupLike,
   } from "$lib/librarySearchView";
   import { loadPinnedSearches, savePinnedSearches } from "$lib/savedSearches";
+  import { loadPinYields, savePinYields } from "$lib/pinYields";
   import { loadLibrarySort, saveLibrarySort } from "$lib/librarySortStore";
 
   let query = $state("");
@@ -217,6 +220,8 @@
   // rankSweepResults/describeSweep own the math; this just drives the calls.
   let sweeping = $state(false);
   let sweepDigest = $state("");
+  /** Persisted per-pin last-sweep yields so a dry pin shows "0" on open. */
+  let pinYields = $state<Record<string, number>>({});
   async function runAllSaved(): Promise<void> {
     if (sweeping || pinned.length === 0) return;
     sweeping = true;
@@ -233,6 +238,9 @@
       }
       const ranked = rankSweepResults(out);
       sweepDigest = describeSweep(ranked);
+      // Persist each pin's yield so the badges survive a panel re-open.
+      pinYields = mergeSweepYields(pinYields, out);
+      savePinYields(pinYields);
       if (ranked.length > 0) runPinned(ranked[0].query);
       void refreshRecents();
     } finally {
@@ -709,6 +717,7 @@
   onMount(() => {
     inputEl?.focus();
     pinned = loadPinnedSearches();
+    pinYields = loadPinYields();
     void refreshRecents();
     void refreshFolders();
     void refreshIndexStats();
@@ -951,8 +960,15 @@
                     {#if savedSearchHitCount(pq, recents) !== null}
                       <span
                         class="recent-meta"
+                        class:dry={savedSearchHitCount(pq, recents) === 0}
                         title={`${savedSearchHitCount(pq, recents)} match${savedSearchHitCount(pq, recents) === 1 ? "" : "es"} last run`}
                       >{savedSearchHitCount(pq, recents)}</span>
+                    {:else if pinYieldBadge(pq, pinYields) !== null}
+                      <span
+                        class="recent-meta"
+                        class:dry={pinYieldBadge(pq, pinYields) === 0}
+                        title={`${pinYieldBadge(pq, pinYields)} match${pinYieldBadge(pq, pinYields) === 1 ? "" : "es"} last sweep`}
+                      >{pinYieldBadge(pq, pinYields)}</span>
                     {/if}
                   </button>
                   <button
@@ -2168,6 +2184,12 @@
     border-radius: 999px;
     background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
     flex-shrink: 0;
+  }
+  /* A dry pin (last run/sweep found nothing) — muted amber so a dead
+     saved search stands out at a glance without re-running the sweep. */
+  .recent-meta.dry {
+    color: #d89c2a;
+    background: color-mix(in srgb, #f5c518 16%, transparent);
   }
   /* Relative-age suffix on a recent chip ("2m" / "3d") — a quiet,
      tabular-aligned hint sitting between the query and its match count. */

@@ -45,6 +45,8 @@ import {
   classifyJumpSavedKey,
   nextSavedIndex,
   savedSearchHitCount,
+  pinYieldBadge,
+  mergeSweepYields,
   rankSweepResults,
   describeSweep,
   SEARCH_SORT_MODES,
@@ -990,6 +992,22 @@ const group = (
   expect(savedSearchHitCount("never run", recents) === null, "saved-count: pin not in log -> null");
   expect(savedSearchHitCount("", recents) === null, "saved-count: blank query -> null");
   expect(savedSearchHitCount("x", null as never) === null, "saved-count: null list -> null");
+}
+
+// --- pinYieldBadge + mergeSweepYields --------------------------------
+{
+  const y = { "invoices 2024": 84, "old tax": 0 };
+  expect(pinYieldBadge("invoices 2024", y) === 84, "yield: exact match");
+  expect(pinYieldBadge("  INVOICES 2024 ", y) === 84, "yield: case+trim");
+  expect(pinYieldBadge("old tax", y) === 0, "yield: dry pin is a real 0");
+  expect(pinYieldBadge("never swept", y) === null, "yield: unswept -> null");
+  expect(pinYieldBadge("", y) === null, "yield: blank -> null");
+  expect(pinYieldBadge("x", null) === null, "yield: null map -> null");
+  const merged = mergeSweepYields({ keep: 5, "old tax": 9 }, [{ query: "old tax", count: 0 }, { query: "new", count: 3 }]);
+  expect(merged["old tax"] === 0, "merge: overwrites prior with new sweep");
+  expect(merged.keep === 5, "merge: untouched prior preserved");
+  expect(merged.new === 3, "merge: adds new pin");
+  expect(mergeSweepYields(null, []).keep === undefined, "merge: null prior -> {}");
 }
 
 // --- jump-to-next-saved chord ----------------------------------------
