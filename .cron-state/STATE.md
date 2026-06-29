@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-29 05:00 PT by Cake (cron) — round-57 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces from the round-56 candidates list. Shipped: (1) Beacon dead-weight reclaim total (16765f2) — deadWeightImpact sums non-dominant PDF/chunk/page footprint via tested summarizeSelection, chip reads "frees 12 PDFs, 3,400 chunks", beaconCacheView 152->158; (2) Library Search clear-all-dry-pins (a6e35f4) — dryPinQueries/clearDryPins/describeClearDryPins prune sweep-measured-0 pins in one chip + persist pruned yields, librarySearchView 319->328; (3) RecentsHome cover-flow hover-zoom on pinned cards (9e67e35) — fixed flyout reusing clampFlyoutTop; (4) SmartFolders skeleton->list crossfade (b112552); (5) Reader outline shimmer skeleton replaces last bare Loading (6b40d6f). Gates: 5 core suites green (beacon 158/library 328/readerThumb 34/recents 167/palette 327), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs 16765f2,a6e35f4,9e67e35,b112552,6b40d6f.
+Last updated: 2026-06-29 07:50 PT by Cake (cron) — round-58 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces from the round-57 candidates list. Shipped: (1) Library Search per-pin sweep recency (23867a5) — parallel pinSwept timestamp store + pure relativeSweptAge/describePinSweepBadge, yield badge now wears "84 · 3h ago" so a stale count never reads as fresh; librarySearchView 329->348 tests; (2) RecentsHome cover-flow hover-zoom on the recents GRID too (ae28def) — hoisted the position:fixed flyout to board level so one render serves both strip + grid, reuses tested clampFlyoutTop; (3) Convert img2pdf real drag-to-reorder + animate:flip settle (e89a4ca) — the dropzone always PROMISED "drag to reorder" but only had up/down buttons; new tested convertReorder.ts (moveItem/isReorder, 21 tests) + stable uid keys; (4) Forms inspect shimmer skeleton (ef6e86d) — replaced bare "Loading…" with toolbar+table-shaped shimmer, reduced-motion safe; (5) SmartFolders suggested-strip staggered fly-in (ae2df3d) — reduced-motion-gated entrance. Gates: 5 TS suites green (librarySearchView 348/convertReorder 21/readerThumbView 34/recentsHomeView 167/paletteSearch 327), pnpm check 0 errors/104 warnings (baseline exact), zero Rust changed. SHAs 23867a5,ae28def,e89a4ca,ef6e86d,ae2df3d.
+
+PREV round-57 (2026-06-29 05:00 PT): 5 frontend/UX capabilities — Beacon dead-weight reclaim total (16765f2); Library Search clear-all-dry-pins (a6e35f4); RecentsHome cover-flow hover-zoom on pinned cards (9e67e35); SmartFolders skeleton->list crossfade (b112552); Reader outline shimmer skeleton (6b40d6f).
 
 PREV round-56 (2026-06-29 02:30 PT): 5 frontend/UX capabilities — Reader thumbnail keyboard preview nav (a5ee2c2); Beacon show-dead-weight chip (8785226); Library per-pin sweep-yield badge (61610f1); SmartFolders shimmer skeleton (373bec8); Convert drop-zone shimmer (94b5235).
 
@@ -1732,7 +1734,29 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   getRecentThumb in rows; killed dead emoji-dup block.
 - ~~skeleton pass: Signet verify~~ — DONE round 54 (568837c): sig-card shimmer.
 
-### Next FRONTEND candidates — refilled round 57
+### Next FRONTEND candidates — refilled round 58
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- doc-detail metadata editor read surface (inline-editable title / tags with
+  optimistic save + rollback toast — toast actions already exist).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- OCR Queue: collapse pending-state + failure facets into one segmented bar
+  (deferred since round 54 — two separate sections, needs careful render merge;
+  the highest-value still-open item — pick this next if a careful tick allows).
+- empty/loading/skeleton pass: Watermark / Press / Tabulate panels still bare.
+- Convert pdf2img: same drag-to-reorder is N/A, but add a per-page thumbnail
+  preview grid (currently a page-count only) so the user sees what they export.
+- Beacon: keyboard hover-preview twin of the dead-weight chip workflow.
+- Library Search: "swept >7d ago" stale-pin nudge chip now that recency exists
+  (round-58 follow-up — relativeSweptAge already returns the absolute date).
+- SmartFolders hub rows: same staggered fly-in on the main list (not just the
+  suggested strip) for a cohesive first-paint settle.
+- Reader outline: filter-as-you-type over a long bookmark tree.
+- DiffPanel / Diff3Panel: first-load skeleton while the two docs parse.
+
+### Next FRONTEND candidates — refilled round 57 (round 58 picks struck)
 
 Ordered roughly by demo value (all frontend; backend deferred per override):
 
@@ -1744,12 +1768,12 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   (deferred since round 54 — two separate sections, needs careful render merge).
 - Palette: thumbnails for pinned-file rows — VERIFIED already shipped (row
   template renders a.thumb for every recent/pinned-file entry); do NOT re-pick.
-- empty/loading/skeleton pass: Forms, Metadata panels still bare; Quill queue.
-- RecentsHome: extend cover-flow hover-zoom to the recents grid cards too.
+- ~~empty/loading/skeleton pass: Forms still bare~~ — DONE round 58 (ef6e86d).
+- ~~RecentsHome: extend cover-flow hover-zoom to the recents grid cards too~~ — DONE round 58 (ae28def).
 - Beacon: keyboard hover-preview twin of the dead-weight chip workflow.
-- Library Search: per-pin "last swept N ago" relative-age on the yield badge.
-- Convert: animate img2pdf reorder list (drag settle / add crossfade).
-- SmartFolders: crossfade the suggested-folders strip on first paint too.
+- ~~Library Search: per-pin "last swept N ago" relative-age on the yield badge~~ — DONE round 58 (23867a5).
+- ~~Convert: animate img2pdf reorder list (drag settle / add crossfade)~~ — DONE round 58 (e89a4ca).
+- ~~SmartFolders: crossfade the suggested-folders strip on first paint too~~ — DONE round 58 (ae2df3d).
 
 ### Next FRONTEND candidates — refilled round 56 (round 57 picks struck)
 
