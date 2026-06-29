@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-29 07:50 PT by Cake (cron) — round-58 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces from the round-57 candidates list. Shipped: (1) Library Search per-pin sweep recency (23867a5) — parallel pinSwept timestamp store + pure relativeSweptAge/describePinSweepBadge, yield badge now wears "84 · 3h ago" so a stale count never reads as fresh; librarySearchView 329->348 tests; (2) RecentsHome cover-flow hover-zoom on the recents GRID too (ae28def) — hoisted the position:fixed flyout to board level so one render serves both strip + grid, reuses tested clampFlyoutTop; (3) Convert img2pdf real drag-to-reorder + animate:flip settle (e89a4ca) — the dropzone always PROMISED "drag to reorder" but only had up/down buttons; new tested convertReorder.ts (moveItem/isReorder, 21 tests) + stable uid keys; (4) Forms inspect shimmer skeleton (ef6e86d) — replaced bare "Loading…" with toolbar+table-shaped shimmer, reduced-motion safe; (5) SmartFolders suggested-strip staggered fly-in (ae2df3d) — reduced-motion-gated entrance. Gates: 5 TS suites green (librarySearchView 348/convertReorder 21/readerThumbView 34/recentsHomeView 167/paletteSearch 327), pnpm check 0 errors/104 warnings (baseline exact), zero Rust changed. SHAs 23867a5,ae28def,e89a4ca,ef6e86d,ae2df3d.
+Last updated: 2026-06-29 11:55 PT by Cake (cron) — round-59 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces from the round-58 candidates list. Shipped: (1) Library Search stale-pin nudge (0418828) — round-58 follow-up; new tested pure isStalePin/countStalePins/describeStaleNudge flag pins swept >1w ago, dismissible amber banner above the saved strip offering the existing Run-all sweep as the fix, dismissal keyed to stale-count so a newly-aged pin re-raises but a re-sweep clears it; librarySearchView 348->371 tests; (2) Reader outline filter-as-you-type (2414ab3) — new tested readerOutlineView.ts (43 tests): filterOutlineTree keeps a branch if it OR a descendant matches, force-expands survivors, reuses palette scorePaletteField+splitHighlight for match+<mark>, null-sentinel on empty query so the normal tree is untouched; wired with a filter input + filteredOutlineList snippet + No-matches state + aria-live count; (3) Diff + Diff3 first-compare skeleton (723947b) — totals-bar+page-row shimmer (DiffPanel) and 3-column base/mine/theirs shimmer (Diff3Panel) shown only on the first compare (working && !diff), shared shimmer family, reduced-motion safe; (4) Convert pdf2img per-page preview grid (091a1ea) — new tested convertPreview.ts (23 tests): selectPreviewPages caps+evenly-spreads big selections (endpoints always included), describePreview "Showing N of M"; wired to render ~140px JPEG thumbs progressively with a stale-render token guard, rebuilds on range change; (5) SmartFolders hub MAIN-list staggered fly-in (1a3a09e) — main-list twin of the round-58 suggested-strip stagger (ae2df3d), same quintOut cardIn rule, reduced-motion gated, keyed so only new rows animate. Gates: 6 TS suites green (librarySearchView 371 / readerOutlineView 43 / convertPreview 23 / convertReorder 21 / readerThumbView 34 / paletteSearch 327 unchanged — shared palette core provably intact), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs 0418828,2414ab3,723947b,091a1ea,1a3a09e.
+
+PREV round-58 (2026-06-29 07:50 PT): 5 frontend/UX capabilities — Library Search per-pin sweep recency (23867a5); RecentsHome cover-flow hover-zoom on the recents grid (ae28def); Convert img2pdf real drag-to-reorder + flip (e89a4ca); Forms inspect shimmer skeleton (ef6e86d); SmartFolders suggested-strip staggered fly-in (ae2df3d).
 
 PREV round-57 (2026-06-29 05:00 PT): 5 frontend/UX capabilities — Beacon dead-weight reclaim total (16765f2); Library Search clear-all-dry-pins (a6e35f4); RecentsHome cover-flow hover-zoom on pinned cards (9e67e35); SmartFolders skeleton->list crossfade (b112552); Reader outline shimmer skeleton (6b40d6f).
 
@@ -1734,27 +1736,48 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   getRecentThumb in rows; killed dead emoji-dup block.
 - ~~skeleton pass: Signet verify~~ — DONE round 54 (568837c): sig-card shimmer.
 
-### Next FRONTEND candidates — refilled round 58
+### Next FRONTEND candidates — refilled round 59
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- doc-detail metadata editor read surface (inline-editable title / tags with
+  optimistic save + rollback toast — toast actions already exist). STILL the
+  top unstarted item; carried since round 51, genuinely high-value, pick next.
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- OCR Queue: collapse pending-state + failure facets into one segmented bar
+  (deferred since round 54 — two separate sections, needs careful render merge;
+  highest-value still-open polish item).
+- empty/loading/skeleton pass: Watermark / Press / Tabulate panels still bare.
+- Reader outline (round-59 follow-ups): keyboard cursor through the FILTERED
+  tree (arrows + Enter-to-jump); persist expand/collapse state per doc.
+- Convert pdf2img (round-59 follow-up): click a preview thumb to jump that
+  page into a Range selection; hover-zoom a thumb like the reader rail.
+- Beacon: keyboard hover-preview twin of the dead-weight chip workflow.
+- Library Search: per-pin "swept >7d" stale BADGE on the chip itself (round-59
+  shipped the aggregate nudge; the per-chip visual marker is the finer-grained
+  follow-up — isStalePin already exists).
+- DiffPanel: now that the skeleton lands, a determinate compare-progress bar
+  (pages aligned / total) replacing the indeterminate "Comparing…".
+- MetadataPanel / SignetPanel: first-load skeletons (still bare spinners).
+
+### Next FRONTEND candidates — refilled round 58 (round 59 picks struck)
 
 Ordered roughly by demo value (all frontend; backend deferred per override):
 
 - doc-detail metadata editor read surface (inline-editable title / tags with
   optimistic save + rollback toast — toast actions already exist).
-- Reader find: highlight the active match's page in the thumbnail rail;
-  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- ~~Reader find: highlight the active match's page in the thumbnail rail~~ — still open (mini-map follow-up).
 - OCR Queue: collapse pending-state + failure facets into one segmented bar
   (deferred since round 54 — two separate sections, needs careful render merge;
   the highest-value still-open item — pick this next if a careful tick allows).
 - empty/loading/skeleton pass: Watermark / Press / Tabulate panels still bare.
-- Convert pdf2img: same drag-to-reorder is N/A, but add a per-page thumbnail
-  preview grid (currently a page-count only) so the user sees what they export.
+- ~~Convert pdf2img: per-page thumbnail preview grid~~ — DONE round 59 (091a1ea).
 - Beacon: keyboard hover-preview twin of the dead-weight chip workflow.
-- Library Search: "swept >7d ago" stale-pin nudge chip now that recency exists
-  (round-58 follow-up — relativeSweptAge already returns the absolute date).
-- SmartFolders hub rows: same staggered fly-in on the main list (not just the
-  suggested strip) for a cohesive first-paint settle.
-- Reader outline: filter-as-you-type over a long bookmark tree.
-- DiffPanel / Diff3Panel: first-load skeleton while the two docs parse.
+- ~~Library Search: "swept >7d ago" stale-pin nudge chip~~ — DONE round 59 (0418828, aggregate banner).
+- ~~SmartFolders hub rows: same staggered fly-in on the main list~~ — DONE round 59 (1a3a09e).
+- ~~Reader outline: filter-as-you-type over a long bookmark tree~~ — DONE round 59 (2414ab3).
+- ~~DiffPanel / Diff3Panel: first-load skeleton while the two docs parse~~ — DONE round 59 (723947b).
 
 ### Next FRONTEND candidates — refilled round 57 (round 58 picks struck)
 
