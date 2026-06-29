@@ -485,6 +485,7 @@ export interface BeaconKeyEvent {
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
+  shiftKey?: boolean;
 }
 
 /**

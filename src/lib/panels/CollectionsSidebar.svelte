@@ -549,7 +549,17 @@
   {/if}
 
   {#if loading && collections.length === 0 && smart.length === 0}
-    <div class="cs-empty">Loading…</div>
+    <!-- First-load skeleton: shimmer rows in the cs-row dot+name shape so the
+         sidebar settles in place instead of flashing a bare "Loading…". The
+         shimmer is decorative; one SR label carries the loading state. -->
+    <div class="cs-skeleton" aria-busy="true" aria-label="Loading collections">
+      {#each Array.from({ length: 5 }, (_, i) => i) as i (i)}
+        <div class="cs-skel-row">
+          <span class="cs-skel-dot"></span>
+          <span class="cs-skel-bar" style="width: {62 - i * 6}%"></span>
+        </div>
+      {/each}
+    </div>
   {:else}
     <!-- v3.53.0 Atlas Collections — Slice 25: role="list" wrapper so each
          draggable .cs-row-wrap inside can carry role="listitem" without
@@ -919,6 +929,47 @@
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+  .cs-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 0;
+  }
+  .cs-skel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+  }
+  .cs-skel-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .cs-skel-bar {
+    height: 11px;
+    border-radius: 6px;
+  }
+  .cs-skel-dot,
+  .cs-skel-bar {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 8%, transparent) 0%,
+      color-mix(in srgb, var(--accent, #7c8cff) 16%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 8%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: cs-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes cs-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cs-skel-dot,
+    .cs-skel-bar { animation: none; }
   }
   .cs-dot.diamond {
     transform: rotate(45deg);
