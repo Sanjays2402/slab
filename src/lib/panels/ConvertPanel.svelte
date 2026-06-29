@@ -461,11 +461,22 @@
 <section class="panel">
   {#if mode === "pdf2img"}
     {#if !pdfInput}
-      <button class="dropzone" onclick={pickPdf} disabled={!pdfjsReady}>
+      {#if !pdfjsReady}
+        <!-- Drop-zone skeleton while pdf.js loads: shimmer in the dropzone
+             shape so the panel doesn't flash a dead disabled "Loading..."
+             button. aria-busy carries the state; visuals are decorative. -->
+        <div class="dz-skeleton" aria-busy="true" aria-label="Loading converter">
+          <span class="dz-skel-icon"></span>
+          <span class="dz-skel-bar dz-skel-title"></span>
+          <span class="dz-skel-bar dz-skel-hint"></span>
+        </div>
+      {:else}
+      <button class="dropzone" onclick={pickPdf}>
         <span class="dz-icon">+</span>
-        <span class="dz-title">{pdfjsReady ? "Choose a PDF" : "Loading…"}</span>
+        <span class="dz-title">Choose a PDF</span>
         <span class="dz-hint">Each page becomes its own image file. Bundled as a ZIP.</span>
       </button>
+      {/if}
     {:else}
       <div class="file-card">
         <div>
