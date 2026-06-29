@@ -19,6 +19,7 @@
   import { idle, basename, stripExt, type Status } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
   import { moveItem, isReorder } from "$lib/convertReorder";
+  import { selectPreviewPages, describePreview } from "$lib/convertPreview";
 
   // ---- PDF.js (only the lib API, no viewer chrome needed here) ----
   type PdfjsModule = typeof import("pdfjs-dist");
@@ -49,6 +50,16 @@
   let imgDpi = $state(150);
   let imgRangeMode = $state<"all" | "range">("all");
   let imgRangeText = $state("");
+  // Round 59: per-page thumbnail preview so the user SEES what they're about
+  // to export, not just a page count. previewThumbs holds {page, url} for the
+  // rendered sample; selectPreviewPages (pure, tested) caps + evenly spreads
+  // big selections so a 500-page book renders ~24 thumbs spanning the whole
+  // doc rather than thousands. Best-effort: a render failure just leaves the
+  // grid empty (the count + export still work).
+  type PreviewThumb = { page: number; url: string };
+  let previewThumbs = $state<PreviewThumb[]>([]);
+  let previewBuilding = $state(false);
+  let previewToken = 0;
 
   // ---- Images → PDF state ----
   type ImgFile = { uid: number; name: string; path: string | null; bytes: Uint8Array; type: string };
@@ -98,6 +109,63 @@
       } catch (e) {
         status = { kind: "err", msg: `Couldn't open PDF: ${e}` };
       }
+    }
+    void buildPreview();
+  }
+
+  // Render a capped, evenly-spread sample of page thumbnails so the user can
+  // see what they're about to export. Re-runnable whenever the file or the
+  // page-range selection changes; a monotonic token guards against an older
+  // render landing after a newer one (stale thumbs). Best-effort — any single
+  // page failure is skipped, a whole-doc failure clears the grid silently.
+  async function buildPreview() {
+    const token = ++previewToken;
+    previewThumbs = [];
+    if (!pdfjsLib || !pdfBytes || pdfPageCount === 0) return;
+    const selected =
+      imgRangeMode === "all"
+        ? Array.from({ length: pdfPageCount }, (_, i) => i + 1)
+        : parseRange(imgRangeText, pdfPageCount);
+    const pages = selectPreviewPages(selected);
+    if (pages.length === 0) return;
+    previewBuilding = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let doc: any = null;
+    try {
+      const task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+      doc = await task.promise;
+      const built: PreviewThumb[] = [];
+      for (const n of pages) {
+        if (token !== previewToken) return; // a newer build superseded us
+        try {
+          const page = await doc.getPage(n);
+          const base = page.getViewport({ scale: 1 });
+          const scale = 140 / base.width; // ~140px-wide thumbs
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            page.cleanup();
+            continue;
+          }
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+          built.push({ page: n, url: canvas.toDataURL("image/jpeg", 0.7) });
+          page.cleanup();
+          if (token === previewToken) previewThumbs = built.slice();
+          await new Promise((r) => setTimeout(r, 0)); // yield so the grid paints progressively
+        } catch {
+          /* skip a single bad page */
+        }
+      }
+    } catch {
+      if (token === previewToken) previewThumbs = [];
+    } finally {
+      if (token === previewToken) previewBuilding = false;
+      if (doc) await doc.destroy().catch(() => {});
     }
   }
 
@@ -549,8 +617,8 @@
         <div class="opt-row">
           <span class="opt-label">Pages</span>
           <div class="seg">
-            <button class:active={imgRangeMode === "all"} onclick={() => (imgRangeMode = "all")}>All</button>
-            <button class:active={imgRangeMode === "range"} onclick={() => (imgRangeMode = "range")}>Range</button>
+            <button class:active={imgRangeMode === "all"} onclick={() => { imgRangeMode = "all"; void buildPreview(); }}>All</button>
+            <button class:active={imgRangeMode === "range"} onclick={() => { imgRangeMode = "range"; void buildPreview(); }}>Range</button>
           </div>
           {#if imgRangeMode === "range"}
             <input
@@ -558,10 +626,37 @@
               placeholder="e.g. 1-3, 7, 9-12"
               aria-label="Page range to convert"
               bind:value={imgRangeText}
+              oninput={() => void buildPreview()}
             />
           {/if}
         </div>
       </div>
+
+      {#if previewThumbs.length > 0 || previewBuilding}
+        <div class="preview-block">
+          <div class="preview-head">
+            <span class="preview-label">Preview</span>
+            {#if describePreview(imgRangeMode === "all" ? pdfPageCount : parseRange(imgRangeText, pdfPageCount).length, previewThumbs.length)}
+              <span class="preview-count">{describePreview(imgRangeMode === "all" ? pdfPageCount : parseRange(imgRangeText, pdfPageCount).length, previewThumbs.length)}</span>
+            {/if}
+          </div>
+          <div class="preview-grid">
+            {#each previewThumbs as t (t.page)}
+              <figure class="preview-cell">
+                <img class="preview-img" src={t.url} alt={`Page ${t.page}`} loading="lazy" />
+                <figcaption class="preview-cap">{t.page}</figcaption>
+              </figure>
+            {/each}
+            {#if previewBuilding}
+              {#each [0, 1, 2] as i (i)}
+                <div class="preview-cell preview-skel" aria-hidden="true">
+                  <span class="preview-skel-img"></span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="actions">
         <button
@@ -705,6 +800,75 @@
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--r-md);
+  }
+  /* Round 59 — pdf2img per-page preview grid. Responsive thumbnail grid so
+     the user sees what they're about to export, not just a page count. */
+  .preview-block {
+    margin: 14px 0;
+  }
+  .preview-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .preview-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-3);
+  }
+  .preview-count {
+    font-size: 11px;
+    color: var(--text-3);
+    opacity: 0.85;
+  }
+  .preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+    gap: 12px;
+  }
+  .preview-cell {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+  }
+  .preview-img {
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    object-fit: contain;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  }
+  .preview-cap {
+    font-size: 10.5px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .preview-skel-img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    border-radius: 6px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 0%,
+      color-mix(in srgb, var(--text-1, #fff) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: pv-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes pv-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .preview-skel-img { animation: none; }
   }
   .opt-row {
     display: flex;
