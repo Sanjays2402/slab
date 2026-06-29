@@ -21,6 +21,7 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fade } from "svelte/transition";
   import {
     smartFoldersList,
     smartFoldersReorder,
@@ -390,7 +391,7 @@
         <!-- First-load skeleton: shimmer rows in the hub-row icon+name shape so
              the hub settles in place instead of flashing a bare "Loading…".
              Decorative; one SR label carries the loading state. -->
-        <div class="sf-skeleton" aria-busy="true" aria-label="Loading smart folders">
+        <div class="sf-skeleton" aria-busy="true" aria-label="Loading smart folders" out:fade={{ duration: 120 }}>
           {#each Array(6) as _, i (i)}
             <div class="sf-skel-row">
               <span class="sf-skel-icon"></span>
@@ -407,7 +408,7 @@
           {/if}
         </div>
       {:else}
-        <ul class="hub-list" aria-label="Smart folders, drag to reorder">
+        <ul class="hub-list" aria-label="Smart folders, drag to reorder" in:fade={{ duration: 160, delay: 60 }}>
           {#each filtered as e, i (e.kind + ":" + e.id)}
             <li
               class="hub-row"
