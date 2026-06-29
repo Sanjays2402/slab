@@ -1781,7 +1781,14 @@
           <button class="outline-close" onclick={() => (outlineOpen = false)} title="Close">×</button>
         </div>
         {#if outlineLoading}
-          <div class="outline-empty">Loading…</div>
+          <!-- Outline skeleton: indented shimmer bars in the tree shape so the
+               panel settles in place instead of flashing a bare "Loading…".
+               Decorative; one SR label carries the loading state. -->
+          <div class="outline-skeleton" aria-busy="true" aria-label="Loading outline">
+            {#each [0, 1, 0, 2, 1, 0, 1, 0] as depth, i (i)}
+              <span class="ol-skel-bar" style="margin-left: {depth * 14}px; width: {64 - depth * 10}%"></span>
+            {/each}
+          </div>
         {:else if outline.length === 0}
           <div class="outline-empty">
             <p>No outline in this PDF.</p>
@@ -2688,6 +2695,33 @@
     overflow-y: auto;
     padding: 6px 6px 14px;
     flex: 1;
+  }
+  /* First-load skeleton — indented shimmer bars matching the outline tree.
+     Same shimmer family as SmartFolders/Convert so loaders feel like one app. */
+  .outline-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px 12px;
+  }
+  .ol-skel-bar {
+    height: 11px;
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 0%,
+      color-mix(in srgb, var(--text-1, #fff) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: ol-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes ol-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ol-skel-bar { animation: none; }
   }
   .outline-list {
     list-style: none;
