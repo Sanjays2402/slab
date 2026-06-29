@@ -334,6 +334,18 @@ export function filterDeadWeight<T extends BeaconPdfLike>(pdfs: readonly T[]): T
   return pdfs.filter((p) => p && p.embed_model !== keep);
 }
 
+/**
+ * Reclaimable footprint of the dead weight: the PDF/chunk/page total of
+ * every non-dominant row, so the chip can say what forgetting them frees
+ * up BEFORE the click. Single-model/garbage index -> all zeros. Pure +
+ * DOM-free — sums via the tested summarizeSelection over the dead hashes.
+ */
+export function deadWeightImpact<T extends BeaconPdfLike>(pdfs: readonly T[]): BeaconImpact {
+  const dead = filterDeadWeight(pdfs);
+  if (dead.length === 0) return { pdfs: 0, chunks: 0, pages: 0 };
+  return summarizeSelection(pdfs, new Set(dead.map((p) => p.pdf_hash)));
+}
+
 // --- Pinned model facets -----------------------------------------------
 //
 // The model tiles are a click-to-filter facet, but the choice is

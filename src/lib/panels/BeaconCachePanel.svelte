@@ -43,7 +43,7 @@
     type IndexedPdfRecord,
     type ModelBucket,
   } from "$lib/beaconCache";
-  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, filterDeadWeight, dominantModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, classifyPinReorderKey, nextPinIndex, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
+  import { searchIndexedPdfs, sortIndexedPdfs, cycleBeaconSort, beaconSortLabel, BEACON_SORT_FIELDS, filterByModel, filterDeadWeight, deadWeightImpact, dominantModel, reconcileModelFacet, isModelPinned, toggleModelPin, livePinnedModels, movePinnedModel, classifyPinReorderKey, nextPinIndex, summarizeSelection, describeImpact, describeBeaconView, classifyBeaconTableKey, nextBeaconCursor, clampBeaconCursor, type BeaconSort, type BeaconSortField } from "$lib/beaconCacheView";
   import { loadPinnedModels, savePinnedModels } from "$lib/beaconPins";
   import { splitHighlight } from "$lib/paletteSearch";
   import { loadBeaconSort, saveBeaconSort } from "$lib/beaconSortStore";
@@ -83,6 +83,8 @@
   let deadWeightOnly = $state(false);
   /** The model Beacon actually queries; non-dominant rows are dead weight. */
   const deadModel = $derived(dominantModel(pdfs));
+  /** Reclaimable footprint (PDFs/chunks/pages) of the dead weight, for the chip. */
+  const deadImpact = $derived(deadWeightImpact(pdfs));
   /** Pinned model names (sticky strip), seeded from localStorage. */
   let pinnedModels = $state<string[]>(loadPinnedModels());
   /** Pinned models that still exist in the live index, in pin order. */
@@ -587,6 +589,9 @@
           >
             {deadWeightOnly ? "Showing dead weight" : "Show dead weight"}{#if deadModel} (not {deadModel}){/if}
           </button>
+          {#if deadImpact.pdfs > 0}
+            <span class="bc-deadweight-reclaim">frees {describeImpact(deadImpact)}</span>
+          {/if}
         </div>
       {/if}
 
@@ -1088,6 +1093,14 @@
     background: color-mix(in srgb, #f5c518 30%, transparent);
     border-color: #f5c518;
     color: #fffbe6;
+  }
+  .bc-deadweight-reclaim {
+    margin-left: 7px;
+    font-size: 11px;
+    font-weight: 500;
+    color: color-mix(in srgb, #f5c518 70%, var(--text-2, #b8b8b8));
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
   .bc-warn strong {
     color: #f5c518;

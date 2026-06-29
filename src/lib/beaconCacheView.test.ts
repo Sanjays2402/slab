@@ -16,6 +16,7 @@ import {
   beaconSortLabel,
   filterByModel,
   filterDeadWeight,
+  deadWeightImpact,
   dominantModel,
   reconcileModelFacet,
   isModelPinned,
@@ -323,6 +324,24 @@ const pdf = (over: Partial<BeaconPdfLike> = {}): BeaconPdfLike => ({
   expect(filterDeadWeight([]).length === 0, "deadweight: empty -> []");
   // @ts-expect-error null tolerance
   expect(dominantModel(null) === null, "dominant: null -> null");
+}
+
+// --- deadWeightImpact ------------------------------------------------
+{
+  const mixed = [
+    pdf({ pdf_hash: "a", embed_model: "nomic-embed-text", chunks: 100, pages: 12 }),
+    pdf({ pdf_hash: "b", embed_model: "mxbai-embed-large", chunks: 20, pages: 8 }),
+    pdf({ pdf_hash: "c", embed_model: "mxbai-embed-large", chunks: 15, pages: 4 }),
+  ];
+  const imp = deadWeightImpact(mixed);
+  expect(imp.pdfs === 2, "dw-impact: sums non-dominant PDFs");
+  expect(imp.chunks === 35, "dw-impact: sums dead chunks");
+  expect(imp.pages === 12, "dw-impact: sums dead pages");
+  const single = [pdf({ pdf_hash: "a", embed_model: "nomic-embed-text", chunks: 5, pages: 3 })];
+  expect(deadWeightImpact(single).pdfs === 0, "dw-impact: single model -> zero");
+  expect(deadWeightImpact([]).chunks === 0, "dw-impact: empty -> zero");
+  // @ts-expect-error null tolerance
+  expect(deadWeightImpact(null).pages === 0, "dw-impact: garbage -> zero");
 }
 
 // --- reconcileModelFacet ---------------------------------------------
