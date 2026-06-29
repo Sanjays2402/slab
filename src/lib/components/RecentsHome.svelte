@@ -50,6 +50,7 @@
     describeResetPinOrder,
     type RecentSortMode,
   } from "$lib/recentsHomeView";
+  import { clampFlyoutTop } from "$lib/readerThumbView";
   import { loadRecentSort, saveRecentSort } from "$lib/recentsView";
   import { loadPinsCollapsed, savePinsCollapsed } from "$lib/recentsPinsCollapsed";
   import { notify } from "$lib/notify";
@@ -168,6 +169,28 @@
   // scroll, on resize, and whenever the pinned list changes.
   let stripEl = $state<HTMLDivElement | null>(null);
   let stripEdges = $state(pinnedStripEdges(null));
+
+  // Cover-flow hover-zoom: hovering a pinned card pops its full cover beside
+  // the strip so a small thumbnail is recognisable without opening the doc —
+  // the twin of the reader rail's hover preview, reusing the tested
+  // clampFlyoutTop so the flyout never spills off the top/bottom edge.
+  let coverPreviewPath = $state<string | null>(null);
+  let coverPreviewTop = $state(0);
+  const COVER_PREVIEW_H = 280;
+  function showCoverPreview(e: MouseEvent, path: string): void {
+    const thumb = getRecentThumb(path);
+    if (!thumb) return;
+    const card = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    coverPreviewTop = clampFlyoutTop(
+      { top: card.top, height: card.height },
+      COVER_PREVIEW_H,
+      window.innerHeight,
+    );
+    coverPreviewPath = path;
+  }
+  function hideCoverPreview(): void {
+    coverPreviewPath = null;
+  }
 
   function measureStrip(): void {
     if (!stripEl) {
@@ -707,7 +730,7 @@
                 </svg>
               </span>
             {/if}
-            <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
+            <button class="card-body" onclick={() => onOpen(r)} onmouseenter={(e) => showCoverPreview(e, r.path)} onmouseleave={hideCoverPreview} title={r.path}>
               <div class="card-thumb">
                 {#if thumb}
                   <img src={thumb} alt="" loading="lazy" />
@@ -737,6 +760,11 @@
         {/each}
         </div>
       </div>
+      {#if coverPreviewPath}
+        <div class="cover-preview" style="top: {coverPreviewTop}px" aria-hidden="true">
+          <img src={getRecentThumb(coverPreviewPath)} alt="" />
+        </div>
+      {/if}
       {/if}
     </section>
   {/if}
@@ -1097,6 +1125,28 @@
     scrollbar-width: thin;
   }
   .row-strip .card { min-width: 160px; flex: 0 0 160px; }
+
+  /* Cover-flow hover-zoom: a fixed flyout pinned to the right of the strip,
+     vertically clamped by clampFlyoutTop. Pointer-transparent so it can't
+     steal the hover; fades in so the pop isn't jarring. */
+  .cover-preview {
+    position: fixed;
+    right: 28px;
+    z-index: 40;
+    width: 210px;
+    pointer-events: none;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px color-mix(in srgb, white 12%, transparent);
+    background: var(--bg-2, #1a1a1a);
+    animation: cover-pop 0.13s ease;
+  }
+  .cover-preview img { display: block; width: 100%; height: auto; }
+  @keyframes cover-pop {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) { .cover-preview { animation: none; } }
 
   /* Pinned-strip overflow affordance: a positioned wrapper paints edge
      fade masks (only when there's hidden content that way) and hosts the
