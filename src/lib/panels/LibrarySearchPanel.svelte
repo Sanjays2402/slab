@@ -72,6 +72,9 @@
     savedSearchHitCount,
     pinYieldBadge,
     mergeSweepYields,
+    clearDryPins,
+    dryPinQueries,
+    describeClearDryPins,
     rankSweepResults,
     describeSweep,
     moveSavedSearch,
@@ -254,6 +257,25 @@
   function togglePin(q: string): void {
     pinned = togglePinnedSearch(pinned, q);
     savePinnedSearches(pinned);
+  }
+
+  /** Dry pins are saved searches a sweep measured at 0 hits. After a sweep
+      flags them, one click prunes them all so the strip is back to pins
+      that still earn their place. Pure dryPinQueries/clearDryPins decide
+      which; this commits + persists both the pin list and pruned yields. */
+  const dryPins = $derived(dryPinQueries(pinned, pinYields));
+  function clearDry(): void {
+    if (dryPins.length === 0) return;
+    pinned = clearDryPins(pinned, pinYields);
+    savePinnedSearches(pinned);
+    const kept: Record<string, number> = {};
+    for (const p of pinned) {
+      const y = pinYieldBadge(p, pinYields);
+      if (y !== null) kept[p] = y;
+    }
+    pinYields = kept;
+    savePinYields(pinYields);
+    sweepDigest = "";
   }
 
   // Round 51 Slice 4: drag-to-reorder the Saved-searches strip. The strip
@@ -916,6 +938,15 @@
                 disabled={sweeping}
                 title="Run every saved search and rank them by hits"
               >{sweeping ? "Running…" : "Run all"}</button>
+              {#if dryPins.length > 0}
+                <button
+                  type="button"
+                  class="saved-clear-dry-btn"
+                  onclick={clearDry}
+                  disabled={sweeping}
+                  title="Unpin the saved searches the last sweep found empty"
+                >{describeClearDryPins(dryPins.length)}</button>
+              {/if}
               {#if pinned.length > 1}
                 <span class="saved-cycle-hint" title="Cycle through saved searches">Cycle <kbd>⌘[</kbd> <kbd>⌘]</kbd></span>
               {/if}
@@ -2126,6 +2157,26 @@
     border-color: var(--accent, #5082ff);
   }
   .saved-sweep-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .saved-clear-dry-btn {
+    margin-left: 6px;
+    font-size: 10px;
+    padding: 2px 9px;
+    border-radius: 5px;
+    background: transparent;
+    border: 1px solid color-mix(in srgb, #f5c518 45%, transparent);
+    color: #fff2b8;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .saved-clear-dry-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, #f5c518 16%, transparent);
+    border-color: #f5c518;
+  }
+  .saved-clear-dry-btn:disabled {
     opacity: 0.55;
     cursor: default;
   }

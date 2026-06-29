@@ -47,6 +47,9 @@ import {
   savedSearchHitCount,
   pinYieldBadge,
   mergeSweepYields,
+  dryPinQueries,
+  clearDryPins,
+  describeClearDryPins,
   rankSweepResults,
   describeSweep,
   SEARCH_SORT_MODES,
@@ -1008,6 +1011,21 @@ const group = (
   expect(merged.keep === 5, "merge: untouched prior preserved");
   expect(merged.new === 3, "merge: adds new pin");
   expect(mergeSweepYields(null, []).keep === undefined, "merge: null prior -> {}");
+}
+
+// --- dryPinQueries / clearDryPins / describeClearDryPins -------------
+{
+  const pins = ["invoices 2024", "old tax", "vendors", "stale"];
+  const y = { "invoices 2024": 84, "old tax": 0, vendors: 3, stale: 0 };
+  expect(JSON.stringify(dryPinQueries(pins, y)) === JSON.stringify(["old tax", "stale"]), "dry: picks measured-0 pins in order");
+  expect(dryPinQueries(pins, { "old tax": 0 }).length === 1, "dry: only the swept-0 is dry, unswept stay");
+  expect(JSON.stringify(clearDryPins(pins, y)) === JSON.stringify(["invoices 2024", "vendors"]), "clear: drops dry, keeps order");
+  expect(clearDryPins(pins, y) !== pins, "clear: new array");
+  expect(JSON.stringify(clearDryPins(pins, {})) === JSON.stringify(pins), "clear: none dry -> unchanged");
+  expect(clearDryPins(null as never, y).length === 0, "clear: garbage -> []");
+  expect(describeClearDryPins(2) === "Clear 2 dry pins", "label: plural");
+  expect(describeClearDryPins(1) === "Clear 1 dry pin", "label: singular");
+  expect(describeClearDryPins(0) === "", "label: zero hides");
 }
 
 // --- jump-to-next-saved chord ----------------------------------------

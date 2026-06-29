@@ -1326,6 +1326,50 @@ export function mergeSweepYields(
   return out;
 }
 
+/**
+ * The pinned queries whose last-known yield is exactly 0 (dry pins) — the
+ * candidates a "clear dry pins" command would unpin after a sweep flags
+ * them. Returns the pins IN their original order (subset of `pinned`), so
+ * the caller can prune them in one pass. A pin never swept (no yield)
+ * stays — only a measured 0 counts. Garbage -> []. Pure + DOM-free.
+ */
+export function dryPinQueries(
+  pinned: readonly string[],
+  yields: Readonly<Record<string, number>> | null | undefined,
+): string[] {
+  if (!Array.isArray(pinned)) return [];
+  const out: string[] = [];
+  for (const p of pinned) {
+    if (typeof p !== "string") continue;
+    if (pinYieldBadge(p, yields) === 0) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Pinned list with every dry pin removed, keeping the rest in order — the
+ * one-shot result of "clear dry pins". Returns a NEW array; never mutates.
+ * No dry pins -> the cleaned list unchanged. Null -> []. Pure + DOM-free.
+ */
+export function clearDryPins(
+  pinned: readonly string[],
+  yields: Readonly<Record<string, number>> | null | undefined,
+): string[] {
+  if (!Array.isArray(pinned)) return [];
+  const dry = new Set(dryPinQueries(pinned, yields));
+  return pinned.filter((p) => typeof p === "string" && !dry.has(p));
+}
+
+/**
+ * Count-aware label for the clear-dry-pins control: "Clear 2 dry pins" /
+ * "Clear 1 dry pin" / "" when none, so the button hides at zero. Pure.
+ */
+export function describeClearDryPins(n: number): string {
+  const c = Math.max(0, Math.trunc(Number(n) || 0));
+  if (c <= 0) return "";
+  return `Clear ${c} dry pin${c === 1 ? "" : "s"}`;
+}
+
 // --- Run-all-saved sweep summary -------------------------------------
 //
 // A user with several saved searches wants a one-shot health check: run
