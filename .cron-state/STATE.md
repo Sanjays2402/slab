@@ -1,6 +1,8 @@
 # Slab Cron State
 
-Last updated: 2026-06-28 23:50 PT by Cake (cron) — round-55 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces, each on a tested pure core where logic exists, from the round-54 candidates list. Shipped: (1) Beacon Alt+Arrow keyboard pin-reorder (1d28abf) — classifyPinReorderKey+nextPinIndex twin of the drag, focus follows the moved chip, beaconCacheView 130->145; (2) Library run-all-saved sweep (b3ca692) — rankSweepResults+describeSweep ranked digest ("5 searches, 84 hits, 1 came up empty"), Run-all btn, librarySearchView 299->309; (3) Reader thumbnail hover-zoom preview (e3bf920) — new readerThumbView.ts (16 tests) clampFlyoutTop/shouldShowPreview/previewLabel, 280px on-demand render flyout; (4) Palette monochrome chrome + Continue cover (657e0c9) — killed 5 color-emoji icons, Continue-reading carries the resume doc cover; (5) Collections sidebar first-load shimmer skeleton (93328b7). Gates: 6 core suites green (1211 tests), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs 1d28abf,b3ca692,e3bf920,657e0c9,93328b7.
+Last updated: 2026-06-29 02:30 PT by Cake (cron) — round-56 BATCH shipped (5 frontend/UX capabilities, 5 feature commits) across FIVE surfaces from the round-55 candidates list. Shipped: (1) Reader thumbnail keyboard preview nav (a5ee2c2) — classifyThumbPreviewKey+nextPreviewPage drive the hover-flyout via Up/Down/Home/End/Esc, focus follows, readerThumbView 16->34; (2) Beacon show-dead-weight chip (8785226) — dominantModel+filterDeadWeight, one chip filters to only the non-dominant PDFs Beacon ignores, beaconCacheView 145->152; (3) Library per-pin sweep-yield badge (61610f1) — pinYields.ts persists last sweep counts, pinYieldBadge+mergeSweepYields, dry pins show muted-amber "0" on open, librarySearchView 308->319; (4) SmartFolders hub first-load shimmer skeleton (373bec8); (5) Convert drop-zone shimmer skeleton (94b5235). Gates: 6 core suites green (1246 tests), pnpm check 0 errors/104 warnings (baseline exact), cargo fmt clean, zero Rust changed. SHAs a5ee2c2,8785226,61610f1,373bec8,94b5235.
+
+PREV round-55 (2026-06-28 23:50 PT): 5 frontend/UX capabilities — Beacon Alt+Arrow pin-reorder (1d28abf); Library run-all-saved sweep (b3ca692); Reader thumbnail hover-zoom (e3bf920); Palette monochrome chrome + Continue cover (657e0c9); Collections shimmer skeleton (93328b7).
 
 PREV round-54 (2026-06-28 21:30 PT): 5 frontend/UX capabilities — Beacon drag-reorder pinned strip (c42aa93); Library jump-to-next-saved chord (4422bc3); OCR per-reason share tooltip (ee76448); Palette recent-file thumbnails (3d49002); Signet verify skeleton (568837c).
 
@@ -1728,7 +1730,7 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   getRecentThumb in rows; killed dead emoji-dup block.
 - ~~skeleton pass: Signet verify~~ — DONE round 54 (568837c): sig-card shimmer.
 
-### Next FRONTEND candidates — refilled round 55
+### Next FRONTEND candidates — refilled round 56
 
 Ordered roughly by demo value (all frontend; backend deferred per override):
 
@@ -1736,16 +1738,31 @@ Ordered roughly by demo value (all frontend; backend deferred per override):
   optimistic save + rollback toast — toast actions already exist).
 - Reader find: highlight the active match's page in the thumbnail rail;
   per-find-result mini-map on the scrollbar (round-42 follow-ups).
-- empty/loading/skeleton-state pass: remaining bare "Loading…" panels
-  (Forms, Metadata, SmartFolders hub) — collections shimmer pattern.
-- Reader: thumbnail-rail keyboard arrows now lack a hover-preview twin —
-  Up/Down should drive the round-55 preview while focused.
+- OCR Queue: collapse pending-state + failure facets into one segmented bar
+  (deferred round 56 — two separate sections, needs careful render merge).
+- RecentsHome: cover-flow hover-zoom on pinned cards (reuse clampFlyoutTop).
 - Palette: thumbnails for pinned-file rows too (Continue + Recent done).
-- Library Search: persist the run-all-sweep digest as a per-pin yield badge
-  so a dry pin shows even before re-running.
-- Beacon: filter the table to only mixed-model dead-weight in one chip.
+- empty/loading/skeleton pass: Forms, Metadata panels still bare "Loading".
+- Beacon: surface dead-weight reclaim total (chunks/pages) in the chip label.
+- Library Search: cmd to clear all dry pins after a sweep flags them.
+- Convert img2pdf tab: same drop-zone skeleton while pickImages is wiring.
+- SmartFolders: animate the skeleton->list crossfade on first paint.
+
+### Next FRONTEND candidates — refilled round 55 (round 56 picks struck)
+
+Ordered roughly by demo value (all frontend; backend deferred per override):
+
+- doc-detail metadata editor read surface (inline-editable title / tags with
+  optimistic save + rollback toast — toast actions already exist).
+- Reader find: highlight the active match's page in the thumbnail rail;
+  per-find-result mini-map on the scrollbar (round-42 follow-ups).
+- ~~empty/loading/skeleton pass: SmartFolders hub~~ — DONE round 56 (373bec8).
+- ~~Reader: thumbnail-rail keyboard hover-preview twin~~ — DONE round 56 (a5ee2c2).
+- Palette: thumbnails for pinned-file rows too (Continue + Recent done).
+- ~~Library Search: persist sweep digest as per-pin yield badge~~ — DONE round 56 (61610f1).
+- ~~Beacon: filter to mixed-model dead-weight in one chip~~ — DONE round 56 (8785226).
 - OCR Queue: collapse pending-state + failure facets into one segmented bar.
-- Convert panel: drop-zone skeleton while pdf.js loads (bare "Loading…").
+- ~~Convert panel: drop-zone skeleton while pdf.js loads~~ — DONE round 56 (94b5235).
 - RecentsHome: cover-flow hover-zoom on pinned cards (reader-preview twin).
 
 ### Next FRONTEND candidates — refilled round 54 (round 55 picks struck)
