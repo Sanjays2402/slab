@@ -4435,6 +4435,26 @@ fn slab_library_set_doc_tags(
     result.into()
 }
 
+/// Atomically attach or detach one tag from one document and return the
+/// refreshed row. Unlike `set_doc_tags`, this cannot overwrite unrelated tag
+/// links written by another window from a fresher snapshot.
+#[tauri::command]
+fn slab_library_set_doc_tag(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    tag_id: i64,
+    attached: bool,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_tag(doc_id, tag_id, attached)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_remove_document(app: tauri::AppHandle, doc_id: i64) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
@@ -7853,6 +7873,7 @@ pub fn run() {
             slab_library_set_doc_starred,
             slab_library_merge_tags,
             slab_library_set_doc_tags,
+            slab_library_set_doc_tag,
             slab_library_bulk_apply_tag,
             slab_library_bulk_remove_tag,
             slab_library_remove_document,

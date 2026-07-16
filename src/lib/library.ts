@@ -585,6 +585,27 @@ export async function setDocumentTags(
   unwrap(res);
 }
 
+/**
+ * Atomically attach or detach one tag and return the refreshed document. This
+ * preserves unrelated links added by another window while an inline editor is
+ * open, unlike replacing the complete tag-id set from a stale snapshot.
+ */
+export async function setDocumentTag(
+  docId: number,
+  tagId: number,
+  attached: boolean,
+): Promise<DocumentRecord> {
+  const res = await invoke<CmdResult<DocumentRecord>>(
+    "slab_library_set_doc_tag",
+    {
+      docId,
+      tagId,
+      attached,
+    },
+  );
+  return unwrap(res);
+}
+
 /** Outcome of a bulk tag apply/remove (mirror of `bulk_tag::BulkTagResult`). */
 export interface BulkTagResult {
   /** The tag that was applied or removed (resolved / created). */

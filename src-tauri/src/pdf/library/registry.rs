@@ -1135,6 +1135,78 @@ impl LibraryDb {
         Ok(())
     }
 
+    /// Atomically attach or detach one tag without replacing the document's
+    /// complete tag set. This is the concurrency-safe path for inline editors:
+    /// a stale client toggling tag A cannot accidentally remove tag B that was
+    /// added by another window. Returns the refreshed document with tags loaded.
+    pub fn set_doc_tag(
+        &mut self,
+        doc_id: i64,
+        tag_id: i64,
+        attached: bool,
+    ) -> Result<DocumentRecord, LibraryError> {
+        let now = now_unix();
+        let tx = self.conn.transaction()?;
+        let doc_exists = tx
+            .query_row(
+                "SELECT 1 FROM library_documents WHERE id = ?1",
+                params![doc_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !doc_exists {
+            return Err(LibraryError::Other(format!("document {doc_id} not found")));
+        }
+        let tag_exists = tx
+            .query_row(
+                "SELECT 1 FROM library_tags WHERE id = ?1",
+                params![tag_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !tag_exists {
+            return Err(LibraryError::Other(format!("tag {tag_id} not found")));
+        }
+
+        if attached {
+            tx.execute(
+                "INSERT OR IGNORE INTO library_doc_tags (doc_id, tag_id, applied_at)
+                 VALUES (?1, ?2, ?3)",
+                params![doc_id, tag_id, now],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![doc_id, tag_id],
+            )?;
+        }
+        let mut doc = tx
+            .query_row(
+                "SELECT id, folder_id, path, title, hash, size_bytes, mtime_ns, pages, added_at, last_seen_at, ocr_state, ocr_output_path, ocr_error, notes, starred
+                 FROM library_documents WHERE id = ?1",
+                params![doc_id],
+                document_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| LibraryError::Other(format!("document {doc_id} not found")))?;
+        doc.tags = {
+            let mut stmt = tx.prepare(
+                "SELECT t.id, t.name, t.color, t.description FROM library_tags t
+                 INNER JOIN library_doc_tags dt ON dt.tag_id = t.id
+                 WHERE dt.doc_id = ?1
+                 ORDER BY t.name ASC",
+            )?;
+            let tags = stmt
+                .query_map(params![doc.id], tag_from_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            tags
+        };
+        tx.commit()?;
+        Ok(doc)
+    }
+
     /// The `limit` most recently *applied* tags, newest first, each tag
     /// listed once by its newest application time. Tags never applied to a
     /// document are excluded (there is nothing recent about them). Legacy
@@ -2969,6 +3041,74 @@ mod tests {
         assert!(attached.iter().any(|t| t.id == t1.id));
         assert!(attached.iter().any(|t| t.id == t3.id));
         assert!(!attached.iter().any(|t| t.id == t2.id));
+    }
+
+    #[test]
+    fn set_doc_tag_changes_only_the_target_link() {
+        let mut db = db();
+        let doc = db
+            .upsert_document(None, "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let first = db.add_tag("first", None).unwrap();
+        let second = db.add_tag("second", None).unwrap();
+        let third = db.add_tag("third", None).unwrap();
+        db.set_doc_tags(doc.id, &[first.id, second.id]).unwrap();
+
+        let attached = db.set_doc_tag(doc.id, third.id, true).unwrap();
+        let attached_ids: std::collections::HashSet<i64> =
+            attached.tags.iter().map(|tag| tag.id).collect();
+        assert_eq!(
+            attached_ids,
+            std::collections::HashSet::from([first.id, second.id, third.id])
+        );
+
+        let detached = db.set_doc_tag(doc.id, second.id, false).unwrap();
+        let detached_ids: std::collections::HashSet<i64> =
+            detached.tags.iter().map(|tag| tag.id).collect();
+        assert_eq!(
+            detached_ids,
+            std::collections::HashSet::from([first.id, third.id])
+        );
+    }
+
+    #[test]
+    fn set_doc_tag_is_idempotent_and_preserves_application_time() {
+        let mut db = db();
+        let doc = db
+            .upsert_document(None, "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let tag = db.add_tag("keep", None).unwrap();
+        db.set_doc_tag(doc.id, tag.id, true).unwrap();
+        stamp(&db, doc.id, tag.id, 1000);
+
+        let attached = db.set_doc_tag(doc.id, tag.id, true).unwrap();
+        assert_eq!(attached.tags.len(), 1);
+        let applied_at: i64 = db
+            .conn()
+            .query_row(
+                "SELECT applied_at FROM library_doc_tags WHERE doc_id = ?1 AND tag_id = ?2",
+                params![doc.id, tag.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(applied_at, 1000);
+
+        db.set_doc_tag(doc.id, tag.id, false).unwrap();
+        let detached = db.set_doc_tag(doc.id, tag.id, false).unwrap();
+        assert!(detached.tags.is_empty());
+    }
+
+    #[test]
+    fn set_doc_tag_rejects_unknown_document_or_tag() {
+        let mut db = db();
+        let doc = db
+            .upsert_document(None, "/tmp/a.pdf", None, "h", 1, 1, None, None)
+            .unwrap();
+        let tag = db.add_tag("known", None).unwrap();
+
+        assert!(db.set_doc_tag(9999, tag.id, true).is_err());
+        assert!(db.set_doc_tag(doc.id, 9999, true).is_err());
+        assert!(db.tags_for_document(doc.id).unwrap().is_empty());
     }
 
     // Force a known applied_at on a (doc, tag) link so ordering tests are
