@@ -63,6 +63,8 @@
     savedViewReorder,
     collectionList,
     collectionAddDocs,
+    collectionListDocs,
+    smartCollectionExpand,
     type AutoTagRunResult,
     type CollectionRecord,
     type DocumentRecord,
@@ -493,6 +495,12 @@
 
   // ---------- Data loaders ----------
 
+  function syncInspectorFromDocs() {
+    if (!inspectorDoc) return;
+    const fresh = docs.find((doc) => doc.id === inspectorDoc?.id);
+    if (fresh) inspectorDoc = fresh;
+  }
+
   async function refreshAll() {
     loading = true;
     error = null;
@@ -516,9 +524,26 @@
   }
 
   async function refreshDocs() {
-    // v3.32.0 Atlas — collection override short-circuits the filter.
+    // v3.32.0 Atlas — collection override short-circuits the filter, but its
+    // document rows still need a fresh query after cross-window mutations.
     if (activeCollection) {
-      docs = activeCollection.docs;
+      const selected = activeCollection;
+      try {
+        const freshDocs =
+          selected.kind === "collection"
+            ? await collectionListDocs(selected.id)
+            : await smartCollectionExpand(selected.id);
+        if (
+          activeCollection?.kind === selected.kind &&
+          activeCollection.id === selected.id
+        ) {
+          activeCollection = { ...selected, docs: freshDocs };
+          docs = freshDocs;
+          syncInspectorFromDocs();
+        }
+      } catch (e) {
+        error = String(e);
+      }
       return;
     }
     const folderId = activeFolder === "all" ? null : activeFolder;
@@ -556,6 +581,7 @@
     }
     try {
       docs = await listDocuments(filter);
+      syncInspectorFromDocs();
       // v3.41.0: prune any selected ids that fell out of the current view
       // so the bulk action bar's count reflects what's actually on screen.
       if (selectedDocIds.size > 0) {
@@ -1690,9 +1716,8 @@
   // currently being inspected (or null when closed). The drawer
   // component re-fetches a fresh row on open so it never edits a stale
   // copy. setInspectorDoc() is what the drawer calls back when it
-  // successfully edits title/notes/starred so the LibraryPanel can
-  // splice the freshly-mutated doc into the grid without a full
-  // listDocuments round-trip.
+  // publishes title/notes/starred/tag mutations so the LibraryPanel can
+  // splice the row into the grid without a full listDocuments round-trip.
   let inspectorDoc = $state<DocumentRecord | null>(null);
   // v3.39.0 Atlas Tag-Suggest slice 52 — bulk review drawer + the
   // badge stats it surfaces in the toolbar. Stats refresh on mount,
@@ -1725,20 +1750,58 @@
     inspectorDoc = null;
   }
   function onInspectorUpdated(updated: DocumentRecord) {
-    // Splice the refreshed row into `docs` so the grid card updates
-    // immediately (title, ★, notes-hint badge if we ever add one).
-    inspectorDoc = updated;
+    // Keep the drawer live only if it is still showing this document. An IPC
+    // save that settles after the user closes the drawer must not reopen it.
+    if (inspectorDoc?.id === updated.id) inspectorDoc = updated;
     const idx = docs.findIndex((d) => d.id === updated.id);
     if (idx >= 0) {
       docs = [...docs.slice(0, idx), updated, ...docs.slice(idx + 1)];
+    }
+    if (activeCollection) {
+      activeCollection = {
+        ...activeCollection,
+        docs: activeCollection.docs.map((doc) =>
+          doc.id === updated.id ? updated : doc,
+        ),
+      };
     }
     // If the starred-only toggle is on and the doc just got unstarred,
     // it must drop out of the grid — the simplest correct path is a
     // refresh, which also re-applies sort.
     if (starredOnly && !updated.starred) void refreshDocs();
   }
+  function onInspectorPatched(
+    docId: number,
+    patch: (current: DocumentRecord) => DocumentRecord,
+  ): DocumentRecord | null {
+    const current =
+      docs.find((doc) => doc.id === docId) ??
+      activeCollection?.docs.find((doc) => doc.id === docId) ??
+      (inspectorDoc?.id === docId ? inspectorDoc : null) ??
+      null;
+    if (!current) return null;
+    const updated = patch(current);
+    if (updated === current) return current;
+    if (inspectorDoc?.id === docId) inspectorDoc = updated;
+    docs = docs.map((doc) => (doc.id === docId ? updated : doc));
+    if (activeCollection) {
+      activeCollection = {
+        ...activeCollection,
+        docs: activeCollection.docs.map((doc) =>
+          doc.id === docId ? updated : doc,
+        ),
+      };
+    }
+    return updated;
+  }
   function onInspectorRemoved(removedId: number) {
     docs = docs.filter((d) => d.id !== removedId);
+    if (activeCollection) {
+      activeCollection = {
+        ...activeCollection,
+        docs: activeCollection.docs.filter((doc) => doc.id !== removedId),
+      };
+    }
     closeInspector();
   }
 
@@ -2698,7 +2761,9 @@
      editing a single doc's title/notes/star + viewing its metadata. -->
 <DocInspectorPanel
   doc={inspectorDoc}
+  availableTags={tags}
   onUpdate={onInspectorUpdated}
+  onPatch={onInspectorPatched}
   onRemove={onInspectorRemoved}
   onClose={closeInspector}
 />

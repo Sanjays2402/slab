@@ -10,8 +10,7 @@
     - star toggle (mirrors the toolbar Starred filter)
     - freeform notes (textarea, cap is enforced server-side at 4000
       Unicode scalars; the drawer surfaces the count as it grows)
-    - tag chips (read-only — tag editing already lives on the card
-      via the existing context menu; the inspector just summarises)
+    - searchable inline tag editor with optimistic add/remove + rollback
     - metadata block (path / pages / size / added / last-seen /
       ocr-state, all read-only)
     - Open in Reader + Reveal on disk actions
@@ -25,27 +24,35 @@
   dismiss.
 
   Two callback props:
-    - onUpdate(updated) — called whenever the inspector successfully
-      mutates title/notes/starred. The parent (LibraryPanel) splices
-      `updated` into its `docs` array so the grid card repaints.
+    - onUpdate(updated) — called for confirmed backend rows.
+    - onPatch(docId, patch) — applies field-scoped optimistic changes and
+      rollbacks against the parent's freshest row.
     - onRemove(docId) — called when the user confirms delete. The
       parent prunes the row and the drawer closes.
 
-  Pure frontend slice: no new Tauri commands, no schema, no
-  backend types. Reuses setDocumentTitle / setDocumentNotes /
-  setDocumentStarred (slice 33 / 34 / 35 wire) + removeDocument
-  (pre-existing).
+  Reuses the existing document setters and the atomic setDocumentTag
+  command so a stale drawer never replaces unrelated tag links.
 -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     type DocumentRecord,
+    type TagRecord,
     setDocumentTitle,
     setDocumentNotes,
     setDocumentStarred,
+    setDocumentTag,
     removeDocument,
   } from "$lib/library";
+  import {
+    filterInspectorTagOptions,
+    planInspectorTagAssignment,
+    planInspectorTagMutation,
+    planInspectorTitleMutation,
+    rollbackInspectorTagMutation,
+  } from "$lib/docInspectorView";
+  import { notify } from "$lib/notify";
   import { basename, type CmdResult } from "$lib/types";
   import { formatRelTime } from "$lib/recent";
 
@@ -54,8 +61,16 @@
      * snapshots this on open and edits its own internal copy; the
      * parent should call onUpdate to keep its `docs` array in sync. */
     doc: DocumentRecord | null;
+    /** Library-wide tags available for the inline add picker. */
+    availableTags?: TagRecord[];
     /** Called when the inspector successfully writes a fresh row. */
     onUpdate?: (updated: DocumentRecord) => void;
+    /** Applies a field-scoped optimistic patch or rollback to the freshest
+     * parent-owned row and returns the result. */
+    onPatch?: (
+      docId: number,
+      patch: (current: DocumentRecord) => DocumentRecord,
+    ) => DocumentRecord | null;
     /** Called when the user confirms delete; the parent removes the
      * row from its grid and closes the drawer. */
     onRemove?: (docId: number) => void;
@@ -64,7 +79,14 @@
     onClose?: () => void;
   };
 
-  let { doc, onUpdate = () => {}, onRemove = () => {}, onClose = () => {} }: Props = $props();
+  let {
+    doc,
+    availableTags = [],
+    onUpdate = () => {},
+    onPatch = () => null,
+    onRemove = () => {},
+    onClose = () => {},
+  }: Props = $props();
 
   // Local mirror of `doc` so the form fields are unconditionally
   // bindable strings. Re-syncs every time `doc` changes (i.e. the
@@ -75,10 +97,28 @@
   let busyTitle = $state(false);
   let busyNotes = $state(false);
   let busyStar = $state(false);
+  let busyTags = $state(false);
   let busyDelete = $state(false);
+  let busyClose = $state(false);
+  let busyReveal = $state(false);
+  const mutationBusy = $derived(
+    busyTitle ||
+      busyNotes ||
+      busyStar ||
+      busyTags ||
+      busyDelete ||
+      busyClose ||
+      busyReveal,
+  );
+  const interactionLocked = $derived(busyDelete || busyClose);
+  let tagQuery = $state("");
   let error = $state<string | null>(null);
   let okToast = $state<string | null>(null);
   let confirmDelete = $state(false);
+  let syncedTitle = $state("");
+  let syncedNotes = $state("");
+  let mutationTail: Promise<void> = Promise.resolve();
+  let mutationFailureVersion = 0;
 
   // Maximum notes length — kept in sync with the backend constant in
   // src-tauri/src/pdf/library/registry.rs::MAX_DOC_NOTES_LEN.
@@ -90,14 +130,29 @@
   // then jump to doc B from the grid menu.
   let currentDocId = $state<number | null>(null);
   $effect(() => {
-    if (doc && doc.id !== currentDocId) {
-      currentDocId = doc.id;
-      title = doc.title ?? "";
-      notes = doc.notes ?? "";
-      starred = doc.starred;
-      error = null;
-      okToast = null;
-      confirmDelete = false;
+    if (doc) {
+      const nextTitle = doc.title ?? "";
+      const nextNotes = doc.notes ?? "";
+      if (doc.id !== currentDocId) {
+        currentDocId = doc.id;
+        title = nextTitle;
+        notes = nextNotes;
+        syncedTitle = nextTitle;
+        syncedNotes = nextNotes;
+        starred = doc.starred;
+        error = null;
+        okToast = null;
+        confirmDelete = false;
+        tagQuery = "";
+      } else {
+        const titleWasClean = title === syncedTitle;
+        const notesWereClean = notes === syncedNotes;
+        syncedTitle = nextTitle;
+        syncedNotes = nextNotes;
+        if (titleWasClean && !busyTitle) title = nextTitle;
+        if (notesWereClean && !busyNotes) notes = nextNotes;
+        if (!busyStar) starred = doc.starred;
+      }
     } else if (!doc) {
       currentDocId = null;
     }
@@ -105,8 +160,9 @@
 
   // Close on Escape from anywhere inside the drawer (form fields too).
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape" && !busyTitle && !busyNotes && !busyStar && !busyDelete) {
-      onClose();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      void requestClose();
     }
   }
 
@@ -145,77 +201,174 @@
 
   // -------- save handlers --------
 
+  function enqueueMutation(run: () => Promise<void>): Promise<void> {
+    const scheduled = mutationTail.then(run, run);
+    mutationTail = scheduled.catch(() => {});
+    return scheduled;
+  }
+
+  function patchDocument(
+    docId: number,
+    patch: (current: DocumentRecord) => DocumentRecord,
+  ): DocumentRecord | null {
+    const patched = onPatch(docId, patch);
+    if (patched) return patched;
+    if (doc?.id !== docId) return null;
+    const fallback = patch(doc);
+    onUpdate(fallback);
+    return fallback;
+  }
+
   async function saveTitleIfChanged() {
-    if (!doc) return;
-    const trimmed = title.trim();
-    const current = doc.title ?? "";
-    // No-op if the field unchanged (including empty -> empty).
-    if (trimmed === current) return;
-    if (trimmed.length > TITLE_MAX) {
+    const source = doc;
+    if (!source || busyTitle || busyDelete) return;
+    const mutation = planInspectorTitleMutation(source, title);
+    if (!mutation) return;
+    if (title.trim().length > TITLE_MAX) {
       error = `Title too long (max ${TITLE_MAX} chars).`;
+      mutationFailureVersion++;
       return;
     }
     busyTitle = true;
-    error = null;
-    try {
-      const updated = await setDocumentTitle(doc.id, trimmed || null);
-      title = updated.title ?? "";
-      onUpdate(updated);
-      okToast = "Title saved";
-    } catch (e) {
-      error = `Title save failed: ${String(e)}`;
-    } finally {
-      busyTitle = false;
-    }
+    const docId = mutation.before.id;
+    await enqueueMutation(async () => {
+      let previousTitle = mutation.before.title;
+      error = null;
+      okToast = null;
+      patchDocument(docId, (current) => {
+        previousTitle = current.title;
+        return current.title === mutation.title
+          ? current
+          : { ...current, title: mutation.title };
+      });
+      try {
+        const updated = await setDocumentTitle(docId, mutation.title);
+        onUpdate(updated);
+        if (doc?.id === docId) {
+          title = updated.title ?? "";
+          okToast = "Title saved";
+        }
+      } catch (e) {
+        const rollback = patchDocument(docId, (current) =>
+          current.title === mutation.title
+            ? { ...current, title: previousTitle }
+            : current,
+        );
+        const detail = String(e);
+        mutationFailureVersion++;
+        if (doc?.id === docId) {
+          title = rollback?.title ?? previousTitle ?? "";
+          error = `Title change rolled back: ${detail}`;
+        }
+        notify.error("Title change rolled back", { detail });
+      } finally {
+        busyTitle = false;
+      }
+    });
   }
 
   async function saveNotesIfChanged() {
-    if (!doc) return;
+    const source = doc;
+    if (!source || busyNotes || busyDelete) return;
+    const docId = source.id;
     const trimmed = notes;
-    const current = doc.notes ?? "";
+    const current = source.notes ?? "";
     // Trim-equality so an extra trailing newline isn't a "change".
     if (trimmed.trim() === current.trim()) return;
     if (trimmed.length > NOTES_MAX) {
       error = `Notes too long (max ${NOTES_MAX} chars).`;
+      mutationFailureVersion++;
       return;
     }
     busyNotes = true;
-    error = null;
-    try {
-      const updated = await setDocumentNotes(doc.id, trimmed || null);
-      notes = updated.notes ?? "";
-      onUpdate(updated);
-      okToast = "Notes saved";
-    } catch (e) {
-      error = `Notes save failed: ${String(e)}`;
-    } finally {
-      busyNotes = false;
-    }
+    await enqueueMutation(async () => {
+      error = null;
+      try {
+        const updated = await setDocumentNotes(docId, trimmed || null);
+        onUpdate(updated);
+        if (doc?.id === docId) {
+          notes = updated.notes ?? "";
+          okToast = "Notes saved";
+        }
+      } catch (e) {
+        mutationFailureVersion++;
+        if (doc?.id === docId) error = `Notes save failed: ${String(e)}`;
+      } finally {
+        busyNotes = false;
+      }
+    });
   }
 
   async function toggleStar() {
-    if (!doc) return;
+    const source = doc;
+    if (!source || busyStar || busyDelete) return;
+    const docId = source.id;
     busyStar = true;
-    error = null;
     const next = !starred;
-    try {
-      const updated = await setDocumentStarred(doc.id, next);
-      starred = updated.starred;
-      onUpdate(updated);
-    } catch (e) {
-      error = `Star failed: ${String(e)}`;
-    } finally {
-      busyStar = false;
-    }
+    await enqueueMutation(async () => {
+      error = null;
+      try {
+        const updated = await setDocumentStarred(docId, next);
+        onUpdate(updated);
+        if (doc?.id === docId) starred = updated.starred;
+      } catch (e) {
+        mutationFailureVersion++;
+        if (doc?.id === docId) error = `Star failed: ${String(e)}`;
+      } finally {
+        busyStar = false;
+      }
+    });
+  }
+
+  async function toggleTag(tag: TagRecord) {
+    const source = doc;
+    if (!source || busyTags || busyDelete) return;
+    const mutation = planInspectorTagMutation(source, tag);
+    const docId = mutation.before.id;
+    busyTags = true;
+    await enqueueMutation(async () => {
+      let activeMutation = mutation;
+      error = null;
+      okToast = null;
+      patchDocument(docId, (current) => {
+        activeMutation = planInspectorTagAssignment(
+          current,
+          tag,
+          mutation.attached,
+        );
+        return activeMutation.optimistic;
+      });
+      try {
+        const updated = await setDocumentTag(docId, tag.id, mutation.attached);
+        onUpdate(updated);
+        if (doc?.id === docId) {
+          if (mutation.attached) tagQuery = "";
+          okToast = mutation.attached ? `Added “${tag.name}”` : `Removed “${tag.name}”`;
+        }
+      } catch (e) {
+        patchDocument(docId, (current) =>
+          rollbackInspectorTagMutation(current, activeMutation),
+        );
+        const detail = String(e);
+        mutationFailureVersion++;
+        if (doc?.id === docId) {
+          error = `Tag change rolled back: ${detail}`;
+        }
+        notify.error("Tag change rolled back", { detail });
+      } finally {
+        busyTags = false;
+      }
+    });
   }
 
   async function onConfirmDelete() {
-    if (!doc) return;
+    if (!doc || mutationBusy) return;
     busyDelete = true;
     error = null;
     try {
       await removeDocument(doc.id);
       const removedId = doc.id;
+      busyDelete = false;
       onRemove(removedId);
     } catch (e) {
       error = `Delete failed: ${String(e)}`;
@@ -226,31 +379,57 @@
   // Reveal in Finder / Explorer — uses the cross-platform Tauri shell
   // open command. Fails silently with a toast if the path vanished.
   async function reveal() {
-    if (!doc) return;
+    const source = doc;
+    if (!source || busyReveal || interactionLocked) return;
+    busyReveal = true;
+    await enqueueMutation(async () => {
+      try {
+        // Try the platform-specific reveal first via our own command if
+        // present; fall back to opening the path in the default opener.
+        const res = await invoke<CmdResult<null>>("slab_reveal_in_finder", {
+          path: source.path,
+        }).catch(() => ({ kind: "err", message: "no reveal command" }) as CmdResult<null>);
+        if (res.kind === "ok") return;
+        // Fallback: open the parent folder.
+        const idx = source.path.lastIndexOf("/");
+        const parent = idx >= 0 ? source.path.slice(0, idx) : source.path;
+        await invoke("slab_open_external", { path: parent });
+      } catch (e) {
+        if (doc?.id === source.id) error = `Reveal failed: ${String(e)}`;
+      } finally {
+        busyReveal = false;
+      }
+    });
+  }
+
+  async function runAfterDraftSaves(action: () => void | Promise<void>) {
+    if (busyClose || busyDelete) return;
+    busyClose = true;
+    const failureVersion = mutationFailureVersion;
     try {
-      // Try the platform-specific reveal first via our own command if
-      // present; fall back to opening the path in the default opener.
-      const res = await invoke<CmdResult<null>>("slab_reveal_in_finder", {
-        path: doc.path,
-      }).catch(() => ({ kind: "err", message: "no reveal command" }) as CmdResult<null>);
-      if (res.kind === "ok") return;
-      // Fallback: open the parent folder.
-      const idx = doc.path.lastIndexOf("/");
-      const parent = idx >= 0 ? doc.path.slice(0, idx) : doc.path;
-      await invoke("slab_open_external", { path: parent });
-    } catch (e) {
-      error = `Reveal failed: ${String(e)}`;
+      await Promise.all([saveTitleIfChanged(), saveNotesIfChanged()]);
+      await mutationTail;
+      if (mutationFailureVersion === failureVersion) await action();
+    } finally {
+      busyClose = false;
     }
   }
 
-  function openInReader() {
-    if (!doc) return;
-    // Same path the LibraryPanel uses — we dispatch the request the
-    // App routes to a Reader tab.
-    void invoke("slab_request_open_in_main", { path: doc.path }).catch(() => {
-      // Browser mode — no-op; nothing else to do.
+  async function requestClose() {
+    await runAfterDraftSaves(onClose);
+  }
+
+  async function openInReader() {
+    const source = doc;
+    if (!source || busyClose || busyDelete) return;
+    await runAfterDraftSaves(async () => {
+      // Same path the LibraryPanel uses — we dispatch the request the
+      // App routes to a Reader tab.
+      await invoke("slab_request_open_in_main", { path: source.path }).catch(() => {
+        // Browser mode — no-op; nothing else to do.
+      });
+      onClose();
     });
-    onClose();
   }
 
   // -------- derived display --------
@@ -270,6 +449,10 @@
   const notesCount = $derived(notes.length);
   const notesNearMax = $derived(notesCount > NOTES_MAX * 0.9);
   const notesOver = $derived(notesCount > NOTES_MAX);
+  const matchingTagOptions = $derived(
+    filterInspectorTagOptions(availableTags, doc?.tags ?? [], tagQuery),
+  );
+  const visibleTagOptions = $derived(matchingTagOptions.slice(0, 8));
 
   function ocrLabel(state: string): string {
     switch (state) {
@@ -299,7 +482,7 @@
     aria-modal="false"
     aria-label="Document inspector"
     onclick={(e) => {
-      if (e.target === e.currentTarget) onClose();
+      if (e.target === e.currentTarget) void requestClose();
     }}
     onkeydown={onKey}
     tabindex="-1"
@@ -311,7 +494,7 @@
             class="di-star"
             class:on={starred}
             onclick={toggleStar}
-            disabled={busyStar}
+            disabled={busyStar || interactionLocked}
             aria-pressed={starred}
             title={starred ? "Unstar this document" : "Star this document"}
             aria-label={starred ? "Unstar" : "Star"}
@@ -325,7 +508,8 @@
         </div>
         <button
           class="di-close"
-          onclick={onClose}
+          onclick={requestClose}
+          disabled={interactionLocked}
           aria-label="Close inspector"
           title="Close (Esc)"
         >✕</button>
@@ -347,7 +531,7 @@
             bind:value={title}
             placeholder={titlePlaceholder}
             maxlength={TITLE_MAX + 1}
-            disabled={busyTitle}
+            disabled={busyTitle || interactionLocked}
             onblur={saveTitleIfChanged}
             onkeydown={(e) => {
               if (e.key === "Enter") {
@@ -371,7 +555,7 @@
             bind:value={notes}
             placeholder="Provenance, follow-ups, context. Saved on blur or ⌘↵."
             rows={6}
-            disabled={busyNotes}
+            disabled={busyNotes || interactionLocked}
             onblur={saveNotesIfChanged}
             onkeydown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -386,23 +570,85 @@
         </label>
       </section>
 
-      {#if doc.tags.length > 0}
-        <section class="di-section">
+      <section class="di-section">
+        <div class="di-section-head">
           <div class="di-label">Tags</div>
+          <span class="di-count">{doc.tags.length} attached</span>
+        </div>
+        {#if doc.tags.length > 0}
           <div class="di-tags">
             {#each doc.tags as t (t.id)}
-              <span
+              <button
+                type="button"
                 class="di-tag"
                 style:background={t.color ?? "var(--surface-2)"}
                 title={t.description ?? t.name}
-              >{t.name}</span>
+                aria-label={`Remove tag ${t.name}`}
+                disabled={busyTags || interactionLocked}
+                onclick={() => toggleTag(t)}
+              >
+                <span>{t.name}</span>
+                <span class="di-tag-remove" aria-hidden="true">×</span>
+              </button>
             {/each}
           </div>
-          <div class="di-hint">
-            Tags are edited from the doc-card context menu (right-click the card).
+        {:else}
+          <div class="di-tag-empty">No tags attached yet.</div>
+        {/if}
+
+        <input
+          type="search"
+          class="di-input di-tag-search"
+          bind:value={tagQuery}
+          placeholder="Find a tag to add…"
+          aria-label="Find a tag to add"
+          disabled={busyTags || interactionLocked || availableTags.length === 0}
+          onkeydown={(e) => {
+            if (e.key === "Escape" && tagQuery) {
+              e.stopPropagation();
+              tagQuery = "";
+            }
+          }}
+        />
+
+        {#if visibleTagOptions.length > 0}
+          <div class="di-tag-options" role="group" aria-label="Available tags">
+            {#each visibleTagOptions as option (option.tag.id)}
+              <button
+                type="button"
+                class="di-tag-option"
+                title={option.tag.description ?? `Add ${option.tag.name}`}
+                aria-label={`Add tag ${option.tag.name}`}
+                disabled={busyTags || interactionLocked}
+                onclick={() => toggleTag(option.tag)}
+              >
+                <span
+                  class="di-tag-dot"
+                  style:background={option.tag.color ?? "var(--text-3)"}
+                  aria-hidden="true"
+                ></span>
+                <span class="di-tag-option-name">
+                  {#each option.segments as segment}
+                    {#if segment.hit}<mark>{segment.text}</mark>{:else}{segment.text}{/if}
+                  {/each}
+                </span>
+                <span class="di-tag-add" aria-hidden="true">+</span>
+              </button>
+            {/each}
           </div>
-        </section>
-      {/if}
+          {#if matchingTagOptions.length > visibleTagOptions.length}
+            <div class="di-hint">
+              Showing {visibleTagOptions.length} of {matchingTagOptions.length}; keep typing to narrow.
+            </div>
+          {/if}
+        {:else if availableTags.length === 0}
+          <div class="di-hint">Create a tag from the Library rail, then attach it here.</div>
+        {:else if tagQuery.trim()}
+          <div class="di-hint">No available tags match “{tagQuery.trim()}”.</div>
+        {:else}
+          <div class="di-hint">All available tags are attached.</div>
+        {/if}
+      </section>
 
       <section class="di-section di-meta">
         <div class="di-label">Details</div>
@@ -442,10 +688,14 @@
       </section>
 
       <footer class="di-foot">
-        <button class="di-btn primary" onclick={openInReader} disabled={busyDelete}>
+        <button class="di-btn primary" onclick={openInReader} disabled={interactionLocked}>
           Open in Reader
         </button>
-        <button class="di-btn ghost" onclick={reveal} disabled={busyDelete}>
+        <button
+          class="di-btn ghost"
+          onclick={reveal}
+          disabled={busyReveal || interactionLocked}
+        >
           Reveal on disk
         </button>
         <span class="di-foot-spacer"></span>
@@ -453,14 +703,14 @@
           <button
             class="di-btn danger"
             onclick={onConfirmDelete}
-            disabled={busyDelete}
+            disabled={mutationBusy}
           >
             {busyDelete ? "Removing…" : "Confirm remove"}
           </button>
           <button
             class="di-btn ghost"
             onclick={() => (confirmDelete = false)}
-            disabled={busyDelete}
+            disabled={mutationBusy}
           >
             Cancel
           </button>
@@ -468,6 +718,7 @@
           <button
             class="di-btn ghost danger-ghost"
             onclick={() => (confirmDelete = true)}
+            disabled={interactionLocked}
             title="Remove from library (file on disk is untouched)"
           >
             Remove from library
@@ -593,6 +844,10 @@
     background: var(--surface-2);
     color: var(--text-1);
   }
+  .di-close:disabled {
+    cursor: wait;
+    opacity: 0.5;
+  }
   .di-err {
     margin: 10px 18px 0;
     padding: 8px 12px;
@@ -634,6 +889,8 @@
     padding: 8px 10px;
     border-radius: var(--r-sm);
     font-size: 13px;
+    box-sizing: border-box;
+    width: 100%;
     transition: border-color 100ms ease;
   }
   .di-input:focus {
@@ -683,12 +940,102 @@
     margin: 4px 0 8px;
   }
   .di-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 999px;
     color: var(--text-1);
     border: 1px solid var(--border);
     line-height: 1.4;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 100ms ease, filter 100ms ease;
+  }
+  .di-tag:hover:not(:disabled) {
+    border-color: var(--text-2);
+    filter: brightness(1.1);
+  }
+  .di-tag:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
+  .di-tag-remove {
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.72;
+  }
+  .di-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .di-count {
+    color: var(--text-3);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .di-tag-empty {
+    color: var(--text-3);
+    font-size: 12px;
+    margin: 7px 0 9px;
+  }
+  .di-tag-search {
+    margin-top: 8px;
+  }
+  .di-tag-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    margin: 7px 0;
+  }
+  .di-tag-option {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+    color: var(--text-1);
+    font: inherit;
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 100ms ease, background 100ms ease;
+  }
+  .di-tag-option:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  }
+  .di-tag-option:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
+  .di-tag-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .di-tag-option-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .di-tag-option-name mark {
+    color: var(--text-1);
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    border-radius: 2px;
+  }
+  .di-tag-add {
+    margin-left: auto;
+    color: var(--accent);
+    font-size: 14px;
+    line-height: 1;
   }
   .di-meta {
     padding-bottom: 18px;
