@@ -159,7 +159,7 @@ pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
 spki = "0.7"
 const-oid = { version = "0.9", features = ["db"] }
 pem = "3"
-directories = "5"
+directories = "6"
 
 # Server (v2.1.0 "Server" 🐳) — optional axum HTTP server stack for
 # `slab-server`. Gated behind the `server` feature so the desktop bundle
