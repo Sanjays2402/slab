@@ -13,10 +13,13 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { writeFile } from "@tauri-apps/plugin-fs";
   import { onMount } from "svelte";
+  import { flip } from "svelte/animate";
   import JSZip from "jszip";
   import { PDFDocument } from "pdf-lib";
   import { idle, basename, stripExt, type Status } from "$lib/types";
   import { isInTauri } from "$lib/tauri";
+  import { moveItem, isReorder } from "$lib/convertReorder";
+  import { selectPreviewPages, describePreview } from "$lib/convertPreview";
 
   // ---- PDF.js (only the lib API, no viewer chrome needed here) ----
   type PdfjsModule = typeof import("pdfjs-dist");
@@ -47,10 +50,23 @@
   let imgDpi = $state(150);
   let imgRangeMode = $state<"all" | "range">("all");
   let imgRangeText = $state("");
+  // Round 59: per-page thumbnail preview so the user SEES what they're about
+  // to export, not just a page count. previewThumbs holds {page, url} for the
+  // rendered sample; selectPreviewPages (pure, tested) caps + evenly spreads
+  // big selections so a 500-page book renders ~24 thumbs spanning the whole
+  // doc rather than thousands. Best-effort: a render failure just leaves the
+  // grid empty (the count + export still work).
+  type PreviewThumb = { page: number; url: string };
+  let previewThumbs = $state<PreviewThumb[]>([]);
+  let previewBuilding = $state(false);
+  let previewToken = 0;
 
   // ---- Images → PDF state ----
-  type ImgFile = { name: string; path: string | null; bytes: Uint8Array; type: string };
+  type ImgFile = { uid: number; name: string; path: string | null; bytes: Uint8Array; type: string };
   let images = $state<ImgFile[]>([]);
+  /** Monotonic id so each row keeps a STABLE key across reorders — required
+      for animate:flip to track a moved row instead of cross-fading by index. */
+  let imgUid = 0;
   let pdfSizing = $state<"fit" | "original">("fit");
   let pdfPageSize = $state<"letter" | "a4" | "auto">("letter");
 
@@ -93,6 +109,63 @@
       } catch (e) {
         status = { kind: "err", msg: `Couldn't open PDF: ${e}` };
       }
+    }
+    void buildPreview();
+  }
+
+  // Render a capped, evenly-spread sample of page thumbnails so the user can
+  // see what they're about to export. Re-runnable whenever the file or the
+  // page-range selection changes; a monotonic token guards against an older
+  // render landing after a newer one (stale thumbs). Best-effort — any single
+  // page failure is skipped, a whole-doc failure clears the grid silently.
+  async function buildPreview() {
+    const token = ++previewToken;
+    previewThumbs = [];
+    if (!pdfjsLib || !pdfBytes || pdfPageCount === 0) return;
+    const selected =
+      imgRangeMode === "all"
+        ? Array.from({ length: pdfPageCount }, (_, i) => i + 1)
+        : parseRange(imgRangeText, pdfPageCount);
+    const pages = selectPreviewPages(selected);
+    if (pages.length === 0) return;
+    previewBuilding = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let doc: any = null;
+    try {
+      const task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+      doc = await task.promise;
+      const built: PreviewThumb[] = [];
+      for (const n of pages) {
+        if (token !== previewToken) return; // a newer build superseded us
+        try {
+          const page = await doc.getPage(n);
+          const base = page.getViewport({ scale: 1 });
+          const scale = 140 / base.width; // ~140px-wide thumbs
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            page.cleanup();
+            continue;
+          }
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+          built.push({ page: n, url: canvas.toDataURL("image/jpeg", 0.7) });
+          page.cleanup();
+          if (token === previewToken) previewThumbs = built.slice();
+          await new Promise((r) => setTimeout(r, 0)); // yield so the grid paints progressively
+        } catch {
+          /* skip a single bad page */
+        }
+      }
+    } catch {
+      if (token === previewToken) previewThumbs = [];
+    } finally {
+      if (token === previewToken) previewBuilding = false;
+      if (doc) await doc.destroy().catch(() => {});
     }
   }
 
@@ -237,6 +310,7 @@
       for (const p of arr) {
         const bytes = await readFile(p);
         next.push({
+          uid: imgUid++,
           name: basename(p),
           path: p,
           bytes,
@@ -256,6 +330,7 @@
       const next: ImgFile[] = [];
       for (const f of files) {
         next.push({
+          uid: imgUid++,
           name: f.name,
           path: null,
           bytes: new Uint8Array(await f.arrayBuffer()),
@@ -280,17 +355,48 @@
   }
 
   function moveImgUp(i: number) {
-    if (i === 0) return;
-    const next = [...images];
-    [next[i - 1], next[i]] = [next[i], next[i - 1]];
-    images = next;
+    images = moveItem(images, i, i - 1);
   }
 
   function moveImgDown(i: number) {
-    if (i === images.length - 1) return;
-    const next = [...images];
-    [next[i + 1], next[i]] = [next[i], next[i + 1]];
-    images = next;
+    images = moveItem(images, i, i + 1);
+  }
+
+  // ---- Drag-to-reorder (the dropzone has always promised this) ----
+  /** Index of the row being dragged, or -1. Drives the drag-source dimming. */
+  let dragImg = $state(-1);
+  /** Index the dragged row is hovering over (drop target), or -1. */
+  let dragOverImg = $state(-1);
+
+  function onImgDragStart(i: number, ev: DragEvent) {
+    dragImg = i;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = "move";
+      // Firefox needs data set for a drag to actually start.
+      try { ev.dataTransfer.setData("text/plain", String(i)); } catch { /* ignore */ }
+    }
+  }
+
+  function onImgDragOver(i: number, ev: DragEvent) {
+    if (dragImg < 0) return;
+    ev.preventDefault(); // allow the drop
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+    dragOverImg = i;
+  }
+
+  function onImgDrop(i: number, ev: DragEvent) {
+    if (dragImg < 0) return;
+    ev.preventDefault();
+    if (isReorder(images.length, dragImg, i)) {
+      images = moveItem(images, dragImg, i);
+    }
+    dragImg = -1;
+    dragOverImg = -1;
+  }
+
+  function onImgDragEnd() {
+    dragImg = -1;
+    dragOverImg = -1;
   }
 
   async function decodeWebpToPng(bytes: Uint8Array): Promise<Uint8Array> {
@@ -461,11 +567,22 @@
 <section class="panel">
   {#if mode === "pdf2img"}
     {#if !pdfInput}
-      <button class="dropzone" onclick={pickPdf} disabled={!pdfjsReady}>
+      {#if !pdfjsReady}
+        <!-- Drop-zone skeleton while pdf.js loads: shimmer in the dropzone
+             shape so the panel doesn't flash a dead disabled "Loading..."
+             button. aria-busy carries the state; visuals are decorative. -->
+        <div class="dz-skeleton" aria-busy="true" aria-label="Loading converter">
+          <span class="dz-skel-icon"></span>
+          <span class="dz-skel-bar dz-skel-title"></span>
+          <span class="dz-skel-bar dz-skel-hint"></span>
+        </div>
+      {:else}
+      <button class="dropzone" onclick={pickPdf}>
         <span class="dz-icon">+</span>
-        <span class="dz-title">{pdfjsReady ? "Choose a PDF" : "Loading…"}</span>
+        <span class="dz-title">Choose a PDF</span>
         <span class="dz-hint">Each page becomes its own image file. Bundled as a ZIP.</span>
       </button>
+      {/if}
     {:else}
       <div class="file-card">
         <div>
@@ -500,8 +617,8 @@
         <div class="opt-row">
           <span class="opt-label">Pages</span>
           <div class="seg">
-            <button class:active={imgRangeMode === "all"} onclick={() => (imgRangeMode = "all")}>All</button>
-            <button class:active={imgRangeMode === "range"} onclick={() => (imgRangeMode = "range")}>Range</button>
+            <button class:active={imgRangeMode === "all"} onclick={() => { imgRangeMode = "all"; void buildPreview(); }}>All</button>
+            <button class:active={imgRangeMode === "range"} onclick={() => { imgRangeMode = "range"; void buildPreview(); }}>Range</button>
           </div>
           {#if imgRangeMode === "range"}
             <input
@@ -509,10 +626,37 @@
               placeholder="e.g. 1-3, 7, 9-12"
               aria-label="Page range to convert"
               bind:value={imgRangeText}
+              oninput={() => void buildPreview()}
             />
           {/if}
         </div>
       </div>
+
+      {#if previewThumbs.length > 0 || previewBuilding}
+        <div class="preview-block">
+          <div class="preview-head">
+            <span class="preview-label">Preview</span>
+            {#if describePreview(imgRangeMode === "all" ? pdfPageCount : parseRange(imgRangeText, pdfPageCount).length, previewThumbs.length)}
+              <span class="preview-count">{describePreview(imgRangeMode === "all" ? pdfPageCount : parseRange(imgRangeText, pdfPageCount).length, previewThumbs.length)}</span>
+            {/if}
+          </div>
+          <div class="preview-grid">
+            {#each previewThumbs as t (t.page)}
+              <figure class="preview-cell">
+                <img class="preview-img" src={t.url} alt={`Page ${t.page}`} loading="lazy" />
+                <figcaption class="preview-cap">{t.page}</figcaption>
+              </figure>
+            {/each}
+            {#if previewBuilding}
+              {#each [0, 1, 2] as i (i)}
+                <div class="preview-cell preview-skel" aria-hidden="true">
+                  <span class="preview-skel-img"></span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="actions">
         <button
@@ -537,15 +681,25 @@
       </button>
     {:else}
       <ul class="file-list">
-        {#each images as img, i (img.name + i)}
-          <li class="file-row">
-            <span class="row-handle" aria-hidden="true">⋮⋮</span>
+        {#each images as img, i (img.uid)}
+          <li
+            class="file-row"
+            class:dragging={dragImg === i}
+            class:dragover={dragOverImg === i && dragImg >= 0 && dragImg !== i}
+            draggable="true"
+            animate:flip={{ duration: 180 }}
+            ondragstart={(ev) => onImgDragStart(i, ev)}
+            ondragover={(ev) => onImgDragOver(i, ev)}
+            ondrop={(ev) => onImgDrop(i, ev)}
+            ondragend={onImgDragEnd}
+          >
+            <span class="row-handle" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
             <span class="row-idx">{i + 1}</span>
             <span class="row-name" title={img.path ?? img.name}>{img.name}</span>
             <span class="row-meta">{(img.bytes.length / 1024).toFixed(1)} KB</span>
             <div class="row-actions">
-              <button class="ghost" onclick={() => moveImgUp(i)} aria-label="Up">↑</button>
-              <button class="ghost" onclick={() => moveImgDown(i)} aria-label="Down">↓</button>
+              <button class="ghost" onclick={() => moveImgUp(i)} disabled={i === 0} aria-label="Move up">↑</button>
+              <button class="ghost" onclick={() => moveImgDown(i)} disabled={i === images.length - 1} aria-label="Move down">↓</button>
               <button class="ghost remove" onclick={() => removeImg(i)} aria-label="Remove">✕</button>
             </div>
           </li>
@@ -647,6 +801,75 @@
     border: 1px solid var(--border);
     border-radius: var(--r-md);
   }
+  /* Round 59 — pdf2img per-page preview grid. Responsive thumbnail grid so
+     the user sees what they're about to export, not just a page count. */
+  .preview-block {
+    margin: 14px 0;
+  }
+  .preview-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .preview-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-3);
+  }
+  .preview-count {
+    font-size: 11px;
+    color: var(--text-3);
+    opacity: 0.85;
+  }
+  .preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+    gap: 12px;
+  }
+  .preview-cell {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+  }
+  .preview-img {
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    object-fit: contain;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  }
+  .preview-cap {
+    font-size: 10.5px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .preview-skel-img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    border-radius: 6px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 0%,
+      color-mix(in srgb, var(--text-1, #fff) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: pv-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes pv-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .preview-skel-img { animation: none; }
+  }
   .opt-row {
     display: flex;
     align-items: center;
@@ -716,8 +939,22 @@
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--r-md);
+    cursor: grab;
+    transition: opacity 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
   }
-  .row-handle { color: var(--text-3); font-size: 11px; user-select: none; }
+  .file-row:active { cursor: grabbing; }
+  /* Drag source: dim + lift so it reads as "in hand". */
+  .file-row.dragging {
+    opacity: 0.45;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  /* Drop target: accent ring so the landing slot is unmistakable. */
+  .file-row.dragover {
+    border-color: var(--accent, #5e6ad2);
+    background: color-mix(in srgb, var(--accent, #5e6ad2) 10%, var(--bg-2));
+    box-shadow: inset 0 0 0 1px var(--accent, #5e6ad2);
+  }
+  .row-handle { color: var(--text-3); font-size: 11px; user-select: none; cursor: grab; }
   .row-idx {
     width: 22px;
     height: 22px;

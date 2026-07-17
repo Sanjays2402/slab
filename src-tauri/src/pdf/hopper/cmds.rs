@@ -268,6 +268,226 @@ pub fn slab_hopper_test_rules(
 }
 
 // ---------------------------------------------------------------------
+// v3.40 Slice 80 — rule coverage analyzer command
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::compute_coverage`] primitive
+// with a one-shot Tauri command that:
+//
+// 1. Sources the sample list FROM THE WATCH'S RECENT RUN LOG by
+//    default (the most useful question is "how would this chain have
+//    handled my actual recent traffic?"), or from a caller-supplied
+//    list when the editor wants to test against synthesised samples.
+// 2. Evaluates the in-flight, possibly-unsaved rule chain (so users
+//    see coverage shift live as they edit, no save round-trip).
+// 3. Returns a [`super::coverage::RuleCoverageReport`] the UI can
+//    render as a per-rule bar strip + a fall-through count + a
+//    "dead at position" diagnostic chip.
+//
+// Default sample source: the latest [`super::log::RunRecord`]s filtered
+// to `watch_id`. We pull at most `sample_limit` (default 100, capped at
+// 1000 to keep IPC payload bounded even on an enormous log). Each row
+// contributes its `input_path`'s basename + the watch's recorded
+// `duration_ms` proxy is NOT used; size + page count are unknown in the
+// log so we default them to zero / None. Text-aware predicates still
+// won't fire — that's a known limitation matching the live preview's
+// behaviour and is documented at the call site.
+
+/// `slab_hopper_rule_coverage` — evaluate a rule chain against the
+/// watch's recent run log (or a caller-supplied sample list), returning
+/// per-rule first-match + would-match counts and the fall-through
+/// count.
+///
+/// `candidate_rules`: optional in-flight rule list; falls back to the
+/// watch's persisted rules so the command works on saved chains too.
+///
+/// `samples`: optional explicit sample list; when `None`, the command
+/// pulls the most-recent `sample_limit` runs (default 100, capped at
+/// 1000) from the run log filtered to `watch_id`. Each run contributes
+/// its `input_path` basename with `size_bytes=0` and `page_count=None`
+/// because the run log doesn't persist those — text-aware and size-
+/// aware predicates won't fire on log-sourced samples, matching the
+/// live preview's existing limitation.
+///
+/// Returns a [`super::coverage::RuleCoverageReport`] alongside the
+/// effective sample count so the UI can render "<rule> X / N matched"
+/// without recomputing.
+#[tauri::command]
+pub fn slab_hopper_rule_coverage(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    candidate_rules: Option<Vec<Rule>>,
+    samples: Option<Vec<super::coverage::RuleSample>>,
+    sample_limit: Option<i64>,
+) -> CmdResult<super::coverage::RuleCoverageReport> {
+    // Resolve the rule chain — caller's in-flight rules win; otherwise
+    // we read whatever's persisted for the watch.
+    let rules = match candidate_rules {
+        Some(rs) => rs,
+        None => {
+            let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.get_rules(watch_id)
+                .map_err(|e| format!("registry get_rules: {e}"))?
+        }
+    };
+
+    // Resolve the sample list — caller wins; else fall back to recent
+    // log entries for this watch. Clamp the sample limit defensively.
+    let resolved_samples: Vec<super::coverage::RuleSample> = match samples {
+        Some(s) => s,
+        None => {
+            let cap = clamp_sample_limit(sample_limit);
+            let over_read = sample_over_read(cap);
+            let runs = {
+                let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
+                log.list_recent(over_read)
+                    .map_err(|e| format!("hopper log list_recent: {e}"))?
+            };
+            samples_from_runs(&runs, watch_id, cap as usize)
+        }
+    };
+
+    Ok(super::coverage::compute_coverage(&rules, &resolved_samples))
+}
+
+/// Clamp the caller's `sample_limit` to `[1, 1000]`, defaulting to 100.
+/// The 1000 ceiling keeps the IPC payload bounded even on a huge log;
+/// the 1 floor stops a caller from accidentally asking for zero (which
+/// would return an all-zero report and look like a bug).
+fn clamp_sample_limit(input: Option<i64>) -> i64 {
+    input.unwrap_or(100).clamp(1, 1000)
+}
+
+/// Compute the over-read size for the global recent-tail scan that
+/// powers per-watch sampling. The hopper log doesn't expose a per-watch
+/// `list_recent`, so we over-fetch and filter. The 4x multiplier keeps
+/// the post-filter sample count meaningful when the target watch is a
+/// small fraction of total traffic, while the 10_000 ceiling guards
+/// against a runaway query on an enormous log.
+fn sample_over_read(cap: i64) -> i64 {
+    cap.saturating_mul(4).min(10_000)
+}
+
+/// Derive a [`super::coverage::RuleSample`] list from a tail of run
+/// records: filter to `watch_id`, take the first `cap`, reduce each
+/// `input_path` to its basename, and zero out the size/page/text axes
+/// (the run log doesn't persist them).
+fn samples_from_runs(
+    runs: &[super::log::RunRecord],
+    watch_id: i64,
+    cap: usize,
+) -> Vec<super::coverage::RuleSample> {
+    runs.iter()
+        .filter(|r| r.watch_id == watch_id)
+        .take(cap)
+        .map(|r| super::coverage::RuleSample {
+            // Reduce the absolute path to its basename so glob / regex
+            // predicates evaluate against the bare filename, matching
+            // how `evaluate_rules` is invoked from the live watcher
+            // pipeline.
+            filename: std::path::Path::new(&r.input_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_owned)
+                .unwrap_or_else(|| r.input_path.clone()),
+            size_bytes: 0,
+            page_count: None,
+            text_sample: None,
+        })
+        .collect()
+}
+
+// ─── Slice 84 — sample drilldown command surface ─────────────────────
+//
+// `slab_hopper_sample_drilldown` lets the coverage panel answer
+// "show me the files in this bucket" when the user clicks a row.
+// The command:
+//
+// 1. Resolves the rule chain (caller-supplied in-flight rules win;
+//    else reads from the registry, matching slab_hopper_rule_coverage).
+// 2. Resolves the samples (caller wins; else pulls from the run log
+//    via the same samples_from_runs helper as the coverage command).
+// 3. Calls compute_sample_drilldown(rules, samples, bucket, cap).
+//
+// We deliberately reuse the same sample/limit semantics as the
+// coverage command (clamp_sample_limit + sample_over_read +
+// samples_from_runs) so a click on a coverage row drills into the
+// EXACT same sample set the coverage report counted — anything else
+// would surface "27 fall-throughs" in the header but only show 23
+// in the drilldown, which would read as a bug.
+
+/// Clamp the caller's preview cap to `[1, 1000]`, defaulting to 25.
+/// Lower ceiling than the analyzer's `[1, 5000]` because the IPC
+/// payload here is heavier — each sample carries the full filename +
+/// the size/page/text axes, vs the coverage report's per-rule
+/// counts. 25 default matches a typical popover "first page" and
+/// stays well under the dropdown's scroll budget.
+fn clamp_preview_cap(input: Option<i64>) -> i64 {
+    input.unwrap_or(25).clamp(1, 1000)
+}
+
+/// `slab_hopper_sample_drilldown` — evaluate a rule chain against
+/// the watch's recent run log (or a caller-supplied sample list)
+/// and return the samples in a specific bucket (one rule's
+/// first-match list, or the fall-through list).
+///
+/// `bucket` is a [`super::coverage::SampleBucket`]: either
+/// `{kind: "rule", index: N}` to drill into rule N's first_match
+/// pool, or `{kind: "fallthrough"}` to see what fell through to the
+/// watch defaults.
+///
+/// `candidate_rules`, `samples`, and `sample_limit` mirror
+/// [`slab_hopper_rule_coverage`] so a click on a coverage row drills
+/// into the EXACT same sample set the coverage report counted.
+///
+/// `preview_cap` (default 25, clamped to [1, 1000]) is the maximum
+/// number of samples returned in the drilldown payload — independent
+/// of `sample_limit` (which caps the chain-walk input size).
+#[tauri::command]
+pub fn slab_hopper_sample_drilldown(
+    svc: tauri::State<'_, HopperService>,
+    watch_id: i64,
+    bucket: super::coverage::SampleBucket,
+    candidate_rules: Option<Vec<Rule>>,
+    samples: Option<Vec<super::coverage::RuleSample>>,
+    sample_limit: Option<i64>,
+    preview_cap: Option<i64>,
+) -> CmdResult<super::coverage::SampleDrilldown> {
+    // Resolve the rule chain — same precedence as the coverage cmd.
+    let rules = match candidate_rules {
+        Some(rs) => rs,
+        None => {
+            let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.get_rules(watch_id)
+                .map_err(|e| format!("registry get_rules: {e}"))?
+        }
+    };
+
+    // Resolve the sample list — same precedence as the coverage cmd.
+    let resolved_samples: Vec<super::coverage::RuleSample> = match samples {
+        Some(s) => s,
+        None => {
+            let cap = clamp_sample_limit(sample_limit);
+            let over_read = sample_over_read(cap);
+            let runs = {
+                let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
+                log.list_recent(over_read)
+                    .map_err(|e| format!("hopper log list_recent: {e}"))?
+            };
+            samples_from_runs(&runs, watch_id, cap as usize)
+        }
+    };
+
+    let preview = clamp_preview_cap(preview_cap) as usize;
+    Ok(super::coverage::compute_sample_drilldown(
+        &rules,
+        &resolved_samples,
+        bucket,
+        preview,
+    ))
+}
+
+// ---------------------------------------------------------------------
 // v3.22.0 — Hopper Loop: batch backfill commands
 // ---------------------------------------------------------------------
 //
@@ -279,13 +499,20 @@ pub fn slab_hopper_test_rules(
 
 /// `slab_hopper_plan_backfill` — dry-run the rule chain against an
 /// existing folder. Resolves the watch by id, loads its current rules,
-/// walks the folder (non-recursive), returns a [`BackfillReport`]. The
-/// frontend renders this report as a table; nothing is moved.
+/// walks the folder, returns a [`BackfillReport`]. The frontend renders
+/// this report as a table; nothing is moved.
+///
+/// `opts` (v3.39 round-10) controls whether sub-folders are swept.
+/// `None` preserves the v3.22 single-level default so pre-v3.39
+/// callers stay behaviourally identical. Recursive scans honour the
+/// `max_depth` cap when set; an unset `max_depth` walks the whole
+/// tree.
 #[tauri::command]
 pub fn slab_hopper_plan_backfill(
     svc: tauri::State<'_, HopperService>,
     watch_id: i64,
     folder: Option<String>,
+    opts: Option<super::backfill::PlanOptions>,
 ) -> CmdResult<super::backfill::BackfillReport> {
     let (watch, rules) = {
         let reg = svc.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -302,7 +529,13 @@ pub fn slab_hopper_plan_backfill(
     // call pattern. The UI also accepts an arbitrary folder picker for
     // "test against a sample folder" workflows.
     let target = folder.unwrap_or_else(|| watch.source_dir.clone());
-    let report = super::backfill::plan_backfill(std::path::Path::new(&target), &watch, &rules);
+    let opts = opts.unwrap_or_default();
+    let report = super::backfill::plan_backfill_with_options(
+        std::path::Path::new(&target),
+        &watch,
+        &rules,
+        &opts,
+    );
     Ok(report)
 }
 
@@ -327,19 +560,563 @@ pub fn slab_hopper_execute_backfill(
     Ok(run)
 }
 
+/// `slab_hopper_execute_backfill_async` — streaming variant. The
+/// long-running [`super::backfill::execute_backfill_streaming`] loop
+/// runs on a `spawn_blocking` worker so it doesn't block the tokio
+/// reactor. Per-file progress is broadcast on
+/// `hopper://backfill-progress` via the service's [`super::watcher::RunEmitter`].
+/// The user's Cancel button calls
+/// [`slab_hopper_cancel_backfill`] which flips the matching token in
+/// [`super::watcher::HopperService::backfill_cancels`].
+///
+/// `run_id` is a frontend-generated unique key (typically `Date.now()`)
+/// that ties the executor + cancel + event subscription together. The
+/// command awaits the worker so the resolved value still carries the
+/// final [`super::backfill::BackfillRun`] — UI code that prefers the
+/// imperative shape can use that and ignore the event stream.
+#[tauri::command]
+pub async fn slab_hopper_execute_backfill_async(
+    svc: tauri::State<'_, HopperService>,
+    report: super::backfill::BackfillReport,
+    run_id: i64,
+) -> CmdResult<super::backfill::BackfillRun> {
+    // Register the cancel-token BEFORE the worker spawns — guarantees
+    // that a Cancel arriving before the worker's first poll is honoured.
+    let cancel = svc.register_backfill_cancel(run_id);
+
+    // Clone Arc handles into the worker. The `svc` State borrow can't
+    // cross the spawn_blocking boundary, so we pluck what we need.
+    let log = svc.log.clone();
+    let emitter = svc.emitter.clone();
+    let cancels = svc.backfill_cancels.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let emitter_ref = emitter.as_ref();
+        let run = super::backfill::execute_backfill_streaming(&report, &cancel, |progress| {
+            emitter_ref.emit_backfill_progress(run_id, progress);
+        });
+
+        // Persist the run (best-effort, same policy as the sync path —
+        // never let a DB hiccup discard the user's completed work).
+        {
+            let mut log_guard = log.lock().unwrap_or_else(|p| p.into_inner());
+            if let Err(e) = log_guard.record_backfill_run(&run) {
+                eprintln!("hopper: failed to persist backfill run: {e}");
+            }
+        }
+
+        // Drop the cancel registration inline so the map stays bounded
+        // even if the awaiting caller is dropped before the JoinHandle
+        // resolves.
+        {
+            let mut map = cancels.lock().unwrap_or_else(|p| p.into_inner());
+            map.remove(&run_id);
+        }
+
+        run
+    })
+    .await
+    .map_err(|e| format!("backfill task join: {e}"))?;
+
+    Ok(result)
+}
+
+/// `slab_hopper_cancel_backfill` — flip the cancel token for an
+/// in-flight streaming backfill. Returns `true` if the run was still
+/// in flight (token was found + flipped), `false` if the run had
+/// already completed (no token registered). The frontend treats both
+/// outcomes as success — \"the user got what they wanted\".
+#[tauri::command]
+pub fn slab_hopper_cancel_backfill(
+    svc: tauri::State<'_, HopperService>,
+    run_id: i64,
+) -> CmdResult<bool> {
+    Ok(svc.cancel_backfill(run_id))
+}
+
 /// `slab_hopper_list_backfill_runs` — tail of historical backfills,
 /// newest first. Pass `folder = Some(p)` to filter to a single watched
 /// directory (Rules Editor's "Recent backfills" strip), `None` for the
 /// global Hopper panel's history.
+///
+/// `since_unix` (v3.39 round-10) filters to runs that *finished* at or
+/// after the given unix-seconds timestamp. `None` disables the
+/// temporal filter (matches all previous behaviour). Combines AND with
+/// the folder filter. Powers the panel's "Last 24h / Last 7d / All"
+/// history chips — filtering happens in SQL so the wire stays slim.
 #[tauri::command]
 pub fn slab_hopper_list_backfill_runs(
     svc: tauri::State<'_, HopperService>,
     folder: Option<String>,
+    since_unix: Option<i64>,
     limit: Option<i64>,
 ) -> CmdResult<Vec<super::backfill::BackfillRun>> {
     let log = svc.log.lock().unwrap_or_else(|p| p.into_inner());
-    log.list_backfill_runs(folder.as_deref(), limit.unwrap_or(20))
-        .map_err(|e| format!("log list_backfill_runs: {e}"))
+    log.list_backfill_runs_since(folder.as_deref(), since_unix, limit.unwrap_or(20))
+        .map_err(|e| format!("log list_backfill_runs_since: {e}"))
+}
+
+/// `slab_hopper_export_backfill_csv` — write a [`super::backfill::BackfillReport`]
+/// to disk as RFC-4180 CSV. The frontend gathers the destination from
+/// a native save-as dialog and passes the absolute path here so the
+/// Tauri layer owns the disk I/O (the frontend's @tauri-apps/plugin-fs
+/// scope doesn't cover arbitrary user-chosen paths).
+///
+/// Returns the byte count actually written so the UI toast can show
+/// "Exported 42 rows (3.1 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+pub fn slab_hopper_export_backfill_csv(
+    report: super::backfill::BackfillReport,
+    path: String,
+) -> CmdResult<u64> {
+    let csv = super::backfill::backfill_report_to_csv(&report, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Slice 89 — drilldown CSV export command surface ─────────────────
+//
+// `slab_hopper_export_drilldown_csv` writes a SampleDrilldown to disk
+// as RFC-4180 CSV. The frontend gathers the destination from a
+// native save-as dialog and passes the absolute path here so the
+// Tauri layer owns the disk I/O - same shape as
+// slab_hopper_export_backfill_csv and slab_marketplace_install_log_
+// export_csv. Returns the byte count actually written so the toast
+// can read "Exported 23 files (1.4 KB)" without re-reading the file.
+//
+// Idempotent - overwrites if the target exists. The save dialog
+// handles overwrite confirmation, so we don't double-confirm.
+//
+// Why a separate command vs serialising the drilldown client-side
+// and shipping it to a generic `write_text_file`:
+//
+//   1. The frontend's @tauri-apps/plugin-fs scope doesn't cover
+//      arbitrary user-chosen paths; the Tauri layer has to own the
+//      write. Same constraint that drove the existing two CSV
+//      export commands.
+//   2. Keeping the CSV rendering in Rust means a future shape
+//      change to RuleSample (e.g. adding a parent_dir column) is a
+//      one-line edit to sample_drilldown_to_csv that automatically
+//      cascades to the export - the frontend doesn't have to remember
+//      to update a parallel TS serialiser.
+
+/// `slab_hopper_export_drilldown_csv` - write a
+/// [`super::coverage::SampleDrilldown`] to disk as RFC-4180 CSV.
+///
+/// `rule_names` is the parallel rule-name array used to resolve a
+/// rule bucket's display label. Empty / missing / out-of-range
+/// names fall back to `"Rule #N"` (1-based) - mirrors the popover
+/// header convention.
+///
+/// Returns the byte count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_drilldown_csv(
+    drilldown: super::coverage::SampleDrilldown,
+    rule_names: Vec<String>,
+    path: String,
+) -> CmdResult<u64> {
+    let csv = super::coverage::sample_drilldown_to_csv(&drilldown, &rule_names, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Slice 94 — drilldown JSON export command surface ────────────────
+//
+// `slab_hopper_export_drilldown_json` writes a SampleDrilldown to disk
+// as a pretty-printed JSON envelope (slice 93 shape). The frontend
+// gathers the destination from a native save-as dialog and passes the
+// absolute path here so the Tauri layer owns the disk I/O - same
+// shape as slab_hopper_export_drilldown_csv (slice 89) and
+// slab_marketplace_install_log_export_json (slice 61).
+//
+// Pretty-printed (NOT compact) for the same reason the install-log
+// JSON export is pretty-printed: a paralegal opening the file in a
+// text editor needs to be able to read it; compactness saves bytes
+// that don't matter for a per-bucket drilldown.
+//
+// Returns the byte count actually written so the toast can read
+// "Exported 23 files (2.7 KB)" without re-reading the file.
+//
+// Idempotent - overwrites if the target exists. The save dialog
+// handles overwrite confirmation, so we don't double-confirm.
+
+/// `slab_hopper_export_drilldown_json` - write a
+/// [`super::coverage::SampleDrilldown`] to disk as a pretty-printed
+/// JSON envelope (slice 93 [`super::coverage::DrilldownExportEnvelope`]
+/// shape).
+///
+/// `rule_names` is the parallel rule-name array used to resolve a
+/// rule bucket's display label - same fallback chain as the CSV
+/// export and the popover header (`Rule #N` 1-based when
+/// missing/blank/out-of-range).
+///
+/// Returns the byte count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_drilldown_json(
+    drilldown: super::coverage::SampleDrilldown,
+    rule_names: Vec<String>,
+    path: String,
+) -> CmdResult<u64> {
+    let envelope = super::coverage::sample_drilldown_to_json(&drilldown, &rule_names);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Slice 125 — rule coverage CSV+JSON export command surface ──────
+//
+// Two commands wrapping slice 123's CSV serialiser and slice 124's
+// JSON envelope. Same call shape as the drilldown export commands
+// (slices 89 + 94): the frontend gathers the absolute destination
+// from a native save-as dialog and ships the path here so the Tauri
+// layer owns disk I/O (the @tauri-apps/plugin-fs scope doesn't
+// cover arbitrary user-chosen paths). Idempotent — overwrites if
+// the target exists; the save dialog handles overwrite confirmation
+// so we don't double-confirm.
+//
+// The two commands accept a RuleCoverageReport DIRECTLY rather than
+// re-running `slab_hopper_rule_coverage` server-side. The coverage
+// panel already has the report loaded in state at click time;
+// re-running risks shipping a slightly different report than what
+// the user sees (the in-flight rule-edit + 600ms-debounced coverage
+// recompute creates a brief window where the panel and the server's
+// re-derivation can diverge). Trusting the client-supplied report
+// means "export what's visible" matches the user's mental model.
+
+/// `slab_hopper_export_coverage_csv` — write a
+/// [`super::coverage::RuleCoverageReport`] to disk as RFC-4180 CSV
+/// (slice 123 [`super::coverage::rule_coverage_to_csv`] shape, with
+/// header included). Returns the byte count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_coverage_csv(
+    report: super::coverage::RuleCoverageReport,
+    path: String,
+) -> CmdResult<u64> {
+    let csv = super::coverage::rule_coverage_to_csv(&report, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// `slab_hopper_export_coverage_json` — write a
+/// [`super::coverage::RuleCoverageReport`] to disk as a pretty-
+/// printed JSON envelope (slice 124
+/// [`super::coverage::RuleCoverageExportEnvelope`] shape with the
+/// envelope-level diagnostic counts pre-computed). Returns the byte
+/// count actually written.
+#[tauri::command]
+pub fn slab_hopper_export_coverage_json(
+    report: super::coverage::RuleCoverageReport,
+    path: String,
+) -> CmdResult<u64> {
+    let envelope = super::coverage::rule_coverage_to_json(&report);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Slice 130 — server-side coverage diagnostic filter command ──────
+//
+// The TS client computes the filter locally via
+// `filterCoverageByDiagnostic` (slice 129) for the in-panel rendering
+// path — chip clicks need to react instantly without round-trips. But
+// the EXPORT path benefits from a server-side filter for two reasons:
+//
+// 1. The wire shape stays self-consistent. A filtered export's CSV /
+//    JSON envelope is produced by the SAME `rule_coverage_to_csv` /
+//    `rule_coverage_to_json` primitives the unfiltered path uses,
+//    fed a filtered report — exactly one code path renders the
+//    envelope shape, no parallel "filter at the renderer" branch to
+//    drift out of sync.
+//
+// 2. A future scripted-export consumer (e.g. a CLI driver, a
+//    cron-scheduled audit dump) gets the filter as a first-class
+//    command rather than having to ship a TS pre-filter step.
+//
+// The command accepts the source `report` directly (matches the
+// `slab_hopper_export_coverage_*` shape — "export what's visible"
+// semantics) and a `filter` discriminator, and returns the NEW
+// filtered report. The caller then pipes that into the existing
+// export commands or renders it client-side.
+//
+// We deliberately do NOT bundle "filter + export" into one command;
+// the filter returns the same `RuleCoverageReport` shape so a TS
+// caller can reuse it for any rendering / export path without
+// expanding the command surface.
+
+/// `slab_hopper_filter_coverage` — narrow a coverage report to one
+/// diagnostic kind on the server. Returns a NEW report with `rules`
+/// filtered per [`super::coverage::filter_coverage_by_diagnostic`]
+/// (slice 128) and `fallthrough` + `total_samples` preserved
+/// verbatim. The filter discriminator is the
+/// [`super::coverage::CoverageFilter`] enum
+/// (`"all"` / `"dead"` / `"zero"` / `"shadowed"` / `"healthy"`).
+///
+/// Pure-data command — no DB, no I/O. Mirrors the TS-side
+/// `filterCoverageByDiagnostic` (slice 129) 1:1 for the export-path
+/// callers; the in-panel render path uses the TS mirror directly.
+#[tauri::command]
+pub fn slab_hopper_filter_coverage(
+    report: super::coverage::RuleCoverageReport,
+    filter: super::coverage::CoverageFilter,
+) -> CmdResult<super::coverage::RuleCoverageReport> {
+    Ok(super::coverage::filter_coverage_by_diagnostic(
+        &report, filter,
+    ))
+}
+
+// ---------------------------------------------------------------------
+// v3.40 Slice 135 — dead-rule reorder planner Tauri command
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::plan_dead_rule_reorder`]
+// primitive (slice 133) 1:1. Reasons for a server-side command at
+// all (the TS mirror in slice 134 already handles the in-panel
+// fix-it chip rendering):
+//
+// 1. A future scripted-audit consumer (CLI / cron health-check / a
+//    "what would my chain look like fixed?" subcommand) gets the
+//    planner as a first-class command rather than having to mirror
+//    the heuristic in TS itself.
+//
+// 2. Server-side guarantees the planner output is computed against
+//    the SAME RulePredicate variant set the runtime evaluator uses.
+//    A future predicate kind added on Rust but not yet mirrored in
+//    the TS `RulePredicate.kind` union would silently fall through
+//    to the no-Always fallback in the TS planner; the server-side
+//    command would catch the same case authoritatively.
+//
+// The wire shape is RuleCoverageReport + Rule[] in (matching the
+// other coverage commands' pattern of accepting the in-state
+// snapshot rather than re-running the underlying analyzer — same
+// race-free posture as `slab_hopper_export_coverage_csv`); the
+// return is Vec<ReorderProposal>. Pure-data: no DB, no I/O.
+
+/// `slab_hopper_plan_dead_rule_reorder` — produce one reorder
+/// suggestion per dead rule in the given coverage report. See
+/// [`super::coverage::plan_dead_rule_reorder`] for the heuristic.
+///
+/// Returns `Vec<ReorderProposal>` in input order (the order of
+/// `report.rules`). Empty when the chain has no dead rules.
+#[tauri::command]
+pub fn slab_hopper_plan_dead_rule_reorder(
+    rules: Vec<Rule>,
+    report: super::coverage::RuleCoverageReport,
+) -> CmdResult<Vec<super::coverage::ReorderProposal>> {
+    Ok(super::coverage::plan_dead_rule_reorder(&rules, &report))
+}
+
+// ---------------------------------------------------------------------
+// v3.40 Slice 140 — batch reorder applier Tauri command
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::apply_reorder_proposals_batch`]
+// primitive (slice 138) 1:1. The same reasons that justify a
+// server-side command for slice 135 (the planner) apply here:
+//
+// 1. A future scripted-audit consumer (CLI driver / cron health
+//    check / a "fix my chain non-interactively" subcommand) gets
+//    the batch applier as a first-class command rather than having
+//    to mirror the by-name resolution heuristic in TS itself.
+//
+// 2. Server-side guarantees the applier compares rule names against
+//    the SAME Rule type the runtime evaluator uses. A future
+//    Rule field added on Rust but not yet mirrored in TS would
+//    silently widen / narrow the equality contract on the TS side;
+//    the server-side command keeps the by-name resolution
+//    authoritative.
+//
+// The wire shape is Rule[] + ReorderProposal[] in, BatchReorderOutcome
+// out (matching the planner command's pattern of accepting the
+// in-state snapshot). Pure-data: no DB, no I/O.
+
+/// `slab_hopper_batch_reorder_dead_rules` — apply every proposal in
+/// `proposals` to `rules` in input order, resolving the source rule
+/// by NAME at each step. See
+/// [`super::coverage::apply_reorder_proposals_batch`] for the
+/// algorithm.
+///
+/// Returns a [`BatchReorderOutcome`] carrying the new chain plus
+/// per-proposal applied/skipped accounting. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_batch_reorder_dead_rules(
+    rules: Vec<Rule>,
+    proposals: Vec<super::coverage::ReorderProposal>,
+) -> CmdResult<super::coverage::BatchReorderOutcome> {
+    Ok(super::coverage::apply_reorder_proposals_batch(
+        &rules, &proposals,
+    ))
+}
+
+// ---------------------------------------------------------------------
+// v3.40 Slice 145 — reorder-effect summary Tauri command (round-30)
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::summarize_reorder_effect`]
+// primitive (slice 143) 1:1. The TS mirror (slice 144) already
+// handles the in-panel undo-toast affordance, so what does the
+// server-side command add?
+//
+// 1. A future scripted-audit consumer (CLI driver / cron health
+//    check / a "what did my last fix-it round actually change?"
+//    diff subcommand) gets the structural summariser as a first-
+//    class command rather than having to mirror the by-name
+//    resolution heuristic in TS itself.
+//
+// 2. Server-side guarantees the summariser compares rule names
+//    against the SAME Rule type the runtime evaluator uses — a
+//    future Rule field added on Rust but not yet mirrored in TS
+//    would silently widen / narrow the by-name equality contract
+//    on the TS side; the server-side command keeps the by-name
+//    resolution authoritative.
+//
+// 3. Symmetry with the rest of the round-29/30 reorder pipeline:
+//    every pure-data primitive has a server-side wire wrapper.
+//
+// Wire shape: Rule[] before + Rule[] after in, ReorderEffect out.
+// Pure-data, no DB, no I/O.
+
+/// `slab_hopper_summarize_reorder_effect` — produce a structural
+/// summary of how the AFTER chain differs from the BEFORE chain by
+/// rule name. See [`super::coverage::summarize_reorder_effect`] for
+/// the algorithm (first-occurrence by-name resolution; AFTER-order
+/// moved entries; is_permutation gate for undo's staleness check).
+///
+/// Returns a [`ReorderEffect`] carrying moved entries, added/removed
+/// name lists, and the permutation flag. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_summarize_reorder_effect(
+    before: Vec<Rule>,
+    after: Vec<Rule>,
+) -> CmdResult<super::coverage::ReorderEffect> {
+    Ok(super::coverage::summarize_reorder_effect(&before, &after))
+}
+
+// ---------------------------------------------------------------------
+// v3.40 Slice 150 — undo-ring summary Tauri command (round-31)
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::summarize_undo_ring`]
+// primitive (slice 148) 1:1. The TS mirror (slice 149) already
+// handles the in-panel ring-counter chip, so what does the server-
+// side command add? Same three reasons as slice 145:
+//
+// 1. A future scripted-audit consumer (CLI "what undo steps does
+//    the UI have buffered right now" subcommand / cron health
+//    check that surfaces a paralegal's ring at full capacity for
+//    weeks) gets the summariser as a first-class command rather
+//    than re-implementing the trim-oldest logic in another
+//    language.
+//
+// 2. Server-side guarantees the trim respects the same capacity
+//    constant the UI uses — a future audit consumer that hard-
+//    codes the constant would silently drift if the UI ever
+//    bumps UNDO_RING_CAPACITY. Routing through the command keeps
+//    the wire shape authoritative.
+//
+// 3. Symmetry with the rest of the round-29/30/31 reorder pipeline:
+//    every pure-data primitive has a server-side wire wrapper.
+//
+// Wire shape: UndoEntrySummary[] entries + usize capacity in,
+// UndoRingSummary out. Pure-data, no DB, no I/O.
+
+/// `slab_hopper_summarize_undo_ring` — produce a structural summary
+/// of the Hopper UI's undo ring against a capacity cap. See
+/// [`super::coverage::summarize_undo_ring`] for the algorithm
+/// (oldest-trimmed-to-capacity; capacity / full metadata for the
+/// audit log's "at capacity" warning).
+///
+/// Returns an [`UndoRingSummary`] carrying the trimmed entries plus
+/// capacity / full metadata. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_summarize_undo_ring(
+    entries: Vec<super::coverage::UndoEntrySummary>,
+    capacity: usize,
+) -> CmdResult<super::coverage::UndoRingSummary> {
+    Ok(super::coverage::summarize_undo_ring(&entries, capacity))
+}
+
+// ---------------------------------------------------------------------
+// v3.40 Slice 155 — undo-ring jump-plan Tauri command (round-32)
+// ---------------------------------------------------------------------
+//
+// Wraps the pure-data [`super::coverage::compute_undo_jump_plan`]
+// primitive (slice 153) 1:1. The TS mirror (slice 154) already
+// handles the in-popover plan rendering, so what does the server-
+// side command add? Same three reasons as slices 145 / 150:
+//
+// 1. A future scripted-audit consumer (CLI "what would a jump-to-
+//    oldest do" subcommand / cron health-check that surfaces deep
+//    jumps the user attempted but never confirmed) gets the
+//    planner as a first-class command rather than re-implementing
+//    the newest-first walk in another language.
+//
+// 2. Server-side keeps the index-resolution contract authoritative
+//    — a future audit consumer that hard-codes the newest-first
+//    walk would silently drift if the UI ever changes the
+//    semantics (e.g. if we ever surface a flipped ring with
+//    oldest-last).
+//
+// 3. Symmetry with the rest of the round-29/30/31/32 reorder
+//    pipeline: every pure-data primitive has a server-side wire
+//    wrapper.
+//
+// Wire shape: UndoEntrySummary[] entries + usize target_index in,
+// UndoJumpPlan out. Pure-data, no DB, no I/O.
+
+/// `slab_hopper_compute_undo_jump_plan` — plan a "skip directly to
+/// entry N" operation against the Hopper UI's undo ring. See
+/// [`super::coverage::compute_undo_jump_plan`] for the algorithm
+/// (newest-first walk collecting dropped labels; invalid for empty
+/// / out-of-range / target-equals-newest).
+///
+/// Returns an [`UndoJumpPlan`] carrying validity, skip count,
+/// dropped labels (newest-first), target label, and echoed target
+/// index. Pure-data; no DB, no I/O.
+#[tauri::command]
+pub fn slab_hopper_compute_undo_jump_plan(
+    entries: Vec<super::coverage::UndoEntrySummary>,
+    target_index: usize,
+) -> CmdResult<super::coverage::UndoJumpPlan> {
+    Ok(super::coverage::compute_undo_jump_plan(
+        &entries,
+        target_index,
+    ))
 }
 
 // ---------------------------------------------------------------------
@@ -568,5 +1345,171 @@ mod tests {
         // 2000 X's + the surrounding prompt scaffold.
         assert!(msgs[1].content.len() < 2200);
         assert!(msgs[1].content.contains(&"X".repeat(2000)));
+    }
+
+    // ── v3.40 Slice 80 — coverage command helper tests ────────────────
+
+    fn run_record(watch_id: i64, input_path: &str) -> super::super::log::RunRecord {
+        super::super::log::RunRecord {
+            id: 0,
+            watch_id,
+            input_path: input_path.into(),
+            output_path: None,
+            status: super::super::log::RunStatus::Success,
+            error: None,
+            duration_ms: 0,
+            ai_title: None,
+            started_at: "0".into(),
+        }
+    }
+
+    #[test]
+    fn clamp_sample_limit_defaults_to_one_hundred() {
+        assert_eq!(clamp_sample_limit(None), 100);
+    }
+
+    #[test]
+    fn clamp_sample_limit_clamps_below_one_to_one() {
+        assert_eq!(clamp_sample_limit(Some(0)), 1);
+        assert_eq!(clamp_sample_limit(Some(-7)), 1);
+    }
+
+    #[test]
+    fn clamp_sample_limit_clamps_above_ceiling_to_one_thousand() {
+        assert_eq!(clamp_sample_limit(Some(10_000)), 1000);
+        assert_eq!(clamp_sample_limit(Some(i64::MAX)), 1000);
+    }
+
+    #[test]
+    fn clamp_sample_limit_passes_in_range_through() {
+        assert_eq!(clamp_sample_limit(Some(1)), 1);
+        assert_eq!(clamp_sample_limit(Some(50)), 50);
+        assert_eq!(clamp_sample_limit(Some(1000)), 1000);
+    }
+
+    #[test]
+    fn sample_over_read_is_four_times_cap() {
+        assert_eq!(sample_over_read(50), 200);
+        assert_eq!(sample_over_read(100), 400);
+    }
+
+    #[test]
+    fn sample_over_read_clamped_to_ceiling() {
+        // 1000 * 4 = 4000, well under the 10_000 cap, so the result
+        // tracks 4x.
+        assert_eq!(sample_over_read(1000), 4000);
+        // Even an absurd cap can't push the over-read past 10_000.
+        assert_eq!(sample_over_read(100_000), 10_000);
+        assert_eq!(sample_over_read(i64::MAX), 10_000);
+    }
+
+    #[test]
+    fn samples_from_runs_filters_to_watch_id() {
+        let runs = vec![
+            run_record(1, "/tmp/a.pdf"),
+            run_record(2, "/tmp/b.pdf"),
+            run_record(1, "/tmp/c.pdf"),
+            run_record(3, "/tmp/d.pdf"),
+        ];
+        let samples = samples_from_runs(&runs, 1, 100);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].filename, "a.pdf");
+        assert_eq!(samples[1].filename, "c.pdf");
+    }
+
+    #[test]
+    fn samples_from_runs_reduces_to_basename() {
+        let runs = vec![
+            run_record(1, "/Users/sanjay/Documents/tax_2026.pdf"),
+            run_record(1, "/var/folders/x/invoice.pdf"),
+            run_record(1, "bare-filename.pdf"),
+        ];
+        let samples = samples_from_runs(&runs, 1, 100);
+        assert_eq!(samples[0].filename, "tax_2026.pdf");
+        assert_eq!(samples[1].filename, "invoice.pdf");
+        assert_eq!(samples[2].filename, "bare-filename.pdf");
+    }
+
+    #[test]
+    fn samples_from_runs_respects_cap() {
+        let runs: Vec<_> = (0..50)
+            .map(|i| run_record(1, &format!("/tmp/f{i}.pdf")))
+            .collect();
+        let samples = samples_from_runs(&runs, 1, 10);
+        assert_eq!(samples.len(), 10);
+        assert_eq!(samples[0].filename, "f0.pdf");
+        assert_eq!(samples[9].filename, "f9.pdf");
+    }
+
+    #[test]
+    fn samples_from_runs_empty_input_returns_empty() {
+        let samples = samples_from_runs(&[], 1, 100);
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn samples_from_runs_no_matches_returns_empty() {
+        let runs = vec![run_record(2, "/tmp/a.pdf"), run_record(3, "/tmp/b.pdf")];
+        let samples = samples_from_runs(&runs, 99, 100);
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn samples_from_runs_zeroes_size_page_text() {
+        let runs = vec![run_record(1, "/tmp/x.pdf")];
+        let samples = samples_from_runs(&runs, 1, 100);
+        assert_eq!(samples[0].size_bytes, 0);
+        assert!(samples[0].page_count.is_none());
+        assert!(samples[0].text_sample.is_none());
+    }
+
+    #[test]
+    fn samples_from_runs_handles_invalid_utf8_basename() {
+        // If file_name returns something that doesn't decode as UTF-8
+        // (essentially impossible on the runtime input_path String, but
+        // belt-and-suspenders), fall back to the full path.
+        let runs = vec![run_record(1, "/")];
+        let samples = samples_from_runs(&runs, 1, 100);
+        // Path::new("/").file_name() returns None -> falls back to "/".
+        assert_eq!(samples[0].filename, "/");
+    }
+
+    // ── Slice 84 — sample drilldown preview cap helper tests ──────────
+
+    #[test]
+    fn clamp_preview_cap_defaults_to_twenty_five() {
+        assert_eq!(clamp_preview_cap(None), 25);
+    }
+
+    #[test]
+    fn clamp_preview_cap_clamps_below_one_to_one() {
+        assert_eq!(clamp_preview_cap(Some(0)), 1);
+        assert_eq!(clamp_preview_cap(Some(-1)), 1);
+        assert_eq!(clamp_preview_cap(Some(i64::MIN)), 1);
+    }
+
+    #[test]
+    fn clamp_preview_cap_clamps_above_ceiling_to_one_thousand() {
+        assert_eq!(clamp_preview_cap(Some(1001)), 1000);
+        assert_eq!(clamp_preview_cap(Some(10_000)), 1000);
+        assert_eq!(clamp_preview_cap(Some(i64::MAX)), 1000);
+    }
+
+    #[test]
+    fn clamp_preview_cap_passes_in_range_through() {
+        assert_eq!(clamp_preview_cap(Some(1)), 1);
+        assert_eq!(clamp_preview_cap(Some(25)), 25);
+        assert_eq!(clamp_preview_cap(Some(100)), 100);
+        assert_eq!(clamp_preview_cap(Some(1000)), 1000);
+    }
+
+    #[test]
+    fn clamp_preview_cap_default_is_lower_than_coverage_default() {
+        // The drilldown carries the FULL filename + axes per sample
+        // (heavier per-row than the coverage report's counts) so its
+        // default is a smaller "first page" preview. Pin the relationship
+        // so a future tweak that breaks the ordering shows up as a test
+        // failure rather than a silent regression.
+        assert!(clamp_preview_cap(None) < clamp_sample_limit(None));
     }
 }

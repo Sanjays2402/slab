@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
+use super::backfill::CancelFlag;
 use super::log::HopperLog;
 use super::pipeline::{self, TitleProvider};
 use super::registry::{HopperRegistry, Watch};
@@ -59,6 +60,12 @@ const FLUSH_TICK_MS: u64 = 200;
 /// constructing a full `tauri::AppHandle`.
 pub trait RunEmitter: Send + Sync + 'static {
     fn emit_run_completed(&self, record: &super::log::RunRecord);
+
+    /// Per-file live-progress event for an in-flight backfill. Default
+    /// impl is a no-op so existing test emitters don't need to change.
+    /// The production `tauri::AppHandle` impl forwards to
+    /// `hopper://backfill-progress`.
+    fn emit_backfill_progress(&self, _run_id: i64, _progress: &super::backfill::BackfillProgress) {}
 }
 
 /// No-op emitter — used in tests and when the service is constructed
@@ -75,6 +82,19 @@ impl RunEmitter for tauri::AppHandle {
         // Best-effort emit — never let a UI delivery failure crash the
         // pipeline. Frontend handles missed events via list-runs polling.
         let _ = self.emit("hopper://run-completed", record);
+    }
+    fn emit_backfill_progress(&self, run_id: i64, progress: &super::backfill::BackfillProgress) {
+        use tauri::Emitter;
+        // Wrap the payload with the run_id so the frontend can route
+        // multi-run scenarios (today the UI gates to one run at a time
+        // but the wire contract supports more).
+        let _ = self.emit(
+            "hopper://backfill-progress",
+            super::backfill::BackfillProgressEvent {
+                run_id,
+                progress: progress.clone(),
+            },
+        );
     }
 }
 
@@ -109,6 +129,18 @@ pub struct HopperService {
     pub provider: Arc<dyn TitleProvider>,
     pub recipe_loader: RecipeLoader,
     pub emitter: Arc<dyn RunEmitter>,
+    /// Cancel-token map for live backfills — keyed by `run_id`
+    /// (a frontend-generated `Date.now()`-style i64). Populated by
+    /// [`Self::register_backfill_cancel`] when the streaming Tauri
+    /// command kicks off; the user's Cancel button calls
+    /// [`Self::cancel_backfill`] which flips the matching flag; the
+    /// worker calls [`Self::unregister_backfill_cancel`] on
+    /// completion to keep the map bounded.
+    ///
+    /// Map (not Vec) so cancel-by-id is O(1) — there's no enumeration
+    /// requirement and the typical occupancy is 0-1 entries (only the
+    /// in-flight run is registered).
+    pub backfill_cancels: Arc<Mutex<HashMap<i64, CancelFlag>>>,
     inner: Arc<Mutex<ServiceInner>>,
 }
 
@@ -147,6 +179,7 @@ impl HopperService {
             provider,
             recipe_loader,
             emitter,
+            backfill_cancels: Arc::new(Mutex::new(HashMap::new())),
             inner: Arc::new(Mutex::new(ServiceInner {
                 watcher: None,
                 watched: Vec::new(),
@@ -154,6 +187,60 @@ impl HopperService {
                 started: false,
             })),
         }
+    }
+
+    /// Register a fresh cancel-token under `run_id`. Returns the
+    /// [`CancelFlag`] the caller hands to
+    /// [`crate::pdf::hopper::backfill::execute_backfill_streaming`].
+    /// Idempotent — registering the same id twice replaces the
+    /// previous flag (the old run is implicitly orphaned; in practice
+    /// the worker is the only thing holding a strong clone so the
+    /// orphan's GC is automatic).
+    pub fn register_backfill_cancel(&self, run_id: i64) -> CancelFlag {
+        let flag = CancelFlag::new();
+        let mut map = self
+            .backfill_cancels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        map.insert(run_id, flag.clone());
+        flag
+    }
+
+    /// Trip the cancel flag for `run_id` if one is registered. Returns
+    /// `true` if a flag was found and flipped, `false` if `run_id`
+    /// has already completed (no flag registered) — both outcomes
+    /// are non-errors from the user's perspective.
+    pub fn cancel_backfill(&self, run_id: i64) -> bool {
+        let map = self
+            .backfill_cancels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(flag) = map.get(&run_id) {
+            flag.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Drop the registration for `run_id`. Worker calls this once the
+    /// streaming loop exits (success or cancellation) so the map
+    /// doesn't accumulate stale entries.
+    pub fn unregister_backfill_cancel(&self, run_id: i64) {
+        let mut map = self
+            .backfill_cancels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        map.remove(&run_id);
+    }
+
+    /// Snapshot count of currently-registered backfill cancels. Used
+    /// in tests + diagnostics; not exposed to the frontend.
+    pub fn backfill_cancel_count(&self) -> usize {
+        self.backfill_cancels
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len()
     }
 
     /// Boot the watcher + flush loop. Idempotent: subsequent calls
@@ -572,6 +659,94 @@ mod tests {
         assert!(
             materialized,
             "watcher did not dispatch file within 5s; check notify backend on this OS"
+        );
+    }
+
+    // ─── backfill cancel registry (v3.39 round-10 slice 44) ───────────
+
+    #[test]
+    fn backfill_cancel_register_returns_a_fresh_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service(
+            dir.path(),
+            &dir.path().join("out"),
+            &dir.path().join("hopper.db"),
+        );
+
+        let flag = svc.register_backfill_cancel(42);
+        assert!(!flag.is_cancelled());
+        assert_eq!(svc.backfill_cancel_count(), 1);
+    }
+
+    #[test]
+    fn backfill_cancel_flips_registered_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service(
+            dir.path(),
+            &dir.path().join("out"),
+            &dir.path().join("hopper.db"),
+        );
+
+        let flag = svc.register_backfill_cancel(7);
+        assert!(svc.cancel_backfill(7));
+        assert!(flag.is_cancelled(), "flag the worker holds must see it");
+    }
+
+    #[test]
+    fn backfill_cancel_unknown_id_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service(
+            dir.path(),
+            &dir.path().join("out"),
+            &dir.path().join("hopper.db"),
+        );
+
+        // No registration → cancel must be a no-op false (not an error).
+        assert!(!svc.cancel_backfill(999));
+    }
+
+    #[test]
+    fn backfill_unregister_removes_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service(
+            dir.path(),
+            &dir.path().join("out"),
+            &dir.path().join("hopper.db"),
+        );
+
+        svc.register_backfill_cancel(1);
+        svc.register_backfill_cancel(2);
+        assert_eq!(svc.backfill_cancel_count(), 2);
+        svc.unregister_backfill_cancel(1);
+        assert_eq!(svc.backfill_cancel_count(), 1);
+        // Cancel-by-id for an unregistered run is a non-error false.
+        assert!(!svc.cancel_backfill(1));
+        // The other registration still works.
+        assert!(svc.cancel_backfill(2));
+    }
+
+    #[test]
+    fn backfill_register_same_id_twice_replaces_flag() {
+        // Idempotency contract — if the frontend retries a run_id
+        // after a crash, the new registration must win (the old
+        // worker has presumably exited and dropped its strong clone).
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service(
+            dir.path(),
+            &dir.path().join("out"),
+            &dir.path().join("hopper.db"),
+        );
+
+        let first = svc.register_backfill_cancel(11);
+        let second = svc.register_backfill_cancel(11);
+        // Map still has only one entry (the second overwrote the first).
+        assert_eq!(svc.backfill_cancel_count(), 1);
+        // Cancel finds the SECOND flag, not the first.
+        assert!(svc.cancel_backfill(11));
+        assert!(second.is_cancelled());
+        assert!(
+            !first.is_cancelled(),
+            "first registration was orphaned and must not be tripped"
         );
     }
 }

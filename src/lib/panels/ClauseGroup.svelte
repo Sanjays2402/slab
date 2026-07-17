@@ -246,7 +246,7 @@
                 <option value={f.id}>{f.path}</option>
               {/each}
             </select>
-          {:else}
+          {:else if clause.type === "title_contains" || clause.type === "title_not_contains"}
             <input
               type="text"
               value={clause.value}

@@ -194,6 +194,84 @@ pub fn delete_personal_preset(db: &mut LibraryDb, id: i64) -> Result<(), Library
     Ok(())
 }
 
+/// Rename a personal preset. Trims the new name; empty rejected; an
+/// unchanged name (post-trim) is a no-op returning the existing row;
+/// a name that collides with another preset is rejected by the UNIQUE
+/// constraint — the UPDATE leaves the row untouched on failure
+/// (sqlite is atomic per statement). Mirrors `rename_view` in
+/// saved_views.rs verbatim so the two list surfaces share one mental
+/// model for the rename verb.
+pub fn rename_personal_preset(
+    db: &mut LibraryDb,
+    id: i64,
+    new_name: &str,
+) -> Result<PersonalPresetRecord, LibraryError> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err(LibraryError::Other("preset name cannot be empty".into()));
+    }
+    let existing = get_personal_preset(db, id)?;
+    if existing.name == trimmed {
+        return Ok(existing);
+    }
+    let conn = db.conn_mut();
+    conn.execute(
+        "UPDATE library_personal_presets SET name = ?1 WHERE id = ?2",
+        rusqlite::params![trimmed, id],
+    )?;
+    get_personal_preset(db, id)
+}
+
+/// Duplicate an existing personal preset: copies the icon/color/
+/// description/filter, gives the copy a fresh sort_order at the bottom
+/// of the list, and derives a unique name by appending " (copy)" /
+/// " (copy 2)" / … so the UNIQUE constraint on `name` never bites.
+/// Errors on unknown id. The duplicate is independent — editing it
+/// later does NOT affect the source. Mirrors `duplicate_view` in
+/// saved_views.rs so the Smart Folders Hub's per-row Duplicate verb
+/// shares one mental model with the Saved Views rail's Duplicate.
+pub fn duplicate_personal_preset(
+    db: &mut LibraryDb,
+    id: i64,
+) -> Result<PersonalPresetRecord, LibraryError> {
+    let source = get_personal_preset(db, id)?;
+    let new_name = derive_personal_copy_name(db, &source.name)?;
+    save_personal_preset(
+        db,
+        &NewPersonalPreset {
+            name: new_name,
+            icon: source.icon,
+            color: source.color,
+            description: source.description,
+            filter: source.filter,
+        },
+    )
+}
+
+/// Find the first available "<name> (copy)" / "<name> (copy N)"
+/// variant that doesn't collide with an existing personal preset.
+/// Capped at 999 attempts as a belt-and-suspenders guard. Mirrors
+/// `saved_views::derive_copy_name`.
+fn derive_personal_copy_name(db: &LibraryDb, source_name: &str) -> Result<String, LibraryError> {
+    let existing: std::collections::HashSet<String> = list_personal_presets(db)?
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    let first = format!("{source_name} (copy)");
+    if !existing.contains(&first) {
+        return Ok(first);
+    }
+    for n in 2..=999 {
+        let candidate = format!("{source_name} (copy {n})");
+        if !existing.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(LibraryError::Other(
+        "too many copies of this preset already exist".into(),
+    ))
+}
+
 /// Materialize this personal preset into a real smart collection.
 /// The collection name is "<preset.name>" — if that already exists,
 /// we append " (copy)" / " (copy 2)" until unique. This matches the
@@ -442,6 +520,122 @@ mod tests {
         let p = save_personal_preset(&mut db, &sample_spec("Tmp")).unwrap();
         delete_personal_preset(&mut db, p.id).unwrap();
         assert!(get_personal_preset(&db, p.id).is_err());
+    }
+
+    // ─── Slice 76: rename + duplicate ────────────────────────────────
+
+    #[test]
+    fn rename_updates_name_preserves_other_fields() {
+        let mut db = db();
+        let p = save_personal_preset(&mut db, &sample_spec("Old")).unwrap();
+        let renamed = rename_personal_preset(&mut db, p.id, "New").unwrap();
+        assert_eq!(renamed.id, p.id);
+        assert_eq!(renamed.name, "New");
+        assert_eq!(renamed.icon, p.icon);
+        assert_eq!(renamed.color, p.color);
+        assert_eq!(renamed.description, p.description);
+        assert_eq!(renamed.created_at, p.created_at);
+        assert_eq!(renamed.sort_order, p.sort_order);
+        // Filter survives byte-identical (same JSON in storage).
+        assert!(renamed.filter.clauses.is_some());
+    }
+
+    #[test]
+    fn rename_trims_new_name() {
+        let mut db = db();
+        let p = save_personal_preset(&mut db, &sample_spec("Old")).unwrap();
+        let renamed = rename_personal_preset(&mut db, p.id, "   New   ").unwrap();
+        assert_eq!(renamed.name, "New");
+    }
+
+    #[test]
+    fn rename_to_same_name_is_noop() {
+        let mut db = db();
+        let p = save_personal_preset(&mut db, &sample_spec("Same")).unwrap();
+        // Trimmed equality short-circuits without touching the row.
+        let again = rename_personal_preset(&mut db, p.id, "   Same   ").unwrap();
+        assert_eq!(again.id, p.id);
+        assert_eq!(again.name, "Same");
+    }
+
+    #[test]
+    fn rename_rejects_empty_name() {
+        let mut db = db();
+        let p = save_personal_preset(&mut db, &sample_spec("Solid")).unwrap();
+        let err = rename_personal_preset(&mut db, p.id, "   ").unwrap_err();
+        assert!(format!("{err}").contains("empty"));
+        // The row survived intact.
+        let fetched = get_personal_preset(&db, p.id).unwrap();
+        assert_eq!(fetched.name, "Solid");
+    }
+
+    #[test]
+    fn rename_rejects_collision_with_other_preset() {
+        let mut db = db();
+        save_personal_preset(&mut db, &sample_spec("Taken")).unwrap();
+        let other = save_personal_preset(&mut db, &sample_spec("Free")).unwrap();
+        let err = rename_personal_preset(&mut db, other.id, "Taken").unwrap_err();
+        assert!(format!("{err}").to_lowercase().contains("unique"));
+        // Source row unchanged after the UPDATE failed.
+        let fetched = get_personal_preset(&db, other.id).unwrap();
+        assert_eq!(fetched.name, "Free");
+    }
+
+    #[test]
+    fn rename_unknown_id_errors() {
+        let mut db = db();
+        let err = rename_personal_preset(&mut db, 9999, "X").unwrap_err();
+        // get_personal_preset raises a QueryReturnedNoRows-flavoured error.
+        let msg = format!("{err}").to_lowercase();
+        assert!(msg.contains("query") || msg.contains("rows") || msg.contains("not"));
+    }
+
+    #[test]
+    fn duplicate_creates_independent_copy_with_unique_name() {
+        let mut db = db();
+        let src = save_personal_preset(&mut db, &sample_spec("Project Apollo")).unwrap();
+        let copy = duplicate_personal_preset(&mut db, src.id).unwrap();
+        assert_ne!(copy.id, src.id);
+        assert_eq!(copy.name, "Project Apollo (copy)");
+        // Carbon copy of the source's metadata + filter.
+        assert_eq!(copy.icon, src.icon);
+        assert_eq!(copy.color, src.color);
+        assert_eq!(copy.description, src.description);
+        assert!(copy.filter.clauses.is_some());
+        // Fresh sort_order at the bottom — strictly greater than the
+        // source's because save_personal_preset stamps MAX+1.
+        assert!(copy.sort_order > src.sort_order);
+    }
+
+    #[test]
+    fn duplicate_renaming_does_not_affect_source() {
+        // The copy is INDEPENDENT — editing it must not bleed into the source.
+        let mut db = db();
+        let src = save_personal_preset(&mut db, &sample_spec("Source")).unwrap();
+        let copy = duplicate_personal_preset(&mut db, src.id).unwrap();
+        rename_personal_preset(&mut db, copy.id, "Tweaked").unwrap();
+        let src_after = get_personal_preset(&db, src.id).unwrap();
+        assert_eq!(src_after.name, "Source");
+    }
+
+    #[test]
+    fn duplicate_appends_numeric_suffix_on_repeated_copies() {
+        let mut db = db();
+        let src = save_personal_preset(&mut db, &sample_spec("Apollo")).unwrap();
+        let c1 = duplicate_personal_preset(&mut db, src.id).unwrap();
+        let c2 = duplicate_personal_preset(&mut db, src.id).unwrap();
+        let c3 = duplicate_personal_preset(&mut db, src.id).unwrap();
+        assert_eq!(c1.name, "Apollo (copy)");
+        assert_eq!(c2.name, "Apollo (copy 2)");
+        assert_eq!(c3.name, "Apollo (copy 3)");
+    }
+
+    #[test]
+    fn duplicate_unknown_id_errors() {
+        let mut db = db();
+        let err = duplicate_personal_preset(&mut db, 9999).unwrap_err();
+        let msg = format!("{err}").to_lowercase();
+        assert!(msg.contains("query") || msg.contains("rows") || msg.contains("not"));
     }
 
     #[test]

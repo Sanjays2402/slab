@@ -37,15 +37,30 @@
     marketplaceAvailable,
     formatBytes,
     compareSemver,
+    installLogSummary,
+    listUpdateTargets,
+    updateAllPlugins,
+    listenUpdateProgress,
+    pluralizeUpdates,
+    formatUpdateSummary,
     type IndexEntry,
+    type InstallLogSummary,
     type MarketplaceState,
+    type UpdatePlan,
+    type UpdateTarget,
+    type BatchUpdateReport,
+    type UpdateProgress,
   } from "$lib/marketplace";
   import { notify } from "$lib/notify";
   import { tStore, t } from "$lib/i18n";
   import PluginDetailDrawer from "$lib/components/PluginDetailDrawer.svelte";
+  import RecentInstallsDrawer from "$lib/components/RecentInstallsDrawer.svelte";
   import InstallProgressModal from "$lib/components/InstallProgressModal.svelte";
   import UninstallConfirmModal from "$lib/components/UninstallConfirmModal.svelte";
   import PluginConsentModal from "$lib/components/PluginConsentModal.svelte";
+  import BulkUpdateProgressOverlay, {
+    type BulkUpdateRowState,
+  } from "$lib/components/BulkUpdateProgressOverlay.svelte";
   import { fuzzyMatchEntry, highlightHTML, type EntryFuzzyResult } from "$lib/marketplace/fuzzy";
 
   // ---------------- Installed-tab state (unchanged from Foundry) ----
@@ -65,6 +80,244 @@
   // Per-plugin "currently writing to backend" flag so we can disable
   // the toggle while a flip is in flight and avoid double-clicks.
   let busy = $state<Record<string, boolean>>({});
+
+  // ---------------- v3.39 Slice 57 — Recent installs drawer state -----
+  /** Slim summary of the install log — used to gate the History
+   *  button so it only appears when there's something to show. */
+  let installLog = $state<InstallLogSummary>({
+    total_events: 0,
+    distinct_plugins: 0,
+    oldest_occurred_at: null,
+  });
+  /** Drawer open flag. */
+  let recentInstallsOpen = $state(false);
+
+  /** Refresh the slim install-log summary. Cheap (three small
+   *  queries); we call this on mount and after every install /
+   *  uninstall / prune so the toolbar badge stays current. */
+  async function refreshInstallLog(): Promise<void> {
+    try {
+      installLog = await installLogSummary();
+    } catch (e) {
+      // Non-fatal — surface the failure to the console but leave
+      // the badge dark rather than nag the user.
+      console.warn("[slab] installLogSummary failed", e);
+    }
+  }
+
+  // ---------------- v3.39 Round-15 — Updates available banner ------
+  /** The current update plan, or null when not yet loaded. Banner
+   *  hides when null OR when targets.length === 0. */
+  let updatePlan = $state<UpdatePlan | null>(null);
+  /** True while listUpdateTargets() or updateAllPlugins() is in flight.
+   *  Disables the "Update all" button. */
+  let updateBusy = $state(false);
+  /** Per-row in-flight flag during the bulk update — keyed by plugin
+   *  id. Slice 72 grows this into a {phase, error} map for the
+   *  per-step overlay; slice 71 keeps it as a simple bool gate so the
+   *  banner's per-row Update buttons disable correctly. */
+  let updateRowBusy = $state<Record<string, boolean>>({});
+  /** Expanded/collapsed banner state. Collapsed by default so the
+   *  user sees the summary at a glance and only expands when they
+   *  want to review per-target details. */
+  let updatesExpanded = $state(false);
+  /** Per-session dismiss flag. Hides the banner until the user takes
+   *  an action that calls refreshUpdateTargets() with a non-empty
+   *  plan (install, uninstall, panel reload). Does NOT persist
+   *  across reloads — Sanjay's house style is "banner you can
+   *  ignore but never permanently kill". */
+  let updatesDismissed = $state(false);
+
+  // ---------------- v3.39 Round-15 — Bulk-update overlay state -----
+  /** Type-tagged so the overlay can render the right state per row
+   *  without re-importing the union from the marketplace module. */
+  type OverlayState = {
+    rows: BulkUpdateRowState[];
+    currentIndex: number;
+    finished: boolean;
+    summary: string;
+    batchId: number;
+  } | null;
+  /** When non-null, render the BulkUpdateProgressOverlay component.
+   *  Slice 72 surface for the per-step live progress. */
+  let bulkOverlay = $state<OverlayState>(null);
+
+  /** True iff the banner should render: a plan exists, has targets,
+   *  and the user hasn't dismissed it this session. */
+  let showUpdatesBanner = $derived(
+    !updatesDismissed &&
+      updatePlan !== null &&
+      updatePlan.targets.length > 0,
+  );
+
+  /** Refresh the update plan from the backend. Cheap (one cache-aware
+   *  index fetch + one in-memory diff against the registry). Best-
+   *  effort — failures warn to console rather than nag the user. */
+  async function refreshUpdateTargets(): Promise<void> {
+    if (!marketplaceAvailable()) {
+      updatePlan = { targets: [], total_bytes: 0 };
+      return;
+    }
+    try {
+      updatePlan = await listUpdateTargets();
+    } catch (e) {
+      // Common path: no network + no cache. Keep the prior plan if
+      // any; surface only to console.
+      console.warn("[slab] listUpdateTargets failed", e);
+    }
+  }
+
+  /** "Update all" — kick off the bulk update for every target in the
+   *  current plan. The banner gates its own button while this is in
+   *  flight; on completion we refresh both the registry (so the
+   *  installed list shows the bumped versions) and the plan (so the
+   *  banner auto-clears once everything succeeded). */
+  async function onUpdateAll(): Promise<void> {
+    if (!updatePlan || updatePlan.targets.length === 0 || updateBusy) return;
+    const ids = updatePlan.targets.map((t: UpdateTarget) => t.id);
+    await runUpdateBatch(ids);
+  }
+
+  /** Single-row "Update" — same backend call as Update-all but for
+   *  one id. Useful when the user wants to update only a subset
+   *  (e.g. defer a heavyweight one for later). */
+  async function onUpdateOne(target: UpdateTarget): Promise<void> {
+    if (updateRowBusy[target.id] || updateBusy) return;
+    await runUpdateBatch([target.id]);
+  }
+
+  /** Shared runner for both Update-all and single-row Update. Owns
+   *  the busy flag transitions, toast notifications, and post-run
+   *  refresh of the plan + registry + install log. The slice-72
+   *  overlay state is also driven here — we set up the per-row
+   *  reducer + subscribe to `marketplace://update-progress` BEFORE
+   *  firing the backend call so early `starting` events are
+   *  captured. */
+  async function runUpdateBatch(ids: string[]): Promise<void> {
+    if (ids.length === 0 || !updatePlan) return;
+
+    // Resolve UpdateTarget rows from the current plan; ids not in
+    // the plan are silently skipped (shouldn't happen in practice).
+    const planById = new Map<string, UpdateTarget>(
+      updatePlan.targets.map((t: UpdateTarget) => [t.id, t]),
+    );
+    const initialRows: BulkUpdateRowState[] = ids
+      .map((id) => planById.get(id))
+      .filter((t): t is UpdateTarget => t !== undefined)
+      .map((target) => ({ target, phase: "pending", error: null }));
+    if (initialRows.length === 0) return;
+
+    updateBusy = true;
+    for (const id of ids) updateRowBusy[id] = true;
+
+    const batchId = Date.now();
+    bulkOverlay = {
+      rows: initialRows,
+      currentIndex: 0,
+      finished: false,
+      summary: "",
+      batchId,
+    };
+
+    // Subscribe to the progress channel BEFORE firing the backend
+    // call. The handler mutates bulkOverlay.rows in place so the
+    // overlay re-renders per event.
+    const unlisten = await listenUpdateProgress((progress: UpdateProgress) => {
+      // Filter out events from other in-flight batches (the UI
+      // never fires more than one at a time, but the contract
+      // honours batch_id correlation).
+      if (!bulkOverlay || progress.batch_id !== bulkOverlay.batchId) return;
+      const rowIdx = bulkOverlay.rows.findIndex(
+        (r) => r.target.id === progress.plugin_id,
+      );
+      if (rowIdx === -1) return;
+      const nextRows = bulkOverlay.rows.slice();
+      const existing = nextRows[rowIdx];
+      if (progress.phase === "starting") {
+        nextRows[rowIdx] = { ...existing, phase: "updating", error: null };
+      } else if (progress.phase === "done") {
+        nextRows[rowIdx] = { ...existing, phase: "done", error: null };
+      } else if (progress.phase === "error") {
+        nextRows[rowIdx] = {
+          ...existing,
+          phase: "failed",
+          error: progress.error ?? "Unknown error",
+        };
+      }
+      bulkOverlay = {
+        ...bulkOverlay,
+        rows: nextRows,
+        currentIndex: progress.index,
+      };
+    });
+
+    try {
+      const report = await updateAllPlugins(batchId, ids);
+      // Pull fresh data after the batch — registry first so the
+      // installed list shows bumped versions, then the plan so the
+      // banner re-derives (and likely hides) based on the new state.
+      await refreshPlugins();
+      void refreshInstallLog();
+      await refreshUpdateTargets();
+      // Finalise the overlay summary + mark finished. The user
+      // dismisses the overlay manually so they can read the per-row
+      // outcomes after the batch lands.
+      const summary = formatUpdateSummary(report);
+      if (bulkOverlay && bulkOverlay.batchId === batchId) {
+        bulkOverlay = { ...bulkOverlay, finished: true, summary };
+      }
+      // Toast summary mirrors the overlay summary so the user gets a
+      // bottom-right confirmation too. Distinct grammar per outcome
+      // path matches the round-15 design.
+      if (report.failed === 0) {
+        notify.success(summary);
+      } else if (report.succeeded === 0) {
+        notify.error(summary, {
+          detail: firstErrorDetail(report),
+        });
+      } else {
+        notify.warning(summary, {
+          detail: firstErrorDetail(report),
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notify.error("Bulk update failed", { detail: msg });
+      // Surface the error on the overlay too (and mark finished so
+      // the user can dismiss).
+      if (bulkOverlay && bulkOverlay.batchId === batchId) {
+        bulkOverlay = {
+          ...bulkOverlay,
+          finished: true,
+          summary: "Bulk update failed",
+        };
+      }
+    } finally {
+      await unlisten();
+      updateBusy = false;
+      for (const id of ids) delete updateRowBusy[id];
+    }
+  }
+
+  /** Dismiss the bulk-update overlay. The overlay's own button
+   *  refuses to fire this while `finished === false`, but we keep
+   *  the guard here too as defence-in-depth. */
+  function dismissBulkOverlay(): void {
+    if (bulkOverlay && bulkOverlay.finished) {
+      bulkOverlay = null;
+    }
+  }
+
+  /** Pull the first failed-outcome error message from a batch report
+   *  for the toast's detail line. Mirrors the existing single-install
+   *  modal's error-message surfacing — show ONE concrete cause rather
+   *  than a generic "N failed" with no actionable info. */
+  function firstErrorDetail(report: BatchUpdateReport): string | undefined {
+    for (const o of report.outcomes) {
+      if (o.kind === "failed") return `${o.plugin_id}: ${o.error}`;
+    }
+    return undefined;
+  }
 
   // ---------------- Bench (v1.4.0) — Browse-tab state --------------
   /** Which tab is showing — 'installed' or 'browse'. The Browse tab
@@ -254,10 +507,18 @@
       if (snap.plugins.length > 0 && marketplace.phase === "idle" && marketplaceAvailable()) {
         void refreshMarketplace();
       }
+      // Round-15: compute the bulk-update plan as soon as plugins +
+      // index are reachable so the "Updates available" banner can
+      // render without waiting for an explicit refresh. Best-effort.
+      void refreshUpdateTargets();
     });
     pluginsDir()
       .then((p) => (dirPath = p))
       .catch(() => (dirPath = null));
+    // Slice 57: load the install-log summary so the History button
+    // can gate on `total_events > 0`. Cheap; safe in browser mode
+    // (returns the empty summary).
+    void refreshInstallLog();
   });
 
   /** Fetch marketplace index the first time the Browse tab opens. */
@@ -376,6 +637,13 @@
     try {
       await installPlugin(entry);
       await refreshPlugins();
+      // Slice 57: install row landed in the log; refresh the
+      // summary so the History toolbar button appears (or its count
+      // increments) without requiring a panel remount.
+      void refreshInstallLog();
+      // Round-15: re-derive the bulk update plan — installing /
+      // updating a single plugin removes it from the banner.
+      void refreshUpdateTargets();
       clearTimeout(downloadTimer);
       clearTimeout(extractTimer);
       installModal = { entry, phase: "done", error: null };
@@ -396,6 +664,10 @@
       clearTimeout(extractTimer);
       const msg = e instanceof Error ? e.message : String(e);
       installModal = { entry, phase: "error", error: msg };
+      // Slice 57: backend has logged a `failed` row for this attempt;
+      // refresh the summary so the History badge surfaces the
+      // failure path even when no installs ever succeeded.
+      void refreshInstallLog();
       notify.error(t("plugins.notify.installFailed"), { detail: msg });
     }
   }
@@ -438,6 +710,14 @@
       const removed = await uninstallPluginById(entry.id);
       if (removed) {
         await refreshPlugins();
+        // Slice 57: uninstall row landed; refresh the summary so
+        // the History badge keeps current. Skip when nothing was
+        // removed (no log row would have been written).
+        void refreshInstallLog();
+        // Round-15: an uninstalled plugin disappears from the
+        // update plan entirely. Refresh so the banner count and
+        // total bytes both re-derive.
+        void refreshUpdateTargets();
         notify.success(t("plugins.notify.uninstallOk", { name: entry.name }));
       }
       // Close the detail drawer if it was showing the now-removed plugin.
@@ -632,6 +912,11 @@
     try {
       const fresh = await reloadPlugins();
       notify.success(t("plugins.reloadDone"), { detail: `${fresh.length} plugin(s)` });
+      // Round-15: explicit reload re-checks the index against the
+      // freshly-discovered plugin set so the banner reflects any
+      // out-of-band install / uninstall (e.g. user dropped a tarball
+      // into ~/.slab/plugins/ manually).
+      void refreshUpdateTargets();
     } catch (e) {
       notify.error(t("plugins.error"), { detail: e instanceof Error ? e.message : String(e) });
     }
@@ -706,7 +991,90 @@
         >📁 {$tStore("plugins.openDir")}</button
       >
       <button type="button" class="ghost" onclick={onReload}>↻ {$tStore("plugins.reload")}</button>
+      {#if installLog.total_events > 0}
+        <button
+          type="button"
+          class="ghost history-btn"
+          onclick={() => (recentInstallsOpen = true)}
+          title="View install / update / uninstall history"
+        >
+          ⏱ History
+          <span class="history-count" aria-label="event count">{installLog.total_events}</span>
+        </button>
+      {/if}
     </div>
+
+    <!-- Round-15: Updates available banner ───────────────────────── -->
+    {#if showUpdatesBanner && updatePlan}
+      <div class="updates-banner" role="region" aria-label="Updates available">
+        <div class="updates-banner-head">
+          <button
+            type="button"
+            class="updates-toggle"
+            onclick={() => (updatesExpanded = !updatesExpanded)}
+            aria-expanded={updatesExpanded}
+            aria-controls="updates-banner-body"
+          >
+            <span class="updates-chev" aria-hidden="true">
+              {updatesExpanded ? "▾" : "▸"}
+            </span>
+            <span class="updates-arrow" aria-hidden="true">↑</span>
+            <span class="updates-headline">
+              {pluralizeUpdates(updatePlan.targets.length)}
+            </span>
+            <span class="updates-meta">
+              {formatBytes(updatePlan.total_bytes)}
+              · {updatesExpanded ? "Hide list" : "Review"}
+            </span>
+          </button>
+          <div class="updates-actions">
+            <button
+              type="button"
+              class="updates-update-all"
+              onclick={onUpdateAll}
+              disabled={updateBusy}
+            >
+              {updateBusy ? "Updating…" : "Update all"}
+            </button>
+            <button
+              type="button"
+              class="updates-dismiss"
+              onclick={() => (updatesDismissed = true)}
+              title="Hide until next install / uninstall / reload"
+              aria-label="Dismiss updates banner"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        {#if updatesExpanded}
+          <ul class="updates-list" id="updates-banner-body">
+            {#each updatePlan.targets as target (target.id)}
+              <li class="updates-row">
+                <div class="updates-row-meta">
+                  <span class="updates-row-name">{target.entry.name}</span>
+                  <span class="updates-row-versions">
+                    <span class="updates-row-prior">v{target.installed_version}</span>
+                    <span class="updates-row-arrow" aria-hidden="true">→</span>
+                    <span class="updates-row-next">v{target.available_version}</span>
+                  </span>
+                  <span class="updates-row-size">{formatBytes(target.size_bytes)}</span>
+                </div>
+                <button
+                  type="button"
+                  class="updates-row-update"
+                  onclick={() => void onUpdateOne(target)}
+                  disabled={updateBusy || updateRowBusy[target.id]}
+                  title="Update {target.entry.name} to v{target.available_version}"
+                >
+                  {updateRowBusy[target.id] ? "Updating…" : "Update"}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
 
     {#if snap.plugins.length === 0}
       <div class="empty-state">
@@ -1158,6 +1526,17 @@
   />
 {/if}
 
+{#if recentInstallsOpen}
+  <RecentInstallsDrawer
+    onClose={() => (recentInstallsOpen = false)}
+    onPruned={() => {
+      // Drawer triggered a prune — refresh the summary so the
+      // toolbar count + History-button gating both update.
+      void refreshInstallLog();
+    }}
+  />
+{/if}
+
 {#if installModal}
   <InstallProgressModal
     entry={installModal.entry}
@@ -1175,6 +1554,16 @@
     busy={uninstallModal.busy}
     onConfirm={confirmUninstall}
     onCancel={dismissUninstallModal}
+  />
+{/if}
+
+{#if bulkOverlay}
+  <BulkUpdateProgressOverlay
+    rows={bulkOverlay.rows}
+    currentIndex={bulkOverlay.currentIndex}
+    finished={bulkOverlay.finished}
+    summary={bulkOverlay.summary}
+    onDismiss={dismissBulkOverlay}
   />
 {/if}
 
@@ -1212,6 +1601,211 @@
     gap: 8px;
     margin-bottom: 18px;
   }
+  /* Slice 57 — History button + count chip */
+  .history-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .history-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    line-height: 1;
+  }
+
+  /* ---- Round-15 — Updates available banner --------------------- */
+  .updates-banner {
+    margin-bottom: 18px;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-2));
+    overflow: hidden;
+  }
+  .updates-banner-head {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .updates-toggle {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 14px 14px auto 1fr;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    padding: 0;
+    text-align: left;
+    color: var(--text-1);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .updates-toggle:hover .updates-headline {
+    text-decoration: underline;
+  }
+  .updates-chev {
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1;
+  }
+  .updates-arrow {
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .updates-headline {
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .updates-meta {
+    color: var(--text-3);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .updates-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .updates-update-all {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .updates-update-all:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .updates-update-all:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .updates-dismiss {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-3);
+    font-size: 16px;
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .updates-dismiss:hover {
+    background: var(--bg-3);
+    color: var(--text-1);
+  }
+  .updates-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--border);
+  }
+  .updates-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px 8px 36px; /* indent past the chevron column */
+    border-bottom: 1px solid var(--border);
+  }
+  .updates-row:last-child {
+    border-bottom: none;
+  }
+  .updates-row-meta {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) auto auto;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
+  }
+  .updates-row-name {
+    color: var(--text-1);
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .updates-row-versions {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--text-3);
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+  .updates-row-prior {
+    color: var(--text-3);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-3);
+  }
+  .updates-row-arrow {
+    color: var(--text-3);
+  }
+  .updates-row-next {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .updates-row-size {
+    color: var(--text-3);
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+  .updates-row-update {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-1);
+    color: var(--text-1);
+    font-size: 12px;
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .updates-row-update:hover:not(:disabled) {
+    background: var(--bg-3);
+    border-color: var(--accent);
+  }
+  .updates-row-update:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .empty-state {
     text-align: center;
     border: 1px dashed var(--border);

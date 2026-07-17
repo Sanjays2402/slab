@@ -380,6 +380,24 @@
     <p class="status">{status.msg}</p>
   {/if}
 
+  {#if status.kind === "working" && !diff}
+    <!-- First-compare skeleton: a three-way compare parses three PDFs and
+         aligns them, which takes a beat on large files. Show a three-column
+         (base / mine / theirs) shimmer in the merge shape so the panel
+         settles instead of sitting on a bare "Comparing…" button. Decorative;
+         aria-busy + the working status line carry the state. -->
+    <div class="d3-skeleton" aria-busy="true" aria-label="Comparing three documents">
+      {#each ["Base", "Mine", "Theirs"] as col (col)}
+        <div class="d3-col">
+          <span class="d3-bar d3-col-head"></span>
+          {#each [92, 70, 84, 60, 76] as w, i (i)}
+            <span class="d3-bar d3-line" style="width: {w}%"></span>
+          {/each}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if diff}
     {#if conflictCount > 0}
       <p class="resolve-bar">
@@ -753,5 +771,47 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  /* Round 59 — three-way first-compare skeleton. Three columns (base / mine /
+     theirs) of shimmer lines in the merge shape; same shimmer family as the
+     DiffPanel / Reader outline / Convert loaders. */
+  .d3-skeleton {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .d3-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+    border-radius: var(--r-md, 8px);
+    background: var(--bg-1, rgba(255, 255, 255, 0.02));
+  }
+  .d3-bar {
+    height: 11px;
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 0%,
+      color-mix(in srgb, var(--text-1, #fff) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: d3-shimmer 1.4s ease-in-out infinite;
+  }
+  .d3-col-head {
+    width: 46%;
+    height: 13px;
+    margin-bottom: 2px;
+  }
+  @keyframes d3-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .d3-bar { animation: none; }
   }
 </style>

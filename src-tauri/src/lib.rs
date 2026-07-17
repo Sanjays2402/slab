@@ -24,7 +24,7 @@ use ai::config::{
 use ai::diff_summary::{beacon_diff_summary as do_beacon_diff_summary, BeaconDiffSummary};
 use ai::embedding_index::{
     default_index_path, index_pdf as do_index_pdf, search_index as do_search_index, EmbeddingIndex,
-    IndexReport, IndexStats, SearchHit,
+    IndexReport, IndexStats, IndexedPdfRecord, ModelBucket, SearchHit,
 };
 use ai::glossary::{
     build_glossary_from_path as do_beacon_build_glossary, GlossaryOpts, GlossaryReport,
@@ -92,11 +92,14 @@ use pdf::legal_stamp::{
 };
 use pdf::library::{
     auto_tag_run_many as do_auto_tag_run_many, auto_tag_run_one as do_auto_tag_run_one,
-    default_db_path as library_default_db_path, ocr_queue_list_pending as do_ocr_queue_list,
-    ocr_queue_run_all as do_ocr_queue_run_all, ocr_queue_run_one as do_ocr_queue_run_one,
+    default_db_path as library_default_db_path, ocr_queue_list_failed as do_ocr_queue_list_failed,
+    ocr_queue_list_pending as do_ocr_queue_list,
+    ocr_queue_requeue_all_failed as do_ocr_queue_requeue_all_failed,
+    ocr_queue_requeue_doc as do_ocr_queue_requeue_doc, ocr_queue_run_all as do_ocr_queue_run_all,
+    ocr_queue_run_one as do_ocr_queue_run_one, ocr_queue_stats as do_ocr_queue_stats,
     query_documents as do_query_documents, scan_folder as do_scan_folder, AutoTagRunResult,
     DocumentRecord, FolderRecord, LibraryDb, LibraryError, LibraryFilter, OcrQueueResult,
-    ScanReport, TagRecord,
+    OcrQueueStats, ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
 use pdf::merge::merge_pdfs;
@@ -2948,6 +2951,85 @@ fn slab_beacon_index_forget(pdf_hash: String) -> CmdResult<()> {
     index.forget(&pdf_hash).into()
 }
 
+// ---------- Beacon Cache Inspector (v3.54.0 round-7) ----------
+
+/// List every PDF currently in the embedding index, newest first, with
+/// per-row chunk count joined in. Powers the inspector's main table.
+#[tauri::command]
+fn slab_beacon_index_list() -> CmdResult<Vec<IndexedPdfRecord>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.list_indexed().into()
+}
+
+/// Bulk-forget every PDF whose hash is in `pdf_hashes`. Returns the
+/// count actually removed; unknown hashes silently skip (tolerant wire
+/// contract for the inspector's multi-select).
+#[tauri::command]
+fn slab_beacon_index_forget_many(pdf_hashes: Vec<String>) -> CmdResult<usize> {
+    let mut index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget_many(&pdf_hashes).into()
+}
+
+/// Per-embed-model bucket counts in one round-trip. The inspector
+/// renders one tile per bucket and surfaces a "mixed model" warning
+/// when len() > 1.
+#[tauri::command]
+fn slab_beacon_index_stats_by_model() -> CmdResult<Vec<ModelBucket>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.stats_by_model().into()
+}
+
+/// Every indexed PDF whose `path` no longer points at a readable file.
+/// The inspector turns this into a "Forget all N stale" affordance.
+#[tauri::command]
+fn slab_beacon_index_find_stale() -> CmdResult<Vec<IndexedPdfRecord>> {
+    let index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.find_stale().into()
+}
+
+/// Bulk-forget every stale (missing-on-disk) PDF in one transaction.
+/// Returns the count actually removed.
+#[tauri::command]
+fn slab_beacon_index_forget_stale() -> CmdResult<usize> {
+    let mut index = match open_default_index() {
+        Ok(i) => i,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    index.forget_stale().into()
+}
+
 // ---------- Beacon PII Highlighter (Slice 8) ----------
 
 impl<T: Serialize> From<Result<T, PiiError>> for CmdResult<T> {
@@ -3258,6 +3340,167 @@ fn slab_library_list_tags() -> CmdResult<Vec<TagRecord>> {
     result.into()
 }
 
+/// The most recently *applied* tags, newest first (each listed once by its
+/// newest application time). Powers the "Recently used" quick-chips when
+/// tagging a document so the common tags are one click away. `limit` defaults
+/// to 8 when omitted. v3.44.0 Atlas Recent-Tags.
+#[tauri::command]
+fn slab_library_recently_used_tags(limit: Option<u32>) -> CmdResult<Vec<TagRecord>> {
+    let result = (|| -> Result<Vec<TagRecord>, LibraryError> {
+        let db = open_library_db()?;
+        db.recently_used_tags(limit.unwrap_or(8) as usize)
+    })();
+    result.into()
+}
+
+/// Document count per tag as `(tag_id, count)` pairs (every tag once; unused
+/// tags report 0). Powers the muted usage count beside each tag in the rail and
+/// the "sort by most used" ordering. One GROUP BY round-trip, not N queries.
+/// v3.46.0 Atlas Tag-Usage-Counts.
+#[tauri::command]
+fn slab_library_tag_usage_counts() -> CmdResult<Vec<(i64, i64)>> {
+    let result = (|| -> Result<Vec<(i64, i64)>, LibraryError> {
+        let db = open_library_db()?;
+        db.tag_usage_counts()
+    })();
+    result.into()
+}
+
+/// Delete every tag attached to zero documents, returning the number removed.
+/// Reclaims the residue merges and bulk-removes leave behind (a tag whose last
+/// document link was detached lingers in the rail at count 0). Tags carrying
+/// even one document are untouched. Emits `library-changed` on a non-empty
+/// cleanup so the rail self-heals. v3.47.0 Atlas Tag-Cleanup.
+#[tauri::command]
+fn slab_library_delete_unused_tags(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        db.delete_unused_tags()
+    })();
+    if matches!(&result, Ok(removed) if *removed > 0) {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+// -----------------------------------------------------------------
+// v3.50.0 "Atlas Saved Views" — one-click restorable rail filters.
+// Distinct from personal_presets (which materialize into a smart
+// collection) and from smart_collections (which own a doc list) —
+// a saved view RESTORES the rail's LibraryFilter and re-runs it live.
+// -----------------------------------------------------------------
+
+#[tauri::command]
+fn slab_library_saved_view_save(
+    app: tauri::AppHandle,
+    spec: pdf::library::saved_views::NewSavedView,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::save_view(&mut db, &spec)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_list() -> CmdResult<Vec<pdf::library::saved_views::SavedViewRecord>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::saved_views::list_views(&db)
+    })();
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::delete_view(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    new_name: String,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::rename_view(&mut db, id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_update_filter(
+    app: tauri::AppHandle,
+    id: i64,
+    filter: pdf::library::query::LibraryFilter,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::update_view_filter(&mut db, id, &filter)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_duplicate(
+    app: tauri::AppHandle,
+    id: i64,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::duplicate_view(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_set_pinned(
+    app: tauri::AppHandle,
+    id: i64,
+    pinned: bool,
+) -> CmdResult<pdf::library::saved_views::SavedViewRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::set_view_pinned(&mut db, id, pinned)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_library_saved_view_reorder(app: tauri::AppHandle, order: Vec<i64>) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::saved_views::reorder_views(&mut db, &order)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 // ---------------------------------------------------------------
 // v3.32.0 "Atlas" — Collections + Smart Collections
 // ---------------------------------------------------------------
@@ -3294,8 +3537,12 @@ fn slab_collection_list() -> CmdResult<Vec<pdf::library::collections::Collection
 }
 
 #[tauri::command]
-fn slab_collection_rename(app: tauri::AppHandle, id: i64, name: String) -> CmdResult<()> {
-    let result = (|| -> Result<(), LibraryError> {
+fn slab_collection_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    name: String,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
         let mut db = open_library_db()?;
         pdf::library::collections::rename_collection(&mut db, id, &name)
     })();
@@ -3310,6 +3557,52 @@ fn slab_collection_delete(app: tauri::AppHandle, id: i64) -> CmdResult<()> {
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         pdf::library::collections::delete_collection(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_set_color(
+    app: tauri::AppHandle,
+    id: i64,
+    color: Option<String>,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::set_collection_color(&mut db, id, color.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_reorder(app: tauri::AppHandle, ordered_ids: Vec<i64>) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::reorder_collections(&mut db, &ordered_ids)
+    })();
+    // Only emit if something actually moved; spamming library-changed for
+    // a no-op reorder would refresh every subscriber for nothing.
+    let did_move = matches!(&result, Ok(n) if *n > 0);
+    if did_move {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+#[tauri::command]
+fn slab_collection_duplicate(
+    app: tauri::AppHandle,
+    source_id: i64,
+) -> CmdResult<pdf::library::collections::CollectionRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::collections::duplicate_collection(&mut db, source_id)
     })();
     if result.is_ok() {
         emit_library_changed(&app);
@@ -3505,6 +3798,44 @@ fn slab_personal_preset_apply(
     result.into()
 }
 
+/// Rename a personal preset in place. Trims the new name; empty
+/// rejected; collision with another preset rejected by the UNIQUE
+/// constraint. Returns the renamed record. v3.40 Slice 76.
+#[tauri::command]
+fn slab_personal_preset_rename(
+    app: tauri::AppHandle,
+    id: i64,
+    new_name: String,
+) -> CmdResult<pdf::library::personal_presets::PersonalPresetRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::rename_personal_preset(&mut db, id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Duplicate a personal preset. The copy gets a fresh sort_order at
+/// the bottom of the list and a derived unique name ("<src> (copy)"
+/// or "<src> (copy N)"). The duplicate is INDEPENDENT — editing it
+/// later doesn't affect the source. v3.40 Slice 76.
+#[tauri::command]
+fn slab_personal_preset_duplicate(
+    app: tauri::AppHandle,
+    id: i64,
+) -> CmdResult<pdf::library::personal_presets::PersonalPresetRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::personal_presets::duplicate_personal_preset(&mut db, id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 /// Export the given personal preset ids (empty = all) to a JSON string.
 /// The frontend handles the file save dialog itself.
 #[tauri::command]
@@ -3675,6 +4006,222 @@ fn slab_library_search_log_count() -> CmdResult<i64> {
     result.into()
 }
 
+/// Most-recent N library search rows from the rolling log, newest first.
+/// Powers the LibrarySearchPanel's "Recent searches" chip strip — one click
+/// to re-run a prior query. `limit` clamps to `1..=50`; default 8.
+/// v3.52.0 Atlas Recent-Searches.
+#[tauri::command]
+fn slab_library_recent_searches(
+    limit: Option<u32>,
+) -> CmdResult<Vec<pdf::library::search_log::QueryRow>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let cap = limit.unwrap_or(8).clamp(1, 50) as usize;
+        pdf::library::search_log::recent_queries(&db, cap)
+    })();
+    result.into()
+}
+
+/// Snapshot of the FTS5 index size: distinct indexed docs + total pages.
+/// Powers the LibrarySearchPanel's status footer so the user can see at
+/// a glance how much of their library is actually searchable. Two cheap
+/// COUNTs; safe to call on every panel mount + after every scan.
+/// v3.55.0 Atlas Index-Status.
+#[tauri::command]
+fn slab_library_index_stats() -> CmdResult<pdf::library::search::IndexStats> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::search::index_stats(db.conn())
+    })();
+    result.into()
+}
+
+/// Wipe every row from `library_search_log`. Returns the count removed so
+/// the UI can decide whether to toast or stay quiet. Suggestion-cluster
+/// dismissals live in a sibling table and are NOT touched.
+/// v3.52.0 Atlas Recent-Searches.
+#[tauri::command]
+fn slab_library_clear_search_history(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let n = pdf::library::search_log::clear(&db)?;
+        if n > 0 {
+            emit_library_changed(&app);
+        }
+        Ok(n)
+    })();
+    result.into()
+}
+
+/// Delete a SINGLE recent-search row by id. Backs the per-chip delete
+/// affordance (an x on each chip / Backspace on the focused chip) so the
+/// user can prune one stray query without nuking the whole history.
+/// Returns true when a row was actually removed (false for a stale id that
+/// a concurrent clear already dropped). Suggestion-cluster dismissals are
+/// NOT touched.
+#[tauri::command]
+fn slab_library_delete_search(app: tauri::AppHandle, id: i64) -> CmdResult<bool> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        let removed = pdf::library::search_log::delete_one(&db, id)?;
+        if removed {
+            emit_library_changed(&app);
+        }
+        Ok(removed)
+    })();
+    result.into()
+}
+
+// ---------------------------------------------------------------------
+// v3.39.0 "Atlas Tag-Suggest" — per-document heuristic tag suggestions.
+// ---------------------------------------------------------------------
+
+/// Suggest up to 5 tags for a single document, computed locally from its
+/// title/filename, the existing tag vocabulary, co-occurrence stats, and a
+/// built-in domain dictionary. Returns `[]` if nothing plausible.
+#[tauri::command]
+fn slab_library_tag_suggestions_for_doc(
+    doc_id: i64,
+) -> CmdResult<Vec<pdf::library::tag_suggest::TagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_tags_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Suggest tags for every untagged document (bulk). Skips docs that yield
+/// no suggestions. `limit` caps how many untagged docs are scanned.
+#[tauri::command]
+fn slab_library_tag_suggestions_bulk_for_untagged(
+    limit: Option<usize>,
+) -> CmdResult<Vec<pdf::library::tag_suggest::BulkTagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_for_untagged(&db, limit.unwrap_or(50))
+    })();
+    result.into()
+}
+
+/// Accept a suggested tag: find-or-create it (auto-colored) and attach it
+/// to the document, unioned with its existing tags.
+#[tauri::command]
+fn slab_library_tag_suggestion_accept(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    tag_name: String,
+) -> CmdResult<pdf::library::TagRecord> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::tag_suggest::accept_tag_suggestion(&mut db, doc_id, &tag_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Dismiss a suggested tag for a document so it never resurfaces there.
+#[tauri::command]
+fn slab_library_tag_suggestion_dismiss(doc_id: i64, tag_name: String) -> CmdResult<()> {
+    let result = (|| -> Result<(), LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::dismiss_tag_suggestion(&db, doc_id, &tag_name)
+    })();
+    result.into()
+}
+
+/// Clear all dismissed tag suggestions for a document (settings escape
+/// hatch — "show me suggestions again").
+#[tauri::command]
+fn slab_library_tag_suggestion_undismiss_all(doc_id: i64) -> CmdResult<usize> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::undismiss_all_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Bulk-accept N (doc_id, tag_name) pairs in one round-trip. Per-item
+/// failure semantics — a malformed name in item 12 fails item 12 alone,
+/// the rest still attach. Emits a single `library-changed` event after
+/// the batch so the UI refreshes once instead of N times.
+#[tauri::command]
+fn slab_library_tag_suggestions_accept_bulk(
+    app: tauri::AppHandle,
+    items: Vec<pdf::library::tag_suggest::AcceptItem>,
+) -> CmdResult<pdf::library::tag_suggest::BulkAcceptResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::tag_suggest::accept_tag_suggestions_bulk(&mut db, &items)
+    })();
+    if let Ok(r) = &result {
+        if !r.attached.is_empty() {
+            emit_library_changed(&app);
+        }
+    }
+    result.into()
+}
+
+/// List every dismissed tag suggestion for a doc, newest first. Powers
+/// the inspector's "Hidden suggestions" disclosure so the user can
+/// review what they've explicitly hidden and undo a single dismissal
+/// without wiping the rest.
+#[tauri::command]
+fn slab_library_tag_suggestions_list_dismissed(
+    doc_id: i64,
+) -> CmdResult<Vec<pdf::library::tag_suggest::DismissedSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::list_dismissed_for_doc(&db, doc_id)
+    })();
+    result.into()
+}
+
+/// Clear ONE dismissal for a (doc, tag) pair. Returns `true` if a row
+/// was deleted; `false` if no such dismissal existed. The next call to
+/// `suggest_tags_for_doc` will re-include that tag in the candidate set.
+#[tauri::command]
+fn slab_library_tag_suggestion_undismiss_one(doc_id: i64, tag_name: String) -> CmdResult<bool> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::undismiss_one_for_doc(&db, doc_id, &tag_name)
+    })();
+    result.into()
+}
+
+/// Bulk suggester over any [`LibraryFilter`]. Generalises
+/// `slab_library_tag_suggestions_bulk_for_untagged` so the review surface
+/// can aim at e.g. "Starred + tagged `discovery-2026`" rather than only
+/// the untagged shortcut. `limit` overrides any filter-embedded limit so
+/// the scan stays bounded.
+#[tauri::command]
+fn slab_library_tag_suggestions_bulk_for_filter(
+    filter: pdf::library::query::LibraryFilter,
+    limit: Option<usize>,
+) -> CmdResult<Vec<pdf::library::tag_suggest::BulkTagSuggestion>> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggest_for_filter(&db, &filter, limit.unwrap_or(50))
+    })();
+    result.into()
+}
+
+/// Compact stats for the tag-suggest review badge — `untagged_docs_with_
+/// suggestions` powers the toolbar count; `dismissed_total` shows up in
+/// the settings escape hatch. `sample_cap` defaults to 200 so the badge
+/// renders e.g. "200+" upstream when the working set is huge.
+#[tauri::command]
+fn slab_library_tag_suggestion_stats(
+    sample_cap: Option<usize>,
+) -> CmdResult<pdf::library::tag_suggest::TagSuggestionStats> {
+    let result = (|| -> Result<_, LibraryError> {
+        let db = open_library_db()?;
+        pdf::library::tag_suggest::suggestion_stats(&db, sample_cap.unwrap_or(200))
+    })();
+    result.into()
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct SmartCollectionPatch {
     #[serde(default)]
@@ -3726,6 +4273,152 @@ fn slab_library_add_tag(
     result.into()
 }
 
+/// Update an existing tag's color (or clear it with `null`). Returns the
+/// updated tag row so the UI can swap it in without a full refetch. Rejects
+/// colors that aren't `#hex` / `hsl()` / `rgb()` shapes. v3.42.0 Atlas
+/// Tag-Color editing.
+#[tauri::command]
+fn slab_library_set_tag_color(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    color: Option<String>,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_tag_color(tag_id, color.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Rename a tag everywhere it is used. Returns the updated tag row so the UI
+/// can swap it in without a full refetch. Rejects an empty name or a name
+/// already taken by a different tag. v3.43.0 Atlas Tag-Rename.
+#[tauri::command]
+fn slab_library_rename_tag(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    new_name: String,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.rename_tag(tag_id, &new_name)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Set (or clear) the freeform description on a tag. Pass `null` — or any
+/// string that trims to empty — to clear it back to NULL. Returns the updated
+/// tag row so the UI can swap it in without a full refetch. The backend trims
+/// the input and rejects oversized text (cap is `MAX_TAG_DESCRIPTION_LEN`
+/// Unicode scalars). v3.51.0 Atlas Tag-Descriptions.
+#[tauri::command]
+fn slab_library_set_tag_description(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    description: Option<String>,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_tag_description(tag_id, description.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Override a library document's displayed `title`. Pass `null` — or any string
+/// that trims to empty — to clear it back to NULL so the LibraryPanel falls
+/// back to the file's basename. Returns the refreshed [`DocumentRecord`] (with
+/// tags eager-loaded) so the UI can splice the card without a full
+/// list_documents round-trip. The backend trims input and rejects oversized
+/// text (cap is `MAX_DOC_TITLE_LEN` Unicode scalars). v3.55.0 Atlas Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_title(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    title: Option<String>,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_title(doc_id, title.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Set (or clear) the freeform `notes` on a library document. Pass `null` — or
+/// any string that trims to empty — to clear the column back to NULL so the
+/// inspector falls back to the empty-state placeholder. Returns the refreshed
+/// [`DocumentRecord`] (with tags eager-loaded) so the Doc-Inspector drawer can
+/// repaint without an extra `listDocuments` round-trip. The backend trims input
+/// and rejects oversized text (cap is `MAX_DOC_NOTES_LEN` Unicode scalars).
+/// v3.55.0 Atlas Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_notes(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    notes: Option<String>,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_notes(doc_id, notes.as_deref())
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Toggle the `starred` flag on a library document. Idempotent. Returns the
+/// refreshed [`DocumentRecord`] (with tags eager-loaded) so the UI can splice
+/// the card without an extra `listDocuments` round-trip. v3.55.0 Atlas
+/// Doc-Inspector.
+#[tauri::command]
+fn slab_library_set_doc_starred(
+    app: tauri::AppHandle,
+    doc_id: i64,
+    starred: bool,
+) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.set_doc_starred(doc_id, starred)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Fold `source_id` into `target_id`: re-point every document link from the
+/// source tag to the target, coalescing duplicates by the newer `applied_at`,
+/// then delete the source tag. Returns the surviving target row. This is the
+/// deliberate "make these the same tag" path that `rename_tag` rejects.
+/// v3.45.0 Atlas Tag-Merge.
+#[tauri::command]
+fn slab_library_merge_tags(
+    app: tauri::AppHandle,
+    source_id: i64,
+    target_id: i64,
+) -> CmdResult<TagRecord> {
+    let result = (|| -> Result<TagRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        db.merge_tags(source_id, target_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
 #[tauri::command]
 fn slab_library_set_doc_tags(
     app: tauri::AppHandle,
@@ -3759,6 +4452,44 @@ fn slab_library_remove_tag(app: tauri::AppHandle, tag_id: i64) -> CmdResult<()> 
     let result = (|| -> Result<(), LibraryError> {
         let mut db = open_library_db()?;
         db.remove_tag(tag_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Bulk apply a tag (by name, find-or-created) across many documents in one
+/// atomic action. Returns the resolved tag plus affected/total counts so the
+/// UI can report "Applied to N of M". v3.41.0 Atlas Bulk Tag-Apply.
+#[tauri::command]
+fn slab_library_bulk_apply_tag(
+    app: tauri::AppHandle,
+    tag_name: String,
+    doc_ids: Vec<i64>,
+) -> CmdResult<pdf::library::bulk_tag::BulkTagResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::bulk_tag::apply_tag_to_docs(&mut db, &tag_name, &doc_ids)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Bulk remove a tag (by id) from many documents in one atomic action. The
+/// tag row itself is preserved — only the named doc links are detached.
+/// v3.41.0 Atlas Bulk Tag-Apply.
+#[tauri::command]
+fn slab_library_bulk_remove_tag(
+    app: tauri::AppHandle,
+    tag_id: i64,
+    doc_ids: Vec<i64>,
+) -> CmdResult<pdf::library::bulk_tag::BulkTagResult> {
+    let result = (|| -> Result<_, LibraryError> {
+        let mut db = open_library_db()?;
+        pdf::library::bulk_tag::remove_tag_from_docs(&mut db, tag_id, &doc_ids)
     })();
     if result.is_ok() {
         emit_library_changed(&app);
@@ -3839,6 +4570,61 @@ fn slab_library_ocr_queue_run_all(
     })();
     if result.is_ok() {
         emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Per-`ocr_state` count snapshot for the OCR Queue Panel's dashboard.
+/// Pure read; safe to poll. v3.52.0 Atlas OCR-Queue Slice 3.
+#[tauri::command]
+fn slab_library_ocr_queue_stats() -> CmdResult<OcrQueueStats> {
+    let result = (|| -> Result<OcrQueueStats, LibraryError> {
+        let db = open_library_db()?;
+        do_ocr_queue_stats(&db)
+    })();
+    result.into()
+}
+
+/// Every `ocr_failed` document, newest first, with `ocr_error`
+/// populated so the failure inbox can render a reason per row.
+/// v3.52.0 Atlas OCR-Queue Slice 4.
+#[tauri::command]
+fn slab_library_ocr_queue_list_failed() -> CmdResult<Vec<DocumentRecord>> {
+    let result = (|| -> Result<Vec<DocumentRecord>, LibraryError> {
+        let db = open_library_db()?;
+        do_ocr_queue_list_failed(&db)
+    })();
+    result.into()
+}
+
+/// Re-queue one document — flip `ocr_done` / `ocr_failed` / `ocr_pending`
+/// back to `scanned` and clear `ocr_error` + `ocr_output_path` so the
+/// next `run_one` picks it up fresh. Returns the updated row.
+/// v3.52.0 Atlas OCR-Queue Slice 2.
+#[tauri::command]
+fn slab_library_ocr_queue_requeue(app: tauri::AppHandle, doc_id: i64) -> CmdResult<DocumentRecord> {
+    let result = (|| -> Result<DocumentRecord, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_requeue_doc(&mut db, doc_id)
+    })();
+    if result.is_ok() {
+        emit_library_changed(&app);
+    }
+    result.into()
+}
+
+/// Re-queue every `ocr_failed` document in one shot. Returns the number
+/// of rows that flipped. v3.52.0 Atlas OCR-Queue Slice 2 companion.
+#[tauri::command]
+fn slab_library_ocr_queue_requeue_all_failed(app: tauri::AppHandle) -> CmdResult<usize> {
+    let result = (|| -> Result<usize, LibraryError> {
+        let mut db = open_library_db()?;
+        do_ocr_queue_requeue_all_failed(&mut db)
+    })();
+    if let Ok(n) = &result {
+        if *n > 0 {
+            emit_library_changed(&app);
+        }
     }
     result.into()
 }
@@ -4392,27 +5178,57 @@ async fn slab_marketplace_index() -> MarketplaceFetchResult {
 ///
 /// The frontend is expected to have already filtered out untrusted
 /// entries; we re-verify here as defence-in-depth.
+///
+/// Side effect (v3.39 Slice 54): every outcome (signature failure,
+/// download / extract failure, success / update success) is recorded
+/// as one row in [`marketplace::InstallLog`] at
+/// `~/.slab/marketplace-history.sqlite`. Log open failures are
+/// swallowed (warned to stderr) — losing audit history must never
+/// block an install the user just clicked.
 #[tauri::command]
 async fn slab_marketplace_install(
     entry: marketplace::IndexEntry,
     reg: tauri::State<'_, plugins::PluginRegistry>,
 ) -> Result<marketplace::InstallReport, String> {
+    // Capture prior version BEFORE the install (the install pipeline
+    // doesn't read manifests; the registry does). This is the value
+    // we'll log as `prior_version` on an update row.
+    let prior_version = reg
+        .get(&entry.id)
+        .and_then(|p| p.manifest.map(|m| m.version));
+
     // 1) Signature check — never trust unsigned input.
-    marketplace::verify_with_maintainer_key(&entry)
-        .map_err(|e| format!("signature check failed: {e}"))?;
+    if let Err(e) = marketplace::verify_with_maintainer_key(&entry) {
+        let msg = format!("signature check failed: {e}");
+        record_install_failure(&entry.id, &entry.version, &msg);
+        return Err(msg);
+    }
 
     // 2) Resolve plugins root (HOME-rooted).
-    let plugins_root = plugins::default_plugins_root()
-        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    let plugins_root = match plugins::default_plugins_root() {
+        Some(p) => p,
+        None => {
+            let msg = "HOME env var not set; cannot locate ~/.slab/plugins".to_string();
+            record_install_failure(&entry.id, &entry.version, &msg);
+            return Err(msg);
+        }
+    };
     if let Err(e) = std::fs::create_dir_all(&plugins_root) {
-        return Err(format!("could not create plugins dir: {e}"));
+        let msg = format!("could not create plugins dir: {e}");
+        record_install_failure(&entry.id, &entry.version, &msg);
+        return Err(msg);
     }
 
     // 3) Download + extract via the install pipeline.
     let client = marketplace::default_client();
-    let report = marketplace::install_from_entry(&client, &entry, &plugins_root)
-        .await
-        .map_err(|e| e.to_string())?;
+    let report = match marketplace::install_from_entry(&client, &entry, &plugins_root).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            record_install_failure(&entry.id, &entry.version, &msg);
+            return Err(msg);
+        }
+    };
 
     // 4) Refresh the registry so the new plugin appears in the UI.
     let enabled = plugins::default_state_path()
@@ -4421,6 +5237,31 @@ async fn slab_marketplace_install(
         .unwrap_or_default();
     reg.discover(&plugins_root, &enabled);
 
+    // 5) Append a success row. The install pipeline's
+    // `replaced_existing` flag is the source of truth for whether we
+    // overwrote a prior copy on disk; the registry-derived
+    // `prior_version` is what the UI displays. Both can drift if the
+    // user mutated `~/.slab/plugins/` out of band — we trust the
+    // pipeline flag for the action discriminant.
+    let logged_prior = if report.replaced_existing {
+        prior_version.as_deref()
+    } else {
+        None
+    };
+    if let Err(e) = open_install_log_and(|log| {
+        log.record_install(
+            &report.id,
+            &report.version,
+            "marketplace",
+            report.bytes_written,
+            report.files_extracted,
+            logged_prior,
+        )
+        .map(|_| ())
+    }) {
+        eprintln!("[slab] install log write failed: {e}");
+    }
+
     Ok(report)
 }
 
@@ -4428,11 +5269,20 @@ async fn slab_marketplace_install(
 /// the install module's uninstall is pure-filesystem. After removal,
 /// re-discover so the registry drops the entry. Returns `false` if the
 /// plugin wasn't installed in the first place.
+///
+/// Side effect (v3.39 Slice 54): on successful removal we append one
+/// `uninstall` row to [`marketplace::InstallLog`] carrying the version
+/// that was just deleted (resolved from the registry BEFORE
+/// removal). Log open failures are swallowed.
 #[tauri::command]
 fn slab_marketplace_uninstall(
     id: String,
     reg: tauri::State<'_, plugins::PluginRegistry>,
 ) -> Result<bool, String> {
+    // Capture prior version BEFORE removing — once the dir is gone
+    // the registry can't tell us what version we just deleted.
+    let prior_version = reg.get(&id).and_then(|p| p.manifest.map(|m| m.version));
+
     let plugins_root = plugins::default_plugins_root()
         .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
     let removed = marketplace::uninstall_plugin(&plugins_root, &id).map_err(|e| e.to_string())?;
@@ -4442,8 +5292,1584 @@ fn slab_marketplace_uninstall(
             .map(plugins::read_enabled_state)
             .unwrap_or_default();
         reg.discover(&plugins_root, &enabled);
+
+        // Log the uninstall. If the plugin had no readable manifest
+        // (registry returned None for version), use the literal
+        // "unknown" so the row is still queryable by id.
+        let ver = prior_version.as_deref().unwrap_or("unknown");
+        if let Err(e) = open_install_log_and(|log| log.record_uninstall(&id, ver).map(|_| ())) {
+            eprintln!("[slab] install log write failed: {e}");
+        }
     }
     Ok(removed)
+}
+
+/// Open the default install log, run `f` against it, return the
+/// result. Centralises the open + path-resolve boilerplate so the
+/// install / uninstall commands stay tight. Errors propagate as
+/// [`marketplace::InstallLogError`] so the caller can decide whether
+/// to surface or swallow.
+fn open_install_log_and<F>(f: F) -> Result<(), marketplace::InstallLogError>
+where
+    F: FnOnce(&mut marketplace::InstallLog) -> Result<(), marketplace::InstallLogError>,
+{
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path)?;
+    f(&mut log)
+}
+
+/// Record an install/update failure to the install log. Best-effort:
+/// any failure to open or write the log is logged to stderr and
+/// swallowed — we never want a logging failure to mask the install
+/// failure being reported back to the user.
+fn record_install_failure(plugin_id: &str, version: &str, error_msg: &str) {
+    if let Err(e) = open_install_log_and(|log| {
+        log.record_failure(plugin_id, version, error_msg)
+            .map(|_| ())
+    }) {
+        eprintln!("[slab] install log failure write failed: {e}");
+    }
+}
+
+// ─── Install log read surface (v3.39 Slice 55) ──────────────────────
+
+/// Per-plugin install/uninstall/failure timeline, newest first,
+/// capped at `limit`. Returns an empty Vec for unknown plugin ids.
+/// Used by PluginDetailDrawer's Activity section.
+#[tauri::command]
+fn slab_marketplace_install_events(
+    plugin_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<marketplace::InstallEvent>, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.list_events(&plugin_id, limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
+}
+
+/// Corpus-wide recent install events, newest first, capped at `limit`.
+/// Used by the PluginsPanel toolbar "Recent installs" drawer.
+#[tauri::command]
+fn slab_marketplace_install_history_recent(
+    limit: Option<i64>,
+) -> Result<Vec<marketplace::InstallEvent>, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.list_recent(limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
+}
+
+/// Per-plugin counts of each install action kind. Powers the slim
+/// header pill on PluginDetailDrawer's Activity section
+/// ("Installed 3 · 1 update · 0 failures") in one round-trip.
+#[tauri::command]
+fn slab_marketplace_plugin_install_stats(
+    plugin_id: String,
+) -> Result<marketplace::InstallStats, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.install_stats(&plugin_id).map_err(|e| e.to_string())
+}
+
+/// Slim summary of the install log as a whole. Used by the Recent
+/// installs drawer's header to render "N events across X days"
+/// without paging the timeline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallLogSummary {
+    pub total_events: i64,
+    pub distinct_plugins: i64,
+    /// Unix seconds of the oldest row, or `None` if the log is
+    /// empty.
+    pub oldest_occurred_at: Option<i64>,
+}
+
+/// Summary of the install log — total event count, distinct plugin
+/// count, oldest event timestamp. Cheap (three small queries) and
+/// safe to call on every drawer open.
+#[tauri::command]
+fn slab_marketplace_install_log_summary() -> Result<InstallLogSummary, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    Ok(InstallLogSummary {
+        total_events: log.total_event_count().map_err(|e| e.to_string())?,
+        distinct_plugins: log.distinct_plugin_count().map_err(|e| e.to_string())?,
+        oldest_occurred_at: log.oldest_occurred_at().map_err(|e| e.to_string())?,
+    })
+}
+
+/// Trim the install log to events newer than `retain_days` days
+/// before now. Returns the number of rows pruned. Used by the
+/// Recent installs drawer's "Clear older than 90d" affordance and
+/// (later) by a background task on app start.
+///
+/// `retain_days` is clamped to a minimum of 1 so a caller can't
+/// accidentally wipe the whole log via `prune(0)` — to clear it
+/// entirely, the user uses the explicit "Clear all" action (not
+/// shipped here; pruning is the safer default surface).
+#[tauri::command]
+fn slab_marketplace_install_log_prune(retain_days: i64) -> Result<usize, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let days = retain_days.max(1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cutoff = now - days * 86_400;
+    log.prune_older_than(cutoff).map_err(|e| e.to_string())
+}
+
+// ─── Install log export surface (v3.39 Slice 61) ────────────────────
+
+/// Write the install log to disk as RFC-4180 CSV, filtered by an
+/// optional `[since_unix, until_unix]` window. The frontend gathers
+/// the destination from a native save-as dialog and passes the
+/// absolute path here so the Tauri layer owns the disk I/O (the
+/// frontend's @tauri-apps/plugin-fs scope doesn't cover arbitrary
+/// user-chosen paths). Same approach as
+/// `slab_hopper_export_backfill_csv`.
+///
+/// `limit` caps the number of rows written (default = 100_000); the
+/// install log is small in practice but a defensive cap protects
+/// against a runaway log eating a user's disk on export.
+///
+/// Returns the byte count actually written so the UI toast can say
+/// "Exported 42 events (3.1 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+fn slab_marketplace_install_log_export_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let events = log
+        .list_events_between(since_unix, until_unix, limit.unwrap_or(100_000))
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::install_log_to_csv(&events, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the install log to disk as a pretty-printed JSON envelope,
+/// filtered by an optional `[since_unix, until_unix]` window.
+/// Mirrors [`slab_marketplace_install_log_export_csv`] but emits the
+/// [`marketplace::install_log::InstallLogExportEnvelope`] shape (with
+/// schema_version + generated_at_iso + window-bounds + events array).
+///
+/// `limit` caps the number of rows written (same default as CSV).
+/// Returns the byte count actually written.
+///
+/// Idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let events = log
+        .list_events_between(since_unix, until_unix, limit.unwrap_or(100_000))
+        .map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::install_log_to_json(&events, since_unix, until_unix);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Install log filtered reader (v3.39 Slice 74) ───────────────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_list_filtered`].
+/// `total_returned` is the row count actually delivered (post-limit) so
+/// the UI can render "Showing N of M (limit reached)" copy when the
+/// query truncated; `limit_used` echoes the effective limit so the
+/// caller doesn't have to remember which default ran when it left
+/// `limit` unset.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallEventFilteredResult {
+    pub events: Vec<marketplace::install_log::InstallEvent>,
+    pub total_returned: i64,
+    pub limit_used: i64,
+}
+
+/// Read the install log with the four-axis filter exposed by
+/// [`marketplace::InstallLog::list_events_filtered`]: optional
+/// time-window (`since_unix` / `until_unix`), optional `actions` set
+/// (case-sensitive lowercase tokens: "install" / "update" /
+/// "uninstall" / "failed"), and optional `plugin_id_substr`
+/// (case-insensitive). Default limit is 500 — large enough for the
+/// drawer's scroll surface, small enough that an absurdly long
+/// filter doesn't accidentally drag a 50k-row table into IPC.
+///
+/// Unknown action tokens are silently dropped — the storage layer's
+/// `InstallAction::parse` treats unknown strings as `Failed` but we
+/// don't want a TS typo to widen the result set; the explicit drop
+/// here makes "asked for nothing valid" yield "no filter" rather
+/// than "secret extra filter for failures".
+#[tauri::command]
+fn slab_marketplace_install_log_list_filtered(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    actions: Option<Vec<String>>,
+    plugin_id_substr: Option<String>,
+    limit: Option<i64>,
+) -> Result<InstallEventFilteredResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+
+    // Parse the action tokens. Drop anything that doesn't round-trip
+    // exactly so a TS typo can't widen the result.
+    let parsed_actions: Option<Vec<marketplace::install_log::InstallAction>> =
+        actions.map(|toks| {
+            toks.iter()
+                .filter_map(|t| match t.as_str() {
+                    "install" => Some(marketplace::install_log::InstallAction::Install),
+                    "update" => Some(marketplace::install_log::InstallAction::Update),
+                    "uninstall" => Some(marketplace::install_log::InstallAction::Uninstall),
+                    "failed" => Some(marketplace::install_log::InstallAction::Failed),
+                    _ => None,
+                })
+                .collect()
+        });
+
+    let limit = limit.unwrap_or(500);
+    let events = log
+        .list_events_filtered(
+            since_unix,
+            until_unix,
+            parsed_actions.as_deref(),
+            plugin_id_substr.as_deref(),
+            limit,
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(InstallEventFilteredResult {
+        total_returned: events.len() as i64,
+        limit_used: limit,
+        events,
+    })
+}
+
+/// Return the most-recently-active distinct plugin_ids in the install
+/// log, newest activity first. Powers the filter bar's plugin
+/// autocomplete in the Recent installs drawer. Default `limit` = 25,
+/// which covers the typical paralegal install footprint without
+/// dragging a giant id list across IPC; the drawer caches the result
+/// for the lifetime of the open session.
+#[tauri::command]
+fn slab_marketplace_install_log_recent_plugin_ids(
+    limit: Option<i64>,
+) -> Result<Vec<String>, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    log.recent_plugin_ids(limit.unwrap_or(25))
+        .map_err(|e| e.to_string())
+}
+
+// ─── Per-plugin histogram aggregate (v3.40 Slice 87) ────────────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_plugin_histogram`].
+/// Carries the rows plus the effective window + limit used, so the UI
+/// can render "Showing top 25 plugins in the last 30d" without remembering
+/// which defaults ran when the caller left the args unset.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginHistogramResult {
+    pub rows: Vec<marketplace::PluginHistogramRow>,
+    pub since_unix: Option<i64>,
+    pub until_unix: Option<i64>,
+    pub limit_used: i64,
+    /// Sum of every row's `total` — the grand total of events within
+    /// the window across the returned plugins. Lets the UI render
+    /// "12 events across 3 plugins" without re-summing client-side.
+    pub grand_total: i64,
+}
+
+/// Aggregate the install log by plugin_id within an optional time
+/// window. Returns the per-plugin counts (installs / updates /
+/// uninstalls / failures / total / last_occurred_at) ordered by
+/// total activity descending, capped at `limit` (default 25).
+///
+/// Powers the Recent installs drawer's "Top plugins" panel — the
+/// answer to "which plugins did I install the most this month?".
+/// Cheap (one indexed GROUP BY scan + a small in-memory sort).
+#[tauri::command]
+fn slab_marketplace_install_log_plugin_histogram(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<PluginHistogramResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .plugin_histogram(since_unix, until_unix, limit)
+        .map_err(|e| e.to_string())?;
+    let grand_total = rows.iter().map(|r| r.total).sum();
+    Ok(PluginHistogramResult {
+        rows,
+        since_unix,
+        until_unix,
+        limit_used: limit,
+        grand_total,
+    })
+}
+
+// ─── Top plugins histogram export (v3.40 round-21 Slice 100) ─────────
+
+/// Write the top-plugins histogram to disk as RFC-4180 CSV, filtered
+/// by an optional `[since_unix, until_unix]` window. Mirrors
+/// [`slab_marketplace_install_log_export_csv`] but emits the
+/// per-plugin aggregate shape (one row per distinct plugin) rather
+/// than the raw event log.
+///
+/// `path` is an absolute filesystem path the frontend obtains from
+/// `@tauri-apps/plugin-dialog` save() so the write bypasses the
+/// default plugin-fs scope (which doesn't cover arbitrary
+/// user-chosen paths). Same approach as
+/// `slab_marketplace_install_log_export_csv`.
+///
+/// `limit` caps the number of rows written (default = server's
+/// histogram default of 25). The histogram itself is small in
+/// practice (a typical paralegal install footprint fits well under
+/// 100 plugins), but the cap also clamps the aggregate query at
+/// the storage boundary so a runaway log doesn't drag a giant grid
+/// through IPC just to be filtered down at write time.
+///
+/// Returns the byte count actually written so the UI toast can say
+/// "Exported 12 plugins (1.8 KB)" without re-reading the file.
+///
+/// Idempotent — overwrites if the target file exists. The frontend's
+/// save dialog handles overwrite confirmation, so we don't double-
+/// confirm here.
+#[tauri::command]
+fn slab_marketplace_install_log_export_histogram_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_histogram(since_unix, until_unix, limit.unwrap_or(25))
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::plugin_histogram_to_csv(&rows, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the top-plugins histogram to disk as a pretty-printed JSON
+/// envelope, filtered by an optional `[since_unix, until_unix]`
+/// window. Mirrors [`slab_marketplace_install_log_export_histogram_csv`]
+/// but emits the [`marketplace::install_log::PluginHistogramExportEnvelope`]
+/// shape (schema_version + generated_at_iso + window-bounds +
+/// row_count + grand_total + rows array).
+///
+/// `limit` caps the number of rows written (same default as the
+/// CSV command — 25, matching the server's histogram default).
+/// Returns the byte count actually written.
+///
+/// Idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_histogram_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_histogram(since_unix, until_unix, limit.unwrap_or(25))
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = rows.iter().map(|r| r.total).sum();
+    let envelope = marketplace::install_log::plugin_histogram_to_json(
+        &rows,
+        since_unix,
+        until_unix,
+        grand_total,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Activity timeline aggregate + export surface (Slice 106) ────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_activity_timeline`].
+/// Carries the buckets plus the effective window + granularity + the
+/// grand_total so the UI can render "Showing 14 daily buckets, 87
+/// events total" without re-summing client-side.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ActivityTimelineResult {
+    pub buckets: Vec<marketplace::ActivityBucket>,
+    pub since_unix: Option<i64>,
+    pub until_unix: Option<i64>,
+    pub granularity: marketplace::TimeBucketGranularity,
+    /// Sum of every bucket's `total` — the corpus-wide event count
+    /// within the window. Lets the UI render "87 events across 14
+    /// buckets" without re-summing client-side.
+    pub grand_total: i64,
+}
+
+/// Aggregate the install log by calendar bucket (day / week / month)
+/// within an optional time window. Returns one
+/// [`marketplace::ActivityBucket`] per non-empty bucket, ordered
+/// ASCENDING by `bucket_start_unix` so the UI renders the timeline
+/// left-to-right.
+///
+/// Powers the Recent installs drawer's "Activity over time" panel
+/// — the answer to "WHEN was install activity happening?" (a
+/// complementary axis to the slice-87 "Top plugins" histogram which
+/// answers "WHICH plugins were active?").
+///
+/// `granularity` defaults to [`marketplace::TimeBucketGranularity::Day`]
+/// when omitted — the most common UI default for the typical "last
+/// 30 days" view. Cheap (one indexed scan + a small in-memory bucket
+/// + sort).
+#[tauri::command]
+fn slab_marketplace_install_log_activity_timeline(
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+) -> Result<ActivityTimelineResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let buckets = log
+        .activity_timeline(since_unix, until_unix, granularity)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = buckets.iter().map(|b| b.total).sum();
+    Ok(ActivityTimelineResult {
+        buckets,
+        since_unix,
+        until_unix,
+        granularity,
+        grand_total,
+    })
+}
+
+/// Write the activity timeline to disk as RFC-4180 CSV, filtered by
+/// an optional `[since_unix, until_unix]` window at the requested
+/// granularity. Mirrors the histogram CSV export shape (slice 100)
+/// but emits the per-bucket activity grid instead of the per-plugin
+/// aggregate.
+///
+/// `path` is an absolute filesystem path the frontend obtains from
+/// `@tauri-apps/plugin-dialog` save() so the write bypasses the
+/// default plugin-fs scope.
+///
+/// `granularity` defaults to Day when omitted — same default as the
+/// read endpoint above so "export the timeline I'm looking at" is
+/// the natural reading without remembering a custom export
+/// granularity.
+///
+/// Returns the byte count actually written. Idempotent — overwrites
+/// if the target file exists. Creates parent dirs if missing.
+#[tauri::command]
+fn slab_marketplace_install_log_export_activity_timeline_csv(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let buckets = log
+        .activity_timeline(since_unix, until_unix, granularity)
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::activity_timeline_to_csv(&buckets, granularity, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the activity timeline to disk as a pretty-printed JSON
+/// envelope, filtered by an optional `[since_unix, until_unix]`
+/// window at the requested granularity. Mirrors the histogram JSON
+/// export (slice 100) but emits the
+/// [`marketplace::install_log::ActivityTimelineExportEnvelope`] shape
+/// (schema_version + generated_at_iso + granularity + window-bounds +
+/// bucket_count + grand_total + buckets array).
+///
+/// Same defaults as the CSV variant; returns the byte count actually
+/// written; idempotent — overwrites if the target file exists.
+#[tauri::command]
+fn slab_marketplace_install_log_export_activity_timeline_json(
+    path: String,
+    since_unix: Option<i64>,
+    until_unix: Option<i64>,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let buckets = log
+        .activity_timeline(since_unix, until_unix, granularity)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = buckets.iter().map(|b| b.total).sum();
+    let envelope = marketplace::install_log::activity_timeline_to_json(
+        &buckets,
+        granularity,
+        since_unix,
+        until_unix,
+        grand_total,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─── Activity bucket drilldown surface (Slice 112) ───────────────────
+
+/// Wire payload returned by [`slab_marketplace_install_log_bucket_drilldown`].
+/// Carries the per-plugin rows plus the bucket coordinates + the
+/// `grand_total` so the UI can render "12 plugins, 87 events total
+/// in this day" without re-summing client-side.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BucketDrilldownResult {
+    pub rows: Vec<marketplace::PluginHistogramRow>,
+    pub bucket_start_unix: i64,
+    pub granularity: marketplace::TimeBucketGranularity,
+    /// Sum of every row's `total` — the corpus-wide event count
+    /// within the bucket. Lets the UI render "87 events across 12
+    /// plugins" without re-summing client-side.
+    pub grand_total: i64,
+}
+
+/// Per-plugin breakdown of install-log activity within a single
+/// activity-timeline bucket. Composes
+/// [`marketplace::InstallLog::bucket_drilldown`] (which composes
+/// `bucket_window_unix` with `plugin_histogram`) with the wire-layer
+/// log-open boilerplate.
+///
+/// `bucket_start_unix` must come from an `activity_timeline` bucket
+/// (i.e. already calendar-floored to the granularity's boundary).
+/// `granularity` defaults to Day when omitted — same default as the
+/// activity-timeline read endpoint so "drill into the timeline I'm
+/// looking at" is the natural reading.
+///
+/// `limit` defaults to 25 — same default as the histogram + drilldown
+/// already use across the install-log read surface; large enough that
+/// the typical bucket fits, small enough that a pathologically-busy
+/// day doesn't drag a giant grid into IPC.
+#[tauri::command]
+fn slab_marketplace_install_log_bucket_drilldown(
+    bucket_start_unix: i64,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+    limit: Option<i64>,
+) -> Result<BucketDrilldownResult, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .bucket_drilldown(bucket_start_unix, granularity, limit)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = rows.iter().map(|r| r.total).sum();
+    Ok(BucketDrilldownResult {
+        rows,
+        bucket_start_unix,
+        granularity,
+        grand_total,
+    })
+}
+
+/// Write the bucket drilldown to disk as RFC-4180 CSV. Mirrors the
+/// activity-timeline CSV export (slice 106) but scopes to a SINGLE
+/// bucket and ships the per-plugin breakdown.
+///
+/// Same defaults as the read endpoint above (granularity defaults to
+/// Day, limit to 25). Returns the byte count actually written;
+/// idempotent — overwrites if the target file exists; creates parent
+/// dirs if missing.
+#[tauri::command]
+fn slab_marketplace_install_log_export_bucket_drilldown_csv(
+    path: String,
+    bucket_start_unix: i64,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .bucket_drilldown(bucket_start_unix, granularity, limit)
+        .map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::bucket_drilldown_to_csv(
+        &rows,
+        bucket_start_unix,
+        granularity,
+        true,
+    );
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the bucket drilldown to disk as a pretty-printed JSON
+/// envelope. Mirrors the activity-timeline JSON export (slice 106)
+/// but scopes to a SINGLE bucket and ships the
+/// [`marketplace::install_log::BucketDrilldownExportEnvelope`] shape.
+///
+/// Same defaults as the CSV variant; returns the byte count actually
+/// written; idempotent.
+#[tauri::command]
+fn slab_marketplace_install_log_export_bucket_drilldown_json(
+    path: String,
+    bucket_start_unix: i64,
+    granularity: Option<marketplace::TimeBucketGranularity>,
+    limit: Option<i64>,
+) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let granularity = granularity.unwrap_or(marketplace::TimeBucketGranularity::Day);
+    let limit = limit.unwrap_or(25);
+    let rows = log
+        .bucket_drilldown(bucket_start_unix, granularity, limit)
+        .map_err(|e| e.to_string())?;
+    let grand_total: i64 = rows.iter().map(|r| r.total).sum();
+    let envelope = marketplace::install_log::bucket_drilldown_to_json(
+        &rows,
+        bucket_start_unix,
+        granularity,
+        grand_total,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Wire payload returned by [`slab_marketplace_install_log_retention_policy`].
+/// Carries the user-visible retention window plus the floor + interval
+/// constants so the UI doesn't have to hard-code them on the TS side.
+/// The `last_auto_prune_at` slot reads `None` until the first auto-prune
+/// runs; the UI uses it to render a "Last auto-prune: <relative>" line
+/// in the Retention section.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallLogRetentionPolicy {
+    pub retain_days: i64,
+    pub last_auto_prune_at: Option<i64>,
+    pub default_retain_days: i64,
+    pub min_retain_days: i64,
+    pub auto_prune_interval_secs: i64,
+}
+
+/// Read the current install-log retention policy. Cheap (two key-value
+/// queries) and idempotent. The UI calls this on mount of the Retention
+/// section in RecentInstallsDrawer; the startup wiring uses
+/// [`slab_marketplace_install_log_auto_prune`] which has its own
+/// effective-policy logic.
+#[tauri::command]
+fn slab_marketplace_install_log_retention_policy() -> Result<InstallLogRetentionPolicy, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    Ok(InstallLogRetentionPolicy {
+        retain_days: log.retain_days().map_err(|e| e.to_string())?,
+        last_auto_prune_at: log.last_auto_prune_at().map_err(|e| e.to_string())?,
+        default_retain_days: marketplace::DEFAULT_RETAIN_DAYS,
+        min_retain_days: marketplace::MIN_RETAIN_DAYS,
+        auto_prune_interval_secs: marketplace::AUTO_PRUNE_INTERVAL_SECS,
+    })
+}
+
+/// Persist a new retention window in days. The storage layer clamps
+/// `days` to [`marketplace::MIN_RETAIN_DAYS`]; the command returns the
+/// stored value so the UI can surface the corrected value if the user
+/// typed something the floor rejects (e.g. 0 → clamps to 1).
+///
+/// Does NOT immediately run a prune — that's the user's separate
+/// action via [`slab_marketplace_install_log_auto_prune`] (or the
+/// existing `slab_marketplace_install_log_prune` for one-shot windows).
+/// Splitting the two responsibilities keeps "change the policy"
+/// reversible without altering the log.
+#[tauri::command]
+fn slab_marketplace_install_log_set_retention_days(days: i64) -> Result<i64, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.set_retain_days(days).map_err(|e| e.to_string())
+}
+
+/// Run the retention policy if the debounce window has elapsed.
+/// Returns the [`marketplace::AutoPruneOutcome`] (snake_case tagged
+/// "pruned" with rows_removed/retain_days/cutoff_unix, or "skipped"
+/// with next_due_unix). The startup wiring (Slice 66) calls this on
+/// app boot; the UI's "Run auto-prune now" affordance calls it on
+/// user click — both paths share the debounce so a recently-pruned
+/// log skips both the boot pass AND the manual click.
+///
+/// `force = Some(true)` bypasses the debounce — used by the UI's
+/// "Run now" button when the user explicitly wants to overwrite the
+/// debounce stamp. `None` or `Some(false)` preserves the debounce.
+#[tauri::command]
+fn slab_marketplace_install_log_auto_prune(
+    force: Option<bool>,
+) -> Result<marketplace::AutoPruneOutcome, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    if force.unwrap_or(false) {
+        // Force path: clear the debounce stamp so the next call
+        // executes the prune regardless of when the last one ran.
+        // The stamp gets re-written by the prune itself, so the next
+        // *unforced* call still honours the 24h window from this run.
+        log.set_last_auto_prune_at(0).map_err(|e| e.to_string())?;
+    }
+    log.auto_prune_if_due_now().map_err(|e| e.to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Per-plugin retention overrides surface (v3.39 round-24 — slice 117).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Wire payload returned by
+/// [`slab_marketplace_install_log_plugin_retention_overrides`].
+/// Carries every persisted override row plus the global window in
+/// force plus the floor constant so the UI can render "Override 7d
+/// (default 365d, min 1d)" without round-tripping for the constants.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginRetentionOverridesResult {
+    pub rows: Vec<marketplace::PluginRetentionOverride>,
+    /// Global window in force at read time — same value
+    /// [`slab_marketplace_install_log_retention_policy`] returns;
+    /// duplicated here so the Retention section UI doesn't have to
+    /// pair the two reads.
+    pub default_retain_days: i64,
+    /// Floor constant — same value as
+    /// [`marketplace::MIN_RETAIN_DAYS`]; the UI uses it to render
+    /// the input field's `min` attribute.
+    pub min_retain_days: i64,
+}
+
+/// Read every persisted per-plugin retention override. Cheap O(N)
+/// on the overrides table; in practice N is small (a handful of
+/// audit-critical or diagnostic plugins per workstation). The UI's
+/// Retention section calls this on mount + after every write.
+#[tauri::command]
+fn slab_marketplace_install_log_plugin_retention_overrides(
+) -> Result<PluginRetentionOverridesResult, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_retention_overrides()
+        .map_err(|e| e.to_string())?;
+    let default_retain_days = log.retain_days().map_err(|e| e.to_string())?;
+    Ok(PluginRetentionOverridesResult {
+        rows,
+        default_retain_days,
+        min_retain_days: marketplace::MIN_RETAIN_DAYS,
+    })
+}
+
+/// Persist a per-plugin retention override. Returns the value
+/// actually stored after the storage layer's
+/// [`marketplace::MIN_RETAIN_DAYS`] clamp so the UI can surface the
+/// corrected value if the user typed something the floor rejects
+/// (e.g. 0 → clamps to 1). Validates `plugin_id` is non-empty
+/// before touching the log — defensive bookkeeping on the wire
+/// boundary.
+///
+/// Does NOT immediately run a prune — that's a separate user
+/// action via [`slab_marketplace_install_log_auto_prune`]. Splitting
+/// the two responsibilities keeps "change the policy" reversible
+/// without altering the log.
+#[tauri::command]
+fn slab_marketplace_install_log_set_plugin_retention(
+    plugin_id: String,
+    days: i64,
+) -> Result<i64, String> {
+    if plugin_id.trim().is_empty() {
+        return Err("plugin_id must not be empty".into());
+    }
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.set_plugin_retention_days(plugin_id.trim(), days)
+        .map_err(|e| e.to_string())
+}
+
+/// Clear a per-plugin retention override. Returns `true` if a row
+/// was actually removed, `false` if no override existed (idempotent).
+/// The plugin falls back to the global window on its next
+/// auto-prune evaluation.
+#[tauri::command]
+fn slab_marketplace_install_log_clear_plugin_retention(plugin_id: String) -> Result<bool, String> {
+    if plugin_id.trim().is_empty() {
+        return Err("plugin_id must not be empty".into());
+    }
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.clear_plugin_retention(plugin_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+/// Write the per-plugin retention overrides list to disk as RFC-4180
+/// CSV. Mirrors the four sibling export commands (install-log,
+/// histogram, activity-timeline, bucket-drilldown). Returns the byte
+/// count actually written; idempotent — overwrites if the target file
+/// exists; creates parent dirs if missing.
+#[tauri::command]
+fn slab_marketplace_install_log_export_plugin_retention_csv(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_retention_overrides()
+        .map_err(|e| e.to_string())?;
+    let default_retain_days = log.retain_days().map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::plugin_retention_overrides_to_csv(
+        &rows,
+        default_retain_days,
+        true,
+    );
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the per-plugin retention overrides list to disk as a
+/// pretty-printed JSON envelope. Ships the
+/// [`marketplace::install_log::PluginRetentionExportEnvelope`] shape
+/// (schema_version + generated_at_iso + default_retain_days +
+/// min_retain_days + row_count + rows). Returns the byte count
+/// actually written; idempotent.
+#[tauri::command]
+fn slab_marketplace_install_log_export_plugin_retention_json(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log
+        .plugin_retention_overrides()
+        .map_err(|e| e.to_string())?;
+    let default_retain_days = log.retain_days().map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::plugin_retention_overrides_to_json(
+        &rows,
+        default_retain_days,
+        marketplace::MIN_RETAIN_DAYS,
+    );
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Auto-prune run history surface (v3.39 round-25 — slice 122).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Wire payload returned by
+/// [`slab_marketplace_install_log_auto_prune_runs`]. Carries the
+/// most-recent N history rows plus the total count plus the
+/// envelope-level attribution totals so the UI can render
+/// "Showing N of M total prunes · Cleared X events (Y from
+/// per-plugin overrides)" without re-querying or re-summing.
+///
+/// `total_count` is the underlying row count in the
+/// `install_log_auto_prune_runs` table; `rows` is capped at the
+/// `limit` the command was called with. When `total_count >
+/// rows.len()` the UI surfaces "Showing N of M" copy; otherwise
+/// "Showing all N".
+///
+/// `total_rows_removed` + `total_overrides_rows_removed` are summed
+/// across the RETURNED rows (NOT the underlying table) — the
+/// attribution split for what the user is currently looking at. A
+/// future "Show all" affordance would re-fetch with limit = -1 …
+/// in practice 25 is enough for the standard view; the
+/// envelope-level totals on the JSON export answer the corpus-wide
+/// version of the question.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AutoPruneRunsResult {
+    pub rows: Vec<marketplace::AutoPruneRun>,
+    /// Total number of rows in the underlying history table —
+    /// always `>= rows.len()`. The UI compares against `rows.len()`
+    /// to render "Showing N of M" vs "Showing all".
+    pub total_count: i64,
+    /// Sum of `rows[i].rows_removed` pre-computed across the
+    /// returned rows. Saves a UI re-sum on every render.
+    pub total_rows_removed: i64,
+    /// Sum of `rows[i].overrides_rows_removed` pre-computed across
+    /// the returned rows. Pairs with `total_rows_removed` for the
+    /// attribution split surfaced in the section header.
+    pub total_overrides_rows_removed: i64,
+}
+
+/// Read the auto-prune run history, newest first, capped at `limit`
+/// (default 25). The UI calls this on mount of the Retention
+/// section and after every prune (so the new entry appears
+/// immediately on the next render).
+///
+/// Cheap O(N) on a small indexed table; the default cap keeps the
+/// table view bounded for a workstation that has been running for
+/// years. A future "Show all" affordance can call with limit = -1
+/// to surface a synthetic "no cap" view (the storage layer treats
+/// negative limits as zero so the caller chooses; today the
+/// command floors negatives at 25 to keep the UI's expectations
+/// stable).
+#[tauri::command]
+fn slab_marketplace_install_log_auto_prune_runs(
+    limit: Option<i64>,
+) -> Result<AutoPruneRunsResult, String> {
+    let path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    let effective_limit = limit.unwrap_or(25).max(1);
+    let rows = log
+        .auto_prune_runs(effective_limit)
+        .map_err(|e| e.to_string())?;
+    let total_count = log.auto_prune_runs_total().map_err(|e| e.to_string())?;
+    let total_rows_removed: i64 = rows.iter().map(|r| r.rows_removed).sum();
+    let total_overrides_rows_removed: i64 = rows.iter().map(|r| r.overrides_rows_removed).sum();
+    Ok(AutoPruneRunsResult {
+        rows,
+        total_count,
+        total_rows_removed,
+        total_overrides_rows_removed,
+    })
+}
+
+/// Remove every row from the auto-prune run history. Idempotent —
+/// returns the number of rows actually deleted (zero on an
+/// already-empty table). The corresponding `install_events` table
+/// is NOT touched; this command clears the audit trail only, not
+/// the events themselves. The UI's "Clear history" affordance
+/// behind a confirm dialog calls this.
+#[tauri::command]
+fn slab_marketplace_install_log_clear_auto_prune_runs() -> Result<u64, String> {
+    let path = marketplace::default_log_path();
+    let mut log = marketplace::InstallLog::open(&path).map_err(|e| e.to_string())?;
+    log.clear_auto_prune_runs()
+        .map(|n| n as u64)
+        .map_err(|e| e.to_string())
+}
+
+/// Write the auto-prune run history to disk as RFC-4180 CSV.
+/// Mirrors the five sibling export commands (install-log,
+/// histogram, activity-timeline, bucket-drilldown, plugin-
+/// retention). Returns the byte count actually written; idempotent
+/// — overwrites if the target file exists; creates parent dirs if
+/// missing.
+///
+/// Reads ALL rows (no limit) — the UI's table view is capped at
+/// 25 for readability but an export should be comprehensive. The
+/// `auto_prune_runs(i64::MAX)` call costs one indexed scan on a
+/// table that grows by one row per day at most.
+#[tauri::command]
+fn slab_marketplace_install_log_export_auto_prune_runs_csv(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log.auto_prune_runs(i64::MAX).map_err(|e| e.to_string())?;
+    let csv = marketplace::install_log::auto_prune_runs_to_csv(&rows, true);
+    let bytes = csv.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write csv: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+/// Write the auto-prune run history to disk as a pretty-printed
+/// JSON envelope. Ships the
+/// [`marketplace::install_log::AutoPruneRunsExportEnvelope`] shape
+/// (schema_version + generated_at_iso + row_count +
+/// total_rows_removed + total_overrides_rows_removed + rows).
+/// Returns the byte count actually written; idempotent.
+///
+/// Like the CSV companion, exports ALL rows — no limit applied at
+/// the export boundary.
+#[tauri::command]
+fn slab_marketplace_install_log_export_auto_prune_runs_json(path: String) -> Result<u64, String> {
+    let log_path = marketplace::default_log_path();
+    let log = marketplace::InstallLog::open(&log_path).map_err(|e| e.to_string())?;
+    let rows = log.auto_prune_runs(i64::MAX).map_err(|e| e.to_string())?;
+    let envelope = marketplace::install_log::auto_prune_runs_to_json(&rows);
+    let json =
+        serde_json::to_string_pretty(&envelope).map_err(|e| format!("serialise json: {e}"))?;
+    let bytes = json.as_bytes();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for export: {e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write json: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Bulk updates (v3.39 round-15 — slices 69-70).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Tauri event channel for per-step bulk-update progress. The frontend
+/// subscribes to this while a `slab_marketplace_update_all` call is
+/// in flight to render a per-plugin progress overlay.
+const MARKETPLACE_UPDATE_PROGRESS_EVENT: &str = "marketplace://update-progress";
+
+/// One step of progress emitted on the `marketplace://update-progress`
+/// channel as the batch updater works through its target list. The
+/// frontend renders this as "Updating 2/5 · Acme PDF Tools…".
+///
+/// Three phases: `starting` (about to call install pipeline),
+/// `done` (install pipeline returned Ok, log row appended), `error`
+/// (install pipeline returned Err — the batch continues onto the next
+/// id, the failed id surfaces on the final report).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UpdateProgress {
+    /// Monotonic batch id (typically `Date.now()`) tying this stream
+    /// of events to the matching `slab_marketplace_update_all` call.
+    /// Lets multiple in-flight batches stay distinct in the event bus
+    /// even though we don't currently fire more than one at a time.
+    pub batch_id: i64,
+    /// 1-indexed position of the current target in the batch list.
+    pub index: usize,
+    /// Total number of targets in the batch.
+    pub total: usize,
+    /// Plugin id of the target this event refers to.
+    pub plugin_id: String,
+    /// `starting` | `done` | `error`.
+    pub phase: String,
+    /// Human-readable error message, only populated when `phase == "error"`.
+    pub error: Option<String>,
+}
+
+/// Outcome of one target in a `slab_marketplace_update_all` batch.
+/// `kind` is `succeeded` (full install pipeline returned Ok and the
+/// log row landed) or `failed` (signature / download / sha256 / extract
+/// returned Err; the failure row also landed in the install log).
+///
+/// The full prior + new version strings are carried for both kinds so
+/// the UI can render "Updated Acme PDF Tools 1.4.0 → 1.5.0" or
+/// "Failed to update Acme PDF Tools 1.4.0 → 1.5.0 (signature check
+/// failed)" without re-resolving from the registry.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UpdateOutcome {
+    Succeeded {
+        plugin_id: String,
+        prior_version: String,
+        new_version: String,
+        bytes_written: u64,
+    },
+    Failed {
+        plugin_id: String,
+        prior_version: String,
+        new_version: String,
+        error: String,
+    },
+}
+
+impl UpdateOutcome {
+    /// Returns the plugin id regardless of outcome kind — used by the
+    /// frontend reducer to key its state map.
+    pub fn plugin_id(&self) -> &str {
+        match self {
+            Self::Succeeded { plugin_id, .. } | Self::Failed { plugin_id, .. } => plugin_id,
+        }
+    }
+
+    /// True iff the outcome is `Succeeded`. Convenience for the
+    /// summary calculation.
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Succeeded { .. })
+    }
+}
+
+/// Final report from a `slab_marketplace_update_all` call. The wire
+/// shape is self-describing: succeeded + failed are derived counts so
+/// callers don't need to fold the outcomes list themselves.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BatchUpdateReport {
+    /// Echo of the batch_id the caller passed in (so a frontend that
+    /// fires multiple batches in close succession can correlate the
+    /// returned report with its in-flight tracking state).
+    pub batch_id: i64,
+    /// Per-target outcomes in the SAME order the caller passed in.
+    pub outcomes: Vec<UpdateOutcome>,
+    /// Count of `Succeeded` outcomes.
+    pub succeeded: usize,
+    /// Count of `Failed` outcomes.
+    pub failed: usize,
+    /// Sum of `bytes_written` across successful outcomes.
+    pub bytes_written: u64,
+}
+
+impl BatchUpdateReport {
+    fn from_outcomes(batch_id: i64, outcomes: Vec<UpdateOutcome>) -> Self {
+        let succeeded = outcomes.iter().filter(|o| o.is_success()).count();
+        let failed = outcomes.len() - succeeded;
+        let bytes_written = outcomes
+            .iter()
+            .filter_map(|o| match o {
+                UpdateOutcome::Succeeded { bytes_written, .. } => Some(*bytes_written),
+                _ => None,
+            })
+            .sum();
+        Self {
+            batch_id,
+            outcomes,
+            succeeded,
+            failed,
+            bytes_written,
+        }
+    }
+}
+
+/// `slab_marketplace_list_update_targets` — compute the deterministic
+/// set of installed plugins that have a newer version available in
+/// the freshly-fetched marketplace index. The frontend's "Updates
+/// available" banner renders directly from this plan.
+///
+/// Re-fetches the index every call so the user gets an up-to-date
+/// answer (the cache + offline-seed fallback in `fetch_index_with_cache`
+/// keeps the call cheap when the network is happy or absent). The
+/// returned plan is sorted by id ascending and carries the full
+/// IndexEntry per target so the banner can render without a second
+/// lookup, and the bulk-update call can feed `entry` straight into
+/// the install pipeline.
+///
+/// Errors surface as `Err(String)` only when the index can't be
+/// loaded at all (no network + no cache + no embedded seed) — every
+/// other code path returns `Ok(UpdatePlan)` with possibly an empty
+/// targets list.
+#[tauri::command]
+async fn slab_marketplace_list_update_targets(
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+) -> Result<marketplace::UpdatePlan, String> {
+    // 1) Resolve installed plugins (slim subset of registry).
+    let installed: Vec<marketplace::InstalledPlugin> = reg
+        .list()
+        .into_iter()
+        .filter_map(|p| {
+            let version = p.manifest.as_ref().map(|m| m.version.clone())?;
+            Some(marketplace::InstalledPlugin {
+                id: p.id.clone(),
+                version,
+            })
+        })
+        .collect();
+
+    // 2) Fetch the index. Use the same cache-aware path as the
+    //    Browse-tab refresh so we don't re-burn the network — the
+    //    user's banner reflects what the cache says when offline.
+    let client = marketplace::default_client();
+    let cache_path = marketplace::default_cache_path();
+    let outcome = marketplace::fetch_index_with_cache(
+        &client,
+        marketplace::DEFAULT_INDEX_URL,
+        cache_path.as_deref(),
+    )
+    .await;
+    let index = match outcome.index() {
+        Some(idx) => idx.clone(),
+        None => {
+            // Nothing we can show. Surface the underlying error so
+            // the banner UI can pin the cause to the user.
+            return Err(format!(
+                "marketplace index unavailable: {}",
+                match outcome {
+                    marketplace::FetchOutcome::Failed(e) => e.to_string(),
+                    _ => "no index, no cache, no embedded seed".to_string(),
+                }
+            ));
+        }
+    };
+
+    Ok(marketplace::plan_updates(&installed, &index.plugins))
+}
+
+/// `slab_marketplace_update_all` — bulk-update one or more plugins
+/// sequentially. The caller passes the list of ids (typically derived
+/// from a prior `slab_marketplace_list_update_targets` plan) plus a
+/// monotonic `batch_id` for correlating the progress event stream.
+///
+/// For EACH id in order:
+///   1. Re-resolve the matching IndexEntry from a fresh index call
+///      (defensive — the index might have moved between the planning
+///      call and this call). If the id is no longer in the index, the
+///      target lands as `Failed` with `error: "no longer in
+///      marketplace index"`.
+///   2. Emit `phase: "starting"` on the progress channel.
+///   3. Run the same verify→install pipeline `slab_marketplace_install`
+///      uses (signature, plugins-root, install_from_entry,
+///      reg.discover, install_log).
+///   4. Emit `phase: "done"` or `phase: "error"` accordingly.
+///
+/// The batch ALWAYS runs to completion — a failed update on id N
+/// does NOT stop ids N+1 onward. This matches every other batch
+/// updater UX (browser extensions, system package managers): the user
+/// expects "as many as can succeed will succeed".
+///
+/// Returns the structured [`BatchUpdateReport`] with per-id outcomes,
+/// counts of succeeded + failed, and total bytes written.
+#[tauri::command]
+async fn slab_marketplace_update_all(
+    app: tauri::AppHandle,
+    reg: tauri::State<'_, plugins::PluginRegistry>,
+    batch_id: i64,
+    plugin_ids: Vec<String>,
+) -> Result<BatchUpdateReport, String> {
+    use tauri::Emitter;
+
+    // Fetch the index ONCE up front; bulk update inside the loop
+    // resolves entries from this snapshot. If the index moves
+    // mid-batch we don't pick it up — that's the deliberate trade
+    // (avoid network races inside the loop).
+    let client = marketplace::default_client();
+    let cache_path = marketplace::default_cache_path();
+    let index_outcome = marketplace::fetch_index_with_cache(
+        &client,
+        marketplace::DEFAULT_INDEX_URL,
+        cache_path.as_deref(),
+    )
+    .await;
+    let index = match index_outcome.index() {
+        Some(idx) => idx.clone(),
+        None => {
+            return Err(format!(
+                "marketplace index unavailable: {}",
+                match index_outcome {
+                    marketplace::FetchOutcome::Failed(e) => e.to_string(),
+                    _ => "no index, no cache, no embedded seed".to_string(),
+                }
+            ))
+        }
+    };
+
+    let plugins_root = plugins::default_plugins_root()
+        .ok_or_else(|| "HOME env var not set; cannot locate ~/.slab/plugins".to_string())?;
+    if let Err(e) = std::fs::create_dir_all(&plugins_root) {
+        return Err(format!("could not create plugins dir: {e}"));
+    }
+
+    let total = plugin_ids.len();
+    let mut outcomes: Vec<UpdateOutcome> = Vec::with_capacity(total);
+
+    for (i, plugin_id) in plugin_ids.iter().enumerate() {
+        let index_pos = i + 1;
+
+        // Capture prior version BEFORE the install (registry-derived).
+        let prior_version = reg
+            .get(plugin_id)
+            .and_then(|p| p.manifest.map(|m| m.version))
+            .unwrap_or_default();
+
+        // Resolve the matching index entry from the snapshot.
+        let Some(entry) = index.plugins.iter().find(|e| &e.id == plugin_id) else {
+            // Index moved or the caller passed a stale id. Surface as
+            // failure without writing an install_log row — there's no
+            // versioned identity to log against here.
+            let _ = app.emit(
+                MARKETPLACE_UPDATE_PROGRESS_EVENT,
+                UpdateProgress {
+                    batch_id,
+                    index: index_pos,
+                    total,
+                    plugin_id: plugin_id.clone(),
+                    phase: "error".into(),
+                    error: Some("no longer in marketplace index".into()),
+                },
+            );
+            outcomes.push(UpdateOutcome::Failed {
+                plugin_id: plugin_id.clone(),
+                prior_version: prior_version.clone(),
+                new_version: String::new(),
+                error: "no longer in marketplace index".into(),
+            });
+            continue;
+        };
+
+        let new_version = entry.version.clone();
+
+        // Starting event.
+        let _ = app.emit(
+            MARKETPLACE_UPDATE_PROGRESS_EVENT,
+            UpdateProgress {
+                batch_id,
+                index: index_pos,
+                total,
+                plugin_id: plugin_id.clone(),
+                phase: "starting".into(),
+                error: None,
+            },
+        );
+
+        // Signature check.
+        if let Err(e) = marketplace::verify_with_maintainer_key(entry) {
+            let msg = format!("signature check failed: {e}");
+            record_install_failure(&entry.id, &entry.version, &msg);
+            let _ = app.emit(
+                MARKETPLACE_UPDATE_PROGRESS_EVENT,
+                UpdateProgress {
+                    batch_id,
+                    index: index_pos,
+                    total,
+                    plugin_id: plugin_id.clone(),
+                    phase: "error".into(),
+                    error: Some(msg.clone()),
+                },
+            );
+            outcomes.push(UpdateOutcome::Failed {
+                plugin_id: plugin_id.clone(),
+                prior_version,
+                new_version,
+                error: msg,
+            });
+            continue;
+        }
+
+        // Install pipeline.
+        let report = match marketplace::install_from_entry(&client, entry, &plugins_root).await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                record_install_failure(&entry.id, &entry.version, &msg);
+                let _ = app.emit(
+                    MARKETPLACE_UPDATE_PROGRESS_EVENT,
+                    UpdateProgress {
+                        batch_id,
+                        index: index_pos,
+                        total,
+                        plugin_id: plugin_id.clone(),
+                        phase: "error".into(),
+                        error: Some(msg.clone()),
+                    },
+                );
+                outcomes.push(UpdateOutcome::Failed {
+                    plugin_id: plugin_id.clone(),
+                    prior_version,
+                    new_version,
+                    error: msg,
+                });
+                continue;
+            }
+        };
+
+        // Refresh registry so the UI sees the bumped version.
+        let enabled = plugins::default_state_path()
+            .as_deref()
+            .map(plugins::read_enabled_state)
+            .unwrap_or_default();
+        reg.discover(&plugins_root, &enabled);
+
+        // Append install_log row (best-effort, same policy as the
+        // single-install command — losing audit never blocks an
+        // install the user just clicked).
+        let logged_prior = if report.replaced_existing && !prior_version.is_empty() {
+            Some(prior_version.as_str())
+        } else {
+            None
+        };
+        if let Err(e) = open_install_log_and(|log| {
+            log.record_install(
+                &report.id,
+                &report.version,
+                "marketplace",
+                report.bytes_written,
+                report.files_extracted,
+                logged_prior,
+            )
+            .map(|_| ())
+        }) {
+            eprintln!("[slab] install log write failed during update: {e}");
+        }
+
+        let _ = app.emit(
+            MARKETPLACE_UPDATE_PROGRESS_EVENT,
+            UpdateProgress {
+                batch_id,
+                index: index_pos,
+                total,
+                plugin_id: plugin_id.clone(),
+                phase: "done".into(),
+                error: None,
+            },
+        );
+
+        outcomes.push(UpdateOutcome::Succeeded {
+            plugin_id: report.id.clone(),
+            prior_version,
+            new_version: report.version.clone(),
+            bytes_written: report.bytes_written,
+        });
+    }
+
+    Ok(BatchUpdateReport::from_outcomes(batch_id, outcomes))
+}
+
+#[cfg(test)]
+mod marketplace_bulk_update_tests {
+    use super::*;
+
+    fn ok(id: &str, prior: &str, new: &str, bytes: u64) -> UpdateOutcome {
+        UpdateOutcome::Succeeded {
+            plugin_id: id.into(),
+            prior_version: prior.into(),
+            new_version: new.into(),
+            bytes_written: bytes,
+        }
+    }
+
+    fn fail(id: &str, prior: &str, new: &str, err: &str) -> UpdateOutcome {
+        UpdateOutcome::Failed {
+            plugin_id: id.into(),
+            prior_version: prior.into(),
+            new_version: new.into(),
+            error: err.into(),
+        }
+    }
+
+    #[test]
+    fn outcome_plugin_id_accessor_works_for_both_kinds() {
+        assert_eq!(ok("a", "1", "2", 0).plugin_id(), "a");
+        assert_eq!(fail("b", "1", "2", "boom").plugin_id(), "b");
+    }
+
+    #[test]
+    fn outcome_is_success_distinguishes_kinds() {
+        assert!(ok("a", "1", "2", 0).is_success());
+        assert!(!fail("b", "1", "2", "boom").is_success());
+    }
+
+    #[test]
+    fn batch_report_counts_succeed_and_fail_correctly() {
+        let outcomes = vec![
+            ok("a", "1.0.0", "1.0.1", 100),
+            fail("b", "2.0.0", "2.0.1", "sig"),
+            ok("c", "3.0.0", "3.1.0", 250),
+        ];
+        let report = BatchUpdateReport::from_outcomes(42, outcomes);
+        assert_eq!(report.batch_id, 42);
+        assert_eq!(report.succeeded, 2);
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.bytes_written, 350);
+        assert_eq!(report.outcomes.len(), 3);
+    }
+
+    #[test]
+    fn batch_report_handles_empty_outcomes() {
+        let report = BatchUpdateReport::from_outcomes(1, vec![]);
+        assert_eq!(report.succeeded, 0);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.bytes_written, 0);
+        assert!(report.outcomes.is_empty());
+    }
+
+    #[test]
+    fn batch_report_serializes_with_snake_case_tags() {
+        let report = BatchUpdateReport::from_outcomes(
+            7,
+            vec![
+                ok("a", "1.0.0", "1.0.1", 100),
+                fail("b", "1.0.0", "1.0.1", "download"),
+            ],
+        );
+        let json = serde_json::to_string(&report).expect("serialize");
+        // Snake_case tag is mandatory — the TS reducer narrows on this.
+        assert!(json.contains("\"kind\":\"succeeded\""), "got {json}");
+        assert!(json.contains("\"kind\":\"failed\""), "got {json}");
+        assert!(json.contains("\"batch_id\":7"));
+        assert!(json.contains("\"succeeded\":1"));
+        assert!(json.contains("\"failed\":1"));
+        assert!(json.contains("\"bytes_written\":100"));
+    }
+
+    #[test]
+    fn update_progress_serializes_with_snake_case_fields() {
+        let p = UpdateProgress {
+            batch_id: 9,
+            index: 2,
+            total: 5,
+            plugin_id: "com.example.hi".into(),
+            phase: "done".into(),
+            error: None,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"batch_id\":9"));
+        assert!(json.contains("\"plugin_id\":\"com.example.hi\""));
+        assert!(json.contains("\"phase\":\"done\""));
+        // error: None skipped under default serde (no skip_if), so the
+        // key is present as null — the TS reducer treats null + missing
+        // identically.
+        assert!(json.contains("\"error\":null"));
+    }
+
+    #[test]
+    fn update_progress_serializes_error_phase_with_message() {
+        let p = UpdateProgress {
+            batch_id: 1,
+            index: 1,
+            total: 1,
+            plugin_id: "a".into(),
+            phase: "error".into(),
+            error: Some("network down".into()),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"error\":\"network down\""));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -5167,6 +7593,42 @@ pub fn run() {
                     eprintln!("hopper: bootstrap failed, panel will be empty: {e}");
                 }
             }
+
+            // Marketplace install-log retention (v3.40 Slice 66): if the
+            // 24h debounce window has elapsed since the last auto-prune
+            // (or no prune has ever run), trim install-log rows older
+            // than the user's configured `retain_days` (default 365).
+            // Best-effort + non-fatal — if the log can't be opened
+            // (HOME unset, disk full, schema corruption) we log to
+            // stderr and Slab boots normally. The user's manual
+            // "Clear older than 90d" affordance keeps working
+            // regardless.
+            match marketplace::InstallLog::open(marketplace::default_log_path()) {
+                Ok(mut log) => match log.auto_prune_if_due_now() {
+                    Ok(marketplace::AutoPruneOutcome::Pruned {
+                        rows_removed,
+                        retain_days,
+                        ..
+                    }) => {
+                        if rows_removed > 0 {
+                            eprintln!(
+                                "marketplace install-log: auto-pruned {rows_removed} \
+                                 event(s) older than {retain_days} day(s)"
+                            );
+                        }
+                    }
+                    Ok(marketplace::AutoPruneOutcome::Skipped { .. }) => {
+                        // Debounce window not yet elapsed — silent skip.
+                    }
+                    Err(e) => {
+                        eprintln!("marketplace install-log: auto-prune failed: {e}");
+                    }
+                },
+                Err(e) => {
+                    eprintln!("marketplace install-log: could not open for auto-prune: {e}");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -5307,6 +7769,11 @@ pub fn run() {
             slab_beacon_search,
             slab_beacon_index_stats,
             slab_beacon_index_forget,
+            slab_beacon_index_list,
+            slab_beacon_index_forget_many,
+            slab_beacon_index_stats_by_model,
+            slab_beacon_index_find_stale,
+            slab_beacon_index_forget_stale,
             slab_beacon_pii_find,
             slab_beacon_pii_redact,
             slab_beacon_selection_action,
@@ -5319,10 +7786,24 @@ pub fn run() {
             slab_library_list_docs,
             slab_library_search,
             slab_library_list_tags,
+            slab_library_recently_used_tags,
+            slab_library_tag_usage_counts,
+            slab_library_delete_unused_tags,
+            slab_library_saved_view_save,
+            slab_library_saved_view_list,
+            slab_library_saved_view_delete,
+            slab_library_saved_view_rename,
+            slab_library_saved_view_update_filter,
+            slab_library_saved_view_duplicate,
+            slab_library_saved_view_set_pinned,
+            slab_library_saved_view_reorder,
             slab_collection_create,
             slab_collection_list,
             slab_collection_rename,
             slab_collection_delete,
+            slab_collection_set_color,
+            slab_collection_reorder,
+            slab_collection_duplicate,
             slab_collection_add_docs,
             slab_collection_remove_docs,
             slab_collection_list_docs,
@@ -5337,6 +7818,8 @@ pub fn run() {
             slab_personal_preset_list,
             slab_personal_preset_delete,
             slab_personal_preset_apply,
+            slab_personal_preset_rename,
+            slab_personal_preset_duplicate,
             slab_personal_presets_export,
             slab_personal_presets_import,
             slab_smart_folders_list,
@@ -5346,15 +7829,42 @@ pub fn run() {
             slab_library_suggestions_dismiss,
             slab_library_suggestions_accept,
             slab_library_search_log_count,
+            slab_library_recent_searches,
+            slab_library_clear_search_history,
+            slab_library_delete_search,
+            slab_library_index_stats,
+            slab_library_tag_suggestions_for_doc,
+            slab_library_tag_suggestions_bulk_for_untagged,
+            slab_library_tag_suggestion_accept,
+            slab_library_tag_suggestion_dismiss,
+            slab_library_tag_suggestion_undismiss_all,
+            slab_library_tag_suggestions_accept_bulk,
+            slab_library_tag_suggestions_list_dismissed,
+            slab_library_tag_suggestion_undismiss_one,
+            slab_library_tag_suggestions_bulk_for_filter,
+            slab_library_tag_suggestion_stats,
             slab_smart_collection_update,
             slab_library_add_tag,
+            slab_library_set_tag_color,
+            slab_library_rename_tag,
+            slab_library_set_tag_description,
+            slab_library_set_doc_title,
+            slab_library_set_doc_notes,
+            slab_library_set_doc_starred,
+            slab_library_merge_tags,
             slab_library_set_doc_tags,
+            slab_library_bulk_apply_tag,
+            slab_library_bulk_remove_tag,
             slab_library_remove_document,
             slab_library_remove_tag,
             slab_library_rescan_all,
             slab_library_ocr_queue_list_pending,
             slab_library_ocr_queue_run_one,
             slab_library_ocr_queue_run_all,
+            slab_library_ocr_queue_stats,
+            slab_library_ocr_queue_list_failed,
+            slab_library_ocr_queue_requeue,
+            slab_library_ocr_queue_requeue_all_failed,
             slab_library_auto_tag_one,
             slab_library_auto_tag_many,
             windows::slab_window_open,
@@ -5383,6 +7893,38 @@ pub fn run() {
             slab_marketplace_index,
             slab_marketplace_install,
             slab_marketplace_uninstall,
+            slab_marketplace_install_events,
+            slab_marketplace_install_history_recent,
+            slab_marketplace_plugin_install_stats,
+            slab_marketplace_install_log_summary,
+            slab_marketplace_install_log_prune,
+            slab_marketplace_install_log_export_csv,
+            slab_marketplace_install_log_export_json,
+            slab_marketplace_install_log_list_filtered,
+            slab_marketplace_install_log_recent_plugin_ids,
+            slab_marketplace_install_log_plugin_histogram,
+            slab_marketplace_install_log_export_histogram_csv,
+            slab_marketplace_install_log_export_histogram_json,
+            slab_marketplace_install_log_activity_timeline,
+            slab_marketplace_install_log_export_activity_timeline_csv,
+            slab_marketplace_install_log_export_activity_timeline_json,
+            slab_marketplace_install_log_bucket_drilldown,
+            slab_marketplace_install_log_export_bucket_drilldown_csv,
+            slab_marketplace_install_log_export_bucket_drilldown_json,
+            slab_marketplace_install_log_retention_policy,
+            slab_marketplace_install_log_set_retention_days,
+            slab_marketplace_install_log_auto_prune,
+            slab_marketplace_install_log_plugin_retention_overrides,
+            slab_marketplace_install_log_set_plugin_retention,
+            slab_marketplace_install_log_clear_plugin_retention,
+            slab_marketplace_install_log_export_plugin_retention_csv,
+            slab_marketplace_install_log_export_plugin_retention_json,
+            slab_marketplace_install_log_auto_prune_runs,
+            slab_marketplace_install_log_clear_auto_prune_runs,
+            slab_marketplace_install_log_export_auto_prune_runs_csv,
+            slab_marketplace_install_log_export_auto_prune_runs_json,
+            slab_marketplace_list_update_targets,
+            slab_marketplace_update_all,
             slab_beacon_voice_capabilities,
             slab_beacon_voice_list_voices,
             slab_beacon_voice_speak,
@@ -5414,9 +7956,24 @@ pub fn run() {
             crate::pdf::hopper::cmds::slab_hopper_get_rules,
             crate::pdf::hopper::cmds::slab_hopper_set_rules,
             crate::pdf::hopper::cmds::slab_hopper_test_rules,
+            crate::pdf::hopper::cmds::slab_hopper_rule_coverage,
+            crate::pdf::hopper::cmds::slab_hopper_sample_drilldown,
             crate::pdf::hopper::cmds::slab_hopper_plan_backfill,
             crate::pdf::hopper::cmds::slab_hopper_execute_backfill,
+            crate::pdf::hopper::cmds::slab_hopper_execute_backfill_async,
+            crate::pdf::hopper::cmds::slab_hopper_cancel_backfill,
             crate::pdf::hopper::cmds::slab_hopper_list_backfill_runs,
+            crate::pdf::hopper::cmds::slab_hopper_export_backfill_csv,
+            crate::pdf::hopper::cmds::slab_hopper_export_drilldown_csv,
+            crate::pdf::hopper::cmds::slab_hopper_export_drilldown_json,
+            crate::pdf::hopper::cmds::slab_hopper_export_coverage_csv,
+            crate::pdf::hopper::cmds::slab_hopper_export_coverage_json,
+            crate::pdf::hopper::cmds::slab_hopper_filter_coverage,
+            crate::pdf::hopper::cmds::slab_hopper_plan_dead_rule_reorder,
+            crate::pdf::hopper::cmds::slab_hopper_batch_reorder_dead_rules,
+            crate::pdf::hopper::cmds::slab_hopper_summarize_reorder_effect,
+            crate::pdf::hopper::cmds::slab_hopper_summarize_undo_ring,
+            crate::pdf::hopper::cmds::slab_hopper_compute_undo_jump_plan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slab");

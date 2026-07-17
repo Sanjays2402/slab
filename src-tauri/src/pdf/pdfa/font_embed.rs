@@ -103,7 +103,7 @@ pub fn embed_substitute(
         "FontName"    => Object::Name(sub.postscript_name.as_bytes().to_vec()),
         "Flags"       => flags as i64,
         "FontBBox"    => Object::Array(bbox_arr),
-        "ItalicAngle" => face.italic_angle().unwrap_or(0.0).round() as i64,
+        "ItalicAngle" => face.italic_angle().round() as i64,
         "Ascent"      => ascent,
         "Descent"     => descent,
         "CapHeight"   => cap_height,

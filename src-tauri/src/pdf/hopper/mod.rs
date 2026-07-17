@@ -36,6 +36,7 @@
 
 pub mod backfill;
 pub mod cmds;
+pub mod coverage;
 pub mod log;
 pub mod pipeline;
 pub mod registry;

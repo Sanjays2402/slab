@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { listRecent, formatRelTime, type RecentFile } from "$lib/recent";
+  import { listRecent, formatRelTime, getRecentThumb, type RecentFile } from "$lib/recent";
   import { setUiConfig, ACCENT_COLORS, BUILT_IN_THEMES, type Density } from "$lib/theme";
   import { recordMru, mruRanks, clearMru } from "$lib/cmdMru";
   import { openPanelWindow } from "$lib/windows";
@@ -11,6 +11,37 @@
   import { applyPluginTheme } from "$lib/pluginThemes";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { notify } from "$lib/notify";
+  import {
+    scorePaletteEntry,
+    splitHighlight,
+    classifyPaletteNav,
+    nextPaletteIndex,
+    paletteKeymapId,
+    suggestPaletteFallback,
+    parsePaletteScope,
+    entryMatchesScope,
+    describePaletteScope,
+    classifyPaletteGroupNav,
+    nextGroupIndex,
+    recentReadingProgress,
+    describePaletteCount,
+    paletteActionVerb,
+    toggleCollapsedGroup,
+    partitionCollapsedGroups,
+    collapseAllGroups,
+    isEveryGroupCollapsed,
+    describeCollapseState,
+    soloExpandGroup,
+    toggleCommandPin,
+    movePinnedCommand,
+    isCommandPinned,
+    type PaletteRange,
+    type PaletteFallback,
+    type RecentProgress,
+  } from "$lib/paletteSearch";
+  import { loadCollapsedGroups, saveCollapsedGroups } from "$lib/paletteCollapsed";
+  import { loadPinnedCommands, savePinnedCommands } from "$lib/cmdPins";
+  import { prettyBindingFor, keymapView, type ActionId } from "$lib/keymap";
   import { get } from "svelte/store";
 
   // Cabinet (v1.1.0) Slice 5 — panels that can be detached into their own
@@ -41,6 +72,11 @@
     group: string;
     run: () => void;
     keywords?: string;
+    // Lumen II Slice 4: optional reading-progress chip for recent-file rows.
+    progress?: RecentProgress;
+    // Round 54: recent-file rows carry a cached page thumbnail so the
+    // palette browse list shows the document, not a generic glyph.
+    thumb?: string;
   };
 
   type Props = {
@@ -66,6 +102,7 @@
   let query = $state("");
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
+  let listEl: HTMLElement | undefined = $state();
   let recents = $state<RecentFile[]>([]);
   // Glass Slice 5: MRU ranks for actions (id → rank, lower = more recent).
   let mru = $state<Record<string, number>>({});
@@ -208,7 +245,7 @@
       id: "home:open",
       title: "Go to Recents Home",
       subtitle: "Hero card · Continue reading · pinned & recent files",
-      icon: "🏠",
+      icon: "⌂",
       group: "Home",
       run: () => {
         // Closing the active document falls back to RecentsHome.
@@ -226,24 +263,15 @@
         window.dispatchEvent(new CustomEvent("slab:home-continue"));
       },
       keywords: "resume continue last opened recent reading",
+      // Show the cover of the doc you'd resume so the entry is recognisable
+      // at a glance, not just a generic play glyph.
+      thumb: recents[0] ? getRecentThumb(recents[0].path) : undefined,
     });
     // Pinned + recent files become direct palette entries — opens are
     // dispatched through the same `slab:open-recent` channel the
-    // ReaderPanel already listens on.
-    try {
-      const recents = listRecent();
-      for (const r of recents.slice(0, 20)) {
-        out.push({
-          id: `recent:${r.path}`,
-          title: `Open ${r.name}`,
-          subtitle: r.path,
-          icon: r.pinned ? "📌" : "📄",
-          group: r.pinned ? "Pinned" : "Recent",
-          run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
-          keywords: `${r.name} ${r.path} ${r.pinned ? "pinned" : "recent"} open file`,
-        });
-      }
-    } catch { /* recent module not loadable — skip dynamic entries */ }
+    // ReaderPanel already listens on. The single source for these rows is
+    // the loop below (group "Recent files") which now carries thumbnails;
+    // the old emoji-glyph duplicate was dead (same id, overwritten).
 
 
     // v3.29.0: replay the Forms onboarding tour from anywhere. This is
@@ -283,14 +311,18 @@
       }
     }
     for (const r of recents) {
+      // Lumen II Slice 4: surface per-document reading position as a chip.
+      const prog = recentReadingProgress(r);
       out.push({
         id: `recent:${r.path}`,
         title: r.name,
-        subtitle: `Open · ${formatRelTime(r.openedAt)}${r.pageCount ? ` · ${r.pageCount} pages` : ""}`,
+        subtitle: `Open · ${formatRelTime(r.openedAt)}${!prog.hasProgress && r.pageCount ? ` · ${r.pageCount} pages` : ""}`,
         icon: "▥",
         group: "Recent files",
         run: () => onOpenRecent(r, { newTab: lastActivationNewTab }),
         keywords: `${r.name} ${r.path} pdf recent`,
+        progress: prog.hasProgress ? prog : undefined,
+        thumb: getRecentThumb(r.path),
       });
     }
     // Theme quick actions
@@ -402,7 +434,7 @@
       id: "library:smart-folders-hub",
       title: "Smart Folders Hub…",
       subtitle: "Manage built-in + personal smart folders — pin, reorder, export pack (⇧⌘F)",
-      icon: "🗂",
+      icon: "▦",
       group: "Library",
       run: () => {
         onSelectPanel("library");
@@ -411,6 +443,40 @@
         });
       },
       keywords: "smart folders hub manage organize pin reorder drag preset built-in personal pack export bulk atlas",
+    });
+    // v3.52.0 "Atlas OCR-Queue" — dedicated panel for the auto-OCR
+    // pipeline: dashboard counts, failure inbox with persisted reasons,
+    // re-queue/retry, pending preview.
+    out.push({
+      id: "library:ocr-queue",
+      title: "OCR Queue…",
+      subtitle: "Pending docs, failure inbox with reasons, re-queue (⇧⌘O)",
+      icon: "◳",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-ocr-queue"));
+        });
+      },
+      keywords: "ocr queue scan tesseract retry failed pending inbox dashboard auto recognise text searchable image atlas",
+    });
+    // v3.54.0 "Atlas Beacon-Cache" — dedicated inspector for the
+    // embedding index: per-model breakdown, stale-path detection,
+    // multi-select forget, full indexed-PDF table.
+    out.push({
+      id: "library:beacon-cache",
+      title: "Beacon Cache…",
+      subtitle: "Inspect & prune the semantic-search index: per-model, stale paths, bulk forget",
+      icon: "◉",
+      group: "Library",
+      run: () => {
+        onSelectPanel("library");
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("slab:open-beacon-cache"));
+        });
+      },
+      keywords: "beacon cache embedding index inspector vector semantic search prune forget stale mixed model nomic mxbai chunks pdfs storage cleanup atlas",
     });
     out.push({
       id: "library:new-smart",
@@ -463,7 +529,7 @@
       id: "stack:export",
       title: "Stack: Export diff report (PDF)",
       subtitle: "Save the current diff as a shareable PDF report",
-      icon: "📄",
+      icon: "⎙",
       group: "Stack",
       run: () => {
         onSelectPanel("diff");
@@ -534,7 +600,7 @@
       id: "theater:open",
       title: "Start Theater (presenter mode)",
       subtitle: "Turn the current PDF into slides — laser, ink, blackout (⇧⌘T)",
-      icon: "🎬",
+      icon: "◳",
       group: "Theater",
       run: () => onSelectPanel("theater"),
       keywords:
@@ -675,39 +741,33 @@
     return out;
   });
 
-  // Lightweight fuzzy match: every character of the query must appear in order
-  // in the haystack. Score = (matched / haystack.length), with bonus for
-  // prefix and contiguous matches.
-  function fuzzyScore(q: string, hay: string): number {
-    if (!q) return 1;
-    const Q = q.toLowerCase();
-    const H = hay.toLowerCase();
-    if (H.startsWith(Q)) return 2 + 1 / H.length;
-    if (H.includes(Q)) return 1.5 + 1 / H.length;
-    let qi = 0;
-    let lastIdx = -1;
-    let contiguous = 0;
-    let bestContiguous = 0;
-    for (let hi = 0; hi < H.length && qi < Q.length; hi++) {
-      if (H[hi] === Q[qi]) {
-        if (hi === lastIdx + 1) contiguous++;
-        else contiguous = 1;
-        bestContiguous = Math.max(bestContiguous, contiguous);
-        lastIdx = hi;
-        qi++;
-      }
-    }
-    if (qi < Q.length) return 0;
-    return 1 + bestContiguous / Q.length + 0.1 / H.length;
-  }
+  // Lumen Slice 1: scoring moved to the tested pure core in
+  // `$lib/paletteSearch`. `scorePaletteEntry` ranks each action on the
+  // higher of its (weighted) title and keyword scores and returns the
+  // character ranges that matched the *title* — consumed by Slice 2's
+  // live highlighting. Ranges for the current query are memoised here
+  // so the render pass doesn't re-score.
+  let titleRangeCache = new Map<string, PaletteRange[]>();
+
+  // Lumen II Slice 2: typed scope sigils. A leading ">", "@", or "#"
+  // narrows the list to commands / files / appearance (VSCode ⌘P style)
+  // and the rest of the query becomes the search term. Parsed once here so
+  // both the filter and the input pill read the same decomposition.
+  let scopeParse = $derived(parsePaletteScope(query));
 
   let filtered = $derived.by(() => {
-    if (!query.trim()) {
-      // Empty-query view: MRU floats to top, in MRU order.
-      // Actions not in MRU keep their natural order after.
+    titleRangeCache = new Map();
+    const { scope, term } = scopeParse;
+    // Apply the scope filter first; "all" passes everything through.
+    const inScope =
+      scope === "all" ? actions : actions.filter((a) => entryMatchesScope(a.group, scope));
+
+    if (!term.trim()) {
+      // Empty term (blank query, or a bare sigil): MRU floats to top, in
+      // MRU order. Actions not in MRU keep their natural order after.
       const recent: Action[] = [];
       const rest: Action[] = [];
-      for (const a of actions) {
+      for (const a of inScope) {
         if (a.id in mru) recent.push(a);
         else rest.push(a);
       }
@@ -718,9 +778,13 @@
       const overflow = recent.slice(6);
       return [...top, ...overflow, ...rest];
     }
-    const q = query.trim();
-    const scored = actions
-      .map((a) => ({ a, score: fuzzyScore(q, `${a.title} ${a.keywords ?? ""}`) }))
+    const q = term.trim();
+    const scored = inScope
+      .map((a: Action) => {
+        const r = scorePaletteEntry(q, { title: a.title, keywords: a.keywords });
+        if (r.score > 0) titleRangeCache.set(a.id, r.titleRanges);
+        return { a, score: r.score };
+      })
       .filter((x) => x.score > 0)
       .sort((a, b) => {
         // Primary: fuzzy score. Tie-breaker: MRU rank (lower = more recent).
@@ -732,15 +796,47 @@
     return scored.map((x) => x.a);
   });
 
-  // Group preserving filtered order. When query is empty AND there are MRU
-  // entries, the first N items get pulled into a synthetic "Recently used"
-  // group so the user sees their muscle-memory commands first.
+  /** Title split into highlight segments for the current query. */
+  function titleSegments(a: Action) {
+    return splitHighlight(a.title, titleRangeCache.get(a.id) ?? []);
+  }
+
+  // Lumen Slice 5: the bound keyboard chord for a row (Raycast-style hint
+  // that teaches the shortcut while you mouse). Resolves the palette
+  // action id -> keymap action id -> pretty chord for the active
+  // platform. `keymapTick` re-reads when the keymap store changes so a
+  // rebind reflects live. Empty string when the row has no global chord.
+  let keymapTick = $state(0);
+  const unsubKeymap = keymapView.subscribe(() => keymapTick++);
+  function rowChord(a: Action): string {
+    void keymapTick; // establish reactive dependency
+    const kid = paletteKeymapId(a.id);
+    if (!kid) return "";
+    return prettyBindingFor(kid as ActionId);
+  }
+
+  // Group preserving filtered order. When the term is empty AND there are
+  // MRU entries, the first N items get pulled into a synthetic "Recently
+  // used" group so the user sees their muscle-memory commands first. Uses
+  // the scoped term so a bare ">" / "@" / "#" still shows the MRU header.
   let grouped = $derived.by(() => {
     const map = new Map<string, Action[]>();
-    const showMruHeader = !query.trim() && Object.keys(mru).length > 0;
+    const browse = !scopeParse.term.trim();
+    const showMruHeader = browse && Object.keys(mru).length > 0;
+    const pinSet = new Set(pinnedCmds);
     let mruShown = 0;
     const mruCap = 6;
     for (const a of filtered) {
+      // Pinned commands ride a sticky group above everything in browse mode,
+      // surviving frecency churn (Raycast/Arc favourites). A pinned command
+      // is shown ONLY in the Pinned group (not also in Recently used / its
+      // own group) so it appears exactly once.
+      if (browse && pinSet.has(a.id)) {
+        const key = "Pinned";
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(a);
+        continue;
+      }
       if (showMruHeader && a.id in mru && mruShown < mruCap) {
         const key = "Recently used";
         if (!map.has(key)) map.set(key, []);
@@ -751,13 +847,164 @@
       if (!map.has(a.group)) map.set(a.group, []);
       map.get(a.group)!.push(a);
     }
-    return Array.from(map.entries());
+    // Pinned floats to the very top, ahead of Recently used.
+    const entries = Array.from(map.entries());
+    const pin = map.get("Pinned");
+    if (pin) {
+      // Order pinned rows by the user's saved arrangement (pinnedCmds index),
+      // not frecency, so Alt+Arrow reordering sticks.
+      pin.sort((x, y) => pinnedCmds.indexOf(x.id) - pinnedCmds.indexOf(y.id));
+    }
+    entries.sort((x, y) => (x[0] === "Pinned" ? -1 : y[0] === "Pinned" ? 1 : 0));
+    return entries;
   });
 
-  // Clamp selection when filter shrinks list
+  // Lumen III Slice 1: group collapse. In browse (empty-query) mode the
+  // user can FOLD a section header so its rows tuck away; the set of
+  // collapsed group names lives here and now PERSISTS across sessions
+  // (v3.57.0 — seeded from localStorage on mount, written back on every
+  // toggle) so a folded "Appearance" stays folded after a restart, exactly
+  // like Raycast. Collapse is DISABLED while a query is active — folding a
+  // group during search would hide matching results, which is a footgun —
+  // so the effective set is empty then.
+  let collapsedGroups = $state<Set<string>>(loadCollapsedGroups());
+  // Round 52: pinned commands ride a sticky "Pinned" group at the very top
+  // of browse, surviving frecency churn. Seeded from localStorage; written
+  // back on every toggle. isCommandPinned/toggleCommandPin are the tested core.
+  let pinnedCmds = $state<string[]>(loadPinnedCommands());
+  function togglePin(id: string): void {
+    pinnedCmds = toggleCommandPin(pinnedCmds, id);
+    savePinnedCommands(pinnedCmds);
+  }
+  // Reorder a pinned command by dir (-1 left/up, +1 right/down) within the
+  // pinned list, persisting the arrangement. Alt+Arrow keyboard twin of a
+  // drag; reuses the tested movePinnedCommand core.
+  function reorderPin(id: string, dir: -1 | 1): void {
+    const from = pinnedCmds.indexOf(id);
+    if (from < 0) return;
+    pinnedCmds = movePinnedCommand(pinnedCmds, from, from + dir);
+    savePinnedCommands(pinnedCmds);
+  }
+  const collapseActive = $derived(!scopeParse.term.trim());
+  let collapsedView = $derived(
+    partitionCollapsedGroups(
+      grouped,
+      collapseActive ? collapsedGroups : new Set<string>(),
+    ),
+  );
+  /** The flat list the keyboard cursor walks — items from open groups only,
+      so arrows never land on a folded (hidden) row. */
+  let visibleList = $derived(collapsedView.visible);
+
+  function toggleGroup(group: string): void {
+    collapsedGroups = toggleCollapsedGroup(collapsedGroups, group);
+    // Persist the new fold set so it survives a restart (best-effort).
+    saveCollapsedGroups(collapsedGroups);
+    // Re-seed the cursor to the top so it can't strand on a now-hidden row
+    // (the clamp effect would also catch it, but this keeps it predictable).
+    selected = 0;
+  }
+
+  // Round 51 Slice 2: Alt-click a header to SOLO-expand it — fold every
+  // other section so one group fills the surface (the inverse of
+  // collapse-all). Re-Alt-clicking an already-solo group pops everything
+  // back open. soloExpandGroup owns the symmetric toggle; the component
+  // just persists + re-seeds the cursor, exactly like toggleGroup.
+  function soloGroup(group: string): void {
+    collapsedGroups = soloExpandGroup(grouped, collapsedGroups, group);
+    saveCollapsedGroups(collapsedGroups);
+    selected = 0;
+  }
+
+  // Lumen III Slice 2: collapse-all / expand-all. With per-group fold +
+  // cross-session persistence in place, a power user wants to clear the
+  // whole browse surface to its headers in one keystroke (Cmd/Ctrl+E) or
+  // a header-bar toggle, then drill back. `allCollapsed` tracks whether
+  // every CURRENT group is folded so the control flips between "Collapse
+  // all" and "Expand all". Only meaningful in browse mode (collapse is
+  // disabled during search), so it reads the same grouped list collapse
+  // applies to.
+  const allCollapsed = $derived(
+    collapseActive && isEveryGroupCollapsed(grouped, collapsedGroups),
+  );
+
+  // Lumen III Slice 3: legible bulk-collapse state in the footer. With
+  // collapse-all in place, a power user wants to know at a glance how much
+  // of the surface is folded — describeCollapseState turns the grouped list
+  // + fold set into "N of M sections open" (or "All M collapsed"). Only
+  // meaningful in browse mode; "" when nothing is folded so the footer
+  // falls back to its result count.
+  const collapseState = $derived(
+    collapseActive
+      ? describeCollapseState(grouped, collapsedGroups)
+      : describeCollapseState([], new Set<string>()),
+  );
+
+  function toggleAllGroups(): void {
+    // Fold everything, or — when already all-folded — clear the set open.
+    collapsedGroups = allCollapsed ? new Set<string>() : collapseAllGroups(grouped);
+    saveCollapsedGroups(collapsedGroups);
+    selected = 0;
+  }
+
+  // Lumen II Slice 3: flat start index of each rendered group, so
+  // Cmd/Ctrl+Arrow can leap the cursor between section heads. With
+  // collapse applied, the heads come straight from the visible-list
+  // partition so a folded group contributes no (unreachable) head.
+  let groupStarts = $derived(collapsedView.starts);
+
+  // Lumen II Slice 5: context-aware footer. The count pulses with the live
+  // result list, and the Enter hint's verb tracks the selected row ("Open"
+  // a file, "Switch to" a panel, "Apply" a theme, "Run" a command) so the
+  // user sees what Return will do before committing.
+  let resultCountLabel = $derived(describePaletteCount(filtered.length));
+  let enterVerb = $derived(paletteActionVerb(visibleList[selected] ?? null));
+
+  // Clamp selection when filter shrinks list (selected indexes the
+  // visible/cursor list, which collapse can shrink below `filtered`).
   $effect(() => {
-    if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
+    if (selected >= visibleList.length) selected = Math.max(0, visibleList.length - 1);
   });
+
+  // Lumen II Slice 1: empty-state fallback. When the live filter comes back
+  // empty for a non-blank query, offer either a typo-corrected "did you
+  // mean" (the closest shorter prefix that matches) or, failing that, a
+  // curated set of starter commands — so the palette is never a dead end.
+  // The actual rows are resolved back to live Action objects (by id) so
+  // Enter/click runs the real handler. Computed only when filtered is empty.
+  let fallback = $derived.by<PaletteFallback>(() => {
+    if (filtered.length > 0 || !scopeParse.term.trim()) {
+      return { kind: "none", relaxed: "", ids: [] };
+    }
+    // Search within the active scope so a scoped miss suggests scoped rows.
+    const inScope =
+      scopeParse.scope === "all"
+        ? actions
+        : actions.filter((a) => entryMatchesScope(a.group, scopeParse.scope));
+    return suggestPaletteFallback(
+      scopeParse.term,
+      inScope.map((a) => ({ id: a.id, title: a.title, keywords: a.keywords })),
+    );
+  });
+
+  /** Resolve fallback ids back to live Action objects, dropping any miss. */
+  let fallbackActions = $derived.by<Action[]>(() => {
+    if (fallback.kind === "none") return [];
+    const byId = new Map(actions.map((a) => [a.id, a] as const));
+    const out: Action[] = [];
+    for (const id of fallback.ids) {
+      const a = byId.get(id);
+      if (a) out.push(a);
+    }
+    return out;
+  });
+
+  /** Run a fallback row directly (records MRU + closes, like runSelected). */
+  function runFallback(a: Action) {
+    if (a.id !== "settings:clear-mru") recordMru(a.id);
+    onClose();
+    queueMicrotask(() => a.run());
+  }
 
   // True when the most recent activation (Enter or click) held Cmd/Ctrl.
   // Recent-file palette entries read this to decide between reuse-active-tab
@@ -765,7 +1012,7 @@
   let lastActivationNewTab = false;
 
   function runSelected() {
-    const a = filtered[selected];
+    const a = visibleList[selected];
     if (!a) return;
     // Record into MRU before running so the next palette open shows it on top.
     // Skip the "clear MRU" action itself so it doesn't become its own bait.
@@ -779,17 +1026,79 @@
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      selected = Math.min(filtered.length - 1, selected + 1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      selected = Math.max(0, selected - 1);
-    } else if (e.key === "Enter") {
+      return;
+    }
+    if (e.key === "Enter") {
       e.preventDefault();
       lastActivationNewTab = e.metaKey || e.ctrlKey;
       runSelected();
+      return;
     }
+    // Lumen II Slice 3: Cmd/Ctrl+Arrow leaps the cursor between section
+    // heads (Linear/Finder-style group jump) over the big action catalog.
+    // Checked BEFORE the modifier bail so the chord isn't swallowed.
+    const groupIntent = classifyPaletteGroupNav(e);
+    if (groupIntent) {
+      e.preventDefault();
+      selected = nextGroupIndex(groupStarts, selected, groupIntent, visibleList.length);
+      scrollSelectedIntoView();
+      return;
+    }
+    // Reorder a pinned command with Alt+ArrowUp/Down (Alt+Left/Right too) —
+    // the keyboard twin of dragging. Only when the focused row is pinned and
+    // in browse mode; reuses movePinnedCommand. Checked before the modifier
+    // bail so Alt+Arrow isn't swallowed by plain-cursor nav.
+    if (
+      collapseActive &&
+      e.altKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")
+    ) {
+      const cur = visibleList[selected];
+      if (cur && isCommandPinned(pinnedCmds, cur.id)) {
+        e.preventDefault();
+        reorderPin(cur.id, e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 1);
+        queueMicrotask(() => {
+          const ni = visibleList.indexOf(cur);
+          if (ni >= 0) selected = ni;
+          scrollSelectedIntoView();
+        });
+        return;
+      }
+    }
+    // Lumen III Slice 2: Cmd/Ctrl+E folds every section to its header, or
+    // — when already all-folded — expands them all. Only in browse mode
+    // (collapse is disabled during search). Checked before the modifier
+    // bail so the chord isn't swallowed.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.key === "e" || e.key === "E")) {
+      if (collapseActive) {
+        e.preventDefault();
+        toggleAllGroups();
+        scrollSelectedIntoView();
+        return;
+      }
+    }
+    // Lumen Slice 3: Raycast-grade list movement. Arrows wrap at the
+    // ends, Home/End leap to either extreme, PageUp/PageDown page through
+    // a long list — all resolved by the tested pure core. Modifiers fall
+    // through (Cmd+ArrowDown etc. stays available for future chords).
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const intent = classifyPaletteNav(e);
+    if (intent) {
+      e.preventDefault();
+      selected = nextPaletteIndex(intent, selected, visibleList.length);
+      scrollSelectedIntoView();
+    }
+  }
+
+  // Keep the active row visible as the cursor moves (wrap to top/bottom,
+  // paging, Home/End can all push it out of the scroll viewport).
+  function scrollSelectedIntoView() {
+    queueMicrotask(() => {
+      const el = listEl?.querySelector<HTMLElement>(".palette-item.active");
+      el?.scrollIntoView({ block: "nearest" });
+    });
   }
 
   onMount(() => {
@@ -798,6 +1107,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", onKey);
     unsubPlugins();
+    unsubKeymap();
   });
 </script>
 
@@ -806,24 +1116,79 @@
   <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
     <div class="palette-input-row">
       <span class="palette-kbd-leading">⌘K</span>
+      {#if scopeParse.scope !== "all"}
+        <span class="palette-scope-pill" aria-label={`Scoped to ${describePaletteScope(scopeParse.scope)}`}>
+          {describePaletteScope(scopeParse.scope)}
+        </span>
+      {/if}
       <input
         bind:this={inputEl}
         bind:value={query}
-        placeholder="Jump to anything…"
+        placeholder={scopeParse.scope === "all" ? "Jump to anything…  (> commands, @ files, # appearance)" : "Filter…"}
         aria-label="Command palette search"
         autocomplete="off"
         spellcheck="false"
       />
       <button class="palette-close" onclick={onClose} title="Close (Esc)">esc</button>
     </div>
-    <div class="palette-list">
+    <div class="palette-list" bind:this={listEl}>
       {#if filtered.length === 0}
-        <div class="palette-empty">No matches for “{query}”</div>
+        {#if fallbackActions.length > 0}
+          <div class="palette-fallback-note">
+            {#if fallback.kind === "typo"}
+              No matches for “{scopeParse.term}”. Showing results for
+              <span class="palette-fallback-relax">{fallback.relaxed}</span>
+            {:else}
+              No matches for “{scopeParse.term}”. Try one of these
+            {/if}
+          </div>
+          <div class="palette-group-label">
+            {fallback.kind === "typo" ? "Did you mean" : "Suggested"}
+          </div>
+          {#each fallbackActions as a (a.id)}
+            <button
+              class="palette-item"
+              onclick={(e: MouseEvent) => {
+                lastActivationNewTab = e.metaKey || e.ctrlKey;
+                runFallback(a);
+              }}
+            >
+              <span class="palette-icon">{#if a.thumb}<img class="palette-thumb" src={a.thumb} alt="" loading="lazy" />{:else}{a.icon}{/if}</span>
+              <span class="palette-text">
+                <span class="palette-title">{a.title}</span>
+                {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
+              </span>
+            </button>
+          {/each}
+        {:else}
+          <div class="palette-empty">No matches for “{scopeParse.term}”</div>
+        {/if}
       {:else}
-        {#each grouped as [group, items] (group)}
-          <div class="palette-group-label">{group}</div>
-          {#each items as a (a.id)}
-            {@const idx = filtered.indexOf(a)}
+        {#each collapsedView.display as section (section.group)}
+          <button
+            type="button"
+            class="palette-group-label palette-group-toggle"
+            class:collapsed={section.collapsed}
+            aria-expanded={!section.collapsed}
+            disabled={!collapseActive}
+            onclick={(e: MouseEvent) => (e.altKey ? soloGroup(section.group) : toggleGroup(section.group))}
+            title={collapseActive
+              ? section.collapsed
+                ? `Expand ${section.group} (Alt-click: show only this)`
+                : `Collapse ${section.group} (Alt-click: show only this)`
+              : section.group}
+          >
+            {#if collapseActive}
+              <span class="palette-group-chevron" aria-hidden="true">{section.collapsed ? "▸" : "▾"}</span>
+            {/if}
+            <span class="palette-group-name">{section.group}</span>
+            <span class="palette-group-count" aria-hidden="true">{section.count}</span>
+          </button>
+          {#each section.items as a (a.id)}
+            {@const idx = visibleList.indexOf(a)}
+            {@const chord = rowChord(a)}
+            {@const pinned = isCommandPinned(pinnedCmds, a.id)}
+            <div class="palette-item-wrap" class:active={idx === selected}>
             <button
               class="palette-item"
               class:active={idx === selected}
@@ -833,21 +1198,71 @@
                 runSelected();
               }}
             >
-              <span class="palette-icon">{a.icon}</span>
+              <span class="palette-icon">{#if a.thumb}<img class="palette-thumb" src={a.thumb} alt="" loading="lazy" />{:else}{a.icon}{/if}</span>
               <span class="palette-text">
-                <span class="palette-title">{a.title}</span>
+                <span class="palette-title">{#each titleSegments(a) as seg}{#if seg.hit}<mark class="palette-hl">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
                 {#if a.subtitle}<span class="palette-subtitle">{a.subtitle}</span>{/if}
               </span>
+              {#if a.progress}
+                <span
+                  class="palette-progress"
+                  class:finished={a.progress.finished}
+                  aria-label={a.progress.finished ? "Finished reading" : `Read ${a.progress.percent} percent, page ${a.progress.page} of ${a.progress.total}`}
+                >
+                  {#if !a.progress.finished}
+                    <span class="palette-progress-track">
+                      <span class="palette-progress-fill" style={`width:${a.progress.percent}%`}></span>
+                    </span>
+                  {/if}
+                  <span class="palette-progress-label">{a.progress.label}</span>
+                </span>
+              {/if}
+              {#if chord}<span class="palette-chord" aria-label={`Shortcut ${chord}`}>{chord}</span>{/if}
               {#if idx === selected}<span class="palette-enter">↵</span>{/if}
             </button>
+            <button
+              class="palette-pin"
+              class:pinned
+              title={pinned ? "Unpin from top (Alt+Arrow to reorder)" : "Pin to top"}
+              aria-label={pinned ? `Unpin ${a.title}` : `Pin ${a.title} to top`}
+              aria-pressed={pinned}
+              onclick={(e: MouseEvent) => { e.stopPropagation(); togglePin(a.id); }}
+            >{pinned ? "\u2605" : "\u2606"}</button>
+            </div>
           {/each}
         {/each}
       {/if}
     </div>
     <div class="palette-footer">
-      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-      <span><kbd>↵</kbd> select</span>
-      <span><kbd>esc</kbd> close</span>
+      {#if collapseActive && collapsedView.display.length > 1}
+        <span class="palette-foldall-group">
+          <button
+            type="button"
+            class="palette-foldall"
+            onclick={() => {
+              toggleAllGroups();
+              scrollSelectedIntoView();
+            }}
+            title={allCollapsed ? "Expand all sections (⌘E)" : "Collapse all sections (⌘E)"}
+            aria-label={allCollapsed ? "Expand all sections" : "Collapse all sections"}
+          >
+            <span class="palette-foldall-glyph" aria-hidden="true">{allCollapsed ? "▸" : "▾"}</span>
+            {allCollapsed ? "Expand all" : "Collapse all"}
+          </button>
+          {#if collapseState.label}
+            <span class="palette-foldall-count" aria-live="polite">{collapseState.label}</span>
+          {/if}
+        </span>
+      {:else}
+        <span class="palette-footer-count">{resultCountLabel}</span>
+      {/if}
+      <span class="palette-footer-keys">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>⌘</kbd><kbd>↑</kbd><kbd>↓</kbd> section</span>
+        {#if collapseActive}<span><kbd>⌘</kbd><kbd>E</kbd> fold all</span>{:else}<span><kbd>⇞</kbd><kbd>⇟</kbd> page</span>{/if}
+        <span><kbd>↵</kbd> {enterVerb || "select"}</span>
+        <span><kbd>esc</kbd> close</span>
+      </span>
     </div>
   </div>
 {/if}
@@ -902,6 +1317,20 @@
     border-radius: 4px;
     letter-spacing: 0.5px;
   }
+  /* Lumen II Slice 2: typed-scope pill. When a leading sigil scopes the
+     search (> commands, @ files, # appearance) this accent chip replaces
+     the implicit "all" so the active class is unmistakable. */
+  .palette-scope-pill {
+    font-size: 11px;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
   .palette-close {
     background: var(--bg-3);
     border: 1px solid var(--border);
@@ -923,12 +1352,76 @@
     color: var(--text-3);
     font-size: 13px;
   }
+  /* Lumen II Slice 1: empty-state fallback ("did you mean" / suggested).
+     The note reads as a gentle recovery line above the offered rows; the
+     relaxed query is tinted with the accent so the correction is legible. */
+  .palette-fallback-note {
+    padding: 14px 14px 6px;
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .palette-fallback-relax {
+    color: var(--accent);
+    font-weight: 600;
+  }
   .palette-group-label {
     padding: 8px 12px 4px;
     font-size: 10px;
     text-transform: uppercase;
     color: var(--text-3);
     letter-spacing: 0.6px;
+  }
+  /* Lumen III: the group label is now a collapse toggle (a real <button>
+     so it's keyboard + screen-reader reachable). Reset button chrome and
+     lay out chevron / name / count in a row. */
+  .palette-group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-3);
+  }
+  .palette-group-toggle:disabled {
+    cursor: default;
+  }
+  .palette-group-toggle:not(:disabled):hover {
+    color: var(--text-2);
+  }
+  .palette-group-chevron {
+    display: inline-flex;
+    width: 10px;
+    justify-content: center;
+    font-size: 9px;
+    opacity: 0.7;
+    transition: transform 120ms ease;
+  }
+  .palette-group-name {
+    flex: 1;
+  }
+  .palette-group-count {
+    font-variant-numeric: tabular-nums;
+    font-size: 9px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-3) 22%, transparent);
+    color: var(--text-3);
+  }
+  .palette-group-toggle.collapsed .palette-group-name {
+    opacity: 0.75;
+  }
+  .palette-item-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
   }
   .palette-item {
     width: 100%;
@@ -947,11 +1440,48 @@
     background: var(--bg-3);
     color: var(--text);
   }
+  .palette-pin {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: 0;
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+    padding: 4px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, color 0.12s ease;
+  }
+  .palette-item-wrap.active .palette-pin,
+  .palette-item-wrap:hover .palette-pin,
+  .palette-pin.pinned {
+    opacity: 1;
+  }
+  .palette-pin.pinned {
+    color: var(--accent);
+  }
+  .palette-pin:hover {
+    color: var(--text);
+  }
   .palette-icon {
     width: 20px;
     text-align: center;
     color: var(--accent);
     font-size: 14px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .palette-thumb {
+    width: 20px;
+    height: 26px;
+    object-fit: cover;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px var(--border, rgba(255, 255, 255, 0.1));
+    background: var(--bg-subtle, rgba(255, 255, 255, 0.04));
   }
   .palette-text {
     flex: 1;
@@ -967,6 +1497,19 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Lumen Slice 2: live query highlight on the matched title chars.
+     Reset the browser's yellow <mark> default and tint with the accent
+     so the matched substring reads as "this is why it ranked". */
+  .palette-hl {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    border-radius: 2px;
+    padding: 0 0.5px;
+    font-weight: 600;
+  }
+  .palette-item.active .palette-hl {
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+  }
   .palette-subtitle {
     font-size: 11px;
     color: var(--text-3);
@@ -978,6 +1521,61 @@
     font-size: 12px;
     color: var(--accent);
   }
+  /* Lumen II Slice 4: recent-file reading-progress chip. A thin accent
+     track + percent label so a recent PDF reads as "continue at p.12/80".
+     Finished docs drop the bar and show a muted "Finished" pill. */
+  .palette-progress {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .palette-progress-track {
+    width: 42px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-3);
+    overflow: hidden;
+  }
+  .palette-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    min-width: 2px;
+  }
+  .palette-progress-label {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+  .palette-progress.finished .palette-progress-label {
+    color: color-mix(in srgb, var(--accent) 70%, var(--text-3));
+    font-weight: 600;
+  }
+  .palette-item.active .palette-progress-label {
+    color: var(--text-2);
+  }
+  /* Lumen Slice 5: bound-shortcut hint on the right of a row. Monospace
+     key-cap styling matching the footer kbd vocabulary; muted by default,
+     brightening on the active row so it reads without shouting. */
+  .palette-chord {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .palette-item.active .palette-chord {
+    color: var(--text-2);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
   .palette-footer {
     display: flex;
     gap: 14px;
@@ -987,6 +1585,60 @@
     color: var(--text-3);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    align-items: center;
+  }
+  /* Lumen II Slice 5: result count on the left, key hints on the right. */
+  .palette-footer-count {
+    flex-shrink: 0;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Lumen III Slice 2: collapse-all / expand-all toggle, replacing the
+     count in browse mode. A quiet text button matching the footer scale. */
+  .palette-foldall {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-2);
+    cursor: pointer;
+    padding: 0;
+    transition: color 80ms;
+  }
+  .palette-foldall:hover {
+    color: var(--accent, #7c8cff);
+  }
+  .palette-foldall-glyph {
+    font-size: 9px;
+    line-height: 1;
+  }
+  /* Lumen III Slice 3: bulk-collapse legibility. The fold-all button + a
+     live "N of M sections open" count sit together so the fold state is
+     legible at a glance. */
+  .palette-foldall-group {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .palette-foldall-count {
+    font-size: 10px;
+    letter-spacing: 0.4px;
+    color: var(--text-3, var(--text-2));
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .palette-footer-keys {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+    align-items: center;
   }
   .palette-footer kbd {
     background: var(--bg-3);
