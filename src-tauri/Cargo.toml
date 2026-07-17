@@ -159,12 +159,12 @@ pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
 spki = "0.7"
 const-oid = { version = "0.9", features = ["db"] }
 pem = "3"
-directories = "5"
+directories = "6"
 
 # Server (v2.1.0 "Server" 🐳) — optional axum HTTP server stack for
 # `slab-server`. Gated behind the `server` feature so the desktop bundle
 # stays lean; Docker / homelab builds opt-in with `--features server`.
-axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "multipart", "macros"], optional = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "multipart", "macros"], optional = true }
 tower = { version = "0.5", default-features = false, optional = true }
 tower-http = { version = "0.6", default-features = false, features = ["cors", "limit", "trace"], optional = true }
 mime = { version = "0.3", optional = true }
@@ -172,7 +172,7 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
 # Zip the multi-file "split" responses so the client gets one download
 # regardless of how many output PDFs the operation produced.
-zip = { version = "2", default-features = false, features = ["deflate", "time"] }
+zip = { version = "8", default-features = false, features = ["deflate", "time"] }
 
 [features]
 default = []
