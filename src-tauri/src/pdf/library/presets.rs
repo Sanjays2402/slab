@@ -246,11 +246,14 @@ fn build_recently_added(_db: &mut LibraryDb) -> Result<LibraryFilter, LibraryErr
 }
 
 fn build_untagged(_db: &mut LibraryDb) -> Result<LibraryFilter, LibraryError> {
-    // No clause yet (TODO follow-up: needs an IsUntagged variant on the
-    // filter language). For now we punt to AddedDesc + a TitleNotContains
-    // pseudo-clause that always matches, leaving the user to refine.
-    // This still produces a usable preset row.
+    // v3.40.0: the filter language now has a first-class `Untagged`
+    // clause, so this preset resolves to exactly the documents that
+    // carry no tags — the natural "what still needs filing?" view.
     Ok(LibraryFilter {
+        clauses: Some(FilterGroup {
+            combinator: FilterCombinator::And,
+            clauses: vec![FilterClause::Untagged],
+        }),
         sort: SortBy::AddedDesc,
         limit: Some(50),
         ..Default::default()
@@ -498,6 +501,22 @@ mod tests {
         let group = filter.clauses.unwrap();
         assert_eq!(group.combinator, FilterCombinator::Or);
         assert_eq!(group.clauses.len(), 2);
+    }
+
+    #[test]
+    fn untagged_preset_uses_untagged_clause() {
+        // Regression guard for the v3.40.0 fix that gave the untagged
+        // preset a real `Untagged` clause (it previously punted).
+        let mut db = fresh_db();
+        let filter = build_untagged(&mut db).unwrap();
+        let group = filter.clauses.expect("untagged preset must carry a clause");
+        assert!(
+            group
+                .clauses
+                .iter()
+                .any(|c| matches!(c, FilterClause::Untagged)),
+            "untagged preset must include the Untagged clause"
+        );
     }
 
     #[test]

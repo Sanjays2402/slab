@@ -9,11 +9,15 @@
 
   Wow moment: a sparkle conic-gradient border that slowly rotates,
   emphasizing that this is the *personalized* / magic section.
+  On first paint the cards fly up in a brief stagger (round 58), so the
+  strip settles in rather than snapping in fully formed; the stagger
+  collapses to a no-op under prefers-reduced-motion.
   Renders nothing when the user has fewer than 10 logged searches
   (the engine returns []), so it's graceful for fresh installs.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import { quintOut } from "svelte/easing";
   import {
     librarySuggestionsList,
     librarySuggestionsDismiss,
@@ -35,6 +39,24 @@
   let busyHash = $state<string | null>(null);
   let dismissedAnim = $state<Set<string>>(new Set());
 
+  // Respect the OS reduced-motion setting: skip the entrance stagger entirely
+  // for users who asked for less movement (the strip just appears). Read once
+  // at mount via the standard media query.
+  let reduceMotion = $state(false);
+
+  /** Per-card entrance: a brief upward fly with a stagger so the suggested
+      strip settles in on first paint instead of snapping in fully formed.
+      Index-keyed delay; collapses to a no-op when reduced-motion is set. */
+  function cardIn(_node: Element, { index }: { index: number }) {
+    if (reduceMotion) return { duration: 0 };
+    return {
+      delay: Math.min(index, 3) * 70,
+      duration: 320,
+      easing: quintOut,
+      css: (t: number, u: number) => `opacity: ${t}; transform: translateY(${u * 8}px);`,
+    };
+  }
+
   async function refresh() {
     loading = true;
     try {
@@ -53,7 +75,14 @@
     }
   }
 
-  onMount(refresh);
+  onMount(() => {
+    // Snapshot the OS reduced-motion preference so the entrance can no-op for
+    // users who asked for less movement.
+    if (typeof window !== "undefined" && window.matchMedia) {
+      reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
+    refresh();
+  });
 
   async function accept(s: FolderSuggestion) {
     busyHash = s.cluster_hash;
@@ -100,11 +129,12 @@
       <span class="sub">based on your recent searches</span>
     </header>
     <ul class="suggest-list">
-      {#each suggestions as s (s.cluster_hash)}
+      {#each suggestions as s, i (s.cluster_hash)}
         <li
           class="suggest-card"
           class:dismissing={dismissedAnim.has(s.cluster_hash)}
           style="--card-color: {s.color};"
+          in:cardIn={{ index: i }}
         >
           <div class="sparkle-border" aria-hidden="true"></div>
           <div class="card-inner">

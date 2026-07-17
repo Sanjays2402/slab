@@ -379,7 +379,28 @@
       {/if}
     </div>
 
-    {#if verifyResults.length > 0}
+    {#if verifyStatus.kind === "working"}
+      <!-- Round 54: signature-card skeleton while verifying, the OcrQueue
+           firstLoad pattern (shimmer + aria-busy) so the panel reads as
+           "working" instead of a bare status line. -->
+      <ul class="verify-list" aria-busy="true" aria-label="Verifying signatures">
+        {#each [0, 1] as i (i)}
+          <li class="sig-card sig-skel">
+            <header>
+              <span class="skel skel-name"></span>
+              <span class="skel skel-signer"></span>
+              <span class="skel skel-time"></span>
+            </header>
+            <div class="badges">
+              <span class="skel skel-badge"></span>
+              <span class="skel skel-badge"></span>
+              <span class="skel skel-badge"></span>
+              <span class="skel skel-badge"></span>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {:else if verifyResults.length > 0}
       <ul class="verify-list">
         {#each verifyResults as sig (sig.field_name)}
           <li class="sig-card">
@@ -553,6 +574,32 @@
     border-radius: 8px;
     padding: 10px 12px;
     background: var(--input-bg);
+  }
+  /* Round 54: verify skeleton — shimmer placeholders mirroring sig-card so
+     the panel reads "working" the moment Verify is clicked, the OcrQueue
+     firstLoad pattern. */
+  .sig-skel .skel {
+    display: inline-block;
+    border-radius: 6px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text, #fff) 8%, transparent) 0%,
+      color-mix(in srgb, var(--accent, #7c8cff) 16%, transparent) 50%,
+      color-mix(in srgb, var(--text, #fff) 8%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: sig-shimmer 1.4s ease-in-out infinite;
+  }
+  .skel-name { width: 110px; height: 13px; }
+  .skel-signer { width: 90px; height: 12px; }
+  .skel-time { width: 70px; height: 11px; margin-left: auto; }
+  .skel-badge { width: 78px; height: 18px; border-radius: 999px; }
+  @keyframes sig-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sig-skel .skel { animation: none; }
   }
   .sig-card header {
     display: flex;

@@ -11,6 +11,7 @@
 // is in flight.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writable, get } from "svelte/store";
 import { isInTauri } from "$lib/tauri";
 
@@ -275,3 +276,1940 @@ export function compareSemver(a: string, b: string): number {
   if (pb.pre === null) return -1;
   return pa.pre < pb.pre ? -1 : pa.pre > pb.pre ? 1 : 0;
 }
+
+// ─── Install log read surface (v3.39 Slice 55) ──────────────────────
+
+/**
+ * One persisted row in the marketplace install-log table. Mirrors
+ * `marketplace::install_log::InstallEvent` on the Rust side.
+ *
+ * The NULL-able fields are populated only on the row kinds that need
+ * them: `bytes_written` / `files_extracted` / `source` /
+ * `replaced_existing` arrive on install/update rows; `error_msg`
+ * arrives on failed rows; `prior_version` arrives on update rows.
+ */
+export interface InstallEvent {
+  id: number;
+  plugin_id: string;
+  version: string;
+  action: "install" | "update" | "uninstall" | "failed";
+  /** Unix seconds (UTC). */
+  occurred_at: number;
+  source: string | null;
+  bytes_written: number | null;
+  files_extracted: number | null;
+  replaced_existing: boolean | null;
+  prior_version: string | null;
+  error_msg: string | null;
+}
+
+/**
+ * Per-plugin counts of each install-log action kind. Mirrors
+ * `marketplace::install_log::InstallStats`.
+ */
+export interface InstallStats {
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+}
+
+const EMPTY_INSTALL_STATS: InstallStats = {
+  installs: 0,
+  updates: 0,
+  uninstalls: 0,
+  failures: 0,
+};
+
+/**
+ * Per-plugin timeline of install/update/uninstall/failure events,
+ * newest first, capped at `limit` (default 50). Returns an empty
+ * array in browser mode and for unknown plugin ids.
+ *
+ * Used by PluginDetailDrawer's Activity section.
+ */
+export async function listInstallEvents(
+  pluginId: string,
+  limit?: number,
+): Promise<InstallEvent[]> {
+  if (!isInTauri()) return [];
+  return invoke<InstallEvent[]>("slab_marketplace_install_events", {
+    pluginId,
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Corpus-wide recent install events, newest first, capped at `limit`
+ * (default 50). Drives the PluginsPanel toolbar "Recent installs"
+ * drawer. Returns an empty array in browser mode.
+ */
+export async function listRecentInstallEvents(limit?: number): Promise<InstallEvent[]> {
+  if (!isInTauri()) return [];
+  return invoke<InstallEvent[]>("slab_marketplace_install_history_recent", {
+    limit: limit ?? null,
+  });
+}
+
+/**
+ * Per-plugin counts of each install-log action kind. Returns an
+ * all-zeroes payload in browser mode or for an unknown plugin id.
+ *
+ * Powers the slim header pill on PluginDetailDrawer's Activity
+ * section ("Installed 3 · 1 update · 0 failures") in one round-trip.
+ */
+export async function pluginInstallStats(pluginId: string): Promise<InstallStats> {
+  if (!isInTauri()) return { ...EMPTY_INSTALL_STATS };
+  return invoke<InstallStats>("slab_marketplace_plugin_install_stats", { pluginId });
+}
+
+/**
+ * Format an `InstallEvent.occurred_at` (unix seconds) as a compact
+ * human-friendly relative timestamp ("just now", "3m ago", "2h ago",
+ * "5d ago"), falling back to ISO yyyy-mm-dd for events older than 30
+ * days. UTC arithmetic so the result is timezone-stable.
+ *
+ * Used by both the Activity rows and the Recent installs drawer so
+ * they share one timestamp vocabulary.
+ */
+export function formatInstallEventTime(occurredAt: number, now?: number): string {
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = Math.max(0, nowSec - occurredAt);
+  if (delta < 60) return "just now";
+  if (delta < 60 * 60) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 60 * 60 * 24) return `${Math.floor(delta / 3600)}h ago`;
+  if (delta < 60 * 60 * 24 * 30) return `${Math.floor(delta / 86400)}d ago`;
+  // ≥30 days — fall back to ISO date (UTC) so the cell is stable
+  // across timezone changes.
+  const iso = new Date(occurredAt * 1000).toISOString();
+  return iso.slice(0, 10);
+}
+
+/**
+ * Glyph hint for an install-log action, matching Slab's monochrome
+ * chrome vocabulary (no emoji in app surfaces — but unicode glyphs
+ * like ✓ / ✕ / ↻ / ⌫ are app-chrome and are fine).
+ */
+export function installEventGlyph(action: InstallEvent["action"]): string {
+  switch (action) {
+    case "install":
+      return "✓";
+    case "update":
+      return "↻";
+    case "uninstall":
+      return "⌫";
+    case "failed":
+      return "✕";
+  }
+}
+
+// ─── Install log filter surface (v3.39 Slice 75) ────────────────────
+
+/**
+ * The complete InstallAction vocabulary as a readonly tuple. Useful for
+ * exhaustive UI iteration (filter chips, action legends) — order is the
+ * "natural" reading order matching how the Recent installs drawer
+ * lists action filter chips (success-shaped first, failure-shaped last).
+ */
+export const ALL_INSTALL_ACTIONS: readonly InstallEvent["action"][] = [
+  "install",
+  "update",
+  "uninstall",
+  "failed",
+] as const;
+
+/**
+ * Four-axis filter for the Recent installs drawer. Mirrors the
+ * Rust-side `slab_marketplace_install_log_list_filtered` command:
+ *
+ * - `since_unix` / `until_unix`: optional inclusive time-window
+ *   boundaries. `null`/missing == no bound on that side.
+ * - `actions`: optional subset of `ALL_INSTALL_ACTIONS`. An empty
+ *   array OR `null`/missing both mean "no action filter". Unknown
+ *   tokens are silently dropped server-side so a typo can't widen
+ *   the result.
+ * - `plugin_id_substr`: optional case-insensitive substring against
+ *   plugin_id. Whitespace-only strings are treated as "no filter"
+ *   (the backend trims+normalises before matching).
+ * - `limit`: row cap. Defaults to 500 server-side.
+ *
+ * All four axes compose via AND so a "Last 7d failures for
+ * com.acme.\*" query reads naturally.
+ */
+export interface InstallEventQuery {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  actions?: readonly InstallEvent["action"][] | null;
+  plugin_id_substr?: string | null;
+  limit?: number | null;
+}
+
+/**
+ * Wire payload returned by [`listInstallEventsFiltered`].
+ * `total_returned` is the row count actually delivered; `limit_used`
+ * echoes the effective limit so the UI can render a "Limit reached
+ * (500) — narrow the filter to see more" hint when the two are equal.
+ */
+export interface InstallEventFilteredResult {
+  events: InstallEvent[];
+  total_returned: number;
+  limit_used: number;
+}
+
+const EMPTY_QUERY: InstallEventQuery = {};
+const EMPTY_FILTERED_RESULT: InstallEventFilteredResult = {
+  events: [],
+  total_returned: 0,
+  limit_used: 0,
+};
+
+/**
+ * Read the install log with the four-axis filter. Returns an empty
+ * result in browser mode (no Tauri context) so the drawer's
+ * `filteredEvents` reducer doesn't have to special-case the dev
+ * environment.
+ */
+export async function listInstallEventsFiltered(
+  query: InstallEventQuery = EMPTY_QUERY,
+): Promise<InstallEventFilteredResult> {
+  if (!isInTauri()) return { ...EMPTY_FILTERED_RESULT };
+  return invoke<InstallEventFilteredResult>(
+    "slab_marketplace_install_log_list_filtered",
+    {
+      sinceUnix: query.since_unix ?? null,
+      untilUnix: query.until_unix ?? null,
+      actions: query.actions && query.actions.length > 0 ? [...query.actions] : null,
+      pluginIdSubstr: query.plugin_id_substr ?? null,
+      limit: query.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Return the most-recently-active distinct plugin_ids in the install
+ * log, newest activity first. Powers the filter bar's plugin
+ * autocomplete in the Recent installs drawer. Returns an empty array
+ * in browser mode.
+ */
+export async function recentInstallPluginIds(limit?: number): Promise<string[]> {
+  if (!isInTauri()) return [];
+  return invoke<string[]>("slab_marketplace_install_log_recent_plugin_ids", {
+    limit: limit ?? null,
+  });
+}
+
+// ─── Per-plugin histogram aggregate (v3.40 Slice 87) ────────────────
+
+/**
+ * One row of the per-plugin histogram aggregate. Mirrors
+ * `marketplace::PluginHistogramRow`. `total` is precomputed so the UI's
+ * bar-width and sort don't have to re-add four columns per row;
+ * `last_occurred_at` is the unix-seconds of this plugin's most recent
+ * event within the queried window.
+ */
+export interface PluginHistogramRow {
+  plugin_id: string;
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+  total: number;
+  last_occurred_at: number;
+}
+
+/**
+ * Wire payload returned by [`getPluginInstallHistogram`]. Echoes the
+ * effective window + limit so the UI can render "Showing top 25 plugins
+ * in the last 30d" without remembering which defaults ran when the
+ * caller left the args unset. `grand_total` is the sum of every row's
+ * `total` — the corpus-wide event count within the window across all
+ * returned plugins.
+ */
+export interface PluginHistogramResult {
+  rows: PluginHistogramRow[];
+  since_unix: number | null;
+  until_unix: number | null;
+  limit_used: number;
+  grand_total: number;
+}
+
+const EMPTY_HISTOGRAM_RESULT: PluginHistogramResult = {
+  rows: [],
+  since_unix: null,
+  until_unix: null,
+  limit_used: 0,
+  grand_total: 0,
+};
+
+/**
+ * Aggregate the install log by plugin_id within an optional time
+ * window. Returns the per-plugin counts ordered by total activity
+ * descending, capped at `limit` (default 25). Powers the Recent
+ * installs drawer's "Top plugins" panel — the answer to "which
+ * plugins did I install the most this month?". Returns an empty
+ * result in browser mode.
+ */
+export async function getPluginInstallHistogram(opts: {
+  sinceUnix?: number | null;
+  untilUnix?: number | null;
+  limit?: number | null;
+} = {}): Promise<PluginHistogramResult> {
+  if (!isInTauri()) return { ...EMPTY_HISTOGRAM_RESULT };
+  return invoke<PluginHistogramResult>(
+    "slab_marketplace_install_log_plugin_histogram",
+    {
+      sinceUnix: opts.sinceUnix ?? null,
+      untilUnix: opts.untilUnix ?? null,
+      limit: opts.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Compose a one-line summary copy for the histogram header. Returns
+ * a friendly empty-state string when no events were aggregated.
+ */
+export function summarizeHistogram(result: PluginHistogramResult): string {
+  const n = result.rows.length;
+  if (n === 0) return "No plugins active in this window";
+  const events = result.grand_total;
+  return `${events} event${events === 1 ? "" : "s"} across ${n} plugin${n === 1 ? "" : "s"}`;
+}
+
+// ─── Histogram export surface (v3.40 round-21 Slice 101) ────────────
+
+/**
+ * Optional time-window + row-cap filter for a histogram export.
+ * Mirrors the backend `plugin_histogram` boundaries. Either or both
+ * of `since_unix` / `until_unix` may be omitted for "no lower / no
+ * upper bound"; both omitted exports across the whole log.
+ *
+ * `limit` clamps the number of plugin rows written (defaults to 25
+ * on the backend — matches the read endpoint's default so "export
+ * what I'm looking at" is the natural reading without remembering
+ * a custom export limit).
+ */
+export interface HistogramExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  limit?: number | null;
+}
+
+const EMPTY_HISTOGRAM_FILTER: HistogramExportFilter = {};
+
+/**
+ * Write the top-plugins histogram to `path` as RFC-4180 CSV. `path`
+ * is an absolute filesystem path the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()` so it bypasses the default
+ * plugin-fs scope.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported 12 plugins (1.8 KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op) so the drawer's export flow
+ * doesn't have to special-case the dev environment.
+ */
+export async function exportInstallLogHistogramCsv(
+  path: string,
+  filter: HistogramExportFilter = EMPTY_HISTOGRAM_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_histogram_csv", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Write the top-plugins histogram to `path` as a pretty-printed JSON
+ * envelope (`PluginHistogramExportEnvelope` shape: schema_version +
+ * generated_at_iso + window-bounds + row_count + grand_total + rows).
+ * Mirrors `exportInstallLogHistogramCsv` — same filter, same window
+ * semantics, same return.
+ */
+export async function exportInstallLogHistogramJson(
+  path: string,
+  filter: HistogramExportFilter = EMPTY_HISTOGRAM_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_histogram_json", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Suggest a default filename for a histogram export. Mirrors the
+ * install-log export filename convention (slice 61) so paralegals
+ * see one consistent naming pattern across the audit-export
+ * surfaces.
+ *
+ * Format: `marketplace-top-plugins_<window>_<YYYY-MM-DD>.<ext>`.
+ * The `window` slot reads "all" when both bounds are unset,
+ * "from-YYYYMMDD" when only `since` is set, "to-YYYYMMDD" when
+ * only `until` is set, and "YYYYMMDD-YYYYMMDD" when both are set —
+ * exactly the same shape as `suggestInstallLogExportFilename` so
+ * the two exports sort next to each other when a user collects
+ * audit files in a directory.
+ *
+ * Pure helper — no I/O, no Tauri context required. `now` is
+ * injectable for deterministic tests; production callers leave it
+ * unset and it reads `Date.now()`.
+ */
+export function suggestHistogramExportFilename(
+  filter: HistogramExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-top-plugins_${window}_${today}.${ext}`;
+}
+
+// ─── Histogram sort axis (v3.40 Slice 97) ───────────────────────────
+
+/**
+ * Sort keys the Top plugins histogram can be reordered by. The
+ * server emits rows sorted by `total` DESC (matching the default
+ * "most active first" mental model); the UI offers four extra axes
+ * so a paralegal can pivot the same row set:
+ *
+ *   - `"total"`     — sum across actions, server's default
+ *   - `"installs"`  — fresh-install volume only
+ *   - `"updates"`   — version-bump volume only
+ *   - `"failures"`  — failed install/update count (the bug hunt)
+ *   - `"recent"`    — most-recent last_occurred_at first
+ *
+ * Uninstalls is deliberately NOT a sort axis: uninstall-heavy
+ * plugins are an antipattern the user typically wants to spot via
+ * the bar segment, not as a sort default. Keeping the menu lean
+ * (5 axes, not 7) reads better and matches the four-action stacked
+ * bar segments minus the uninstall outlier.
+ */
+export type HistogramSortKey =
+  | "total"
+  | "installs"
+  | "updates"
+  | "failures"
+  | "recent";
+
+/**
+ * Stable in-place-equivalent sort for histogram rows. Always sorts
+ * descending on the requested axis (most-of-X-first reads more
+ * naturally than ascending for every count axis); secondary sort is
+ * ASC on `plugin_id` so ties are reproducible across calls and the
+ * row order doesn't reshuffle on a refresh.
+ *
+ * Pure function — returns a NEW array; the caller's input is not
+ * mutated. This matters because Svelte 5's `$state` proxies don't
+ * play nicely with in-place sorts, and the server payload should
+ * stay untouched in case a different sort gets re-applied later.
+ *
+ * The `recent` key sorts by `last_occurred_at` DESC; everything
+ * else is a count column.
+ */
+export function sortHistogramRows(
+  rows: readonly PluginHistogramRow[],
+  key: HistogramSortKey,
+): PluginHistogramRow[] {
+  const out = [...rows];
+  const valueOf = (row: PluginHistogramRow): number => {
+    switch (key) {
+      case "total":
+        return row.total;
+      case "installs":
+        return row.installs;
+      case "updates":
+        return row.updates;
+      case "failures":
+        return row.failures;
+      case "recent":
+        return row.last_occurred_at;
+    }
+  };
+  out.sort((a, b) => {
+    const diff = valueOf(b) - valueOf(a);
+    if (diff !== 0) return diff;
+    // Deterministic tiebreak so a refresh doesn't reshuffle.
+    return a.plugin_id.localeCompare(b.plugin_id);
+  });
+  return out;
+}
+
+/**
+ * Human label for a sort key — used in the toggle dropdown and the
+ * "Sorted by X" subtitle. Singular nouns match the rest of the
+ * drawer's voice; "Most recent" reads naturally for the timestamp
+ * axis (vs the count axes which already imply "most-of-X first").
+ */
+export function histogramSortLabel(key: HistogramSortKey): string {
+  switch (key) {
+    case "total":
+      return "Most active";
+    case "installs":
+      return "Most installs";
+    case "updates":
+      return "Most updates";
+    case "failures":
+      return "Most failures";
+    case "recent":
+      return "Most recent";
+  }
+}
+
+/**
+ * All sort keys in display order. Keep `total` first so it reads as
+ * the default; `recent` last because it's a timestamp axis and feels
+ * like a "switch the mental model" rather than a count-pivot.
+ */
+export const HISTOGRAM_SORT_KEYS: readonly HistogramSortKey[] = [
+  "total",
+  "installs",
+  "updates",
+  "failures",
+  "recent",
+] as const;
+
+// ─── Activity timeline aggregate + export (v3.40 round-22 Slice 106) ─
+
+/**
+ * Bucket-width discriminator for the activity timeline aggregate.
+ * Matches `marketplace::TimeBucketGranularity` on the Rust side and
+ * its serde rename_all = "lowercase" so the wire form is exactly
+ * `"day"` / `"week"` / `"month"`.
+ *
+ *   - `"day"`   → 86_400-second wide buckets, floor to UTC midnight.
+ *   - `"week"`  → ISO-8601 week, floor to UTC Monday 00:00:00. Sunday
+ *                 belongs to the END of the prior week, not the start
+ *                 of the next.
+ *   - `"month"` → variable-width (28-31 day) bucket, floor to UTC
+ *                 first-of-month 00:00:00.
+ *
+ * All boundaries are UTC so two machines in different timezones
+ * produce the same buckets. The UI is free to render labels in local
+ * time; the buckets themselves don't drift.
+ */
+export type TimeBucketGranularity = "day" | "week" | "month";
+
+/**
+ * All bucket-width values in display order. Day-first matches the
+ * UI default + the read endpoint default; month-last because it's
+ * the coarsest pivot.
+ */
+export const TIME_BUCKET_GRANULARITIES: readonly TimeBucketGranularity[] = [
+  "day",
+  "week",
+  "month",
+] as const;
+
+/**
+ * Human label for a bucket width. Used in the "Activity over time"
+ * section's bucket-width toggle. Singular nouns match the rest of
+ * the drawer's voice; "Per X" reads naturally for the cadence axis
+ * (vs the histogram sort axes which already imply "most-of-X-first").
+ */
+export function timeBucketLabel(granularity: TimeBucketGranularity): string {
+  switch (granularity) {
+    case "day":
+      return "Per day";
+    case "week":
+      return "Per week";
+    case "month":
+      return "Per month";
+  }
+}
+
+/**
+ * One row of the activity-timeline aggregate. Mirrors
+ * `marketplace::ActivityBucket`. `total` is precomputed so the UI's
+ * bar-height computation doesn't have to re-add four columns per
+ * bucket; `bucket_start_unix` is the UTC-floored start of the bucket
+ * window per the request's granularity.
+ */
+export interface ActivityBucket {
+  bucket_start_unix: number;
+  installs: number;
+  updates: number;
+  uninstalls: number;
+  failures: number;
+  total: number;
+}
+
+/**
+ * Wire payload returned by [`getActivityTimeline`]. Echoes the
+ * effective window + granularity + grand_total so the UI can render
+ * "Showing 14 daily buckets, 87 events total" without remembering
+ * which defaults ran when the caller left an arg unset.
+ */
+export interface ActivityTimelineResult {
+  buckets: ActivityBucket[];
+  since_unix: number | null;
+  until_unix: number | null;
+  granularity: TimeBucketGranularity;
+  grand_total: number;
+}
+
+const EMPTY_TIMELINE_RESULT: ActivityTimelineResult = {
+  buckets: [],
+  since_unix: null,
+  until_unix: null,
+  granularity: "day",
+  grand_total: 0,
+};
+
+/**
+ * Aggregate the install log by calendar bucket within an optional
+ * time window. Returns the per-bucket counts ordered ASC by
+ * `bucket_start_unix` (oldest -> newest, natural reading direction).
+ * Powers the Recent installs drawer's "Activity over time" panel —
+ * the answer to "WHEN was install activity happening?".
+ *
+ * SPARSE: only buckets with at least one event are returned. The UI
+ * densifies (zero-fill the gap days/weeks/months) for rendering.
+ *
+ * Returns an empty result in browser mode (no Tauri context).
+ */
+export async function getActivityTimeline(opts: {
+  sinceUnix?: number | null;
+  untilUnix?: number | null;
+  granularity?: TimeBucketGranularity | null;
+} = {}): Promise<ActivityTimelineResult> {
+  if (!isInTauri()) return { ...EMPTY_TIMELINE_RESULT };
+  return invoke<ActivityTimelineResult>(
+    "slab_marketplace_install_log_activity_timeline",
+    {
+      sinceUnix: opts.sinceUnix ?? null,
+      untilUnix: opts.untilUnix ?? null,
+      granularity: opts.granularity ?? null,
+    },
+  );
+}
+
+/**
+ * Densify a sparse activity timeline by inserting zero-event buckets
+ * for every missing day/week/month between the first and last bucket
+ * the server returned (inclusive). The server's primitive is
+ * deliberately sparse (only non-empty buckets) so an idle corpus
+ * doesn't drag thousands of empty rows through IPC; the UI rendering
+ * a bar chart needs the dense form so gap days show as visible
+ * zero-bars rather than collapsing the time axis.
+ *
+ * Returns a NEW array (input never mutated, same posture as
+ * `sortHistogramRows`). The output's first + last buckets equal the
+ * input's first + last verbatim (boundary preservation); every
+ * intermediate bucket is either a verbatim copy from the input or a
+ * synthesised zero-bucket at the expected interval.
+ *
+ * Empty input -> empty output. Single-bucket input -> single-bucket
+ * output (no gap to fill).
+ *
+ * Pure helper — no I/O, no Tauri context required. The interval-
+ * advance arithmetic mirrors the Rust-side `bucket_floor_unix`
+ * semantics: day = +86_400 seconds, week = +7 * 86_400, month =
+ * UTC-calendar +1 month (variable width). The day/week paths use
+ * plain arithmetic; the month path goes through Date for calendar
+ * correctness (28/29/30/31).
+ */
+export function densifyActivityTimeline(
+  buckets: readonly ActivityBucket[],
+  granularity: TimeBucketGranularity,
+): ActivityBucket[] {
+  if (buckets.length === 0) return [];
+  // Build a quick lookup by bucket_start so we can re-use input
+  // buckets when they exist (carries their counts verbatim) and
+  // synthesise zero-buckets for the gaps.
+  const byStart = new Map<number, ActivityBucket>();
+  for (const b of buckets) byStart.set(b.bucket_start_unix, b);
+  const first = buckets[0].bucket_start_unix;
+  const last = buckets[buckets.length - 1].bucket_start_unix;
+  const out: ActivityBucket[] = [];
+  let cursor = first;
+  // Safety cap so a corrupted input (e.g. start > last) can't loop
+  // forever. 366 days * 5 years = 1830; pick something well above
+  // any realistic install-log span.
+  let guard = 5000;
+  while (cursor <= last && guard-- > 0) {
+    const existing = byStart.get(cursor);
+    if (existing) {
+      out.push(existing);
+    } else {
+      out.push({
+        bucket_start_unix: cursor,
+        installs: 0,
+        updates: 0,
+        uninstalls: 0,
+        failures: 0,
+        total: 0,
+      });
+    }
+    cursor = advanceBucketStart(cursor, granularity);
+  }
+  return out;
+}
+
+/**
+ * Advance a bucket-start timestamp to the start of the NEXT bucket
+ * per the granularity rules. Day/week are simple addition; month is
+ * calendar-aware (28-31 day variation) and routes through Date.
+ *
+ * Public for unit-testing the calendar arithmetic; production code
+ * goes through `densifyActivityTimeline`.
+ */
+export function advanceBucketStart(
+  start_unix: number,
+  granularity: TimeBucketGranularity,
+): number {
+  switch (granularity) {
+    case "day":
+      return start_unix + 86_400;
+    case "week":
+      return start_unix + 7 * 86_400;
+    case "month": {
+      const d = new Date(start_unix * 1000);
+      // UTC arithmetic to match the Rust-side bucket_floor_unix.
+      const y = d.getUTCFullYear();
+      const m = d.getUTCMonth(); // 0..11
+      // Next month, same day-of-month. JavaScript's Date.UTC handles
+      // year overflow (Dec -> Jan next year) automatically. Anchor at
+      // day 1 so first-of-month inputs stay first-of-month.
+      const next = Date.UTC(y, m + 1, 1, 0, 0, 0, 0);
+      return Math.floor(next / 1000);
+    }
+  }
+}
+
+/**
+ * Optional time-window + granularity filter for an activity-timeline
+ * export. Mirrors the backend `activity_timeline` boundaries. Either
+ * or both of `since_unix` / `until_unix` may be omitted for "no
+ * lower / no upper bound"; `granularity` defaults to "day" on the
+ * backend if omitted.
+ */
+export interface ActivityTimelineExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  granularity?: TimeBucketGranularity | null;
+}
+
+const EMPTY_TIMELINE_FILTER: ActivityTimelineExportFilter = {};
+
+/**
+ * Write the activity timeline to `path` as RFC-4180 CSV. `path` is
+ * an absolute filesystem path the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()`.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported 14 buckets (1.2 KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op) so the drawer's export flow
+ * doesn't have to special-case the dev environment.
+ */
+export async function exportInstallLogActivityTimelineCsv(
+  path: string,
+  filter: ActivityTimelineExportFilter = EMPTY_TIMELINE_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_activity_timeline_csv",
+    {
+      path,
+      sinceUnix: filter.since_unix ?? null,
+      untilUnix: filter.until_unix ?? null,
+      granularity: filter.granularity ?? null,
+    },
+  );
+}
+
+/**
+ * Write the activity timeline to `path` as a pretty-printed JSON
+ * envelope (`ActivityTimelineExportEnvelope` shape: schema_version +
+ * generated_at_iso + granularity + window-bounds + bucket_count +
+ * grand_total + buckets). Mirrors `exportInstallLogActivityTimelineCsv`
+ * — same filter, same window semantics, same return.
+ */
+export async function exportInstallLogActivityTimelineJson(
+  path: string,
+  filter: ActivityTimelineExportFilter = EMPTY_TIMELINE_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_activity_timeline_json",
+    {
+      path,
+      sinceUnix: filter.since_unix ?? null,
+      untilUnix: filter.until_unix ?? null,
+      granularity: filter.granularity ?? null,
+    },
+  );
+}
+
+/**
+ * Suggest a default filename for an activity-timeline export.
+ * Mirrors the install-log + histogram export filename conventions
+ * (slices 61 + 101) so a paralegal sees ONE consistent naming
+ * pattern across every audit-export surface.
+ *
+ * Format: `marketplace-activity-{day|week|month}_<window>_<YYYY-MM-DD>.<ext>`.
+ *
+ * The `window` slot reads:
+ *   - `"all"` when neither bound is set,
+ *   - `"from-YYYYMMDD"` when only `since` is set,
+ *   - `"to-YYYYMMDD"` when only `until` is set,
+ *   - `"YYYYMMDD-YYYYMMDD"` when both are set,
+ *
+ * — IDENTICAL window shape to `suggestHistogramExportFilename` (slice
+ * 101) so the histogram + timeline exports for the same window
+ * naturally sort side-by-side in a directory.
+ *
+ * The granularity is woven into the prefix (`marketplace-activity-day`
+ * vs `marketplace-activity-week`) rather than the window slot because
+ * "activity" + "<width>" reads as a single noun phrase ("the daily
+ * activity export"); putting it in the window slot would read as
+ * data ("from-day-YYYYMMDD").
+ *
+ * Pure helper — no I/O, no Tauri context required. `now` is
+ * injectable for deterministic tests; production callers leave it
+ * unset and it reads `Date.now()`.
+ */
+export function suggestActivityTimelineExportFilename(
+  filter: ActivityTimelineExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const granularity = filter.granularity ?? "day";
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-activity-${granularity}_${window}_${today}.${ext}`;
+}
+
+// ─── Bucket drilldown surface (v3.40 Slice 112) ─────────────────────
+
+/**
+ * Wire payload returned by [`getBucketDrilldown`]. Mirrors the
+ * Rust-side `BucketDrilldownResult`. Carries the per-plugin rows
+ * plus the bucket coordinates + `grand_total` so the UI can render
+ * "12 plugins, 87 events total in this day" without re-summing.
+ */
+export interface BucketDrilldownResult {
+  rows: PluginHistogramRow[];
+  bucket_start_unix: number;
+  granularity: TimeBucketGranularity;
+  grand_total: number;
+}
+
+const EMPTY_BUCKET_DRILLDOWN_RESULT: BucketDrilldownResult = {
+  rows: [],
+  bucket_start_unix: 0,
+  granularity: "day",
+  grand_total: 0,
+};
+
+/**
+ * Per-plugin breakdown of activity inside a single activity-timeline
+ * bucket. Powers the "WHICH plugins drove THIS bucket?" follow-up to
+ * the Activity-over-time chart — the natural drilldown from a user
+ * clicking a bar.
+ *
+ * `bucketStartUnix` must come from an activity_timeline bucket (i.e.
+ * already calendar-floored to the granularity's boundary). The
+ * underlying Tauri command composes `bucket_window_unix` with
+ * `plugin_histogram` so the rows are scoped to exactly the same
+ * window the timeline bucket represents — no double-counting at
+ * boundaries.
+ *
+ * Returns an empty result in browser mode (no Tauri context).
+ */
+export async function getBucketDrilldown(opts: {
+  bucketStartUnix: number;
+  granularity?: TimeBucketGranularity | null;
+  limit?: number | null;
+}): Promise<BucketDrilldownResult> {
+  if (!isInTauri()) return { ...EMPTY_BUCKET_DRILLDOWN_RESULT };
+  return invoke<BucketDrilldownResult>(
+    "slab_marketplace_install_log_bucket_drilldown",
+    {
+      bucketStartUnix: opts.bucketStartUnix,
+      granularity: opts.granularity ?? null,
+      limit: opts.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Optional bucket-coords filter for a drilldown export. The
+ * `bucket_start_unix` + `granularity` together identify the bucket
+ * the export is scoped to — they're REQUIRED on the wire (not
+ * optional like the timeline window) because the drilldown is
+ * inherently per-bucket.
+ *
+ * `limit` is optional and defaults to 25 server-side.
+ */
+export interface BucketDrilldownExportFilter {
+  bucket_start_unix: number;
+  granularity: TimeBucketGranularity;
+  limit?: number | null;
+}
+
+/**
+ * Write the bucket drilldown to `path` as RFC-4180 CSV. `path` is an
+ * absolute filesystem path the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()`.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported 12 plugins (1.8 KB)" without re-reading the file. 0 in
+ * browser mode (no-op).
+ */
+export async function exportInstallLogBucketDrilldownCsv(
+  path: string,
+  filter: BucketDrilldownExportFilter,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_bucket_drilldown_csv",
+    {
+      path,
+      bucketStartUnix: filter.bucket_start_unix,
+      granularity: filter.granularity,
+      limit: filter.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Write the bucket drilldown to `path` as a pretty-printed JSON
+ * envelope (`BucketDrilldownExportEnvelope` shape: schema_version +
+ * generated_at_iso + granularity + bucket_start_unix +
+ * bucket_start_iso + row_count + grand_total + rows). Mirrors
+ * `exportInstallLogBucketDrilldownCsv` — same filter, same return.
+ */
+export async function exportInstallLogBucketDrilldownJson(
+  path: string,
+  filter: BucketDrilldownExportFilter,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_bucket_drilldown_json",
+    {
+      path,
+      bucketStartUnix: filter.bucket_start_unix,
+      granularity: filter.granularity,
+      limit: filter.limit ?? null,
+    },
+  );
+}
+
+/**
+ * Suggest a default filename for a bucket-drilldown export. Mirrors
+ * the install-log + histogram + activity-timeline export filename
+ * conventions (slices 61 + 101 + 106) so a paralegal sees ONE
+ * consistent naming pattern across every audit-export surface.
+ *
+ * Format:
+ *   `marketplace-bucket-drilldown-{day|week|month}_<bucketISO>_<YYYY-MM-DD>.<ext>`
+ *
+ * The bucket slot is the bucket_start's ISO date (`YYYYMMDD`) — a
+ * paralegal collecting drilldown exports for the same bucket across
+ * different days will see them sort by bucket date first, then by
+ * export date, which is the natural reading order.
+ *
+ * Pure helper — no I/O, no Tauri context required. `now` is
+ * injectable for deterministic tests; production callers leave it
+ * unset and it reads `Date.now()`.
+ */
+export function suggestBucketDrilldownExportFilename(
+  filter: BucketDrilldownExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const bucketSlug = iso(filter.bucket_start_unix);
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-bucket-drilldown-${filter.granularity}_${bucketSlug}_${today}.${ext}`;
+}
+
+/**
+ * Human-friendly label for a set of action filters. Used in the
+ * "Showing X of Y events" subtitle and the filter-bar empty-state.
+ * The canonical render:
+ *
+ *   ∅                              → "all actions"
+ *   ALL_INSTALL_ACTIONS            → "all actions"
+ *   { "failed" }                   → "failures only"
+ *   { "install", "update" }        → "installs and updates"
+ *   { "install", "update", ... }   → "installs, updates and uninstalls"
+ *
+ * Single-action plurals use the action's natural plural (install →
+ * installs); "failed" pluralises to "failures" for cleaner copy. The
+ * three-or-more form uses Oxford-style "X, Y and Z" without a comma
+ * before the final "and" (matches the surrounding app voice — see
+ * formatUpdateSummary in slice 70).
+ */
+export function describeActionSet(
+  actions: readonly InstallEvent["action"][] | null | undefined,
+): string {
+  // Treat missing / empty / full-set as "all actions".
+  if (!actions || actions.length === 0) return "all actions";
+  if (actions.length === ALL_INSTALL_ACTIONS.length) {
+    // De-dupe + size check — a caller might pass duplicates.
+    const set = new Set(actions);
+    if (ALL_INSTALL_ACTIONS.every((a) => set.has(a))) return "all actions";
+  }
+  // Stable plural forms. "failed" → "failures" for readable copy.
+  const plurals: Record<InstallEvent["action"], string> = {
+    install: "installs",
+    update: "updates",
+    uninstall: "uninstalls",
+    failed: "failures",
+  };
+  // Single-action specialisation: "failures only" reads better than
+  // "failures" as a chip subtitle.
+  if (actions.length === 1) {
+    const only = plurals[actions[0]];
+    return `${only} only`;
+  }
+  // Deterministic order — match the canonical ALL_INSTALL_ACTIONS
+  // sequence so two callers with the same set always render the same
+  // string regardless of input order.
+  const ordered = ALL_INSTALL_ACTIONS.filter((a) =>
+    actions.includes(a),
+  ).map((a) => plurals[a]);
+  if (ordered.length === 2) return `${ordered[0]} and ${ordered[1]}`;
+  // 3+: Oxford-style "X, Y and Z" (no Oxford comma — matches the app's
+  // existing copy in formatUpdateSummary).
+  const head = ordered.slice(0, -1).join(", ");
+  return `${head} and ${ordered[ordered.length - 1]}`;
+}
+
+/**
+ * Compact label for the active filter state, suitable for a footer
+ * subtitle in the drawer ("3 filters active") or a chip count badge.
+ * Counts the number of axes (out of four) that are narrowing the result:
+ * window, action set, plugin substring. The window axis counts as ONE
+ * narrowing axis even when both since+until are set (a single semantic
+ * choice from the user). Returns `null` when no axis narrows — the
+ * caller can hide the subtitle entirely on a clean filter.
+ */
+export function pluginQueryActiveLabel(
+  query: InstallEventQuery,
+): string | null {
+  let n = 0;
+  if (query.since_unix != null || query.until_unix != null) n++;
+  if (query.actions && query.actions.length > 0) {
+    // A full-set explicit pick reads as "no action filter" too.
+    const set = new Set(query.actions);
+    const isFullSet =
+      query.actions.length === ALL_INSTALL_ACTIONS.length &&
+      ALL_INSTALL_ACTIONS.every((a) => set.has(a));
+    if (!isFullSet) n++;
+  }
+  if (query.plugin_id_substr && query.plugin_id_substr.trim() !== "") n++;
+  if (n === 0) return null;
+  return `${n} filter${n === 1 ? "" : "s"} active`;
+}
+
+// ─── Install log retention surface (v3.39 Slice 56) ─────────────────
+
+/**
+ * Slim summary of the install log as a whole. Mirrors
+ * `InstallLogSummary` on the Rust side. Drives the Recent installs
+ * drawer's header "N events across X days" subtitle.
+ */
+export interface InstallLogSummary {
+  total_events: number;
+  distinct_plugins: number;
+  /** Unix seconds of the oldest row, or null if the log is empty. */
+  oldest_occurred_at: number | null;
+}
+
+const EMPTY_INSTALL_LOG_SUMMARY: InstallLogSummary = {
+  total_events: 0,
+  distinct_plugins: 0,
+  oldest_occurred_at: null,
+};
+
+/**
+ * Fetch a one-shot summary of the install log. Cheap (three small
+ * queries) and safe to call on every drawer open. Returns the empty
+ * summary in browser mode so the UI renders consistently.
+ */
+export async function installLogSummary(): Promise<InstallLogSummary> {
+  if (!isInTauri()) return { ...EMPTY_INSTALL_LOG_SUMMARY };
+  return invoke<InstallLogSummary>("slab_marketplace_install_log_summary");
+}
+
+/**
+ * Trim the install log to events newer than `retainDays` days
+ * before now. Returns the number of rows pruned.
+ *
+ * `retainDays` is clamped on the backend to a minimum of 1, so a
+ * caller can't accidentally wipe the whole log via `prune(0)`.
+ * Returns 0 in browser mode (no-op).
+ */
+export async function pruneInstallLog(retainDays: number): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_prune", { retainDays });
+}
+
+/**
+ * Human-friendly "log spans X days" subtitle. Returns the literal
+ * "no events yet" when the summary is empty so the UI can render the
+ * subtitle unconditionally without an extra empty-state branch.
+ *
+ * Uses ceiling-day arithmetic so a log opened 5 minutes ago still
+ * reads "1 day" rather than the awkward "0 days".
+ */
+export function formatLogSpan(summary: InstallLogSummary, now?: number): string {
+  if (summary.total_events === 0 || summary.oldest_occurred_at === null) {
+    return "no events yet";
+  }
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const span = Math.max(1, Math.ceil((nowSec - summary.oldest_occurred_at) / 86_400));
+  const events = `${summary.total_events} event${summary.total_events === 1 ? "" : "s"}`;
+  const days = `${span} day${span === 1 ? "" : "s"}`;
+  return `${events} across ${days}`;
+}
+
+// ─── Install log export surface (v3.39 Slice 61) ────────────────────
+
+/**
+ * Optional time-window + row-cap filter for an install-log export.
+ * Mirrors the backend `list_events_between` boundaries. Either or
+ * both of `since_unix` / `until_unix` may be omitted for "no
+ * lower / no upper bound"; both omitted exports the whole log.
+ *
+ * `limit` clamps the number of rows written (defaults to 100_000 on
+ * the backend); the install log is small in practice but a defensive
+ * cap protects against a runaway log eating a user's disk.
+ */
+export interface InstallLogExportFilter {
+  since_unix?: number | null;
+  until_unix?: number | null;
+  limit?: number | null;
+}
+
+const EMPTY_FILTER: InstallLogExportFilter = {};
+
+/**
+ * Write the install log to `path` as RFC-4180 CSV. The path is an
+ * absolute filesystem path that the caller usually obtains from
+ * `@tauri-apps/plugin-dialog` `save()` so it bypasses the default
+ * plugin-fs scope.
+ *
+ * Returns the byte count actually written so the UI toast can say
+ * "Exported N events (X.X KB)" without re-reading the file.
+ * Returns 0 in browser mode (no-op).
+ */
+export async function exportInstallLogCsv(
+  path: string,
+  filter: InstallLogExportFilter = EMPTY_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_csv", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Write the install log to `path` as a pretty-printed JSON envelope.
+ * Mirrors `exportInstallLogCsv` but emits the `InstallLogExportEnvelope`
+ * shape (schema_version + generated_at_iso + window-bounds + events).
+ */
+export async function exportInstallLogJson(
+  path: string,
+  filter: InstallLogExportFilter = EMPTY_FILTER,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>("slab_marketplace_install_log_export_json", {
+    path,
+    sinceUnix: filter.since_unix ?? null,
+    untilUnix: filter.until_unix ?? null,
+    limit: filter.limit ?? null,
+  });
+}
+
+/**
+ * Suggest a default filename for an install-log export. Mirrors the
+ * hopper backfill CSV convention so paralegals see one consistent
+ * naming pattern across the audit-export surfaces.
+ *
+ * Format: `marketplace-history_<window>_<YYYY-MM-DD>.<ext>`. The
+ * window slot reads "all" when both bounds are unset, "from-YYYYMMDD"
+ * when only `since` is set, "to-YYYYMMDD" when only `until` is set,
+ * and "YYYYMMDD-YYYYMMDD" when both are set. Pure helper — no I/O,
+ * no Tauri.
+ */
+export function suggestInstallLogExportFilename(
+  filter: InstallLogExportFilter,
+  ext: "csv" | "json",
+  now?: number,
+): string {
+  const iso = (unixSec: number): string => {
+    const d = new Date(unixSec * 1000);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}${m}${day}`;
+  };
+  const since = filter.since_unix ?? null;
+  const until = filter.until_unix ?? null;
+  let window = "all";
+  if (since !== null && until !== null) window = `${iso(since)}-${iso(until)}`;
+  else if (since !== null) window = `from-${iso(since)}`;
+  else if (until !== null) window = `to-${iso(until)}`;
+  const todaySec = Math.floor((now ?? Date.now()) / 1000);
+  const today = iso(todaySec);
+  return `marketplace-history_${window}_${today}.${ext}`;
+}
+
+// ─── Install log retention policy (v3.40 Slice 65) ──────────────────
+
+/**
+ * Effective retention policy for the install log.
+ *
+ * `retain_days` is the user-modifiable window (defaults to 365 when
+ * never set). `last_auto_prune_at` is the unix-seconds stamp from the
+ * most recent auto-prune execution, or `null` if it has never run on
+ * this install — the UI uses it to render a "Last auto-prune:
+ * <relative>" line and to compute "Next auto-prune in <duration>".
+ *
+ * The three `*_*` capability fields surface the backend's policy
+ * constants (default, floor, debounce interval) so the UI doesn't
+ * have to hard-code them — bumping `DEFAULT_RETAIN_DAYS` in Rust
+ * flows through here transparently.
+ */
+export interface InstallLogRetentionPolicy {
+  retain_days: number;
+  last_auto_prune_at: number | null;
+  default_retain_days: number;
+  min_retain_days: number;
+  auto_prune_interval_secs: number;
+}
+
+/**
+ * Discriminated union returned by `runInstallLogAutoPrune`. Matches the
+ * Rust `AutoPruneOutcome` shape (snake_case tagged enum):
+ *
+ * - `{ outcome: "pruned", rows_removed, retain_days, cutoff_unix }` —
+ *   the prune ran (either because it had never run before, the
+ *   debounce window had elapsed, or `force` was passed).
+ * - `{ outcome: "skipped", next_due_unix }` — the debounce window had
+ *   not yet elapsed; no rows were touched. `next_due_unix` is when the
+ *   next unforced call will actually prune.
+ */
+export type InstallLogAutoPruneOutcome =
+  | {
+      outcome: "pruned";
+      rows_removed: number;
+      retain_days: number;
+      cutoff_unix: number;
+      /** Per-plugin retention overrides considered during this run
+       *  (== `len()` of overrides at prune time). Zero on a
+       *  workstation with no overrides. Added Slice 114. */
+      overrides_applied: number;
+      /** Subset of `rows_removed` attributable to the per-plugin
+       *  override passes; the rest are the global pass. Always
+       *  `<= rows_removed`. Added Slice 114; the toast (Slice 122)
+       *  uses this to render the attribution split. */
+      overrides_rows_removed: number;
+    }
+  | { outcome: "skipped"; next_due_unix: number };
+
+const BROWSER_FALLBACK_POLICY: InstallLogRetentionPolicy = {
+  retain_days: 365,
+  last_auto_prune_at: null,
+  default_retain_days: 365,
+  min_retain_days: 1,
+  auto_prune_interval_secs: 86_400,
+};
+
+/**
+ * Read the current retention policy. Cheap (two key-value queries on
+ * the backend); safe to call on every drawer mount. In browser mode
+ * returns the fallback policy that mirrors the Rust constants so the
+ * UI renders consistently for dev / preview builds.
+ */
+export async function getInstallLogRetentionPolicy(): Promise<InstallLogRetentionPolicy> {
+  if (!isInTauri()) return { ...BROWSER_FALLBACK_POLICY };
+  return invoke<InstallLogRetentionPolicy>(
+    "slab_marketplace_install_log_retention_policy",
+  );
+}
+
+/**
+ * Persist a new retention window in days. Returns the value actually
+ * stored after the backend's `MIN_RETAIN_DAYS` clamp — when the user
+ * types 0 the backend stores 1 and we surface 1 here, so the input
+ * field can correct itself inline without an extra round-trip.
+ *
+ * Does NOT immediately run a prune — that is a separate user action
+ * via `runInstallLogAutoPrune`. Changing the policy and applying it
+ * are independent so the user can edit + cancel without altering the
+ * log.
+ *
+ * In browser mode returns the requested value (clamped at >= 1) so
+ * the UI's optimistic update reads consistently.
+ */
+export async function setInstallLogRetentionDays(days: number): Promise<number> {
+  if (!isInTauri()) return Math.max(1, Math.trunc(days));
+  return invoke<number>("slab_marketplace_install_log_set_retention_days", {
+    days,
+  });
+}
+
+/**
+ * Run the retention auto-prune if the 24-hour debounce window has
+ * elapsed (or unconditionally if `force` is true). Returns the
+ * outcome discriminator so the UI can either surface
+ * "Auto-pruned N events" or "Next auto-prune due in X" depending on
+ * which branch fired.
+ *
+ * The force path is for the user-clicked "Run auto-prune now" button;
+ * the natural-debounce path is for the startup wiring. Both paths
+ * re-stamp `last_auto_prune_at` after a prune, so a forced run still
+ * resets the 24h debounce.
+ *
+ * In browser mode returns a synthetic "skipped" outcome dated 1 day
+ * out so the UI's "Next auto-prune" copy reads sensibly without a
+ * real backend.
+ */
+export async function runInstallLogAutoPrune(
+  force = false,
+): Promise<InstallLogAutoPruneOutcome> {
+  if (!isInTauri()) {
+    return {
+      outcome: "skipped",
+      next_due_unix: Math.floor(Date.now() / 1000) + 86_400,
+    };
+  }
+  return invoke<InstallLogAutoPruneOutcome>(
+    "slab_marketplace_install_log_auto_prune",
+    { force },
+  );
+}
+
+// ─── Per-plugin retention overrides (Slice 117) ─────────────────────
+
+/**
+ * One persisted per-plugin retention override. Mirrors the Rust
+ * `PluginRetentionOverride` struct (Slice 113). `retain_days` is
+ * guaranteed `>= min_retain_days` because the storage layer clamps
+ * writes and the readers re-clamp on read.
+ */
+export interface PluginRetentionOverride {
+  plugin_id: string;
+  retain_days: number;
+}
+
+/**
+ * Wire payload returned by `getPluginRetentionOverrides`. Carries
+ * every override row plus the global window in force and the floor
+ * constant so the UI can render override badges and validate input
+ * without a second round-trip.
+ */
+export interface PluginRetentionOverridesResult {
+  rows: PluginRetentionOverride[];
+  default_retain_days: number;
+  min_retain_days: number;
+}
+
+const BROWSER_FALLBACK_OVERRIDES: PluginRetentionOverridesResult = {
+  rows: [],
+  default_retain_days: 365,
+  min_retain_days: 1,
+};
+
+/**
+ * Read every persisted per-plugin retention override. Cheap O(N) on
+ * the overrides table; in practice N is small (a handful of audit-
+ * critical or diagnostic plugins per workstation). Called on Retention
+ * section mount + after every write so the list stays current.
+ *
+ * Browser mode returns an empty overrides list with the fallback
+ * default + min so the UI renders consistently in dev / preview
+ * builds.
+ */
+export async function getPluginRetentionOverrides(): Promise<PluginRetentionOverridesResult> {
+  if (!isInTauri()) return { ...BROWSER_FALLBACK_OVERRIDES, rows: [] };
+  return invoke<PluginRetentionOverridesResult>(
+    "slab_marketplace_install_log_plugin_retention_overrides",
+  );
+}
+
+/**
+ * Persist a per-plugin retention override. Returns the value actually
+ * stored after the backend's `MIN_RETAIN_DAYS` clamp — when the user
+ * types 0 the backend stores 1 and we surface 1 here, so the input
+ * field can correct itself inline without an extra round-trip.
+ *
+ * Does NOT immediately run a prune — changing the policy and applying
+ * it are independent so the user can edit + cancel without altering
+ * the log. The next `runInstallLogAutoPrune` call will honour the
+ * new override.
+ *
+ * In browser mode returns the requested value clamped at `>= 1` so
+ * the UI's optimistic update reads consistently.
+ */
+export async function setPluginRetentionDays(
+  pluginId: string,
+  days: number,
+): Promise<number> {
+  if (!isInTauri()) return Math.max(1, Math.trunc(days));
+  return invoke<number>(
+    "slab_marketplace_install_log_set_plugin_retention",
+    { pluginId, days },
+  );
+}
+
+/**
+ * Clear a per-plugin retention override. Returns `true` if a row was
+ * removed, `false` if no override existed (idempotent — calling twice
+ * is a no-op on the second call). The plugin falls back to the global
+ * window on its next auto-prune evaluation.
+ *
+ * In browser mode returns `false` (no real backend to mutate).
+ */
+export async function clearPluginRetention(
+  pluginId: string,
+): Promise<boolean> {
+  if (!isInTauri()) return false;
+  return invoke<boolean>(
+    "slab_marketplace_install_log_clear_plugin_retention",
+    { pluginId },
+  );
+}
+
+/**
+ * Suggest a filename for the per-plugin retention overrides export.
+ * Produces `marketplace-plugin-retention-overrides_<YYYYMMDD>.<ext>`
+ * matching the four sibling export-filename helpers' shape. UTC date
+ * slug so the same export from two machines in different timezones
+ * carries the same name.
+ *
+ * Pure helper — no I/O, no Tauri. Accepts an injectable `now` for
+ * deterministic unit tests.
+ */
+export function suggestPluginRetentionExportFilename(
+  kind: "csv" | "json",
+  now?: number,
+): string {
+  const d = new Date(now ?? Date.now());
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `marketplace-plugin-retention-overrides_${y}${m}${day}.${kind}`;
+}
+
+/**
+ * Write the per-plugin retention overrides list to disk as RFC-4180
+ * CSV. Returns the byte count written. In browser mode no-ops and
+ * returns 0 — the file picker is desktop-only.
+ */
+export async function exportPluginRetentionOverridesCsv(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_plugin_retention_csv",
+    { path },
+  );
+}
+
+/**
+ * Write the per-plugin retention overrides list to disk as a pretty-
+ * printed JSON envelope (schema_version + generated_at_iso +
+ * default_retain_days + min_retain_days + row_count + rows). Returns
+ * the byte count written. In browser mode no-ops and returns 0.
+ */
+export async function exportPluginRetentionOverridesJson(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_plugin_retention_json",
+    { path },
+  );
+}
+
+/**
+ * Human-friendly subtitle for the Retention section. Renders one of:
+ *
+ * - "Never auto-pruned"                 — last_auto_prune_at is null
+ * - "Last auto-prune: 2h ago"           — pruned recently
+ * - "Last auto-prune: yesterday"        — within 7 days
+ * - "Last auto-prune: 2026-06-15"       — older than 7 days
+ *
+ * Accepts an injectable `now` (unix seconds) for deterministic unit
+ * tests. Pure helper — no I/O, no Tauri.
+ */
+export function formatLastAutoPrune(
+  lastUnix: number | null,
+  now?: number,
+): string {
+  if (lastUnix === null) return "Never auto-pruned";
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = Math.max(0, nowSec - lastUnix);
+  if (delta < 90) return "Last auto-prune: just now";
+  if (delta < 3_600) {
+    const m = Math.floor(delta / 60);
+    return `Last auto-prune: ${m}m ago`;
+  }
+  if (delta < 86_400) {
+    const h = Math.floor(delta / 3_600);
+    return `Last auto-prune: ${h}h ago`;
+  }
+  if (delta < 86_400 * 2) return "Last auto-prune: yesterday";
+  if (delta < 86_400 * 7) {
+    const d = Math.floor(delta / 86_400);
+    return `Last auto-prune: ${d}d ago`;
+  }
+  const date = new Date(lastUnix * 1000);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `Last auto-prune: ${y}-${m}-${day}`;
+}
+
+/**
+ * Human-friendly "Next auto-prune in X" subtitle for the Retention
+ * section's debounce indicator. Returns:
+ *
+ * - "Due now"                          — at or past the due time
+ * - "Next auto-prune in 4h 12m"         — same-day, hours+minutes
+ * - "Next auto-prune in 23m"            — same-hour, minutes only
+ * - "Next auto-prune in 1d 3h"          — across day boundary
+ *
+ * Accepts an injectable `now` for deterministic unit tests.
+ */
+export function formatNextAutoPrune(
+  nextDueUnix: number,
+  now?: number,
+): string {
+  const nowSec = Math.floor((now ?? Date.now()) / 1000);
+  const delta = nextDueUnix - nowSec;
+  if (delta <= 0) return "Due now";
+  if (delta < 60) return "Next auto-prune in <1m";
+  if (delta < 3_600) {
+    const m = Math.floor(delta / 60);
+    return `Next auto-prune in ${m}m`;
+  }
+  if (delta < 86_400) {
+    const h = Math.floor(delta / 3_600);
+    const m = Math.floor((delta % 3_600) / 60);
+    return m > 0
+      ? `Next auto-prune in ${h}h ${m}m`
+      : `Next auto-prune in ${h}h`;
+  }
+  const d = Math.floor(delta / 86_400);
+  const h = Math.floor((delta % 86_400) / 3_600);
+  return h > 0
+    ? `Next auto-prune in ${d}d ${h}h`
+    : `Next auto-prune in ${d}d`;
+}
+
+// ─── Bulk update surface (v3.39 round-15 slices 68-72) ──────────────
+
+/**
+ * One planned update — installed plugin id paired with the index
+ * entry that supersedes it. Mirrors `marketplace::UpdateTarget`. The
+ * `entry` field is the full IndexEntry so the banner UI can render
+ * the new name / size / installs without a second lookup.
+ */
+export interface UpdateTarget {
+  id: string;
+  installed_version: string;
+  available_version: string;
+  size_bytes: number;
+  entry: IndexEntry;
+}
+
+/**
+ * Deterministic plan of updates to apply. Mirrors
+ * `marketplace::UpdatePlan`. Targets are sorted by id ascending so
+ * the banner UI doesn't need to sort defensively.
+ */
+export interface UpdatePlan {
+  targets: UpdateTarget[];
+  total_bytes: number;
+}
+
+/**
+ * One step of progress emitted on `marketplace://update-progress`
+ * while `slab_marketplace_update_all` is in flight. Mirrors
+ * `UpdateProgress`. The TS reducer narrows on `phase` to decide
+ * which row's state to mutate.
+ */
+export interface UpdateProgress {
+  batch_id: number;
+  /** 1-indexed position of the current target. */
+  index: number;
+  total: number;
+  plugin_id: string;
+  /** `"starting"` | `"done"` | `"error"`. */
+  phase: "starting" | "done" | "error";
+  /** Populated only on `phase === "error"`. */
+  error: string | null;
+}
+
+/**
+ * Per-target outcome from `slab_marketplace_update_all`. Discriminated
+ * union on `kind` so the reducer can narrow.
+ */
+export type UpdateOutcome =
+  | {
+      kind: "succeeded";
+      plugin_id: string;
+      prior_version: string;
+      new_version: string;
+      bytes_written: number;
+    }
+  | {
+      kind: "failed";
+      plugin_id: string;
+      prior_version: string;
+      new_version: string;
+      error: string;
+    };
+
+/**
+ * Final report from `slab_marketplace_update_all`. The `succeeded` /
+ * `failed` / `bytes_written` fields are pre-computed server-side so
+ * the toast / banner-reset logic doesn't need to fold the outcomes
+ * list itself.
+ */
+export interface BatchUpdateReport {
+  batch_id: number;
+  outcomes: UpdateOutcome[];
+  succeeded: number;
+  failed: number;
+  bytes_written: number;
+}
+
+/**
+ * List installed plugins for which the marketplace index has a
+ * strictly-newer version. Returns an empty plan (`targets.length ===
+ * 0`) when there's nothing to update; throws (Promise rejects) only
+ * if the index can't be loaded at all (no network + no cache + no
+ * embedded seed). Browser mode (non-Tauri) returns an empty plan so
+ * the banner UI naturally hides.
+ */
+export async function listUpdateTargets(): Promise<UpdatePlan> {
+  if (!isInTauri()) return { targets: [], total_bytes: 0 };
+  return await invoke<UpdatePlan>("slab_marketplace_list_update_targets");
+}
+
+/**
+ * Bulk-update one or more plugins sequentially. Pass a monotonic
+ * `batchId` (typically `Date.now()`) so the progress event stream can
+ * be correlated with the matching `slab_marketplace_update_all`
+ * call. Returns the structured per-id outcomes report on completion.
+ *
+ * Browser mode synthesises an empty all-failed report so the UI's
+ * "Update all" button gives consistent feedback in dev.
+ *
+ * Pair with `listenUpdateProgress` BEFORE awaiting this call to avoid
+ * dropping early `phase: "starting"` events.
+ */
+export async function updateAllPlugins(
+  batchId: number,
+  pluginIds: string[],
+): Promise<BatchUpdateReport> {
+  if (!isInTauri()) {
+    return {
+      batch_id: batchId,
+      outcomes: pluginIds.map((id) => ({
+        kind: "failed" as const,
+        plugin_id: id,
+        prior_version: "",
+        new_version: "",
+        error: "Marketplace bulk-update is only available in the Slab desktop app",
+      })),
+      succeeded: 0,
+      failed: pluginIds.length,
+      bytes_written: 0,
+    };
+  }
+  return await invoke<BatchUpdateReport>("slab_marketplace_update_all", {
+    batchId,
+    pluginIds,
+  });
+}
+
+/**
+ * Subscribe to per-step bulk-update progress events. Returns an
+ * unlisten function that the caller MUST invoke when the batch
+ * completes (or when the panel unmounts) to free the listener slot.
+ *
+ * The handler runs for EVERY in-flight batch on the host — filter on
+ * `payload.batch_id` if multiple are running concurrently (the UI
+ * never runs more than one at a time today, but this is the contract
+ * the listener honours).
+ */
+export async function listenUpdateProgress(
+  handler: (progress: UpdateProgress) => void,
+): Promise<UnlistenFn> {
+  if (!isInTauri()) return async () => {};
+  return await listen<UpdateProgress>(
+    "marketplace://update-progress",
+    (e) => handler(e.payload),
+  );
+}
+
+/**
+ * Pluralise a count of updates for the banner header text. The
+ * banner reads "1 update available" / "3 updates available" / "12
+ * updates available". Pure string helper — no I/O, no locale magic;
+ * the existing PluginsPanel i18n table interpolates {count} for the
+ * full Linear-grade i18n future when needed.
+ */
+export function pluralizeUpdates(n: number): string {
+  return n === 1 ? "1 update available" : `${n} updates available`;
+}
+
+/**
+ * Compact one-line summary of a batch result for the success toast.
+ * Examples:
+ *   { succeeded: 3, failed: 0 } → "Updated 3 plugins (4.2 MB)"
+ *   { succeeded: 2, failed: 1 } → "Updated 2 of 3 plugins (1.8 MB) · 1 failed"
+ *   { succeeded: 0, failed: 1 } → "Failed to update 1 plugin"
+ *   { succeeded: 1, failed: 0, bytes_written: 0 } → "Updated 1 plugin"
+ *      (no size shown when bytes_written is 0 — e.g. all-failed batches)
+ */
+export function formatUpdateSummary(report: BatchUpdateReport): string {
+  const { succeeded, failed, bytes_written } = report;
+  const total = succeeded + failed;
+  const sizePart = bytes_written > 0 ? ` (${formatBytes(bytes_written)})` : "";
+  if (succeeded === 0 && failed === 0) {
+    return "No plugins updated";
+  }
+  if (succeeded === 0) {
+    return failed === 1
+      ? "Failed to update 1 plugin"
+      : `Failed to update ${failed} plugins`;
+  }
+  if (failed === 0) {
+    const word = succeeded === 1 ? "plugin" : "plugins";
+    return `Updated ${succeeded} ${word}${sizePart}`;
+  }
+  const word = total === 1 ? "plugin" : "plugins";
+  return `Updated ${succeeded} of ${total} ${word}${sizePart} · ${failed} failed`;
+}
+
+// ─── Auto-prune run history surface (v3.39 round-25 — slice 122) ────
+
+/**
+ * One persisted row in the auto-prune run history table. Mirrors
+ * the Rust `AutoPruneRun` struct (Slice 118). The
+ * `overrides_applied` + `overrides_rows_removed` fields carry the
+ * per-plugin-vs-global attribution split returned by
+ * `AutoPruneOutcome::Pruned` (Slice 114) — preserved per-row so a
+ * UI viewing a 6-month-old prune still answers "did the override
+ * or the global window remove these events".
+ */
+export interface AutoPruneRun {
+  id: number;
+  ran_at_unix: number;
+  rows_removed: number;
+  /** Global retention window in force when this prune ran (NOT
+   *  the current setting — captured per-row so the audit trail
+   *  shows what window applied at the time). */
+  retain_days: number;
+  /** Unix-seconds cutoff the global pass applied
+   *  (ran_at_unix - retain_days * 86_400). */
+  cutoff_unix: number;
+  /** Per-plugin retention overrides considered during this run.
+   *  Zero on a workstation with no overrides. */
+  overrides_applied: number;
+  /** Subset of `rows_removed` attributable to the per-plugin
+   *  override passes; the rest are the global pass. */
+  overrides_rows_removed: number;
+}
+
+/**
+ * Wire payload returned by `getAutoPruneRuns`. Mirrors the Rust
+ * `AutoPruneRunsResult` struct (Slice 122). Carries the most-
+ * recent N history rows plus the underlying total plus the
+ * envelope-level attribution totals (pre-summed across the
+ * returned rows) so the UI renders "Showing N of M · cleared X
+ * events (Y from per-plugin overrides)" without re-summing on
+ * every render.
+ */
+export interface AutoPruneRunsResult {
+  rows: AutoPruneRun[];
+  /** Total rows in the underlying table — always `>= rows.length`.
+   *  UI compares against `rows.length` to render "Showing N of M"
+   *  vs "Showing all". */
+  total_count: number;
+  /** Sum of `rows[i].rows_removed`. Pairs with
+   *  `total_overrides_rows_removed` for the attribution split. */
+  total_rows_removed: number;
+  /** Sum of `rows[i].overrides_rows_removed`. */
+  total_overrides_rows_removed: number;
+}
+
+const BROWSER_FALLBACK_AUTO_PRUNE_RUNS: AutoPruneRunsResult = {
+  rows: [],
+  total_count: 0,
+  total_rows_removed: 0,
+  total_overrides_rows_removed: 0,
+};
+
+/**
+ * Read the auto-prune run history, newest first, capped at
+ * `limit` (default 25). Cheap O(N) on a small indexed table. In
+ * browser mode returns an empty result so the UI renders the
+ * empty state cleanly in dev / preview builds.
+ */
+export async function getAutoPruneRuns(
+  limit = 25,
+): Promise<AutoPruneRunsResult> {
+  if (!isInTauri()) return { ...BROWSER_FALLBACK_AUTO_PRUNE_RUNS };
+  return invoke<AutoPruneRunsResult>(
+    "slab_marketplace_install_log_auto_prune_runs",
+    { limit },
+  );
+}
+
+/**
+ * Remove every row from the auto-prune run history. Idempotent —
+ * returns the number of rows actually deleted (zero on an
+ * already-empty table). The corresponding `install_events` table
+ * is NOT touched; only the audit trail is cleared. In browser
+ * mode no-ops and returns 0.
+ */
+export async function clearAutoPruneRuns(): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_clear_auto_prune_runs",
+  );
+}
+
+/**
+ * Write the auto-prune run history to disk as RFC-4180 CSV.
+ * Returns the byte count written. In browser mode no-ops and
+ * returns 0 — the file picker is desktop-only.
+ */
+export async function exportAutoPruneRunsCsv(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_auto_prune_runs_csv",
+    { path },
+  );
+}
+
+/**
+ * Write the auto-prune run history to disk as a pretty-printed
+ * JSON envelope (schema_version + generated_at_iso + row_count +
+ * total_rows_removed + total_overrides_rows_removed + rows).
+ * Returns the byte count written. In browser mode no-ops and
+ * returns 0.
+ */
+export async function exportAutoPruneRunsJson(
+  path: string,
+): Promise<number> {
+  if (!isInTauri()) return 0;
+  return invoke<number>(
+    "slab_marketplace_install_log_export_auto_prune_runs_json",
+    { path },
+  );
+}
+
+/**
+ * Suggest a filename for the auto-prune run history export.
+ * Produces `marketplace-auto-prune-runs_<YYYYMMDD>.<ext>` matching
+ * the five sibling export-filename helpers' shape. UTC date slug
+ * so the same export from two machines in different timezones
+ * carries the same name.
+ *
+ * Pure helper — no I/O, no Tauri. Accepts an injectable `now` for
+ * deterministic unit tests.
+ */
+export function suggestAutoPruneRunsExportFilename(
+  kind: "csv" | "json",
+  now?: number,
+): string {
+  const d = new Date(now ?? Date.now());
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `marketplace-auto-prune-runs_${y}${m}${day}.${kind}`;
+}
+
+/**
+ * Compact attribution toast for the auto-prune outcome. Surfaces
+ * the per-plugin-vs-global split that Slice 114 plumbed through
+ * `AutoPruneOutcome::Pruned` but the round-24 toast didn't render.
+ *
+ * Returns one of:
+ *   - "Auto-prune ran — nothing to remove."          (rows_removed === 0)
+ *   - "Auto-pruned 23 events older than 365d."       (no overrides applied)
+ *   - "Auto-pruned 23 events older than 365d (5 from 2 per-plugin overrides)."
+ *                                                     (overrides applied)
+ *   - "Auto-pruned 23 events older than 365d (all from per-plugin overrides)."
+ *                                                     (every row came from overrides)
+ *
+ * Pure helper — no I/O. Accepts the full Pruned-branch payload so
+ * the caller can hand it the discriminated-union variant directly.
+ */
+export function formatAutoPruneAttributionToast(outcome: {
+  rows_removed: number;
+  retain_days: number;
+  overrides_applied: number;
+  overrides_rows_removed: number;
+}): string {
+  const { rows_removed, retain_days, overrides_applied, overrides_rows_removed } =
+    outcome;
+  if (rows_removed === 0) return "Auto-prune ran — nothing to remove.";
+  const word = rows_removed === 1 ? "event" : "events";
+  const base = `Auto-pruned ${rows_removed} ${word} older than ${retain_days}d`;
+  if (overrides_applied === 0 || overrides_rows_removed === 0) {
+    return `${base}.`;
+  }
+  if (overrides_rows_removed === rows_removed) {
+    return `${base} (all from per-plugin overrides).`;
+  }
+  const overridesWord =
+    overrides_applied === 1 ? "per-plugin override" : "per-plugin overrides";
+  return `${base} (${overrides_rows_removed} from ${overrides_applied} ${overridesWord}).`;
+}
+
+

@@ -21,8 +21,38 @@
     getRecentThumb,
     pinRecent,
     removeRecent,
+    clearRecent,
+    reorderPinned,
+    clearPinOrder,
     type RecentFile,
   } from "$lib/recent";
+  import {
+    partitionRecents,
+    filterRecents,
+    highlightRecentName,
+    sortRecentView,
+    recentSortLabel,
+    RECENT_SORT_MODES,
+    flattenRecentCards,
+    classifyRecentKey,
+    recentCardScrollOptions,
+    moveRecentCursor,
+    clampRecentCursor,
+    summarizeRecents,
+    countInProgress,
+    countUnpinned,
+    describeClearUnpinned,
+    recentProgressBar,
+    pinnedStripEdges,
+    orderPinnedStrip,
+    movePinned,
+    anyPinOrder,
+    describeResetPinOrder,
+    type RecentSortMode,
+  } from "$lib/recentsHomeView";
+  import { clampFlyoutTop } from "$lib/readerThumbView";
+  import { loadRecentSort, saveRecentSort } from "$lib/recentsView";
+  import { loadPinsCollapsed, savePinsCollapsed } from "$lib/recentsPinsCollapsed";
   import { notify } from "$lib/notify";
   import { basename } from "$lib/types";
   import { onMount, onDestroy } from "svelte";
@@ -41,37 +71,383 @@
     unsub = subscribeRecent((files) => {
       recents = files;
     });
+    window.addEventListener("keydown", handleKey);
+    // Re-measure the pinned strip's overflow on viewport resize (a window
+    // narrowing can turn a fitting strip into an overflowing one).
+    window.addEventListener("resize", measureStrip);
+    queueMicrotask(measureStrip);
   });
   onDestroy(() => {
     unsub?.();
+    window.removeEventListener("keydown", handleKey);
+    window.removeEventListener("resize", measureStrip);
   });
+
+  // Slice 2 (round 44): filter-as-you-type. A user near the 12-file recents
+  // cap had no way to jump to one file — the grid was eyeball-only. The
+  // filter input narrows the board live, reusing the tested palette scorer
+  // (via filterRecents / highlightRecentName) so ranking + <mark> highlight
+  // behave EXACTLY like Cmd+K and the library search panel.
+  let query = $state("");
+  let filterEl: HTMLInputElement | null = $state(null);
+  const q = $derived(query.trim());
+  const filtering = $derived(q.length > 0);
+
+  // Slice 3 (round 44): sort modes. Recents only ever sorted newest-first.
+  // The segmented control cycles Recent / Name / Progress / Pages via the
+  // tested sortRecentView, applied to BOTH rendered grids (pinned + others)
+  // so the whole board re-orders together.
+  // Round 51 Slice 3: the choice now PERSISTS across sessions — seeded from
+  // localStorage (loadRecentSort, default "recent") and written back on
+  // every change via setSort, so a user who always wants their library
+  // alphabetised gets it without re-picking every launch. (The filter query
+  // is intentionally NOT persisted — a stale term would hide recents behind
+  // a forgotten filter on reopen.)
+  let sortMode = $state<RecentSortMode>(loadRecentSort());
+  // The pinned strip can fold away so a many-pin board doesn't push recents
+  // off-screen; persisted (loadPinsCollapsed, default expanded) so the choice
+  // survives a restart, like the sort mode above.
+  let pinsCollapsed = $state<boolean>(loadPinsCollapsed());
+  function togglePinsCollapsed() {
+    pinsCollapsed = !pinsCollapsed;
+    savePinsCollapsed(pinsCollapsed);
+  }
+
+  /** Set the active sort and persist it (best-effort). */
+  function setSort(mode: RecentSortMode): void {
+    sortMode = mode;
+    saveRecentSort(mode);
+  }
 
   // The "Continue reading" hero card surfaces the single most useful next
-  // action: the file with the freshest reading progress. We prefer files
-  // that have a lastPage *and* are not already at the end. Pinned items
-  // are eligible but don't dominate — the hero is about momentum, not
-  // a curated favourites shelf.
-  const continueCandidate = $derived.by<RecentFile | null>(() => {
-    const withProgress = recents
-      .filter((r) => r.lastPage && r.totalPages && r.lastPage < r.totalPages)
-      .sort((a, b) => (b.lastReadAt ?? b.openedAt) - (a.lastReadAt ?? a.openedAt));
-    if (withProgress.length > 0) return withProgress[0];
-    // Fall back to most recent file even without progress (first-open case).
-    return recents[0] ?? null;
+  // action: the file with the freshest reading momentum. The selection +
+  // partition math now lives in the tested pure core (recentsHomeView.ts),
+  // so the contract that decides what the app's headline card even is has
+  // unit tests instead of an untested inline $derived. `partitionRecents`
+  // returns { hero, pinned, others } exactly mirroring the render regions.
+  //
+  // While a filter is active the hero collapses and the board becomes a
+  // flat matched list (pinned strip + recents grid both filtered); with no
+  // filter the partition's hero-aware split is used unchanged. The rendered
+  // rows are then run through sortRecentView so the active sort mode wins.
+  const partition = $derived(partitionRecents(recents));
+  const matched = $derived(filtering ? filterRecents(recents, q) : recents);
+  const continueCandidate = $derived(filtering ? null : partition.hero);
+  // The pinned strip honours the user's manual drag order (orderPinnedStrip
+  // reads each card's pinOrder) ONLY in the default Recent view with no
+  // filter — an explicit sort (Name/Progress/Pages) or an active filter
+  // takes precedence, exactly like the others grid. So drag-order is the
+  // resting arrangement, and choosing a sort still works.
+  const pinnedBase = $derived(
+    filtering ? matched.filter((r) => r.pinned) : partition.pinned,
+  );
+  const pinned = $derived(
+    !filtering && sortMode === "recent"
+      ? orderPinnedStrip(pinnedBase)
+      : sortRecentView(pinnedBase, sortMode),
+  );
+  const others = $derived(
+    sortRecentView(filtering ? matched.filter((r) => !r.pinned) : partition.others, sortMode),
+  );
+  /** True only when the strip is in its manually-orderable resting state
+   *  (default Recent sort, no filter) — gates the drag handles + Alt+Arrow
+   *  reorder so a reorder during a sort/filter can't write a misleading
+   *  pinOrder. */
+  const stripReorderable = $derived(!filtering && sortMode === "recent" && pinned.length > 1);
+
+  /** Slice 9: whether the strip carries a manual drag order, so the "reset
+      order" affordance shows only once a user has rearranged it — and only
+      in the reorderable resting state where a reset is meaningful. */
+  const canResetPinOrder = $derived(stripReorderable && anyPinOrder(pinned));
+  /** The reset-order button label ("Reset order (N)"), or "" to hide it. */
+  const resetPinOrderLabel = $derived(canResetPinOrder ? describeResetPinOrder(pinned.length) : "");
+
+  // Pinned-strip overflow affordance (this round): the strip scrolls
+  // horizontally but gave no hint when it overflowed. Track its live scroll
+  // geometry; pinnedStripEdges turns it into {overflowing, atStart, atEnd}
+  // so we can paint edge fades + enable the scroll chevrons. Recomputed on
+  // scroll, on resize, and whenever the pinned list changes.
+  let stripEl = $state<HTMLDivElement | null>(null);
+  let stripEdges = $state(pinnedStripEdges(null));
+
+  // Cover-flow hover-zoom: hovering a pinned card OR a recents-grid card pops
+  // its full cover beside the board so a small thumbnail is recognisable
+  // without opening the doc — the twin of the reader rail's hover preview,
+  // reusing the tested clampFlyoutTop so the flyout never spills off the
+  // top/bottom edge. The flyout is hoisted to board level (position:fixed)
+  // so one render serves both the strip and the grid.
+  let coverPreviewPath = $state<string | null>(null);
+  let coverPreviewTop = $state(0);
+  const COVER_PREVIEW_H = 280;
+  function showCoverPreview(e: MouseEvent, path: string): void {
+    const thumb = getRecentThumb(path);
+    if (!thumb) return;
+    const card = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    coverPreviewTop = clampFlyoutTop(
+      { top: card.top, height: card.height },
+      COVER_PREVIEW_H,
+      window.innerHeight,
+    );
+    coverPreviewPath = path;
+  }
+  function hideCoverPreview(): void {
+    coverPreviewPath = null;
+  }
+
+  function measureStrip(): void {
+    if (!stripEl) {
+      stripEdges = pinnedStripEdges(null);
+      return;
+    }
+    stripEdges = pinnedStripEdges({
+      scrollLeft: stripEl.scrollLeft,
+      scrollWidth: stripEl.scrollWidth,
+      clientWidth: stripEl.clientWidth,
+    });
+  }
+
+  /** Scroll the pinned strip by ~80% of a viewport in the given direction
+      (the chevron buttons + a fallback for pointer-only users). */
+  function scrollStrip(dir: -1 | 1): void {
+    if (!stripEl) return;
+    stripEl.scrollBy({ left: dir * stripEl.clientWidth * 0.8, behavior: "smooth" });
+  }
+
+  // Slice 8 (this round): drag-to-reorder the pinned strip. The strip
+  // rendered in store order with no way to arrange it. A card carries a
+  // drag handle; HTML5 drag computes the new order and reorderPinned
+  // persists each card's pinOrder. Keyboard users get Alt+Left/Right on a
+  // focused card (no pointer needed). All gated on stripReorderable so a
+  // reorder during a sort/filter can't stamp a misleading order.
+  /** Index (within the rendered `pinned` strip) of the card being dragged,
+   *  or -1 when no drag is in flight. Drives the drag-source dimming. */
+  let dragIdx = $state(-1);
+  /** Index the dragged card is currently hovering over (the drop target),
+   *  or -1. Drives the drop-indicator ring. */
+  let dragOverIdx = $state(-1);
+
+  /** Commit a reorder: move the card at `from` to `to` and persist. The
+      pure movePinned computes the new path order from the CURRENT strip
+      order; reorderPinned stamps pinOrder (store sort untouched). */
+  function commitReorder(from: number, to: number): void {
+    if (!stripReorderable) return;
+    const order = movePinned(pinned, from, to);
+    if (order.length > 0) reorderPinned(order);
+  }
+
+  /** Slice 9: drop the strip back to the store's natural pinned-first /
+      openedAt-desc order by clearing every pinOrder stamp. Guarded on
+      canResetPinOrder so it's a no-op when there's no manual order. */
+  function resetPinOrder(): void {
+    if (!canResetPinOrder) return;
+    clearPinOrder();
+  }
+
+  function onDragStart(e: DragEvent, i: number): void {
+    if (!stripReorderable) return;
+    dragIdx = i;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox requires data to be set for a drag to start.
+      try { e.dataTransfer.setData("text/plain", String(i)); } catch { /* ignore */ }
+    }
+  }
+
+  function onDragOver(e: DragEvent, i: number): void {
+    if (dragIdx < 0) return;
+    e.preventDefault(); // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    dragOverIdx = i;
+  }
+
+  function onDrop(e: DragEvent, i: number): void {
+    if (dragIdx < 0) return;
+    e.preventDefault();
+    if (dragIdx !== i) commitReorder(dragIdx, i);
+    dragIdx = -1;
+    dragOverIdx = -1;
+  }
+
+  function onDragEnd(): void {
+    dragIdx = -1;
+    dragOverIdx = -1;
+  }
+
+  /** Keyboard reorder: Alt+Left/Right nudges a focused pinned card one slot.
+      Returns true if it handled the key (so the caller can stop). */
+  function nudgePinned(i: number, dir: -1 | 1): boolean {
+    if (!stripReorderable) return false;
+    const to = i + dir;
+    if (to < 0 || to >= pinned.length) return false;
+    commitReorder(i, to);
+    // Keep the keyboard cursor on the moved card so repeated nudges chain.
+    cursor = to;
+    queueMicrotask(() => cardEls[to]?.focus?.());
+    return true;
+  }
+
+  // Re-measure when the pinned list changes (a pin/unpin can flip overflow).
+  $effect(() => {
+    void pinned.length;
+    void stripEl;
+    queueMicrotask(measureStrip);
   });
 
-  const pinned = $derived(recents.filter((r) => r.pinned));
-  // Everything except the hero candidate (avoid duplication) and pinned
-  // items (already shown in their own row, unless we have <4 pinned).
-  const others = $derived.by(() => {
-    const heroPath = continueCandidate?.path;
-    const pinnedPaths = new Set(pinned.map((p) => p.path));
-    return recents.filter((r) => {
-      if (r.path === heroPath) return false;
-      if (pinnedPaths.has(r.path)) return false;
-      return true;
-    });
+  // Slice 4 (round 44): keyboard navigation. The board was mouse-only. A
+  // window keydown handler drives a VIRTUAL cursor (ring only, no DOM focus
+  // move) over the rendered cards — flattenRecentCards gives one index space
+  // across the pinned strip + recents grid (the hero keeps its own ⌘0). The
+  // cursor never moves real focus, so Enter on a focused card-button can't
+  // double-fire. Reuses the tested palette nav core via moveRecentCursor /
+  // clampRecentCursor, and classifyRecentKey owns the bare-key -> action map.
+  const flatRows = $derived(flattenRecentCards(pinned, others));
+  let cursor = $state(-1);
+  let cardEls = $state<Array<HTMLElement | null>>([]);
+  let listFocused = $state(false);
+
+  // Slice 5 (round 44): context-aware summary footer. The board gave no
+  // running sense of what you were looking at. summarizeRecents narrates the
+  // live view (shown-vs-total, the filter term, the in-progress count, the
+  // active sort) into an aria-live region, mirroring the command-palette /
+  // library-search / beacon-cache footers. countInProgress reuses the
+  // palette progress core so the threshold matches the hero chip exactly.
+  const summary = $derived(
+    summarizeRecents({
+      total: recents.length,
+      shown: filtering ? matched.length : recents.length,
+      query: q,
+      inProgress: countInProgress(filtering ? matched : recents),
+      sort: sortMode,
+    }),
+  );
+
+  // Slice 6 (this round): clear-unpinned affordance. The board only let you
+  // remove rows one at a time; the store already has a "clear unpinned"
+  // primitive (clearRecent preserves pinned). countUnpinned drives an honest
+  // count so the footer can offer "Clear N unpinned" and hide it when every
+  // row is pinned (nothing to clear). Confirm before wiping.
+  const unpinnedCount = $derived(countUnpinned(recents));
+  const clearUnpinnedLabel = $derived(describeClearUnpinned(unpinnedCount));
+  function clearUnpinned() {
+    if (unpinnedCount <= 0) return;
+    if (
+      !window.confirm(
+        `Clear ${unpinnedCount} unpinned ${unpinnedCount === 1 ? "document" : "documents"} from recents? Pinned documents are kept.`,
+      )
+    )
+      return;
+    clearRecent();
+    notify.info(
+      `Cleared ${unpinnedCount} unpinned ${unpinnedCount === 1 ? "document" : "documents"}`,
+    );
+  }
+
+  // Keep the cursor in range when the list shrinks (a filter narrowed it, a
+  // file was pinned/removed). A cleared filter / emptied board parks it.
+  $effect(() => {
+    cursor = clampRecentCursor(cursor, flatRows.length);
+    if (flatRows.length === 0) listFocused = false;
   });
+
+  function scrollCursorIntoView() {
+    queueMicrotask(() => {
+      const el = cardEls[cursor];
+      if (!el) return;
+      // A pinned card lives in a horizontally-overflowing strip, so scroll
+      // it along the inline (horizontal) axis; a grid card scrolls
+      // vertically. The view-core decides the alignment per section.
+      const row = cursor >= 0 ? flatRows[cursor] : null;
+      const opts = recentCardScrollOptions(row?.section ?? "others");
+      el.scrollIntoView({ block: opts.block, inline: opts.inline });
+    });
+  }
+
+  /**
+   * Window-level key handler. Returns true when it consumed the event.
+   * While the filter input is focused only nav + Enter are honored (so the
+   * arrows reach the cards but typed letters like "p" stay literal text);
+   * elsewhere the full bare-key map (Enter / P / Backspace / Esc) applies.
+   */
+  function handleKey(e: KeyboardEvent): boolean {
+    if (recents.length === 0) return false;
+    const target = e.target as HTMLElement | null;
+    const inFilter = target === filterEl;
+    const tag = target?.tagName;
+    // Outside the filter, ignore keys aimed at other inputs/controls.
+    if (!inFilter && (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")) {
+      return false;
+    }
+    // Slice 8: Alt+Left/Right reorders a focused PINNED card one slot — a
+    // keyboard twin of drag-to-reorder. Checked before classifyRecentKey
+    // (which disqualifies modifier chords). Only when the cursor sits on a
+    // pinned card and the strip is in its reorderable resting state.
+    if (
+      e.altKey && !e.metaKey && !e.ctrlKey && !inFilter &&
+      (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+      stripReorderable && cursor >= 0 && cursor < pinned.length
+    ) {
+      if (nudgePinned(cursor, e.key === "ArrowRight" ? 1 : -1)) {
+        e.preventDefault();
+        return true;
+      }
+    }
+    const action = classifyRecentKey(e);
+    if (!action) return false;
+    // From inside the filter box, only let movement + open through — pin /
+    // remove / clear would hijack the user's typing.
+    if (inFilter && action.kind !== "move" && action.kind !== "open") return false;
+    // ...and inside the filter box, leave the HORIZONTAL arrows to the
+    // text caret (Left/Right move within the typed query); only the
+    // vertical arrows cross into the card grid. Outside the filter, both
+    // axes walk the cursor (so the pinned strip is reachable with Right).
+    if (inFilter && action.kind === "move" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      return false;
+    }
+
+    const row = cursor >= 0 ? flatRows[cursor] : null;
+    switch (action.kind) {
+      case "move": {
+        if (flatRows.length === 0) return false;
+        e.preventDefault();
+        listFocused = true;
+        cursor = moveRecentCursor(action.intent, cursor, flatRows.length);
+        scrollCursorIntoView();
+        return true;
+      }
+      case "open": {
+        if (!row) return false;
+        e.preventDefault();
+        onOpen(row.file);
+        return true;
+      }
+      case "pin": {
+        if (!row) return false;
+        e.preventDefault();
+        pinRecent(row.file.path);
+        notify.success(row.file.pinned ? `Unpinned ${row.file.name}` : `Pinned ${row.file.name}`);
+        return true;
+      }
+      case "remove": {
+        if (!row) return false;
+        e.preventDefault();
+        removeRecent(row.file.path);
+        notify.info(`Removed ${row.file.name} from recents`);
+        return true;
+      }
+      case "clear": {
+        // Esc parks the cursor if the list has focus; otherwise it falls
+        // through (the filter's own Esc handler clears the query first).
+        if (listFocused && cursor >= 0) {
+          e.preventDefault();
+          cursor = -1;
+          listFocused = false;
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
+  }
 
   function progressPct(r: RecentFile): number {
     if (!r.lastPage || !r.totalPages || r.totalPages <= 0) return 0;
@@ -114,7 +490,100 @@
   });
 </script>
 
+<!-- Monochrome glyphs (Slab chrome is icon-only, never emoji). -->
+{#snippet pinGlyph()}
+  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M9 4h6l-1 6 3 3v2H7v-2l3-3-1-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+    <path d="M12 15v5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+{/snippet}
+{#snippet removeGlyph()}
+  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+{/snippet}
+{#snippet searchGlyph()}
+  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+    <path d="M16 16l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+  </svg>
+{/snippet}
+<!-- Renders a recent file's name with a live <mark> over the matched range. -->
+{#snippet nameSegs(name: string)}
+  {#each highlightRecentName(name, q) as seg}
+    {#if seg.hit}<mark class="hl">{seg.text}</mark>{:else}{seg.text}{/if}
+  {/each}
+{/snippet}
+<!-- Slice 7 — thumbnail reading-progress overlay. A thin accent bar along
+     the bottom edge of a card/hero thumbnail shows how far through the doc
+     you are, derived from the same tested recentReadingProgress core the
+     dots + palette chip use (so they can never disagree). Finished docs
+     read as a full bar with a distinct done tint. Hidden when there's no
+     usable position. -->
+{#snippet progressOverlay(r: RecentFile)}
+  {@const bar = recentProgressBar(r)}
+  {#if bar.show}
+    <div
+      class="thumb-progress"
+      class:done={bar.finished}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={bar.percent}
+      aria-label={bar.label}
+      title={bar.label}
+    >
+      <span class="thumb-progress-fill" style="width: {bar.percent}%"></span>
+    </div>
+  {/if}
+{/snippet}
+
 <div class="recents-home">
+  {#if recents.length > 0}
+    <div class="filter-bar">
+      <span class="filter-ico" aria-hidden="true">{@render searchGlyph()}</span>
+      <input
+        bind:this={filterEl}
+        class="filter-input"
+        type="text"
+        placeholder="Filter recent documents…"
+        bind:value={query}
+        spellcheck="false"
+        autocomplete="off"
+        aria-label="Filter recent documents"
+        onkeydown={(e) => {
+          if (e.key === "Escape" && query) {
+            e.preventDefault();
+            e.stopPropagation();
+            query = "";
+          }
+        }}
+      />
+      {#if filtering}
+        <button
+          class="filter-clear"
+          onclick={() => {
+            query = "";
+            filterEl?.focus();
+          }}
+          aria-label="Clear filter"
+          title="Clear filter (Esc)"
+        >Clear</button>
+      {/if}
+      <div class="sort-seg" role="group" aria-label="Sort recent documents">
+        {#each RECENT_SORT_MODES as mode (mode)}
+          <button
+            class="sort-btn"
+            class:active={sortMode === mode}
+            onclick={() => setSort(mode)}
+            aria-pressed={sortMode === mode}
+            title={`Sort by ${recentSortLabel(mode)}`}
+          >{recentSortLabel(mode)}</button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if continueCandidate && continueCandidate.lastPage && continueCandidate.totalPages}
     <!-- Hero: a user with reading momentum gets resume as the headline. -->
     <button class="hero-card resume" onclick={continueReading} title={continueCandidate.path}>
@@ -177,23 +646,103 @@
   {#if pinned.length > 0}
     <section class="row">
       <header class="row-head">
-        <span class="row-label">Pinned</span>
+        <button
+          type="button"
+          class="rh-pins-toggle"
+          aria-expanded={!pinsCollapsed}
+          onclick={togglePinsCollapsed}
+          title={pinsCollapsed ? "Show pinned documents" : "Hide pinned documents"}
+        >
+          <span class="rh-pins-chevron" aria-hidden="true">{pinsCollapsed ? "\u25B8" : "\u25BE"}</span>
+          <span class="row-label">Pinned</span>
+        </button>
         <span class="row-hint">{pinned.length} file{pinned.length === 1 ? "" : "s"}</span>
+        {#if resetPinOrderLabel && !pinsCollapsed}
+          <button
+            type="button"
+            class="rh-reset-order"
+            onclick={resetPinOrder}
+            title="Drop the strip back to its natural order (clears your manual arrangement)"
+          >
+            {resetPinOrderLabel}
+          </button>
+        {/if}
       </header>
-      <div class="row-strip">
-        {#each pinned as r (r.path)}
+      {#if !pinsCollapsed}
+      <div
+        class="strip-wrap"
+        class:has-start={stripEdges.atStart}
+        class:has-end={stripEdges.atEnd}
+      >
+        {#if stripEdges.overflowing}
+          <button
+            type="button"
+            class="strip-nav prev"
+            aria-label="Scroll pinned documents left"
+            disabled={!stripEdges.atStart}
+            onclick={() => scrollStrip(-1)}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="strip-nav next"
+            aria-label="Scroll pinned documents right"
+            disabled={!stripEdges.atEnd}
+            onclick={() => scrollStrip(1)}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+            </svg>
+          </button>
+        {/if}
+        <div class="row-strip" bind:this={stripEl} onscroll={measureStrip} role="list" aria-label="Pinned documents">
+        {#each pinned as r, i (r.path)}
           {@const thumb = getRecentThumb(r.path)}
-          <div class="card pinned">
-            <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
+          <div
+            class="card pinned"
+            class:cursor={listFocused && cursor === i}
+            class:dragging={dragIdx === i}
+            class:drop-target={dragOverIdx === i && dragIdx >= 0 && dragIdx !== i}
+            class:reorderable={stripReorderable}
+            bind:this={cardEls[i]}
+            role="listitem"
+            aria-label={stripReorderable ? `${r.name} — draggable, Alt+Left or Alt+Right to reorder` : r.name}
+            draggable={stripReorderable}
+            ondragstart={(e) => onDragStart(e, i)}
+            ondragover={(e) => onDragOver(e, i)}
+            ondrop={(e) => onDrop(e, i)}
+            ondragend={onDragEnd}
+          >
+            {#if stripReorderable}
+              <span
+                class="drag-grip"
+                aria-hidden="true"
+                title="Drag to reorder (or Alt+←/→)"
+              >
+                <svg viewBox="0 0 10 16" width="8" height="13">
+                  <circle cx="2.5" cy="3" r="1.2" fill="currentColor" />
+                  <circle cx="7.5" cy="3" r="1.2" fill="currentColor" />
+                  <circle cx="2.5" cy="8" r="1.2" fill="currentColor" />
+                  <circle cx="7.5" cy="8" r="1.2" fill="currentColor" />
+                  <circle cx="2.5" cy="13" r="1.2" fill="currentColor" />
+                  <circle cx="7.5" cy="13" r="1.2" fill="currentColor" />
+                </svg>
+              </span>
+            {/if}
+            <button class="card-body" onclick={() => onOpen(r)} onmouseenter={(e) => showCoverPreview(e, r.path)} onmouseleave={hideCoverPreview} title={r.path}>
               <div class="card-thumb">
                 {#if thumb}
                   <img src={thumb} alt="" loading="lazy" />
                 {:else}
                   <span class="card-thumb-placeholder">PDF</span>
                 {/if}
-                <span class="pin-flag" aria-hidden="true">📌</span>
+                <span class="pin-flag" aria-hidden="true">{@render pinGlyph()}</span>
+                {@render progressOverlay(r)}
               </div>
-              <span class="card-name">{r.name}</span>
+              <span class="card-name">{@render nameSegs(r.name)}</span>
               <span class="card-meta">
                 {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
               </span>
@@ -206,8 +755,56 @@
               {/if}
             </button>
             <div class="card-actions">
-              <button class="act" title="Unpin" aria-label="Unpin" onclick={(e) => handlePin(e, r)}>📌</button>
-              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>✕</button>
+              <button class="act" title="Unpin" aria-label="Unpin" onclick={(e) => handlePin(e, r)}>{@render pinGlyph()}</button>
+              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>{@render removeGlyph()}</button>
+            </div>
+          </div>
+        {/each}
+        </div>
+      </div>
+      {/if}
+    </section>
+  {/if}
+
+  {#if others.length > 0}
+    <section class="row">
+      <header class="row-head">
+        <span class="row-label">{filtering ? "Results" : "Recent"}</span>
+        <span class="row-hint">{others.length} file{others.length === 1 ? "" : "s"}</span>
+      </header>
+      <div class="grid">
+        {#each others as r, i (r.path)}
+          {@const thumb = getRecentThumb(r.path)}
+          {@const flatIdx = pinned.length + i}
+          <div
+            class="card"
+            class:cursor={listFocused && cursor === flatIdx}
+            bind:this={cardEls[flatIdx]}
+          >
+            <button class="card-body" onclick={() => onOpen(r)} onmouseenter={(e) => showCoverPreview(e, r.path)} onmouseleave={hideCoverPreview} title={r.path}>
+              <div class="card-thumb">
+                {#if thumb}
+                  <img src={thumb} alt="" loading="lazy" />
+                {:else}
+                  <span class="card-thumb-placeholder">{basename(r.name).slice(0, 3).toUpperCase()}</span>
+                {/if}
+                {@render progressOverlay(r)}
+              </div>
+              <span class="card-name">{@render nameSegs(r.name)}</span>
+              <span class="card-meta">
+                {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
+              </span>
+              {#if r.lastPage && r.totalPages}
+                <div class="dots" aria-label="Reading progress">
+                  {#each dots(r) as on}
+                    <span class="dot" class:on></span>
+                  {/each}
+                </div>
+              {/if}
+            </button>
+            <div class="card-actions">
+              <button class="act" title="Pin to top" aria-label="Pin" onclick={(e) => handlePin(e, r)}>{@render pinGlyph()}</button>
+              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>{@render removeGlyph()}</button>
             </div>
           </div>
         {/each}
@@ -215,44 +812,41 @@
     </section>
   {/if}
 
-  {#if others.length > 0}
-    <section class="row">
-      <header class="row-head">
-        <span class="row-label">Recent</span>
-        <span class="row-hint">{others.length} file{others.length === 1 ? "" : "s"}</span>
-      </header>
-      <div class="grid">
-        {#each others as r (r.path)}
-          {@const thumb = getRecentThumb(r.path)}
-          <div class="card">
-            <button class="card-body" onclick={() => onOpen(r)} title={r.path}>
-              <div class="card-thumb">
-                {#if thumb}
-                  <img src={thumb} alt="" loading="lazy" />
-                {:else}
-                  <span class="card-thumb-placeholder">{basename(r.name).slice(0, 3).toUpperCase()}</span>
-                {/if}
-              </div>
-              <span class="card-name">{r.name}</span>
-              <span class="card-meta">
-                {#if r.pageCount}{r.pageCount}p · {/if}{formatRelTime(r.openedAt)}
-              </span>
-              {#if r.lastPage && r.totalPages}
-                <div class="dots" aria-label="Reading progress">
-                  {#each dots(r) as on}
-                    <span class="dot" class:on></span>
-                  {/each}
-                </div>
-              {/if}
-            </button>
-            <div class="card-actions">
-              <button class="act" title="Pin to top" aria-label="Pin" onclick={(e) => handlePin(e, r)}>📌</button>
-              <button class="act danger" title="Remove" aria-label="Remove" onclick={(e) => handleRemove(e, r)}>✕</button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    </section>
+  {#if filtering && pinned.length === 0 && others.length === 0}
+    <div class="filter-empty">
+      <p class="filter-empty-line">
+        No recent documents match <span class="filter-empty-q">“{q}”</span>.
+      </p>
+      <button class="filter-empty-reset" onclick={() => { query = ""; filterEl?.focus(); }}>
+        Clear filter
+      </button>
+    </div>
+  {/if}
+
+  {#if recents.length > 0}
+    <footer class="board-foot">
+      <span class="board-foot-summary" aria-live="polite">{summary}</span>
+      {#if clearUnpinnedLabel}
+        <button
+          class="board-foot-clear"
+          onclick={clearUnpinned}
+          title="Remove every unpinned document from this list (pinned are kept)"
+        >{clearUnpinnedLabel}</button>
+      {/if}
+      <span class="board-foot-hint" aria-hidden="true">
+        <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>P</kbd> pin · <kbd>⌫</kbd> remove
+      </span>
+    </footer>
+  {/if}
+
+  <!-- Cover-flow hover-zoom flyout. Hoisted to board level (round 58) so it
+       pops for BOTH the pinned strip AND the recents grid — position:fixed
+       (right-anchored, clampFlyoutTop vertical) makes it placement-agnostic.
+       Pointer-transparent so it never steals the hover that drives it. -->
+  {#if coverPreviewPath}
+    <div class="cover-preview" style="top: {coverPreviewTop}px" aria-hidden="true">
+      <img src={getRecentThumb(coverPreviewPath)} alt="" />
+    </div>
   {/if}
 </div>
 
@@ -264,6 +858,106 @@
     gap: 1.5rem;
     padding: 0;
   }
+
+  /* Slice 2 — filter bar: palette-grade filter-as-you-type. */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-1, rgba(255,255,255,0.08));
+    background: var(--surface-2, rgba(255,255,255,0.03));
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .filter-bar:focus-within {
+    border-color: var(--accent, #5e6ad2);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #5e6ad2) 22%, transparent);
+  }
+  .filter-ico { display: flex; opacity: 0.5; }
+  .filter-ico .ico { width: 16px; height: 16px; }
+  .filter-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    font-size: 0.9rem;
+    outline: none;
+  }
+  .filter-input::placeholder { opacity: 0.45; }
+  .filter-clear {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--accent, #5e6ad2);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.15rem 0.35rem;
+    border-radius: 6px;
+  }
+  .filter-clear:hover { background: color-mix(in srgb, var(--accent, #5e6ad2) 14%, transparent); }
+
+  /* Slice 3 — segmented sort control. */
+  .sort-seg {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--surface-3, rgba(255,255,255,0.04));
+    flex: 0 0 auto;
+  }
+  .sort-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    font-size: 0.74rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.22rem 0.5rem;
+    border-radius: 6px;
+    transition: background 120ms ease, opacity 120ms ease;
+    white-space: nowrap;
+  }
+  .sort-btn:hover { opacity: 0.9; background: color-mix(in srgb, white 6%, transparent); }
+  .sort-btn.active {
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent, #5e6ad2) 26%, transparent);
+  }
+
+  .hl {
+    background: color-mix(in srgb, var(--accent, #5e6ad2) 36%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1px;
+  }
+
+  .filter-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 2.5rem 1rem;
+    text-align: center;
+    opacity: 0.85;
+  }
+  .filter-empty-line { margin: 0; opacity: 0.7; font-size: 0.95rem; }
+  .filter-empty-q { color: var(--accent, #5e6ad2); font-weight: 600; }
+  .filter-empty-reset {
+    appearance: none;
+    border: 1px solid var(--border-1, rgba(255,255,255,0.12));
+    background: var(--surface-2, rgba(255,255,255,0.03));
+    color: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0.4rem 0.9rem;
+    border-radius: 9px;
+  }
+  .filter-empty-reset:hover { border-color: var(--accent, #5e6ad2); }
 
   .hero-card {
     display: grid;
@@ -383,11 +1077,140 @@
   }
   .row-hint { font-size: 0.75rem; opacity: 0.45; }
 
+  /* Pinned-strip collapse toggle: the row label becomes a fold control with
+     a leading chevron, matching the palette's foldable sections. */
+  .rh-pins-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+  }
+  .rh-pins-chevron {
+    font-size: 0.7rem;
+    opacity: 0.55;
+    transition: opacity 120ms;
+  }
+  .rh-pins-toggle:hover .rh-pins-chevron,
+  .rh-pins-toggle:hover .row-label { opacity: 0.9; }
+  .rh-pins-toggle:focus-visible {
+    outline: 2px solid color-mix(in srgb, #79c0ff 60%, transparent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Slice 9: reset-pin-order affordance. A quiet text button that appears in
+     the Pinned header only once the strip carries a manual drag order;
+     clicking drops it back to the natural order. */
+  .rh-reset-order {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    color: var(--text-2, #9aa0aa);
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 5px;
+    transition: color 90ms ease, background 90ms ease;
+  }
+  .rh-reset-order:hover {
+    color: var(--accent, #7c8cff);
+    background: color-mix(in srgb, var(--accent, #7c8cff) 10%, transparent);
+  }
+  .rh-reset-order:focus-visible {
+    outline: 2px solid var(--accent, #7c8cff);
+    outline-offset: 1px;
+  }
+
   .row-strip {
     display: flex; gap: 0.75rem; overflow-x: auto; padding: 0.25rem 0 0.5rem;
     scrollbar-width: thin;
   }
   .row-strip .card { min-width: 160px; flex: 0 0 160px; }
+
+  /* Cover-flow hover-zoom: a fixed flyout pinned to the right of the strip,
+     vertically clamped by clampFlyoutTop. Pointer-transparent so it can't
+     steal the hover; fades in so the pop isn't jarring. */
+  .cover-preview {
+    position: fixed;
+    right: 28px;
+    z-index: 40;
+    width: 210px;
+    pointer-events: none;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px color-mix(in srgb, white 12%, transparent);
+    background: var(--bg-2, #1a1a1a);
+    animation: cover-pop 0.13s ease;
+  }
+  .cover-preview img { display: block; width: 100%; height: auto; }
+  @keyframes cover-pop {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) { .cover-preview { animation: none; } }
+
+  /* Pinned-strip overflow affordance: a positioned wrapper paints edge
+     fade masks (only when there's hidden content that way) and hosts the
+     scroll chevrons. The masks use pseudo-elements gated by the
+     has-start / has-end classes the component toggles from pinnedStripEdges. */
+  .strip-wrap { position: relative; }
+  .strip-wrap::before,
+  .strip-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0.25rem;
+    bottom: 0.5rem;
+    width: 2.5rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 140ms ease;
+    z-index: 1;
+  }
+  .strip-wrap::before {
+    left: 0;
+    background: linear-gradient(to right, var(--bg, #0d0d10), transparent);
+  }
+  .strip-wrap::after {
+    right: 0;
+    background: linear-gradient(to left, var(--bg, #0d0d10), transparent);
+  }
+  .strip-wrap.has-start::before { opacity: 1; }
+  .strip-wrap.has-end::after { opacity: 1; }
+
+  .strip-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    background: color-mix(in srgb, var(--bg-panel, #1a1a1f) 88%, transparent);
+    backdrop-filter: blur(6px);
+    color: var(--fg, #fff);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 140ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .strip-nav.prev { left: -6px; }
+  .strip-nav.next { right: -6px; }
+  .strip-wrap.has-start .strip-nav.prev,
+  .strip-wrap.has-end .strip-nav.next { opacity: 1; }
+  .strip-nav:hover:not(:disabled) {
+    background: var(--bg-panel, #1a1a1f);
+    border-color: var(--accent, #7c8cff);
+  }
+  .strip-nav:disabled { opacity: 0; pointer-events: none; }
 
   .grid {
     display: grid;
@@ -409,6 +1232,47 @@
     box-shadow: 0 8px 22px -14px rgba(0,0,0,0.5);
   }
   .card.pinned { border-color: var(--accent, #5e6ad2); }
+  /* Slice 4 — virtual keyboard cursor ring. */
+  .card.cursor {
+    border-color: var(--accent, #5e6ad2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #5e6ad2) 55%, transparent),
+      0 8px 22px -14px rgba(0,0,0,0.5);
+  }
+  .card.cursor .card-actions { opacity: 1; }
+
+  /* Slice 8 — drag-to-reorder the pinned strip. The card carries a grip
+     affordance (top-left, fades in on hover/cursor); the drag source dims
+     and the drop target shows an accent ring so the landing slot is clear. */
+  .card.reorderable { position: relative; }
+  .drag-grip {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 4px;
+    color: var(--text-3, #8b8b94);
+    background: color-mix(in srgb, var(--bg-1, #16161a) 70%, transparent);
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 100ms ease, color 100ms ease;
+  }
+  .card.reorderable:hover .drag-grip,
+  .card.reorderable.cursor .drag-grip {
+    opacity: 1;
+  }
+  .drag-grip:hover { color: var(--accent, #5e6ad2); }
+  .card.dragging {
+    opacity: 0.45;
+    cursor: grabbing;
+  }
+  .card.drop-target {
+    border-color: var(--accent, #5e6ad2);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #5e6ad2) 70%, transparent);
+  }
 
   .card-body {
     width: 100%;
@@ -437,8 +1301,30 @@
   }
   .pin-flag {
     position: absolute; top: 6px; right: 6px;
-    font-size: 14px;
+    color: var(--accent, #5e6ad2);
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
+    display: flex;
+  }
+  .pin-flag .ico { width: 14px; height: 14px; }
+  /* Slice 7 — thumbnail progress overlay. A thin accent bar pinned to the
+     bottom edge of the thumbnail; a translucent track behind the fill so
+     even a tiny fill reads as "started". Finished docs get a calm green. */
+  .thumb-progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .thumb-progress-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent, #5e6ad2);
+    transition: width 200ms ease;
+  }
+  .thumb-progress.done .thumb-progress-fill {
+    background: var(--success, #3fb950);
   }
   .card-name {
     font-size: 0.85rem;
@@ -476,6 +1362,55 @@
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
+  .act .ico { width: 13px; height: 13px; }
   .act:hover { border-color: var(--accent, #5e6ad2); }
   .act.danger:hover { border-color: #ef4444; color: #ef4444; }
+
+  /* Slice 5 — context-aware summary footer. */
+  .board-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0.25rem 0;
+    border-top: 1px solid var(--border-1, rgba(255,255,255,0.06));
+    font-size: 0.76rem;
+    flex-wrap: wrap;
+  }
+  .board-foot-summary { opacity: 0.6; margin-right: auto; }
+  /* Slice 6 — clear-unpinned affordance. Quiet by default; the danger
+     tint only surfaces on hover so it never competes with the summary. */
+  .board-foot-clear {
+    appearance: none;
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.1));
+    background: transparent;
+    color: inherit;
+    opacity: 0.55;
+    font-size: 0.74rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 120ms, border-color 120ms, color 120ms;
+  }
+  .board-foot-clear:hover {
+    opacity: 1;
+    color: #ef4444;
+    border-color: #ef4444;
+  }
+  .board-foot-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    opacity: 0.4;
+    white-space: nowrap;
+  }
+  .board-foot-hint kbd {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.92em;
+    padding: 0.04em 0.32em;
+    border-radius: 4px;
+    background: var(--surface-3, rgba(255,255,255,0.06));
+    border: 1px solid var(--border-1, rgba(255,255,255,0.08));
+  }
 </style>

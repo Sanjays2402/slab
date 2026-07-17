@@ -16,6 +16,7 @@
 // * `query` — list/filter/sort with eager tag loading.
 
 pub mod auto_tagger;
+pub mod bulk_tag;
 pub mod collections;
 pub mod folder_suggest;
 pub mod fts;
@@ -24,17 +25,21 @@ pub mod personal_presets;
 pub mod presets;
 pub mod query;
 pub mod registry;
+pub mod saved_views;
 pub mod scanner;
 pub mod search;
 pub mod search_log;
 pub mod smart_folders;
+pub mod tag_suggest;
 
 pub use auto_tagger::{
     run_many as auto_tag_run_many, run_one as auto_tag_run_one, AutoTagRunResult,
 };
 pub use ocr_queue::{
-    list_pending as ocr_queue_list_pending, run_all as ocr_queue_run_all,
-    run_one as ocr_queue_run_one, OcrQueueResult,
+    list_failed as ocr_queue_list_failed, list_pending as ocr_queue_list_pending,
+    requeue_all_failed as ocr_queue_requeue_all_failed, requeue_doc as ocr_queue_requeue_doc,
+    run_all as ocr_queue_run_all, run_one as ocr_queue_run_one, stats as ocr_queue_stats,
+    OcrQueueResult, OcrQueueStats,
 };
 pub use query::{query_documents, LibraryFilter, SortBy};
 pub use registry::{

@@ -270,12 +270,39 @@
               : ""}
             {#if report.has_xfa}<span class="warn">· XFA</span>{/if}
           {:else}
-            Loading…
+            <span class="meta-skel" aria-label="Inspecting form fields">
+              <span class="meta-skel-bar"></span>
+            </span>
           {/if}
         </div>
       </div>
       <button class="ghost" onclick={pickInput}>Change</button>
     </div>
+
+    {#if !report && status.kind !== "err"}
+      <!-- Inspect skeleton: shimmer rows in the fields-table shape so the
+           panel settles in place instead of flashing a bare "Loading…" while
+           slab_forms_inspect runs. Decorative; one SR label carries state. -->
+      <div class="forms-skeleton" aria-busy="true" aria-label="Inspecting form fields">
+        <div class="fsk-toolbar">
+          <span class="fsk-bar fsk-search"></span>
+          <span class="fsk-spacer"></span>
+          <span class="fsk-bar fsk-btn"></span>
+          <span class="fsk-bar fsk-btn"></span>
+          <span class="fsk-bar fsk-btn"></span>
+        </div>
+        <div class="fsk-table">
+          {#each Array(7) as _, i (i)}
+            <div class="fsk-row">
+              <span class="fsk-pill"></span>
+              <span class="fsk-bar fsk-name" style="width: {70 - (i % 4) * 9}%"></span>
+              <span class="fsk-bar fsk-page"></span>
+              <span class="fsk-bar fsk-val"></span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     {#if report && report.has_acroform && !report.has_xfa}
       <div class="toolbar">
@@ -511,5 +538,79 @@
   .warn {
     color: #c0561e;
     margin-left: 6px;
+  }
+
+  /* ---- Inspect skeleton (round 58) ----------------------------------
+     Shimmer placeholders in the toolbar + fields-table shape, shown while
+     slab_forms_inspect runs so the panel settles in place instead of
+     flashing a bare "Loading…". Mirrors the SmartFolders/OCR shimmer. */
+  .meta-skel {
+    display: inline-block;
+    vertical-align: middle;
+  }
+  .meta-skel-bar {
+    display: inline-block;
+    width: 160px;
+    height: 11px;
+    border-radius: 6px;
+    vertical-align: middle;
+  }
+  .forms-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .fsk-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .fsk-spacer { flex: 1; }
+  .fsk-table {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+  }
+  .fsk-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .fsk-pill {
+    width: 54px;
+    height: 18px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .fsk-bar { height: 12px; border-radius: 6px; }
+  .fsk-search { width: 220px; height: 30px; border-radius: var(--r-sm); }
+  .fsk-btn { width: 64px; height: 30px; border-radius: var(--r-sm); flex-shrink: 0; }
+  .fsk-name { flex: 1; }
+  .fsk-page { width: 40px; flex-shrink: 0; }
+  .fsk-val { width: 90px; flex-shrink: 0; }
+  .meta-skel-bar,
+  .fsk-pill,
+  .fsk-bar {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 8%, transparent) 0%,
+      color-mix(in srgb, var(--accent, #5e6ad2) 16%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 8%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: forms-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes forms-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .meta-skel-bar,
+    .fsk-pill,
+    .fsk-bar { animation: none; }
   }
 </style>

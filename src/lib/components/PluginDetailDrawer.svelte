@@ -1,5 +1,5 @@
 <script lang="ts">
-  // PluginDetailDrawer — v1.4.0 "Bench" Slice 8a.
+  // PluginDetailDrawer — v1.4.0 "Bench" Slice 8a + v3.39 Slice 57.
   //
   // Right-side slide-in drawer triggered by clicking a Browse-tab
   // marketplace card. Surfaces every piece of metadata the user might
@@ -18,9 +18,25 @@
   // mounted with `role="dialog"` + `aria-modal="true"` and consumes a
   // svelte:window onkeydown so keyboard users can dismiss without
   // hunting for the close button.
+  //
+  // v3.39 Slice 57: Activity section between the metadata grid and
+  // the footer. On mount we fetch the install-log timeline + stats
+  // for this entry's id; on every `entry.id` change we refetch (so
+  // jumping between cards in the same drawer mount cycle works).
+  // The section auto-collapses when the timeline is empty so a
+  // never-installed plugin's drawer stays clean.
 
+  import { onMount } from "svelte";
   import type { IndexEntry } from "$lib/marketplace";
-  import { formatBytes } from "$lib/marketplace";
+  import {
+    formatBytes,
+    formatInstallEventTime,
+    installEventGlyph,
+    listInstallEvents,
+    pluginInstallStats,
+    type InstallEvent,
+    type InstallStats,
+  } from "$lib/marketplace";
   import { t, tStore } from "$lib/i18n";
 
   type Status = "install" | "installed" | "update";
@@ -34,6 +50,70 @@
   };
 
   let { entry, status, installedVersion, inFlight, onClose, onAction }: Props = $props();
+
+  let activityEvents = $state<InstallEvent[]>([]);
+  let activityStats = $state<InstallStats>({
+    installs: 0,
+    updates: 0,
+    uninstalls: 0,
+    failures: 0,
+  });
+  let activityLoading = $state(false);
+  let activityErr = $state<string | null>(null);
+
+  /** Sum of all action counts in the loaded stats. */
+  let activityTotal = $derived(
+    activityStats.installs +
+      activityStats.updates +
+      activityStats.uninstalls +
+      activityStats.failures,
+  );
+
+  /**
+   * Compact "Installed 3 · 1 update · 1 failure" subtitle for the
+   * Activity header. Only kinds with a nonzero count appear so the
+   * subtitle stays tight; empty stats render nothing (the section
+   * itself hides when total is zero).
+   */
+  let activitySubtitle = $derived.by<string>(() => {
+    if (activityTotal === 0) return "";
+    const parts: string[] = [];
+    const push = (n: number, sing: string, plural: string) => {
+      if (n > 0) parts.push(`${n} ${n === 1 ? sing : plural}`);
+    };
+    push(activityStats.installs, "install", "installs");
+    push(activityStats.updates, "update", "updates");
+    push(activityStats.uninstalls, "uninstall", "uninstalls");
+    push(activityStats.failures, "failure", "failures");
+    return parts.join(" · ");
+  });
+
+  async function loadActivity(pluginId: string): Promise<void> {
+    activityLoading = true;
+    activityErr = null;
+    try {
+      const [events, stats] = await Promise.all([
+        listInstallEvents(pluginId, 20),
+        pluginInstallStats(pluginId),
+      ]);
+      activityEvents = events;
+      activityStats = stats;
+    } catch (e) {
+      activityErr = e instanceof Error ? e.message : String(e);
+    } finally {
+      activityLoading = false;
+    }
+  }
+
+  // Reload whenever entry.id changes — covers the case where the
+  // parent keeps the drawer mounted and just swaps the entry through.
+  $effect(() => {
+    void loadActivity(entry.id);
+  });
+
+  onMount(() => {
+    void loadActivity(entry.id);
+  });
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
@@ -108,6 +188,56 @@
       <dt>{$tStore("plugins.detail.downloadUrl")}</dt>
       <dd class="mono break">{entry.download_url}</dd>
     </dl>
+
+    {#if activityErr}
+      <section class="activity-block">
+        <h2 class="section-h">Activity</h2>
+        <p class="activity-err">Could not load history: {activityErr}</p>
+      </section>
+    {:else if activityTotal > 0}
+      <section class="activity-block">
+        <div class="activity-head">
+          <h2 class="section-h">Activity</h2>
+          <span class="activity-sub" aria-label="Lifetime install statistics">
+            {activitySubtitle}
+          </span>
+        </div>
+        <ul class="activity-list" aria-label="Install history (newest first)">
+          {#each activityEvents as ev (ev.id)}
+            <li class="activity-row" data-action={ev.action}>
+              <span class="ev-glyph" aria-hidden="true">{installEventGlyph(ev.action)}</span>
+              <div class="ev-body">
+                <span class="ev-line">
+                  <span class="ev-action">{ev.action}</span>
+                  <span class="ev-version">v{ev.version}</span>
+                  {#if ev.action === "update" && ev.prior_version}
+                    <span class="ev-from">← v{ev.prior_version}</span>
+                  {/if}
+                </span>
+                {#if ev.error_msg}
+                  <span class="ev-err" title={ev.error_msg}>{ev.error_msg}</span>
+                {:else if ev.bytes_written !== null && ev.files_extracted !== null}
+                  <span class="ev-meta">
+                    {formatBytes(ev.bytes_written)} · {ev.files_extracted} file{ev.files_extracted ===
+                    1
+                      ? ""
+                      : "s"}
+                  </span>
+                {/if}
+              </div>
+              <time class="ev-time" datetime={new Date(ev.occurred_at * 1000).toISOString()}>
+                {formatInstallEventTime(ev.occurred_at)}
+              </time>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {:else if activityLoading}
+      <section class="activity-block">
+        <h2 class="section-h">Activity</h2>
+        <p class="activity-loading">Loading history…</p>
+      </section>
+    {/if}
 
     <footer class="drawer-foot">
       <button type="button" class="ghost" onclick={onClose} disabled={inFlight}>
@@ -336,5 +466,132 @@
   .drawer-foot .ghost:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+  }
+
+  /* ─── Activity section (v3.39 Slice 57) ──────────────────────── */
+  .activity-block {
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .activity-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .section-h {
+    margin: 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+  .activity-sub {
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .activity-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    /* Subtle row separators so the timeline reads as discrete events
+     * without painting every row in a heavy box. */
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .activity-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .activity-row:first-child {
+    border-top: none;
+  }
+  .ev-glyph {
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: center;
+  }
+  /* Per-action accent on the glyph — failure red, update amber,
+   * uninstall muted, install neutral. Matches the chrome the
+   * Hopper log surface uses for run outcomes. */
+  .activity-row[data-action="failed"] .ev-glyph {
+    color: var(--danger, rgb(255, 100, 100));
+  }
+  .activity-row[data-action="update"] .ev-glyph {
+    color: rgb(245, 180, 70);
+  }
+  .activity-row[data-action="install"] .ev-glyph {
+    color: var(--accent);
+  }
+  .ev-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .ev-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .ev-action {
+    color: var(--text);
+    text-transform: capitalize;
+    font-weight: 500;
+  }
+  .ev-version {
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .ev-from {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .ev-meta {
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .ev-err {
+    color: var(--danger, rgb(255, 100, 100));
+    font-size: 11px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ev-time {
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .activity-err {
+    margin: 0;
+    color: var(--danger, rgb(255, 100, 100));
+    font-size: 12px;
+  }
+  .activity-loading {
+    margin: 0;
+    color: var(--text-3);
+    font-size: 12px;
   }
 </style>

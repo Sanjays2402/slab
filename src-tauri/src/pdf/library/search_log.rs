@@ -9,6 +9,7 @@
 // (we update the existing row's ts + result_count instead of inserting).
 
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::registry::{LibraryDb, LibraryError};
@@ -20,12 +21,37 @@ pub const LOG_CAP: usize = 500;
 const DEDUPE_WINDOW_SECS: i64 = 30;
 
 /// One row in `library_search_log`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueryRow {
     pub id: i64,
     pub query: String,
     pub ts: i64,
     pub result_count: i64,
+}
+
+/// Delete every row from `library_search_log`. Used by the search panel's
+/// "Clear history" affordance so the user can wipe their recent searches
+/// without nuking the rest of the library. Returns the number of rows
+/// removed so the caller can decide whether to surface a "Cleared N searches"
+/// toast or stay silent on an already-empty log. Idempotent — calling on an
+/// empty log returns 0.
+pub fn clear(db: &LibraryDb) -> Result<usize, LibraryError> {
+    let n = db.conn().execute("DELETE FROM library_search_log", [])?;
+    Ok(n)
+}
+
+/// Delete a SINGLE row from `library_search_log` by id. Backs the search
+/// panel's per-chip delete affordance (an x on each recent-search chip, or
+/// Backspace on the focused chip), complementing the all-or-nothing
+/// `clear`. Returns true when a row was actually removed so the caller can
+/// distinguish a real delete from a stale id (a chip already gone after a
+/// concurrent clear). Leaves every other row — and the suggestion
+/// dismissals next door — untouched.
+pub fn delete_one(db: &LibraryDb, id: i64) -> Result<bool, LibraryError> {
+    let n = db
+        .conn()
+        .execute("DELETE FROM library_search_log WHERE id = ?1", params![id])?;
+    Ok(n > 0)
 }
 
 fn now_unix() -> i64 {
@@ -194,5 +220,95 @@ mod tests {
         assert_eq!(count(&d).unwrap(), 1);
         let rows = recent_queries(&d, 10).unwrap();
         assert_eq!(rows[0].result_count, 7);
+    }
+
+    #[test]
+    fn clear_removes_every_row_and_returns_count() {
+        let d = db();
+        record(&d, "alpha", 1).unwrap();
+        record(&d, "beta", 2).unwrap();
+        record(&d, "gamma", 3).unwrap();
+        assert_eq!(count(&d).unwrap(), 3);
+        let removed = clear(&d).unwrap();
+        assert_eq!(removed, 3, "clear must report rows removed");
+        assert_eq!(count(&d).unwrap(), 0);
+        assert!(recent_queries(&d, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_on_empty_log_is_zero_noop() {
+        let d = db();
+        assert_eq!(clear(&d).unwrap(), 0);
+        // And a second clear after a partial wipe also a no-op.
+        record(&d, "x", 0).unwrap();
+        assert_eq!(clear(&d).unwrap(), 1);
+        assert_eq!(clear(&d).unwrap(), 0);
+    }
+
+    #[test]
+    fn delete_one_removes_only_the_target_row() {
+        let d = db();
+        record(&d, "alpha", 1).unwrap();
+        record(&d, "beta", 2).unwrap();
+        record(&d, "gamma", 3).unwrap();
+        // Find beta's id so we can drop exactly it.
+        let rows = recent_queries(&d, 10).unwrap();
+        let beta = rows.iter().find(|r| r.query == "beta").unwrap();
+        let removed = delete_one(&d, beta.id).unwrap();
+        assert!(removed, "delete_one must report a real removal");
+        assert_eq!(count(&d).unwrap(), 2, "only one row removed");
+        let after = recent_queries(&d, 10).unwrap();
+        let mut qs: Vec<_> = after.iter().map(|r| r.query.clone()).collect();
+        qs.sort();
+        assert_eq!(qs, vec!["alpha", "gamma"], "alpha + gamma survive");
+    }
+
+    #[test]
+    fn delete_one_on_missing_id_is_false_noop() {
+        let d = db();
+        record(&d, "alpha", 1).unwrap();
+        // An id that never existed.
+        assert!(!delete_one(&d, 999_999).unwrap(), "missing id -> false");
+        assert_eq!(count(&d).unwrap(), 1, "no row removed for a stale id");
+        // Deleting the same row twice: first true, second false.
+        let id = recent_queries(&d, 1).unwrap()[0].id;
+        assert!(delete_one(&d, id).unwrap(), "first delete removes it");
+        assert!(
+            !delete_one(&d, id).unwrap(),
+            "second delete is a false no-op"
+        );
+        assert_eq!(count(&d).unwrap(), 0);
+    }
+
+    #[test]
+    fn clear_does_not_touch_dismissals() {
+        // The Atlas suggestion engine's dismissed-cluster table lives next door
+        // (library_suggestion_dismissed); clearing the *search log* must leave
+        // user-curated dismissals intact so suggestions don't reappear.
+        let d = db();
+        dismiss(&d, "cluster-keep-me").unwrap();
+        record(&d, "alpha", 1).unwrap();
+        clear(&d).unwrap();
+        assert!(is_dismissed(&d, "cluster-keep-me").unwrap());
+    }
+
+    #[test]
+    fn query_row_serde_roundtrip_uses_snake_case() {
+        // The Tauri command for recent_searches returns Vec<QueryRow> across
+        // the wire; pin the JSON shape (snake_case keys + i64 values) so the
+        // TS client doesn't drift.
+        let row = QueryRow {
+            id: 7,
+            query: "indemnification".into(),
+            ts: 1_700_000_000,
+            result_count: 42,
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("\"id\":7"));
+        assert!(json.contains("\"query\":\"indemnification\""));
+        assert!(json.contains("\"ts\":1700000000"));
+        assert!(json.contains("\"result_count\":42"));
+        let back: QueryRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, row);
     }
 }
