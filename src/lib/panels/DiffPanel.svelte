@@ -370,6 +370,30 @@
     <div class="status err">✕ {status.msg}</div>
   {/if}
 
+  {#if status.kind === "working" && !diff}
+    <!-- First-compare skeleton: the two PDFs are parsing + diffing, which can
+         take a beat on large files. Show a totals-bar + stacked page-row
+         shimmer in the diff's shape so the panel settles in place instead of
+         sitting on a bare "Comparing…" button. Decorative; aria-busy + the
+         working status line carry the state for assistive tech. -->
+    <div class="diff-skeleton" aria-busy="true" aria-label="Comparing documents">
+      <div class="ds-totals">
+        <span class="ds-bar ds-pill"></span>
+        <span class="ds-bar ds-pill ds-arrow"></span>
+        <span class="ds-bar ds-pill"></span>
+        <span class="ds-bar ds-pill ds-grow"></span>
+      </div>
+      {#each [0, 1, 2] as page (page)}
+        <div class="ds-page">
+          <span class="ds-bar ds-page-head"></span>
+          {#each [88, 72, 80, 54] as w, i (i)}
+            <span class="ds-bar ds-line" style="width: {w}%"></span>
+          {/each}
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if diff}
     <div class="totals">
       <div class="total-pill old">{diff.old_page_count} pages (old)</div>
@@ -708,5 +732,64 @@
   }
   .redline .word-eq {
     opacity: 0.78;
+  }
+  /* Round 59 — first-compare skeleton. Totals-bar + stacked page-row shimmer
+     in the diff's shape, same shimmer family as the Reader outline / Convert
+     loaders so every loading state feels like one app. */
+  .diff-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .ds-totals {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ds-page {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+    border-radius: var(--r-md, 8px);
+    background: var(--bg-1, rgba(255, 255, 255, 0.02));
+  }
+  .ds-bar {
+    height: 11px;
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 0%,
+      color-mix(in srgb, var(--text-1, #fff) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: ds-shimmer 1.4s ease-in-out infinite;
+  }
+  .ds-pill {
+    width: 96px;
+    height: 22px;
+    border-radius: 999px;
+  }
+  .ds-arrow {
+    width: 26px;
+  }
+  .ds-grow {
+    flex: 1;
+    max-width: 160px;
+  }
+  .ds-page-head {
+    width: 38%;
+    height: 13px;
+    margin-bottom: 2px;
+  }
+  @keyframes ds-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ds-bar { animation: none; }
   }
 </style>

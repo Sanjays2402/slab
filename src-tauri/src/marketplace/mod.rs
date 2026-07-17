@@ -19,6 +19,7 @@ pub mod fetch;
 pub mod index;
 pub mod install;
 pub mod install_log;
+pub mod update_plan;
 pub mod verify;
 
 pub use fetch::{
@@ -31,9 +32,11 @@ pub use install::{
     MAX_UNCOMPRESSED_BYTES,
 };
 pub use install_log::{
-    default_log_path, AutoPruneOutcome, InstallAction, InstallEvent, InstallLog, InstallLogError,
-    InstallStats, AUTO_PRUNE_INTERVAL_SECS, DEFAULT_RETAIN_DAYS, MIN_RETAIN_DAYS,
+    default_log_path, ActivityBucket, AutoPruneOutcome, AutoPruneRun, InstallAction, InstallEvent,
+    InstallLog, InstallLogError, InstallStats, PluginHistogramRow, PluginRetentionOverride,
+    TimeBucketGranularity, AUTO_PRUNE_INTERVAL_SECS, DEFAULT_RETAIN_DAYS, MIN_RETAIN_DAYS,
 };
+pub use update_plan::{plan_updates, InstalledPlugin, UpdatePlan, UpdateTarget};
 pub use verify::{
     verify_entry, verify_with_maintainer_key, VerifyError, MAINTAINER_KEY_ID, MAINTAINER_PUBLIC_KEY,
 };

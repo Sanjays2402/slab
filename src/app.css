@@ -375,6 +375,49 @@ input[type="text"]:focus {
   color: var(--text-3);
 }
 
+/* Drop-zone first-load skeleton — dashed frame in the dropzone shape with
+   shimmer icon + title + hint bars, so a loading converter doesn't flash a
+   dead disabled button. Decorative; aria-busy carries the loading state. */
+.dz-skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px;
+  background: var(--bg-2);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--r-lg);
+}
+.dz-skel-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+.dz-skel-bar { height: 13px; border-radius: 6px; }
+.dz-skel-title { width: 130px; }
+.dz-skel-hint { width: 230px; height: 11px; }
+.dz-skel-icon,
+.dz-skel-bar {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text) 8%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 18%, transparent) 50%,
+    color-mix(in srgb, var(--text) 8%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: dz-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes dz-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dz-skel-icon,
+  .dz-skel-bar { animation: none; }
+}
+
+
 .file-card {
   display: flex;
   align-items: center;

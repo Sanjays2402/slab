@@ -336,6 +336,21 @@ export async function clearLibrarySearchHistory(): Promise<number> {
 }
 
 /**
+ * Delete a SINGLE recent-search row by id. Backs the per-chip delete
+ * affordance (an x on each chip / Backspace on the focused chip) so the
+ * user can prune one stray query without nuking the whole history.
+ * Resolves true when a row was actually removed, false for a stale id
+ * (e.g. a chip already gone after a concurrent clear). v3.57.0 Atlas
+ * Recent-Searches.
+ */
+export async function deleteLibrarySearch(id: number): Promise<boolean> {
+  const res = await invoke<CmdResult<boolean>>("slab_library_delete_search", {
+    id,
+  });
+  return unwrap(res);
+}
+
+/**
  * Snapshot of the FTS5 library index size. Powers the LibrarySearchPanel
  * status footer so the user can see at-a-glance how many docs + pages
  * are searchable. Two cheap COUNTs server-side; safe to call frequently.
@@ -1143,6 +1158,40 @@ export async function personalPresetApply(
 ): Promise<SmartCollectionRecord> {
   const res = await invoke<CmdResult<SmartCollectionRecord>>(
     "slab_personal_preset_apply",
+    { id },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Rename a personal preset in place. Trims the new name; empty is
+ * rejected with a thrown error; collision with another preset name
+ * is rejected by the backend's UNIQUE constraint. Returns the renamed
+ * record so the caller can splice it back into its local list without
+ * a refetch. v3.40 Slice 76.
+ */
+export async function personalPresetRename(
+  id: number,
+  newName: string,
+): Promise<PersonalPresetRecord> {
+  const res = await invoke<CmdResult<PersonalPresetRecord>>(
+    "slab_personal_preset_rename",
+    { id, newName },
+  );
+  return unwrap(res);
+}
+
+/**
+ * Duplicate a personal preset. The copy gets a fresh sort_order at
+ * the bottom of the list and a derived unique name ("<src> (copy)"
+ * or "<src> (copy N)"). The copy is INDEPENDENT — editing it doesn't
+ * affect the source. v3.40 Slice 76.
+ */
+export async function personalPresetDuplicate(
+  id: number,
+): Promise<PersonalPresetRecord> {
+  const res = await invoke<CmdResult<PersonalPresetRecord>>(
+    "slab_personal_preset_duplicate",
     { id },
   );
   return unwrap(res);

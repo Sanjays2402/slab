@@ -8,6 +8,8 @@
   import { isInTauri } from "$lib/tauri";
   import { recordRecent, recordRecentProgress, getRecentProgress, listRecent, formatRelTime, setRecentThumb, getRecentThumb, pinRecent, removeRecent, type RecentFile } from "$lib/recent";
   import RecentsHome from "$lib/components/RecentsHome.svelte";
+  import { clampFlyoutTop, shouldShowPreview, previewLabel, classifyThumbPreviewKey, nextPreviewPage } from "$lib/readerThumbView";
+  import { filterOutlineTree, describeOutlineFilter, countOutlineNodes, type FilteredOutlineNode } from "$lib/readerOutlineView";
   import { notify } from "$lib/notify";
   import { pluginsStore, runPluginPdfAction, type ActivePdfAction } from "$lib/plugins";
   import OutlineEditor from "$lib/OutlineEditor.svelte";
@@ -17,6 +19,27 @@
   import { slabScanAudit, nonEmptyPages, type ScanAuditReport } from "$lib/lens";
   import { analyzeSlides, type SlideReport } from "$lib/slides";
   import PresenterOverlay from "$lib/components/PresenterOverlay.svelte";
+  import {
+    interpretFindState,
+    idleFindStatus,
+    describeFindStatus,
+    findStatusTone,
+    announceFindStatus,
+    buildFindDispatch,
+    defaultFindOptions,
+    toggleFindOption,
+    describeFindOptions,
+    FIND_OPTION_TOGGLES,
+    pushFindHistory,
+    suggestFindHistory,
+    suggestionSegments,
+    classifyFindGlobalKey,
+    classifyFindDropdownKey,
+    type FindStatus,
+    type FindOptions,
+    type FindSuggestion,
+  } from "$lib/readerFindView";
+  import { classifyPaletteNav, nextPaletteIndex } from "$lib/paletteSearch";
   // @ts-expect-error - pdfjs-dist .mjs has no types index alias
   import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
   import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
@@ -131,9 +154,15 @@
   let zoomPct = $state(100);
   let findOpen = $state(false);
   let findQuery = $state("");
-  let findStatus = $state<{ current: number; total: number }>({ current: 0, total: 0 });
-  let findCaseSensitive = $state(false);
-  let findWholeWord = $state(false);
+  let findStatus = $state<FindStatus>(idleFindStatus());
+  let findOptions = $state<FindOptions>(defaultFindOptions());
+  // Atlas IV: recent-search MRU ring (persisted) + live suggestion dropdown.
+  let findHistory = $state<string[]>(loadFindHistory());
+  let findSuggestOpen = $state(false);
+  let findSuggestCursor = $state(-1);
+  // Atlas IV: aria-live announcement, debounced by equality so the same
+  // phrase isn't re-read as pdf.js fires repeated progress events.
+  let findAnnounce = $state("");
   let thumbsOpen = $state(true);
   let infoOpen = $state(false);
   let outlineOpen = $state(false);
@@ -151,6 +180,14 @@
   let outline = $state<OutlineNode[]>([]);
   let outlineLoading = $state(false);
   let outlineEditorOpen = $state(false);
+  // Round 59: filter-as-you-type over the outline tree. A long PDF can carry
+  // 100+ nested headings; outlineFilter drives the pure filterOutlineTree
+  // (keep a branch if it OR a descendant matches, ancestors force-expanded,
+  // matched span <mark>-highlighted). A null result = no filter active, so
+  // the normal expand/collapse tree renders unchanged.
+  let outlineFilter = $state("");
+  const filteredOutline = $derived(filterOutlineTree(outline, outlineFilter));
+  const outlineNodeCount = $derived(countOutlineNodes(outline));
   let annotMode = $state<AnnotMode>("off");
   let ocrRunning = $state(false);
   let ocrStatus = $state<string>("");
@@ -801,16 +838,10 @@
       syncZoom();
     });
     eventBus.on("updatefindcontrolstate", (s: any) => {
-      findStatus = {
-        current: s.matchesCount?.current ?? 0,
-        total: s.matchesCount?.total ?? 0,
-      };
+      applyFindEvent(s);
     });
     eventBus.on("updatefindmatchescount", (s: any) => {
-      findStatus = {
-        current: s.matchesCount?.current ?? 0,
-        total: s.matchesCount?.total ?? 0,
-      };
+      applyFindEvent(s);
     });
   }
 
@@ -868,7 +899,7 @@
       findQuery = highlight;
       // Don't pop the find bar by default — the highlights are enough.
       // If the user wants to keep navigating matches they can hit Cmd+F.
-      runFind(highlight, "find");
+      runFind(highlight);
     }
     // Trigger the halo on the next frame so the scroll has time to land.
     jumpHalo = false;
@@ -954,7 +985,7 @@
     const d = (e as CustomEvent<{ query: string }>).detail;
     findQuery = d.query;
     if (!findOpen) toggleFind();
-    runFind(findQuery, "find");
+    runFind(findQuery);
   }
 
   function onVimFindNext(e: Event) {
@@ -978,55 +1009,150 @@
     setZoomValue(Math.max(0.25, +(pdfViewer.currentScale / 1.2).toFixed(2)));
   }
 
-  // ---------- Find ----------
-  function toggleFind() {
-    findOpen = !findOpen;
-    if (findOpen) {
-      queueMicrotask(() => {
-        const inp = document.querySelector<HTMLInputElement>(".find-input");
-        inp?.focus();
-        inp?.select();
-      });
-    } else {
-      runFind("", "find");
+  // ---------- Find (Atlas IV: tested pure core $lib/readerFindView) ----------
+  const FIND_HISTORY_KEY = "slab.reader.find.history.v1";
+
+  function loadFindHistory(): string[] {
+    if (typeof localStorage === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(FIND_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveFindHistory(h: string[]): void {
+    if (typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(FIND_HISTORY_KEY, JSON.stringify(h));
+    } catch {
+      /* localStorage full — best effort */
     }
   }
 
-  function runFind(q: string, type: string = "find") {
-    if (!eventBus) return;
-    eventBus.dispatch("find", {
-      source: null,
-      type,
-      query: q,
-      caseSensitive: findCaseSensitive,
-      entireWord: findWholeWord,
-      highlightAll: true,
-      findPrevious: false,
+  // Slice 3: live suggestion list derived from the ring + current query.
+  // Always computed (not gated on findSuggestOpen) so runFind can read its
+  // length to decide whether to keep the dropdown open without a circular
+  // dependency; the *rendering* is gated on findSuggestOpen in the markup.
+  let findSuggestions = $derived<FindSuggestion[]>(suggestFindHistory(findHistory, findQuery));
+
+  function focusFindInput() {
+    queueMicrotask(() => {
+      const inp = document.querySelector<HTMLInputElement>(".find-input");
+      inp?.focus();
+      inp?.select();
     });
   }
-  function findNext() {
+
+  function toggleFind() {
+    findOpen = !findOpen;
+    if (findOpen) {
+      // Opening on an empty box surfaces the recent-search dropdown.
+      findSuggestOpen = true;
+      findSuggestCursor = -1;
+      focusFindInput();
+    } else {
+      closeFind();
+    }
+  }
+
+  function closeFind() {
+    findOpen = false;
+    findSuggestOpen = false;
+    findSuggestCursor = -1;
+    findStatus = idleFindStatus();
+    findAnnounce = "";
+    dispatchFind("clear");
+  }
+
+  // Slice 2: every pdf.js find dispatch flows through ONE builder.
+  function dispatchFind(action: Parameters<typeof buildFindDispatch>[0], query: string = findQuery) {
     if (!eventBus) return;
-    eventBus.dispatch("find", {
-      source: null,
-      type: "again",
-      query: findQuery,
-      caseSensitive: findCaseSensitive,
-      entireWord: findWholeWord,
-      highlightAll: true,
-      findPrevious: false,
-    });
+    eventBus.dispatch("find", buildFindDispatch(action, query, findOptions));
+  }
+
+  function runFind(q: string) {
+    findSuggestOpen = q.length === 0 ? true : findSuggestions.length > 0;
+    findSuggestCursor = -1;
+    if (q.trim()) {
+      findHistory = pushFindHistory(findHistory, q);
+      saveFindHistory(findHistory);
+    }
+    dispatchFind("find", q);
+  }
+
+  function findNext() {
+    dispatchFind("again-next");
   }
   function findPrev() {
-    if (!eventBus) return;
-    eventBus.dispatch("find", {
-      source: null,
-      type: "again",
-      query: findQuery,
-      caseSensitive: findCaseSensitive,
-      entireWord: findWholeWord,
-      highlightAll: true,
-      findPrevious: true,
-    });
+    dispatchFind("again-prev");
+  }
+
+  // Slice 2: re-run after toggling an option chip (case / word / diacritics).
+  function setFindOption(key: keyof FindOptions) {
+    findOptions = toggleFindOption(findOptions, key);
+    if (findQuery) dispatchFind("options");
+  }
+
+  // Slice 3: commit a recent-search suggestion into the box + run it.
+  function commitSuggestion(q: string) {
+    findQuery = q;
+    findSuggestOpen = false;
+    findSuggestCursor = -1;
+    focusFindInput();
+    runFind(q);
+  }
+
+  // Slice 4: keystrokes inside the find input — dropdown nav first, then
+  // the find box's own Enter/Escape. stopPropagation on every handled key
+  // so the window-level reader keymap (page nav, Escape-closes-find) never
+  // double-fires while the user is interacting with the find input.
+  function onFindInputKey(e: KeyboardEvent) {
+    if (findSuggestOpen && findSuggestions.length > 0) {
+      const intent = classifyFindDropdownKey(e, findSuggestCursor >= 0);
+      if (intent === "next" || intent === "prev") {
+        e.preventDefault();
+        e.stopPropagation();
+        const nav = classifyPaletteNav({ key: e.key });
+        if (nav) findSuggestCursor = nextPaletteIndex(nav, findSuggestCursor, findSuggestions.length);
+        return;
+      }
+      if (intent === "commit") {
+        e.preventDefault();
+        e.stopPropagation();
+        commitSuggestion(findSuggestions[findSuggestCursor].query);
+        return;
+      }
+      if (intent === "close") {
+        // First Escape closes only the dropdown; the bar stays open.
+        e.preventDefault();
+        e.stopPropagation();
+        findSuggestOpen = false;
+        findSuggestCursor = -1;
+        return;
+      }
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      findSuggestOpen = false;
+      if (e.shiftKey) findPrev();
+      else findNext();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFind();
+    }
+  }
+
+  // Slice 1 + 5: turn the two pdf.js find events into one clean status,
+  // then narrate it to the aria-live region (deduped by equality).
+  function applyFindEvent(s: { state?: number | null; matchesCount?: { current?: number | null; total?: number | null } | null }) {
+    findStatus = interpretFindState(s, findQuery);
+    const phrase = announceFindStatus(findStatus);
+    if (phrase && phrase !== findAnnounce) findAnnounce = phrase;
   }
 
   // ---------- Thumbnails ----------
@@ -1085,17 +1211,34 @@
       return;
     }
     if (!doc) return;
-    if (isMod && e.key === "f") {
+    // Slice 4 (Atlas IV): global find chords classified by the tested core —
+    // Cmd/Ctrl+F opens/focuses, F3 / Cmd+G cycle matches from anywhere
+    // (Shift reverses). Shift+Cmd+F (library search) is deliberately not
+    // claimed by classifyFindGlobalKey.
+    const findIntent = classifyFindGlobalKey(e);
+    if (findIntent === "open") {
       e.preventDefault();
-      toggleFind();
-    } else if (isMod && (e.key === "=" || e.key === "+")) {
+      if (!findOpen) toggleFind();
+      else focusFindInput();
+      return;
+    } else if (findIntent === "again-next" || findIntent === "again-prev") {
+      // Only cycle when there's a live query to step through.
+      if (findQuery) {
+        e.preventDefault();
+        if (!findOpen) findOpen = true;
+        if (findIntent === "again-prev") findPrev();
+        else findNext();
+        return;
+      }
+    }
+    if (isMod && (e.key === "=" || e.key === "+")) {
       e.preventDefault();
       zoomIn();
     } else if (isMod && e.key === "-") {
       e.preventDefault();
       zoomOut();
     } else if (e.key === "Escape" && findOpen) {
-      toggleFind();
+      closeFind();
     } else if (e.key === "Escape" && cheatsheetOpen) {
       cheatsheetOpen = false;
     } else if (e.key === "?" && !(e.target as HTMLElement)?.matches("input,textarea")) {
@@ -1331,6 +1474,57 @@
     };
   }
 
+  // Hover-zoom preview: hovering a rail thumbnail pops a larger render
+  // beside it so you can read the page before clicking. Top is clamped on
+  // screen by the tested clampFlyoutTop; gated by shouldShowPreview (open
+  // rail, multi-page doc, in range). previewCanvas renders on demand.
+  let previewPage = $state(0);
+  let previewTop = $state(8);
+  let previewCanvas = $state<HTMLCanvasElement | null>(null);
+  const previewVisible = $derived(shouldShowPreview(previewPage, doc?.pageCount ?? 0, thumbsOpen));
+  function onThumbHover(n: number, el: HTMLElement) {
+    if (!shouldShowPreview(n, doc?.pageCount ?? 0, thumbsOpen)) return;
+    previewPage = n;
+    const r = el.getBoundingClientRect();
+    previewTop = clampFlyoutTop({ top: r.top, height: r.height }, 360, window.innerHeight);
+    void renderPreview(n);
+  }
+  function onThumbLeave() { previewPage = 0; }
+  // Keyboard twin of hover: a focused rail thumb drives the SAME preview
+  // flyout with Up/Down (prev/next), Home/End to ends, Esc to dismiss —
+  // tested by classifyThumbPreviewKey + nextPreviewPage.
+  function onThumbKey(n: number, e: KeyboardEvent) {
+    const action = classifyThumbPreviewKey(e);
+    if (!action) return;
+    e.preventDefault();
+    if (action === "dismiss") { previewPage = 0; return; }
+    const target = nextPreviewPage(previewPage || n, doc?.pageCount ?? 0, action);
+    const btn = thumbButtons.get(target);
+    if (btn) { btn.focus(); onThumbHover(target, btn); }
+  }
+  async function renderPreview(n: number) {
+    if (!pdfDocument || !previewVisible) return;
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    const c = previewCanvas;
+    if (!c || previewPage !== n) return;
+    try {
+      const page = await pdfDocument.getPage(n);
+      if (previewPage !== n) return;
+      const base = page.getViewport({ scale: 1 });
+      const scale = 280 / base.width;
+      const vp = page.getViewport({ scale });
+      const dpr = window.devicePixelRatio || 1;
+      c.width = Math.floor(vp.width * dpr);
+      c.height = Math.floor(vp.height * dpr);
+      c.style.width = `${vp.width}px`;
+      c.style.height = `${vp.height}px`;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      await page.render({ canvasContext: ctx, viewport: vp, canvas: c }).promise;
+    } catch { /* preview is best-effort */ }
+  }
+
   // Auto-scroll thumbnail sidebar when currentPage changes
   $effect(() => {
     const n = currentPage;
@@ -1373,6 +1567,33 @@
         </div>
         {#if node.expanded && node.items.length > 0}
           {@render outlineList(node.items, depth + 1)}
+        {/if}
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
+{#snippet filteredOutlineList(nodes: FilteredOutlineNode<OutlineNode>[], depth: number)}
+  <ul class="outline-list" class:nested={depth > 0}>
+    {#each nodes as fn, i (fn.node.title + i + depth)}
+      <li class="outline-item">
+        <div class="outline-row" style="padding-left: {depth * 12}px">
+          {#if fn.items.length > 0}
+            <span class="outline-twist open" aria-hidden="true">▸</span>
+          {:else}
+            <span class="outline-twist spacer" aria-hidden="true"></span>
+          {/if}
+          <button
+            class="outline-label"
+            class:match={fn.selfMatch}
+            onclick={() => jumpToOutline(fn.node)}
+            title={fn.node.title}
+          >
+            {#each fn.segments as seg}{#if seg.hit}<mark class="outline-hit">{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+          </button>
+        </div>
+        {#if fn.items.length > 0}
+          {@render filteredOutlineList(fn.items, depth + 1)}
         {/if}
       </li>
     {/each}
@@ -1520,33 +1741,71 @@
 
   {#if findOpen}
     <div class="findbar">
-      <input
-        class="find-input"
-        placeholder="Search in document"
-        aria-label="Find in document"
-        bind:value={findQuery}
-        oninput={() => runFind(findQuery, "find")}
-        onkeydown={(e) => {
-          if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) findPrev(); else findNext(); }
-          else if (e.key === "Escape") { e.preventDefault(); toggleFind(); }
-        }}
-      />
-      <label class="find-opt">
-        <input type="checkbox" bind:checked={findCaseSensitive} onchange={() => runFind(findQuery, "highlightallchange")} />
-        Aa
-      </label>
-      <label class="find-opt">
-        <input type="checkbox" bind:checked={findWholeWord} onchange={() => runFind(findQuery, "highlightallchange")} />
-        Word
-      </label>
-      <span class="find-count">
-        {findStatus.total > 0
-          ? `${findStatus.current} / ${findStatus.total}`
-          : (findQuery ? "no matches" : "")}
+      <div class="find-field">
+        <input
+          class="find-input"
+          placeholder="Find in document"
+          aria-label="Find in document"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-expanded={findSuggestOpen && findSuggestions.length > 0}
+          aria-controls="find-suggest-list"
+          aria-activedescendant={findSuggestCursor >= 0 ? `find-suggest-${findSuggestCursor}` : undefined}
+          bind:value={findQuery}
+          oninput={() => runFind(findQuery)}
+          onkeydown={onFindInputKey}
+          onfocus={() => { findSuggestOpen = true; }}
+          onblur={() => { setTimeout(() => { findSuggestOpen = false; findSuggestCursor = -1; }, 120); }}
+        />
+        {#if findSuggestOpen && findSuggestions.length > 0}
+          <ul class="find-suggest" id="find-suggest-list" role="listbox" aria-label="Recent searches">
+            {#each findSuggestions as s, i (s.query)}
+              <li role="presentation">
+                <button
+                  id={`find-suggest-${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={i === findSuggestCursor}
+                  class="find-suggest-item"
+                  class:active={i === findSuggestCursor}
+                  onmouseenter={() => (findSuggestCursor = i)}
+                  onclick={() => commitSuggestion(s.query)}
+                >
+                  <span class="find-suggest-glyph" aria-hidden="true">{findQuery ? "\u2197" : "\u21BA"}</span>
+                  <span class="find-suggest-text">
+                    {#each suggestionSegments(s) as seg (seg.text + (seg.hit ? "1" : "0"))}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+                  </span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+      <div class="find-opts" role="group" aria-label="Find options">
+        {#each FIND_OPTION_TOGGLES as opt (opt.key)}
+          <button
+            type="button"
+            class="find-opt-chip"
+            class:on={findOptions[opt.key]}
+            aria-pressed={findOptions[opt.key]}
+            title={opt.title}
+            aria-label={opt.title}
+            onclick={() => setFindOption(opt.key)}
+          >{opt.label}</button>
+        {/each}
+      </div>
+      <span class="find-count" data-tone={findStatusTone(findStatus)} title={describeFindOptions(findOptions)}>
+        {describeFindStatus(findStatus)}
       </span>
-      <button class="tb-btn icon" onclick={findPrev} disabled={!findQuery} title="Previous">↑</button>
-      <button class="tb-btn icon" onclick={findNext} disabled={!findQuery} title="Next">↓</button>
+      {#if findStatus.wrapped}
+        <span class="find-wrapped" title="Search wrapped past the end of the document">wrapped</span>
+      {/if}
+      <button class="tb-btn icon" onclick={findPrev} disabled={!findQuery} title="Previous match (Shift+F3)" aria-label="Previous match">↑</button>
+      <button class="tb-btn icon" onclick={findNext} disabled={!findQuery} title="Next match (F3)" aria-label="Next match">↓</button>
+      <button class="tb-btn icon" onclick={closeFind} title="Close find (Esc)" aria-label="Close find">×</button>
     </div>
+    <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{findAnnounce}</div>
   {/if}
 
   <div class="viewer-grid" class:no-thumbs={!thumbsOpen && !outlineOpen} class:with-info={infoOpen}>
@@ -1558,25 +1817,71 @@
           <button class="outline-close" onclick={() => (outlineOpen = false)} title="Close">×</button>
         </div>
         {#if outlineLoading}
-          <div class="outline-empty">Loading…</div>
+          <!-- Outline skeleton: indented shimmer bars in the tree shape so the
+               panel settles in place instead of flashing a bare "Loading…".
+               Decorative; one SR label carries the loading state. -->
+          <div class="outline-skeleton" aria-busy="true" aria-label="Loading outline">
+            {#each [0, 1, 0, 2, 1, 0, 1, 0] as depth, i (i)}
+              <span class="ol-skel-bar" style="margin-left: {depth * 14}px; width: {64 - depth * 10}%"></span>
+            {/each}
+          </div>
         {:else if outline.length === 0}
           <div class="outline-empty">
             <p>No outline in this PDF.</p>
             <button class="outline-add-btn" onclick={() => (outlineEditorOpen = true)}>+ Create outline</button>
           </div>
         {:else}
-          <nav class="outline-tree">
-            {@render outlineList(outline, 0)}
-          </nav>
+          <div class="outline-filter">
+            <svg class="outline-filter-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.4" stroke="currentColor" stroke-width="1.3" fill="none" />
+              <path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+            </svg>
+            <input
+              type="text"
+              class="outline-filter-input"
+              placeholder={outlineNodeCount > 0 ? `Filter ${outlineNodeCount} heading${outlineNodeCount === 1 ? "" : "s"}…` : "Filter outline…"}
+              bind:value={outlineFilter}
+              aria-label="Filter outline"
+              onkeydown={(e) => { if (e.key === "Escape") { e.stopPropagation(); outlineFilter = ""; } }}
+            />
+            {#if outlineFilter.trim()}
+              <button
+                class="outline-filter-clear"
+                onclick={() => (outlineFilter = "")}
+                title="Clear filter"
+                aria-label="Clear outline filter"
+              >×</button>
+            {/if}
+          </div>
+          {#if filteredOutline !== null && describeOutlineFilter(filteredOutline)}
+            <div class="outline-filter-count" role="status" aria-live="polite">{describeOutlineFilter(filteredOutline)}</div>
+          {/if}
+          {#if filteredOutline === null}
+            <nav class="outline-tree">
+              {@render outlineList(outline, 0)}
+            </nav>
+          {:else if filteredOutline.length === 0}
+            <div class="outline-empty outline-no-match">
+              <p>No headings match “{outlineFilter.trim()}”.</p>
+              <button class="outline-add-btn" onclick={() => (outlineFilter = "")}>Clear filter</button>
+            </div>
+          {:else}
+            <nav class="outline-tree">
+              {@render filteredOutlineList(filteredOutline, 0)}
+            </nav>
+          {/if}
         {/if}
       </aside>
     {:else if thumbsOpen && doc}
-      <aside class="thumbs">
+      <aside class="thumbs" onmouseleave={onThumbLeave}>
         {#each Array.from({ length: doc.pageCount }, (_, i) => i + 1) as n (n)}
           <button
             class="thumb"
             class:active={n === currentPage}
             onclick={() => jumpTo(n)}
+            onmouseenter={(e) => onThumbHover(n, e.currentTarget)}
+            onfocus={(e) => onThumbHover(n, e.currentTarget)}
+            onkeydown={(e) => onThumbKey(n, e)}
             use:attachThumbBtn={n}
           >
             <canvas use:attachThumb={n}></canvas>
@@ -1584,6 +1889,12 @@
           </button>
         {/each}
       </aside>
+      {#if previewVisible}
+        <div class="thumb-preview" style="top: {previewTop}px" role="presentation">
+          <canvas bind:this={previewCanvas}></canvas>
+          <span class="thumb-preview-cap">{previewLabel(previewPage, doc.pageCount)}</span>
+        </div>
+      {/if}
     {/if}
 
     <div class="pdfjs-container" class:invert class:jump-halo={jumpHalo} bind:this={containerEl}>
@@ -1919,9 +2230,16 @@
     background: var(--bg-2);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    position: relative;
+    z-index: 5;
+  }
+  .find-field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
   }
   .find-input {
-    flex: 1;
+    width: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
@@ -1933,20 +2251,112 @@
     outline: none;
     border-color: var(--accent);
   }
-  .find-opt {
+  /* Slice 3: recent-search dropdown */
+  .find-suggest {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background: var(--bg-1, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    z-index: 20;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .find-suggest-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-radius: calc(var(--r-sm) - 2px);
+    padding: 6px 8px;
+    color: var(--text-2);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .find-suggest-item.active {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--text);
+  }
+  .find-suggest-glyph {
+    color: var(--text-3);
+    font-size: 12px;
+    width: 14px;
+    flex-shrink: 0;
+    text-align: center;
+  }
+  .find-suggest-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .find-suggest-text :global(mark) {
+    background: transparent;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Slice 2: option chips */
+  .find-opts {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .find-opt-chip {
+    background: var(--bg);
+    border: 1px solid var(--border);
     color: var(--text-3);
+    border-radius: var(--r-sm);
+    padding: 4px 7px;
+    font-size: 11px;
+    line-height: 1;
     cursor: pointer;
+    transition:
+      color 0.12s,
+      border-color 0.12s,
+      background 0.12s;
+  }
+  .find-opt-chip:hover {
+    color: var(--text);
+    border-color: var(--text-3);
+  }
+  .find-opt-chip.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
   .find-count {
     font-size: 12px;
     color: var(--text-3);
-    width: 80px;
+    min-width: 64px;
     text-align: right;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+  .find-count[data-tone="warn"] {
+    color: #ffb648;
+  }
+  .find-count[data-tone="normal"] {
+    color: var(--text);
+  }
+  /* Slice 1: wrapped pill */
+  .find-wrapped {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 999px;
+    padding: 1px 6px;
+    flex-shrink: 0;
   }
 
   .viewer-grid {
@@ -2003,6 +2413,42 @@
     color: var(--text-3);
   }
   .thumb.active .thumb-num { color: var(--accent); }
+
+  /* Hover-zoom preview: a larger render beside the rail (round 55). Fixed
+     so the inline top (from clampFlyoutTop vs innerHeight) is viewport-
+     relative; left sits just past the ~150px rail. */
+  .thumb-preview {
+    position: fixed;
+    left: 156px;
+    z-index: 40;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    pointer-events: none;
+    animation: thumb-preview-in 0.1s ease-out;
+  }
+  .thumb-preview canvas {
+    background: white;
+    border-radius: 2px;
+    max-height: 360px;
+  }
+  .thumb-preview-cap {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  @keyframes thumb-preview-in {
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .thumb-preview { animation: none; }
+  }
 
   /* PDFViewer needs its container to be position:relative or absolute */
   .pdfjs-container {
@@ -2321,6 +2767,105 @@
     overflow-y: auto;
     padding: 6px 6px 14px;
     flex: 1;
+  }
+  /* Round 59 — outline filter input. Compact palette-grade filter bar that
+     sits under the outline header; matches the dark-first input styling used
+     across Slab's search surfaces. */
+  .outline-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 8px 6px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    background: var(--bg-2, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+    transition: border-color 0.12s ease;
+  }
+  .outline-filter:focus-within {
+    border-color: color-mix(in srgb, var(--accent, #7c8cff) 55%, transparent);
+  }
+  .outline-filter-icon {
+    flex: none;
+    color: var(--text-3, #888);
+  }
+  .outline-filter-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-1, #fff);
+    font-size: 12px;
+    padding: 1px 0;
+  }
+  .outline-filter-input::placeholder {
+    color: var(--text-3, #888);
+  }
+  .outline-filter-clear {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-3, #888);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .outline-filter-clear:hover {
+    background: var(--bg-3, rgba(255, 255, 255, 0.08));
+    color: var(--text-1, #fff);
+  }
+  .outline-filter-count {
+    font-size: 10.5px;
+    color: var(--text-3, #888);
+    padding: 0 12px 4px;
+  }
+  .outline-no-match {
+    padding-top: 6px;
+  }
+  .outline-label.match {
+    color: var(--text-1, #fff);
+  }
+  .outline-hit {
+    background: color-mix(in srgb, var(--accent, #7c8cff) 32%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  /* First-load skeleton — indented shimmer bars matching the outline tree.
+     Same shimmer family as SmartFolders/Convert so loaders feel like one app. */
+  .outline-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 12px 12px;
+  }
+  .ol-skel-bar {
+    height: 11px;
+    border-radius: 4px;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 0%,
+      color-mix(in srgb, var(--text-1, #fff) 14%, transparent) 50%,
+      color-mix(in srgb, var(--text-1, #fff) 7%, transparent) 100%
+    );
+    background-size: 200% 100%;
+    animation: ol-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes ol-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ol-skel-bar { animation: none; }
   }
   .outline-list {
     list-style: none;
