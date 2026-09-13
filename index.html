@@ -21,14 +21,7 @@
 
   <header class="nav" id="top">
     <div class="wrap nav-inner">
-      <a class="brand" href="#top" aria-label="Slab home">
-        <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-          <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#f5b32b"/>
-          <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#e09b12"/>
-          <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#b97a0a"/>
-        </svg>
-        <span>Slab</span>
-      </a>
+      <a class="brand-box" href="#top">Slab</a>
       <nav class="links" aria-label="Primary">
         <a href="#features">Features</a>
         <a href="#beacon">Beacon AI</a>
@@ -37,7 +30,7 @@
         <a href="#download">Download</a>
       </nav>
       <div class="nav-cta">
-        <a class="btn-pill" href="#download">Get Slab free</a>
+        <a class="btn-box solid small" href="#download">Get Slab free</a>
         <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false">
           <span></span><span></span><span></span>
         </button>
@@ -53,60 +46,34 @@
   </header>
 
   <main id="main">
-    <!-- BENTO HERO -->
-    <section class="bento-section">
-      <div class="wrap bento-grid">
-
-        <article class="tile tile-hero reveal">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="wrap">
+        <p class="kicker-box reveal">v3.39.0 — Inspector Tags · Free &amp; open source · GPL-3.0</p>
+        <h1 class="reveal">The PDF toolkit<br>your files <span class="hl">never&nbsp;leave.</span></h1>
+        <p class="lede reveal">Most PDF software today is a subscription wrapped around an upload button. Slab is the opposite: a fast, free PDF app for macOS, Windows, and Linux that runs <strong>entirely on your machine</strong>. No accounts. No uploads. No cloud round-trips.</p>
+        <div class="cta-row reveal">
+          <a class="btn-box solid" href="#download">Download for free</a>
+          <a class="btn-box" href="https://github.com/Sanjays2402/slab" target="_blank" rel="noopener">View source</a>
+        </div>
+        <figure class="shot-box reveal">
           <img src="screenshots/00-hero-reader.png" alt="Slab reader with a PDF open" loading="eager">
-          <h1>The PDF toolkit your files <span>never&nbsp;leave.</span></h1>
-          <a class="circle-btn" href="#download" aria-label="Go to downloads">
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </a>
-          <p class="hero-note">Most PDF software is a subscription wrapped around an upload button. Slab is the opposite.</p>
-        </article>
+          <figcaption>Slab Reader — dark-first, themeable, three density modes.</figcaption>
+        </figure>
+      </div>
+    </section>
 
-        <article class="tile tile-mid reveal">
-          <img src="screenshots/03-beacon-ai.png" alt="Beacon AI answering a question about a PDF" loading="lazy">
-          <div class="overlap">
-            <h2>AI with nowhere to phone home.</h2>
-            <p>Eleven features, on-device. No API keys.</p>
-            <a class="mini-arrow" href="#beacon" aria-label="Read about Beacon AI">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
-          </div>
-        </article>
+    <div class="strip" aria-hidden="true">
+      <i style="background:#c7ddf5"></i><i style="background:#f2b8b8"></i><i style="background:#d9d9d9"></i><i style="background:#d9c9f0"></i><i style="background:#c9e8d4"></i><i style="background:#f5efb8"></i>
+    </div>
 
-        <article class="tile tile-tall reveal">
-          <img src="screenshots/23-redact.png" alt="Redacting a PDF in Slab" loading="lazy">
-          <div class="tint" aria-hidden="true"></div>
-          <h2 class="vertical">Your files never leave.</h2>
-          <p class="tall-note">local-first, always</p>
-        </article>
-
-        <article class="tile tile-stat reveal">
-          <div class="stat-top"><span class="pill">tools</span>
-            <a class="mini-arrow" href="#features" aria-label="See all features">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
-          </div>
-          <p class="stat-label">PDF tools, every one local</p>
-          <strong class="stat-num">30+</strong>
-        </article>
-
-        <article class="tile tile-stat pop reveal">
-          <div class="stat-top"><span class="pill">quality</span></div>
-          <p class="stat-label">Rust tests, clippy-clean</p>
-          <strong class="stat-num">730+</strong>
-        </article>
-
-        <article class="tile tile-tags reveal">
-          <div class="tag-cloud" aria-label="Some of the things Slab does">
-            <span style="--r:-10deg">Merge</span><span style="--r:7deg">OCR</span><span style="--r:-6deg">Redact</span><span style="--r:11deg">Sign</span><span style="--r:-8deg">Hopper</span><span style="--r:5deg">Beacon</span><span style="--r:-11deg">Foundry</span><span style="--r:8deg">Bates</span><span style="--r:-5deg">Flatten</span><span style="--r:10deg">Diff</span><span style="--r:-9deg">Vim mode</span><span style="--r:6deg">Sanitize</span>
-          </div>
-          <span class="dot" aria-hidden="true"></span>
-        </article>
-
+    <!-- STATS -->
+    <section class="stats">
+      <div class="wrap stats-grid">
+        <div class="reveal"><strong>30+</strong><span>PDF tools, every one local</span></div>
+        <div class="reveal"><strong>730+</strong><span>Rust tests, clippy-clean</span></div>
+        <div class="reveal"><strong>3</strong><span>macOS, Windows, Linux</span></div>
+        <div class="reveal"><strong>0</strong><span>trackers · accounts · upsells</span></div>
       </div>
     </section>
 
@@ -114,20 +81,20 @@
     <section class="section" id="features">
       <div class="wrap">
         <div class="section-head reveal">
-          <p class="kicker">What it does</p>
+          <p class="kicker-box">Index of features</p>
           <h2>Thirty-plus tools.<br>Zero cloud.</h2>
           <p class="sub">Built because every PDF app wanted my files and my credit card. Hit <kbd>⌘K</kbd> from anywhere to jump to any tool — everything below runs on your device, and air-gapping a laptop changes nothing.</p>
         </div>
-        <div class="grid cards">
-          <article class="card reveal"><h3>Read &amp; navigate</h3><p>Thumbnails, outline, find, highlights, sticky notes, recents. The basics, done right.</p></article>
-          <article class="card reveal"><h3>Manipulate</h3><p>Merge, split, compress, extract, encrypt, watermark, sign, crop, redact, N-up. Merging a hundred files takes a second, not a minute.</p></article>
-          <article class="card reveal"><h3>Document tools</h3><p>Markdown&rarr;PDF, .docx/.xlsx/.epub conversion, flatten, sanitize, repair, edit text, grayscale, page labels.</p></article>
-          <article class="card reveal"><h3>OCR &amp; vision</h3><p>Tesseract OCR with a batch queue, table extraction, language packs — plus vision Q&amp;A in Beacon.</p></article>
-          <article class="card reveal"><h3>Beacon AI</h3><p>Chat, summaries, semantic search, PII redaction. On-device only — no API keys, no cloud.</p></article>
-          <article class="card reveal"><h3>Productivity</h3><p>A real library with folders and tags, line-level diff, presenter mode, detachable panels.</p></article>
-          <article class="card reveal"><h3>Reach</h3><p>Vim mode for the faithful, a WCAG-level accessibility pass, i18n groundwork.</p></article>
-          <article class="card reveal"><h3>Foundry</h3><p>Declarative plugins — themes, commands, AI providers, PDF actions — without writing Rust. Signed marketplace included.</p></article>
-        </div>
+        <ol class="index-list">
+          <li class="reveal"><span class="idx">01</span><h3>Read &amp; navigate</h3><p>Thumbnails, outline, find, highlights, sticky notes, recents. The basics, done right.</p></li>
+          <li class="reveal"><span class="idx">02</span><h3>Manipulate</h3><p>Merge, split, compress, extract, encrypt, watermark, sign, crop, redact, N-up. Merging a hundred files takes a second, not a minute.</p></li>
+          <li class="reveal"><span class="idx">03</span><h3>Document tools</h3><p>Markdown&rarr;PDF, .docx/.xlsx/.epub conversion, flatten, sanitize, repair, edit text, grayscale, page labels.</p></li>
+          <li class="reveal"><span class="idx">04</span><h3>OCR &amp; vision</h3><p>Tesseract OCR with a batch queue, table extraction, language packs — plus vision Q&amp;A in Beacon.</p></li>
+          <li class="reveal"><span class="idx">05</span><h3>Beacon AI</h3><p>Chat, summaries, semantic search, PII redaction. On-device only — no API keys, no cloud.</p></li>
+          <li class="reveal"><span class="idx">06</span><h3>Productivity</h3><p>A real library with folders and tags, line-level diff, presenter mode, detachable panels.</p></li>
+          <li class="reveal"><span class="idx">07</span><h3>Reach</h3><p>Vim mode for the faithful, a WCAG-level accessibility pass, i18n groundwork.</p></li>
+          <li class="reveal"><span class="idx">08</span><h3>Foundry</h3><p>Declarative plugins — themes, commands, AI providers, PDF actions — without writing Rust. Signed marketplace included.</p></li>
+        </ol>
       </div>
     </section>
 
@@ -135,7 +102,7 @@
     <section class="section" id="beacon">
       <div class="wrap split">
         <div class="reveal">
-          <p class="kicker">Beacon</p>
+          <p class="kicker-box">Beacon</p>
           <h2>AI with nowhere to phone home.</h2>
           <p class="sub">Eleven features — chat, summaries, semantic search, PII redaction, study mode, voice — running on your machine by default. No API keys, no usage limits. Pull the ethernet cable and everything still works.</p>
           <ul class="chips">
@@ -143,7 +110,7 @@
           </ul>
           <p class="fine">Chat answers with citations pointing back to exact pages. Voice Mode pairs on-device TTS with speech-to-text.</p>
         </div>
-        <figure class="shot reveal">
+        <figure class="shot-box reveal">
           <img src="screenshots/03-beacon-ai.png" alt="Beacon AI panel answering a question about a PDF" loading="lazy">
           <figcaption>Beacon Chat — citations point back to exact pages.</figcaption>
         </figure>
@@ -154,23 +121,23 @@
     <section class="section" id="hopper">
       <div class="wrap">
         <div class="section-head reveal">
-          <p class="kicker">Hopper</p>
+          <p class="kicker-box">Hopper</p>
           <h2>One inbox. Many destinations.<br>Zero clicks.</h2>
           <p class="sub">Point Hopper at a folder — <code>~/Downloads</code>, a scanner, a shared inbox — and attach a recipe. Incoming PDFs get flattened, OCR&rsquo;d, redacted, watermarked, renamed by Beacon, and filed. A live log shows every run. <kbd>⇧⌘H</kbd> to open it.</p>
         </div>
         <div class="hopper-grid">
-          <div class="card reveal">
+          <div class="box reveal">
             <h3>Conditional rules</h3>
             <p>Route each arriving PDF through a chain of rules you write once and forget. Six predicate kinds — first match wins, everything else falls through.</p>
             <ul class="preds">
               <li>filename glob</li><li>regex</li><li>text contents</li><li>page count</li><li>file size</li><li>catch-all</li>
             </ul>
           </div>
-          <div class="card reveal">
+          <div class="box reveal">
             <h3>Live preview</h3>
             <p>As you edit any predicate, green ✓ chips light up next to your <em>actual</em> recent files showing which rule will catch them. No deploy-test-squint loops.</p>
           </div>
-          <div class="card reveal">
+          <div class="box reveal">
             <h3>Why not the others?</h3>
             <p>Hazel is $42 and can&rsquo;t read PDFs. Adobe&rsquo;s version needs an enterprise license and phones home. Hopper is free and local.</p>
           </div>
@@ -182,7 +149,7 @@
     <section class="section" id="server">
       <div class="wrap split">
         <div class="reveal">
-          <p class="kicker">Slab Server</p>
+          <p class="kicker-box">Slab Server</p>
           <h2>Put it on your NAS.</h2>
           <p class="sub">Same Rust engine, headless: an HTTP API plus a drag-and-drop web UI in an 80&nbsp;MB Docker image. Compose file and docs included — sits behind a reverse proxy without complaint.</p>
           <button class="term block" data-copy="docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest" title="Click to copy">
@@ -192,7 +159,7 @@
           <p class="fine">80&nbsp;MB image at <code>ghcr.io/sanjays2402/slab</code> · full HTTP API · Compose example in <a href="https://github.com/Sanjays2402/slab/blob/main/docs/server.md" target="_blank" rel="noopener">docs/server.md</a></p>
         </div>
         <div class="reveal">
-          <p class="kicker">Foundry + Bench</p>
+          <p class="kicker-box">Foundry + Bench</p>
           <h2>Plugins without the plugin hell.</h2>
           <p class="sub">Declare a theme, a locale, a command, an AI provider — no Rust required. A typed TypeScript SDK ships three working examples inside the app, so you can take the system apart on day one. Bench is the signed marketplace.</p>
         </div>
@@ -203,14 +170,14 @@
     <section class="section" id="gallery">
       <div class="wrap">
         <div class="section-head reveal">
-          <p class="kicker">Screenshots</p>
+          <p class="kicker-box">Screenshots</p>
           <h2>Looks like this.</h2>
         </div>
         <div class="gallery">
-          <figure class="reveal"><img src="screenshots/02-library.png" alt="Slab library view with folders and tags" loading="lazy"><figcaption>Library — folders, tags, watched-folder auto-indexing</figcaption></figure>
-          <figure class="reveal"><img src="screenshots/39-command-palette.png" alt="Slab command palette" loading="lazy"><figcaption><kbd>⌘K</kbd> — every tool, a few keystrokes away</figcaption></figure>
-          <figure class="reveal"><img src="screenshots/19-sign.png" alt="Signing a PDF in Slab" loading="lazy"><figcaption>Sign — on your machine, not in a cloud</figcaption></figure>
-          <figure class="reveal"><img src="screenshots/23-redact.png" alt="Redacting a PDF in Slab" loading="lazy"><figcaption>Redact — true redaction, plus auto PII detection</figcaption></figure>
+          <figure class="shot-box reveal"><img src="screenshots/02-library.png" alt="Slab library view with folders and tags" loading="lazy"><figcaption>Library — folders, tags, watched-folder auto-indexing</figcaption></figure>
+          <figure class="shot-box reveal"><img src="screenshots/39-command-palette.png" alt="Slab command palette" loading="lazy"><figcaption><kbd>⌘K</kbd> — every tool, a few keystrokes away</figcaption></figure>
+          <figure class="shot-box reveal"><img src="screenshots/19-sign.png" alt="Signing a PDF in Slab" loading="lazy"><figcaption>Sign — on your machine, not in a cloud</figcaption></figure>
+          <figure class="shot-box reveal"><img src="screenshots/23-redact.png" alt="Redacting a PDF in Slab" loading="lazy"><figcaption>Redact — true redaction, plus auto PII detection</figcaption></figure>
         </div>
       </div>
     </section>
@@ -219,7 +186,7 @@
     <section class="section" id="compare">
       <div class="wrap">
         <div class="section-head reveal">
-          <p class="kicker">The comparison</p>
+          <p class="kicker-box">The comparison</p>
           <h2>Why you&rsquo;d switch.</h2>
         </div>
         <div class="table-wrap reveal">
@@ -235,8 +202,8 @@
               <tr><td>Telemetry</td><td class="hl">None</td><td>Yes</td><td>None</td></tr>
             </tbody>
           </table>
-          <p class="fine">Prices as publicly listed.</p>
         </div>
+        <p class="fine reveal">Prices as publicly listed.</p>
       </div>
     </section>
 
@@ -244,37 +211,37 @@
     <section class="section" id="download">
       <div class="wrap">
         <div class="section-head reveal">
-          <p class="kicker">Download</p>
+          <p class="kicker-box">Download</p>
           <h2>Free. Actually free.</h2>
           <p class="sub">Latest release: <strong>v3.39.0</strong> — Inspector Tags. GPL-3.0, no Pro tier, no upsells, no telemetry. <a href="https://github.com/Sanjays2402/slab/releases/latest" target="_blank" rel="noopener">Release notes &rarr;</a></p>
         </div>
         <div class="grid dl">
-          <article class="card dl-card reveal">
+          <article class="box dl-card reveal">
             <h3>macOS</h3><p>Apple Silicon &amp; Intel</p>
             <div class="dl-btns">
-              <a class="btn-pill" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_aarch64.dmg">.dmg — Apple Silicon</a>
-              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64.dmg">.dmg — Intel</a>
+              <a class="btn-box solid" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_aarch64.dmg">.dmg — Apple Silicon</a>
+              <a class="btn-box" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64.dmg">.dmg — Intel</a>
             </div>
           </article>
-          <article class="card dl-card reveal">
+          <article class="box dl-card reveal">
             <h3>Windows</h3><p>Installer &amp; MSI</p>
             <div class="dl-btns">
-              <a class="btn-pill" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64-setup.exe">.exe — Setup</a>
-              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64_en-US.msi">.msi — Installer</a>
+              <a class="btn-box solid" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64-setup.exe">.exe — Setup</a>
+              <a class="btn-box" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64_en-US.msi">.msi — Installer</a>
             </div>
           </article>
-          <article class="card dl-card reveal">
+          <article class="box dl-card reveal">
             <h3>Linux</h3><p>AppImage &amp; Debian</p>
             <div class="dl-btns">
-              <a class="btn-pill" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.AppImage">.AppImage</a>
-              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.deb">.deb</a>
+              <a class="btn-box solid" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.AppImage">.AppImage</a>
+              <a class="btn-box" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.deb">.deb</a>
             </div>
           </article>
-          <article class="card dl-card reveal">
+          <article class="box dl-card reveal">
             <h3>Docker</h3><p>Self-host Slab Server</p>
             <div class="dl-btns">
-              <button class="btn-pill" data-copy="docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest">Copy docker command</button>
-              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/pkgs/container/slab" target="_blank" rel="noopener">Container registry</a>
+              <button class="btn-box solid" data-copy="docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest">Copy docker command</button>
+              <a class="btn-box" href="https://github.com/Sanjays2402/slab/pkgs/container/slab" target="_blank" rel="noopener">Container registry</a>
             </div>
           </article>
         </div>
@@ -284,14 +251,7 @@
 
   <footer>
     <div class="wrap foot">
-      <a class="brand" href="#top">
-        <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-          <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#f5b32b"/>
-          <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#e09b12"/>
-          <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#b97a0a"/>
-        </svg>
-        <span>Slab</span>
-      </a>
+      <a class="brand-box" href="#top">Slab</a>
       <p>Free software under the <a href="https://github.com/Sanjays2402/slab/blob/main/LICENSE" target="_blank" rel="noopener">GPL-3.0</a>. Your files never leave your machine.</p>
       <nav aria-label="Footer">
         <a href="https://github.com/Sanjays2402/slab" target="_blank" rel="noopener">GitHub</a>
