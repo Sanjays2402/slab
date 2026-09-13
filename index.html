@@ -10,6 +10,9 @@
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://raw.githubusercontent.com/Sanjays2402/slab/main/docs/screenshots/00-hero-reader.png">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <noscript><style>.reveal { opacity: 1; transform: none; }</style></noscript>
 </head>
@@ -20,9 +23,9 @@
     <div class="wrap nav-inner">
       <a class="brand" href="#top" aria-label="Slab home">
         <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-          <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#ffd47e"/>
-          <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#f6b73c"/>
-          <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#d98a1f"/>
+          <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#f5b32b"/>
+          <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#e09b12"/>
+          <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#b97a0a"/>
         </svg>
         <span>Slab</span>
       </a>
@@ -34,11 +37,7 @@
         <a href="#download">Download</a>
       </nav>
       <div class="nav-cta">
-        <a class="btn ghost" href="https://github.com/Sanjays2402/slab" target="_blank" rel="noopener">
-          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-          GitHub
-        </a>
-        <a class="btn primary" href="#download">Get Slab free</a>
+        <a class="btn-pill" href="#download">Get Slab free</a>
         <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false">
           <span></span><span></span><span></span>
         </button>
@@ -54,49 +53,62 @@
   </header>
 
   <main id="main">
-    <!-- HERO -->
-    <section class="hero">
-      <div class="wrap">
-        <div class="hero-copy reveal">
-          <p class="eyebrow"><span class="dot"></span> v3.39.0 &nbsp;·&nbsp; Free &amp; open source &nbsp;·&nbsp; GPL-3.0</p>
-          <h1>The PDF toolkit your files <em>never leave.</em></h1>
-          <p class="lede">Most PDF software today is a subscription wrapped around an upload button. Slab is the opposite: a fast, free PDF app for macOS, Windows, and Linux that runs <strong>entirely on your machine</strong>. No accounts. No uploads. No cloud round-trips.</p>
-          <div class="cta-row">
-            <a class="btn primary big" href="#download">Download for free</a>
-            <a class="btn ghost big" href="https://github.com/Sanjays2402/slab" target="_blank" rel="noopener">View source</a>
+    <!-- BENTO HERO -->
+    <section class="bento-section">
+      <div class="wrap bento-grid">
+
+        <article class="tile tile-hero reveal">
+          <img src="screenshots/00-hero-reader.png" alt="Slab reader with a PDF open" loading="eager">
+          <h1>The PDF toolkit your files <span>never&nbsp;leave.</span></h1>
+          <a class="circle-btn" href="#download" aria-label="Go to downloads">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <p class="hero-note">Most PDF software is a subscription wrapped around an upload button. Slab is the opposite.</p>
+        </article>
+
+        <article class="tile tile-mid reveal">
+          <img src="screenshots/03-beacon-ai.png" alt="Beacon AI answering a question about a PDF" loading="lazy">
+          <div class="overlap">
+            <h2>AI with nowhere to phone home.</h2>
+            <p>Eleven features, on-device. No API keys.</p>
+            <a class="mini-arrow" href="#beacon" aria-label="Read about Beacon AI">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
           </div>
-          <button class="term" id="dockerChip" data-copy="docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest" title="Click to copy">
-            <span class="prompt">$</span><code>docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest</code>
-            <span class="copy-hint" aria-hidden="true">copy</span>
-          </button>
-        </div>
-        <figure class="hero-shot reveal">
-          <div class="browser">
-            <div class="browser-bar" aria-hidden="true"><i></i><i></i><i></i></div>
-            <img src="screenshots/00-hero-reader.png" alt="Slab reader with a PDF open" width="1200" height="800" loading="eager">
+        </article>
+
+        <article class="tile tile-tall reveal">
+          <img src="screenshots/23-redact.png" alt="Redacting a PDF in Slab" loading="lazy">
+          <div class="tint" aria-hidden="true"></div>
+          <h2 class="vertical">Your files never leave.</h2>
+          <p class="tall-note">local-first, always</p>
+        </article>
+
+        <article class="tile tile-stat reveal">
+          <div class="stat-top"><span class="pill">tools</span>
+            <a class="mini-arrow" href="#features" aria-label="See all features">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 17L17 7M17 7H8M17 7v9" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
           </div>
-          <figcaption>Slab Reader — dark-first, themeable, three density modes.</figcaption>
-        </figure>
+          <p class="stat-label">PDF tools, every one local</p>
+          <strong class="stat-num">30+</strong>
+        </article>
+
+        <article class="tile tile-stat pop reveal">
+          <div class="stat-top"><span class="pill">quality</span></div>
+          <p class="stat-label">Rust tests, clippy-clean</p>
+          <strong class="stat-num">730+</strong>
+        </article>
+
+        <article class="tile tile-tags reveal">
+          <div class="tag-cloud" aria-label="Some of the things Slab does">
+            <span style="--r:-10deg">Merge</span><span style="--r:7deg">OCR</span><span style="--r:-6deg">Redact</span><span style="--r:11deg">Sign</span><span style="--r:-8deg">Hopper</span><span style="--r:5deg">Beacon</span><span style="--r:-11deg">Foundry</span><span style="--r:8deg">Bates</span><span style="--r:-5deg">Flatten</span><span style="--r:10deg">Diff</span><span style="--r:-9deg">Vim mode</span><span style="--r:6deg">Sanitize</span>
+          </div>
+          <span class="dot" aria-hidden="true"></span>
+        </article>
+
       </div>
     </section>
-
-    <!-- STATS -->
-    <section class="stats" aria-label="Highlights">
-      <div class="wrap stats-grid reveal">
-        <div><strong>30+</strong><span>PDF tools, every one local</span></div>
-        <div><strong>730+</strong><span>Rust tests, clippy-clean</span></div>
-        <div><strong>3</strong><span>macOS, Windows, Linux</span></div>
-        <div><strong>0</strong><span>trackers · accounts · upsells</span></div>
-      </div>
-    </section>
-
-    <!-- MARQUEE -->
-    <div class="marquee" aria-hidden="true">
-      <div class="marquee-track">
-        <span>Merge</span><span>Split</span><span>OCR</span><span>Redact</span><span>Sign</span><span>Bates</span><span>Flatten</span><span>Diff</span><span>Sanitize</span><span>Compress</span><span>Watermark</span><span>Encrypt</span><span>N-up</span><span>Extract</span><span>Crop</span><span>Convert</span>
-        <span>Merge</span><span>Split</span><span>OCR</span><span>Redact</span><span>Sign</span><span>Bates</span><span>Flatten</span><span>Diff</span><span>Sanitize</span><span>Compress</span><span>Watermark</span><span>Encrypt</span><span>N-up</span><span>Extract</span><span>Crop</span><span>Convert</span>
-      </div>
-    </div>
 
     <!-- FEATURES -->
     <section class="section" id="features">
@@ -120,11 +132,11 @@
     </section>
 
     <!-- BEACON -->
-    <section class="section alt" id="beacon">
+    <section class="section" id="beacon">
       <div class="wrap split">
         <div class="reveal">
           <p class="kicker">Beacon</p>
-          <h2>AI with nowhere<br>to phone home.</h2>
+          <h2>AI with nowhere to phone home.</h2>
           <p class="sub">Eleven features — chat, summaries, semantic search, PII redaction, study mode, voice — running on your machine by default. No API keys, no usage limits. Pull the ethernet cable and everything still works.</p>
           <ul class="chips">
             <li>Beacon Chat</li><li>Summary</li><li>Semantic Search</li><li>PII Redact</li><li>Smart Outline</li><li>Citations</li><li>Study Mode</li><li>Glossary</li><li>Voice Mode</li>
@@ -167,7 +179,7 @@
     </section>
 
     <!-- SERVER + FOUNDRY -->
-    <section class="section alt" id="server">
+    <section class="section" id="server">
       <div class="wrap split">
         <div class="reveal">
           <p class="kicker">Slab Server</p>
@@ -181,7 +193,7 @@
         </div>
         <div class="reveal">
           <p class="kicker">Foundry + Bench</p>
-          <h2>Plugins without<br>the plugin hell.</h2>
+          <h2>Plugins without the plugin hell.</h2>
           <p class="sub">Declare a theme, a locale, a command, an AI provider — no Rust required. A typed TypeScript SDK ships three working examples inside the app, so you can take the system apart on day one. Bench is the signed marketplace.</p>
         </div>
       </div>
@@ -204,7 +216,7 @@
     </section>
 
     <!-- COMPARE -->
-    <section class="section alt" id="compare">
+    <section class="section" id="compare">
       <div class="wrap">
         <div class="section-head reveal">
           <p class="kicker">The comparison</p>
@@ -240,29 +252,29 @@
           <article class="card dl-card reveal">
             <h3>macOS</h3><p>Apple Silicon &amp; Intel</p>
             <div class="dl-btns">
-              <a class="btn primary" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_aarch64.dmg">.dmg — Apple Silicon</a>
-              <a class="btn ghost" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64.dmg">.dmg — Intel</a>
+              <a class="btn-pill" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_aarch64.dmg">.dmg — Apple Silicon</a>
+              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64.dmg">.dmg — Intel</a>
             </div>
           </article>
           <article class="card dl-card reveal">
             <h3>Windows</h3><p>Installer &amp; MSI</p>
             <div class="dl-btns">
-              <a class="btn primary" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64-setup.exe">.exe — Setup</a>
-              <a class="btn ghost" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64_en-US.msi">.msi — Installer</a>
+              <a class="btn-pill" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64-setup.exe">.exe — Setup</a>
+              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_x64_en-US.msi">.msi — Installer</a>
             </div>
           </article>
           <article class="card dl-card reveal">
             <h3>Linux</h3><p>AppImage &amp; Debian</p>
             <div class="dl-btns">
-              <a class="btn primary" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.AppImage">.AppImage</a>
-              <a class="btn ghost" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.deb">.deb</a>
+              <a class="btn-pill" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.AppImage">.AppImage</a>
+              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/releases/download/v3.39.0/Slab_3.39.0_amd64.deb">.deb</a>
             </div>
           </article>
           <article class="card dl-card reveal">
             <h3>Docker</h3><p>Self-host Slab Server</p>
             <div class="dl-btns">
-              <button class="btn primary" data-copy="docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest">Copy docker command</button>
-              <a class="btn ghost" href="https://github.com/Sanjays2402/slab/pkgs/container/slab" target="_blank" rel="noopener">Container registry</a>
+              <button class="btn-pill" data-copy="docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest">Copy docker command</button>
+              <a class="btn-pill light" href="https://github.com/Sanjays2402/slab/pkgs/container/slab" target="_blank" rel="noopener">Container registry</a>
             </div>
           </article>
         </div>
@@ -274,9 +286,9 @@
     <div class="wrap foot">
       <a class="brand" href="#top">
         <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-          <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#ffd47e"/>
-          <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#f6b73c"/>
-          <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#d98a1f"/>
+          <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#f5b32b"/>
+          <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#e09b12"/>
+          <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#b97a0a"/>
         </svg>
         <span>Slab</span>
       </a>
