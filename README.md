@@ -11,7 +11,7 @@ with on-device AI, watched-folder automation, and a self-hostable Docker server.
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
 
-![Slab Reader with a PDF open](docs/screenshots/00-hero-reader.png)
+<img src="docs/screenshots/00-hero-reader.png" alt="Slab Reader with a PDF open" width="800">
 
 **[Download Slab](https://github.com/Sanjays2402/slab/releases/latest)** ·
 [Website](https://sanjays2402.github.io/slab/) ·
@@ -26,7 +26,7 @@ with on-device AI, watched-folder automation, and a self-hostable Docker server.
 | | |
 |---|---|
 | 🔒 **Local-first** | Your documents never touch a server. Air-gap a laptop and Slab still works — AI included. |
-| ⚡ **Fast** | Native Rust core. Merging a hundred files takes a second, not a minute. |
+| ⚡ **Fast** | Native Rust core. A hundred-file merge finishes before your coffee does. |
 | 🪶 **Tiny** | ~15–25 MB installers. No Electron bloat. |
 | 💸 **Honest** | Free forever, GPL-3.0. No accounts, no telemetry, no "Pro" tier. |
 
@@ -46,7 +46,9 @@ with on-device AI, watched-folder automation, and a self-hostable Docker server.
 
 ## Hopper — folders that file themselves
 
-Point Hopper at a folder — `~/Downloads`, a scanner, a shared inbox — and attach a recipe. New PDFs get flattened, OCR'd, redacted, watermarked, renamed by Beacon, and filed away, with a live log streaming every run. Six predicate kinds route each file; a live preview pane shows what each rule would catch against your *actual* recent files. `⇧⌘H` to open it.
+Point Hopper at a folder — `~/Downloads`, a scanner, a shared inbox — and attach a recipe. New PDFs get flattened, OCR'd, redacted, watermarked, renamed by Beacon, and filed away, with a live log streaming every run.
+
+Six predicate kinds route each file (filename, regex, text contents, page count, size, catch-all), and a live preview pane shows what each rule would catch against your *actual* recent files. `⇧⌘H` to open it.
 
 Hazel charges $42 and can't read PDFs. Adobe's automation needs an enterprise license and phones home. Hopper is free and local.
 
@@ -58,7 +60,7 @@ Headless Slab: an HTTP API plus a drag-and-drop web UI in a single Docker image.
 docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest
 ```
 
-Open http://localhost:8080, drop a PDF on the page. Full API + Compose example: [docs/server.md](docs/server.md).
+Open [http://localhost:8080](http://localhost:8080), drop a PDF on the page. Full API + Compose example: [docs/server.md](docs/server.md).
 
 ## 65 tools, one palette
 
@@ -78,6 +80,14 @@ Open http://localhost:8080, drop a PDF on the page. Full API + Compose example: 
 | Create | Forms · Toolbox · Loom (PDF/UA) · Loupe (PDF/A check) |
 
 </details>
+
+## Also in the box
+
+- **Standalone CLI** — a separate `slab` binary ships in every bundle: `slab autoredact in.pdf out.pdf --preset email,ssn`, no GUI needed.
+- **Polyglot** — point Slab at `.docx` `.xlsx` `.pptx` `.epub` `.csv` `.json` `.html` `.rtf` `.odt`, images (EXIF + OCR text), even audio (EXIF + transcription) and get PDFs out.
+- **Detachable panels** — pop any panel into its own window. Beacon on the second monitor, two Readers side by side.
+- **Vim mode** — modal keybindings (`gg`/`G`/`j`/`k`, counts, `/` search, `:42`) in Reader, Library, and Beacon.
+- **A11y & i18n** — built-in accessibility audit, full keyboard control, and a JSON locale system.
 
 ## Install
 
