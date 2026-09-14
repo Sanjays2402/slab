@@ -69,7 +69,7 @@
         <p class="lede reveal">A complete PDF toolkit for macOS, Windows, and Linux that runs entirely on your computer. Merge, OCR, redact, sign, and automate — with on-device AI and zero telemetry. Free forever, open source, no accounts.</p>
         <div class="cta-row reveal">
           <a class="btn white big" href="#download">Download Slab</a>
-          <a class="btn outline big" href="https://github.com/Sanjays2402/slab" target="_blank" rel="noopener">Star on GitHub</a>
+          <a class="btn outline big" id="ghStar" href="https://github.com/Sanjays2402/slab" target="_blank" rel="noopener">Star on GitHub</a>
         </div>
         <div class="stack-row reveal" aria-label="Built with open source">
           <span class="stack-label">Built in the open</span>
@@ -87,6 +87,22 @@
       </div>
     </section>
 
+    <!-- MARQUEE + STATS -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        <div class="mq"><span>Merge</span><b>✦</b><span>OCR</span><b>✦</b><span>Redact</span><b>✦</b><span>Sign</span><b>✦</b><span>Compress</span><b>✦</b><span>Encrypt</span><b>✦</b><span>Watermark</span><b>✦</b><span>Bates numbering</span><b>✦</b><span>N-up</span><b>✦</b><span>Diff</span><b>✦</b><span>Flatten</span><b>✦</b><span>Sanitize</span><b>✦</b><span>Grayscale</span><b>✦</b><span>Split</span><b>✦</b><span>Convert</span><b>✦</b><span>Metadata</span><b>✦</b><span>Forms</span><b>✦</b><span>Repair</span><b>✦</b><span>Hopper</span><b>✦</b><span>Beacon AI</span><b>✦</b></div>
+        <div class="mq"><span>Merge</span><b>✦</b><span>OCR</span><b>✦</b><span>Redact</span><b>✦</b><span>Sign</span><b>✦</b><span>Compress</span><b>✦</b><span>Encrypt</span><b>✦</b><span>Watermark</span><b>✦</b><span>Bates numbering</span><b>✦</b><span>N-up</span><b>✦</b><span>Diff</span><b>✦</b><span>Flatten</span><b>✦</b><span>Sanitize</span><b>✦</b><span>Grayscale</span><b>✦</b><span>Split</span><b>✦</b><span>Convert</span><b>✦</b><span>Metadata</span><b>✦</b><span>Forms</span><b>✦</b><span>Repair</span><b>✦</b><span>Hopper</span><b>✦</b><span>Beacon AI</span><b>✦</b></div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="wrap stats-grid reveal">
+        <div class="stat"><span class="num" data-count="65">0</span><span class="lbl">PDF tools</span></div>
+        <div class="stat"><span class="num" data-count="3">0</span><span class="lbl">Platforms</span></div>
+        <div class="stat"><span class="num" data-count="0">0</span><span class="lbl">Trackers</span></div>
+        <div class="stat"><span class="free">$0</span><span class="lbl">Forever</span></div>
+      </div>
+    </div>
+
     <!-- TOOLKIT -->
     <section class="section" id="toolkit">
       <div class="wrap">
@@ -95,6 +111,23 @@
         <p class="sec-sub reveal">Sixty-five tools, one <kbd>⌘K</kbd> palette to reach them all. The short list:</p>
         <div class="toolwall reveal">
           <span>Merge</span><span>Split</span><span>Compress</span><span>OCR</span><span>Redact</span><span>Sign</span><span>Encrypt</span><span>Watermark</span><span>Flatten</span><span>Sanitize</span><span>Bates numbering</span><span>N-up</span><span>Diff</span><span>Crop</span><span>Extract text</span><span>Extract tables</span><span>Grayscale</span><span>Page labels</span><span>Headers &amp; footers</span><span>Repair</span><span>Markdown → PDF</span><span>Office → PDF</span><span>ePub → PDF</span><span>Edit text</span><span>Presenter mode</span><span>Vim mode</span><span>Library &amp; tags</span><span>+ more</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLAYGROUND -->
+    <section class="section" id="playground">
+      <div class="wrap">
+        <p class="sec-label reveal">Try it</p>
+        <h2 class="sec-title reveal">One palette.<br><em class="grad">Every tool.</em></h2>
+        <p class="sec-sub reveal">The real <kbd>&#8984;K</kbd> palette from the app, running right here. Type to filter all 65 tools.</p>
+        <div class="palette reveal">
+          <div class="palette-input">
+            <kbd>&#8984;K</kbd>
+            <input id="paletteInput" type="text" placeholder="Type a tool name&hellip;  (try &ldquo;redact&rdquo;)" autocomplete="off" spellcheck="false" aria-label="Filter Slab tools">
+          </div>
+          <ul class="palette-list" id="paletteList"></ul>
+          <p class="palette-count" id="paletteCount">65 tools</p>
         </div>
       </div>
     </section>
@@ -198,6 +231,40 @@
           </table>
         </div>
         <p class="fine reveal">Prices as publicly listed.</p>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <div class="wrap">
+        <p class="sec-label reveal">Questions</p>
+        <h2 class="sec-title reveal">Asked <em class="grad">often.</em></h2>
+        <div class="faq reveal">
+          <details open>
+            <summary>Is Slab really free?</summary>
+            <p>Yes — free software under the GPL-3.0, free forever. No accounts, no trials, no upsells, no &ldquo;pro&rdquo; tier.</p>
+          </details>
+          <details>
+            <summary>Does it work offline?</summary>
+            <p>Completely. Every tool runs on your machine — including Beacon, the AI. Unplug the network and keep working.</p>
+          </details>
+          <details>
+            <summary>Which platforms are supported?</summary>
+            <p>macOS (Apple Silicon and Intel), Windows, and Linux. Slab Server ships as a Docker image for your NAS or homelab.</p>
+          </details>
+          <details>
+            <summary>Where do my files go?</summary>
+            <p>Nowhere. They never leave your computer — no cloud round-trips, no telemetry, no analytics. This site sets zero cookies too.</p>
+          </details>
+          <details>
+            <summary>How is this different from Adobe Acrobat?</summary>
+            <p>It&rsquo;s free, local-first, and open source. No subscription, no cloud lock-in, and your documents are never uploaded anywhere.</p>
+          </details>
+          <details>
+            <summary>Who builds Slab?</summary>
+            <p>It&rsquo;s built in the open on GitHub — star the repo, file issues, send pull requests. That&rsquo;s the whole business model: there isn&rsquo;t one.</p>
+          </details>
+        </div>
       </div>
     </section>
 
