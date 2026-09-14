@@ -206,7 +206,11 @@
     color: var(--ink, #e9ecf2);
     font-size: 14px;
   }
-  .search input:focus { outline: 2px solid var(--accent-2, #7dd3fc); outline-offset: -1px; }
+  .search input:focus {
+    outline: none;
+    border-color: var(--accent, #ff7a59);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #ff7a59) 22%, transparent);
+  }
 
   .chips {
     display: flex; flex-wrap: wrap; justify-content: center;
@@ -228,10 +232,14 @@
   }
   .chip:hover { color: var(--ink, #e9ecf2); border-color: #3a3f4a; }
   .chip.active {
-    background: var(--ink, #e9ecf2); color: var(--bg, #0c0e12);
-    border-color: var(--ink, #e9ecf2);
+    background: color-mix(in srgb, var(--accent, #ff7a59) 14%, transparent);
+    color: var(--ink, #e9ecf2);
+    border-color: var(--accent, #ff7a59);
   }
-  .chip.active .num { background: rgba(0,0,0,.15); color: var(--bg, #0c0e12); }
+  .chip.active .num {
+    background: color-mix(in srgb, var(--accent, #ff7a59) 22%, transparent);
+    color: var(--accent, #ff7a59);
+  }
 
   .grid {
     display: grid;
@@ -243,7 +251,7 @@
     text-align: left;
     background: var(--panel, #14171d);
     border: 1px solid var(--line, #232831);
-    border-radius: 12px;
+    border-radius: 14px;
     padding: 16px 14px 14px;
     display: flex; flex-direction: column; gap: 6px;
     cursor: pointer;

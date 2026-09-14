@@ -47,6 +47,17 @@
   --gap-sm: 8px;
   --nav-item-pad-y: 8px;
 
+  /* Legacy token aliases — a number of panels were written against an
+   * older token vocabulary (--ink/--panel/--line/--muted). They resolve
+   * here to the canonical theme tokens so every surface stays in sync
+   * across dark / light / white themes. New code should use the
+   * canonical names (--text/--bg-2/--border/--text-2) directly. */
+  --ink: var(--text);
+  --muted: var(--text-2);
+  --panel: var(--bg-2);
+  --panel-2: var(--bg-3);
+  --line: var(--border);
+
   color: var(--text);
   background: var(--bg);
   font-family: var(--font-sans);
@@ -184,6 +195,7 @@ button.primary {
   border-color: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 button.primary:hover {
   background: var(--accent-2);

@@ -93,75 +93,96 @@
     label: string;
     icon: string;
     ready: boolean;
+    group: string;
   };
 
+  /** Sidebar nav sections, in display order. Labels live in i18n `nav.group.*`. */
+  const NAV_GROUPS = [
+    "start",
+    "beacon",
+    "assemble",
+    "refine",
+    "convert",
+    "sign",
+    "automate",
+    "present",
+  ] as const;
+
   const features: Feature[] = [
-    { id: "toolbox", label: "Toolbox", icon: "▦", ready: true },
-    { id: "reader", label: "Reader", icon: "▥", ready: true },
-    { id: "library", label: "Library", icon: "❐", ready: true },
-    { id: "library-search", label: "Search Library", icon: "⌕", ready: true },
-    { id: "beacon", label: "Beacon AI", icon: "✦", ready: true },
-    { id: "search", label: "Beacon Search", icon: "⌕", ready: true },
-    { id: "pii", label: "PII Redact", icon: "◍", ready: true },
-    { id: "citations", label: "Citations", icon: "❞", ready: true },
-    { id: "study", label: "Study", icon: "⊜", ready: true },
-    { id: "glossary", label: "Glossary", icon: "⌥", ready: true },
-    { id: "voice", label: "Voice", icon: "◊", ready: true },
-    { id: "merge", label: "Merge", icon: "⧉", ready: true },
-    { id: "split", label: "Split", icon: "⎯", ready: true },
-    { id: "split-chapter", label: "Split by Chapter", icon: "✂", ready: true },
-    { id: "pages", label: "Pages", icon: "▦", ready: true },
-    { id: "pages-list", label: "Pages (list)", icon: "≣", ready: true },
-    { id: "edit-text", label: "Edit Text", icon: "✎", ready: true },
-    { id: "compress", label: "Compress", icon: "▼", ready: true },
-    { id: "extract", label: "Extract", icon: "❡", ready: true },
-    { id: "encrypt", label: "Encrypt", icon: "▣", ready: true },
-    { id: "watermark", label: "Watermark", icon: "○", ready: true },
-    { id: "convert", label: "Convert", icon: "↔", ready: true },
-    { id: "metadata", label: "Metadata", icon: "ⓘ", ready: true },
-    { id: "numbers", label: "Numbers", icon: "№", ready: true },
-    { id: "sign", label: "Sign", icon: "✍", ready: true },
-    { id: "loom", label: "Loom (PDF/UA)", icon: "♿", ready: true },
-    { id: "crop", label: "Crop", icon: "⊟", ready: true },
-    { id: "insert", label: "Insert", icon: "＋", ready: true },
-    { id: "headerfooter", label: "Header/Footer", icon: "≡", ready: true },
-    { id: "bates", label: "Bates", icon: "№", ready: true },
-    { id: "stamp", label: "Legal Stamp", icon: "✸", ready: true },
-    { id: "signet", label: "Signet", icon: "✍︎", ready: true },
-    { id: "signet-batch", label: "Batch Sign", icon: "✱", ready: true },
-    { id: "redact", label: "Redact", icon: "▮", ready: true },
-    { id: "veil", label: "Veil", icon: "🛡", ready: true },
-    { id: "compact", label: "Compact", icon: "📦", ready: true },
-    { id: "streamline", label: "Streamline (Fast Web View)", icon: "⚡", ready: true },
-    { id: "reflow", label: "Reflow (PDF → Word)", icon: "📝", ready: true },
-    { id: "tabulate", label: "Tabulate (PDF → Excel)", icon: "📊", ready: true },
-    { id: "mdexport", label: "Markdown (PDF → MD / HTML)", icon: "🅼", ready: true },
-    { id: "bind", label: "Bind (PDF → EPUB)", icon: "📖", ready: true },
-    { id: "autoredact", label: "Auto-Redact", icon: "⊘", ready: true },
-    { id: "nup", label: "N-up", icon: "▦", ready: true },
-    { id: "markdown", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
-    { id: "grayscale", label: "Grayscale", icon: "◐", ready: true },
-    { id: "labels", label: "Page Labels", icon: "ⅰ", ready: true },
-    { id: "flatten", label: "Flatten", icon: "▤", ready: true },
-    { id: "sanitize", label: "Sanitize", icon: "⊗", ready: true },
-    { id: "repair", label: "Repair", icon: "✚", ready: true },
-    { id: "ocr", label: "OCR", icon: "◉", ready: true },
-    { id: "tables", label: "Tables → CSV", icon: "⊞", ready: true },
-    { id: "diff", label: "Diff", icon: "≢", ready: true },
-    { id: "diff3", label: "Compare 3-way", icon: "⫲", ready: true },
-    { id: "stack", label: "Compare", icon: "⇄", ready: true },
-    { id: "bedrock", label: "Archive (PDF/A)", icon: "⌬", ready: true },
-    { id: "press", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
-    { id: "forms", label: "Forms", icon: "✎", ready: true },
-    { id: "quill-batch", label: "Quill Batch (CSV merge)", icon: "⋮", ready: true },
-    { id: "quill-designer", label: "Quill Designer (author fields)", icon: "✎", ready: true },
-    { id: "quill-autodetect", label: "Quill Auto-Detect (✨ propose fields)", icon: "✨", ready: true },
-    { id: "atelier", label: "Atelier (Recipes)", icon: "⚙", ready: true },
-    { id: "hopper", label: "Hopper (Watched Folders)", icon: "🪣", ready: true },
-    { id: "loupe", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
-    { id: "slides", label: "Slides", icon: "▷", ready: true },
-    { id: "theater", label: "Theater", icon: "❖", ready: true },
+    { id: "toolbox", group: "start", label: "Toolbox", icon: "▦", ready: true },
+    { id: "reader", group: "start", label: "Reader", icon: "▥", ready: true },
+    { id: "library", group: "start", label: "Library", icon: "❐", ready: true },
+    { id: "library-search", group: "start", label: "Search Library", icon: "⌕", ready: true },
+    { id: "beacon", group: "beacon", label: "Beacon AI", icon: "✦", ready: true },
+    { id: "search", group: "beacon", label: "Beacon Search", icon: "⌕", ready: true },
+    { id: "pii", group: "beacon", label: "PII Redact", icon: "◍", ready: true },
+    { id: "citations", group: "beacon", label: "Citations", icon: "❞", ready: true },
+    { id: "study", group: "beacon", label: "Study", icon: "⊜", ready: true },
+    { id: "glossary", group: "beacon", label: "Glossary", icon: "⌥", ready: true },
+    { id: "voice", group: "beacon", label: "Voice", icon: "◊", ready: true },
+    { id: "merge", group: "assemble", label: "Merge", icon: "⧉", ready: true },
+    { id: "split", group: "assemble", label: "Split", icon: "⎯", ready: true },
+    { id: "split-chapter", group: "assemble", label: "Split by Chapter", icon: "✂", ready: true },
+    { id: "pages", group: "assemble", label: "Pages", icon: "▦", ready: true },
+    { id: "pages-list", group: "assemble", label: "Pages (list)", icon: "≣", ready: true },
+    { id: "edit-text", group: "refine", label: "Edit Text", icon: "✎", ready: true },
+    { id: "compress", group: "convert", label: "Compress", icon: "▼", ready: true },
+    { id: "extract", group: "convert", label: "Extract", icon: "❡", ready: true },
+    { id: "encrypt", group: "sign", label: "Encrypt", icon: "▣", ready: true },
+    { id: "watermark", group: "refine", label: "Watermark", icon: "○", ready: true },
+    { id: "convert", group: "convert", label: "Convert", icon: "↔", ready: true },
+    { id: "metadata", group: "refine", label: "Metadata", icon: "ⓘ", ready: true },
+    { id: "numbers", group: "refine", label: "Numbers", icon: "№", ready: true },
+    { id: "sign", group: "sign", label: "Sign", icon: "✍", ready: true },
+    { id: "loom", group: "refine", label: "Loom (PDF/UA)", icon: "♿", ready: true },
+    { id: "crop", group: "refine", label: "Crop", icon: "⊟", ready: true },
+    { id: "insert", group: "assemble", label: "Insert", icon: "＋", ready: true },
+    { id: "headerfooter", group: "refine", label: "Header/Footer", icon: "≡", ready: true },
+    { id: "bates", group: "refine", label: "Bates", icon: "№", ready: true },
+    { id: "stamp", group: "refine", label: "Legal Stamp", icon: "✸", ready: true },
+    { id: "signet", group: "sign", label: "Signet", icon: "✍︎", ready: true },
+    { id: "signet-batch", group: "sign", label: "Batch Sign", icon: "✱", ready: true },
+    { id: "redact", group: "refine", label: "Redact", icon: "▮", ready: true },
+    { id: "veil", group: "refine", label: "Veil", icon: "🛡", ready: true },
+    { id: "compact", group: "refine", label: "Compact", icon: "📦", ready: true },
+    { id: "streamline", group: "refine", label: "Streamline (Fast Web View)", icon: "⚡", ready: true },
+    { id: "reflow", group: "convert", label: "Reflow (PDF → Word)", icon: "📝", ready: true },
+    { id: "tabulate", group: "convert", label: "Tabulate (PDF → Excel)", icon: "📊", ready: true },
+    { id: "mdexport", group: "convert", label: "Markdown (PDF → MD / HTML)", icon: "🅼", ready: true },
+    { id: "bind", group: "assemble", label: "Bind (PDF → EPUB)", icon: "📖", ready: true },
+    { id: "autoredact", group: "refine", label: "Auto-Redact", icon: "⊘", ready: true },
+    { id: "nup", group: "assemble", label: "N-up", icon: "▦", ready: true },
+    { id: "markdown", group: "convert", label: "Markdown → PDF", icon: "Ⓜ", ready: true },
+    { id: "grayscale", group: "refine", label: "Grayscale", icon: "◐", ready: true },
+    { id: "labels", group: "refine", label: "Page Labels", icon: "ⅰ", ready: true },
+    { id: "flatten", group: "refine", label: "Flatten", icon: "▤", ready: true },
+    { id: "sanitize", group: "refine", label: "Sanitize", icon: "⊗", ready: true },
+    { id: "repair", group: "refine", label: "Repair", icon: "✚", ready: true },
+    { id: "ocr", group: "convert", label: "OCR", icon: "◉", ready: true },
+    { id: "tables", group: "convert", label: "Tables → CSV", icon: "⊞", ready: true },
+    { id: "diff", group: "present", label: "Diff", icon: "≢", ready: true },
+    { id: "diff3", group: "present", label: "Compare 3-way", icon: "⫲", ready: true },
+    { id: "stack", group: "present", label: "Compare", icon: "⇄", ready: true },
+    { id: "bedrock", group: "convert", label: "Archive (PDF/A)", icon: "⌬", ready: true },
+    { id: "press", group: "convert", label: "Press (PDF/X-4)", icon: "🖨", ready: true },
+    { id: "forms", group: "automate", label: "Forms", icon: "✎", ready: true },
+    { id: "quill-batch", group: "automate", label: "Quill Batch (CSV merge)", icon: "⋮", ready: true },
+    { id: "quill-designer", group: "automate", label: "Quill Designer (author fields)", icon: "✎", ready: true },
+    { id: "quill-autodetect", group: "automate", label: "Quill Auto-Detect (✨ propose fields)", icon: "✨", ready: true },
+    { id: "atelier", group: "automate", label: "Atelier (Recipes)", icon: "⚙", ready: true },
+    { id: "hopper", group: "automate", label: "Hopper (Watched Folders)", icon: "🪣", ready: true },
+    { id: "loupe", group: "automate", label: "Loupe (PDF/A check)", icon: "⌕", ready: true },
+    { id: "slides", group: "present", label: "Slides", icon: "▷", ready: true },
+    { id: "theater", group: "present", label: "Theater", icon: "❖", ready: true },
   ];
+
+  /** Sidebar nav sections, in display order. Items stay in `features` order. */
+  const groupedFeatures = $derived(
+    NAV_GROUPS.map((g) => ({
+      id: g,
+      items: features.filter((f) => f.group === g),
+    })).filter((g) => g.items.length > 0),
+  );
 
   let active = $state("toolbox");
   let paletteOpen = $state(false);
@@ -933,44 +954,50 @@
 
 <aside class="sidebar">
   <div class="brand">
-    <span class="logo">▤</span>
+    <svg class="logo-mark" viewBox="0 0 64 64" aria-hidden="true">
+      <rect x="10" y="8"  width="44" height="11" rx="5.5" fill="#f5b32b"/>
+      <rect x="10" y="26" width="44" height="11" rx="5.5" fill="#e09b12"/>
+      <rect x="10" y="44" width="44" height="11" rx="5.5" fill="#b97a0a"/>
+    </svg>
     <span class="brand-name">Slab</span>
-    <span class="brand-tag">local · offline · free</span>
   </div>
 
   <nav aria-label="Primary">
-    {#each features as f (f.id)}
-      <div class="nav-row" class:active={active === f.id}>
-        <button
-          class="nav-item"
-          class:active={active === f.id}
-          class:locked={!f.ready}
-          disabled={!f.ready}
-          aria-current={active === f.id ? "page" : undefined}
-          onclick={() => (active = f.id)}
-        >
-          <span class="nav-icon">{f.icon}</span>
-          <span class="nav-label">{$tStore(`features.${f.id}`)}</span>
-          {#if !f.ready}<span class="badge">soon</span>{/if}
-        </button>
-        {#if active === f.id && f.ready && supportsDetach(f.id) && isInTauri()}
+    {#each groupedFeatures as g (g.id)}
+      <p class="nav-group-label">{$tStore(`nav.group.${g.id}`)}</p>
+      {#each g.items as f (f.id)}
+        <div class="nav-row" class:active={active === f.id}>
           <button
-            class="detach-btn"
-            type="button"
-            title="Open {$tStore(`features.${f.id}`)} in a new window"
-            aria-label="Open {$tStore(`features.${f.id}`)} in a new window"
-            onclick={(e) => {
-              e.stopPropagation();
-              detachActive(f.id);
-            }}
-          >⤢</button>
-        {/if}
-      </div>
+            class="nav-item"
+            class:active={active === f.id}
+            class:locked={!f.ready}
+            disabled={!f.ready}
+            aria-current={active === f.id ? "page" : undefined}
+            onclick={() => (active = f.id)}
+          >
+            <span class="nav-icon" aria-hidden="true">{f.icon}</span>
+            <span class="nav-label">{$tStore(`features.${f.id}`)}</span>
+            {#if !f.ready}<span class="badge">soon</span>{/if}
+          </button>
+          {#if active === f.id && f.ready && supportsDetach(f.id) && isInTauri()}
+            <button
+              class="detach-btn"
+              type="button"
+              title="Open {$tStore(`features.${f.id}`)} in a new window"
+              aria-label="Open {$tStore(`features.${f.id}`)} in a new window"
+              onclick={(e) => {
+                e.stopPropagation();
+                detachActive(f.id);
+              }}
+            >⤢</button>
+          {/if}
+        </div>
+      {/each}
     {/each}
   </nav>
 
   <button class="palette-trigger" onclick={() => (paletteOpen = true)} title="Command palette">
-    <span class="pt-icon">⌘</span>
+    <span class="pt-icon" aria-hidden="true">⌕</span>
     <span class="pt-label">Jump to anything</span>
     <span class="pt-kbd">⌘K</span>
   </button>
@@ -1263,32 +1290,42 @@
 
   .brand {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 4px 8px 18px;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px 20px;
   }
-  .logo {
-    color: var(--accent);
-    font-size: 18px;
+  .logo-mark {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 2px 6px rgba(245, 179, 43, 0.35));
   }
   .brand-name {
-    font-weight: 700;
-    font-size: 15px;
-    letter-spacing: 0.2px;
-  }
-  .brand-tag {
-    font-size: 10px;
-    text-transform: uppercase;
-    color: var(--text-3);
-    letter-spacing: 0.5px;
+    font-weight: 800;
+    font-size: 16px;
+    letter-spacing: -0.2px;
   }
 
   nav {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
     flex: 1;
     overflow-y: auto;
+    padding-bottom: 8px;
+  }
+
+  /* Section labels for the grouped nav — quiet, uppercase, airy. */
+  .nav-group-label {
+    margin: 16px 10px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-3);
+  }
+  .nav-group-label:first-child {
+    margin-top: 2px;
   }
 
   .nav-item {
@@ -1299,30 +1336,57 @@
     background: transparent;
     border: 1px solid transparent;
     color: var(--text-2);
-    padding: 7px 10px;
+    padding: 6px 10px;
     border-radius: var(--r-sm);
     font-size: 13px;
+    position: relative;
+    transition: background 0.12s ease, color 0.12s ease;
   }
   .nav-item:hover:not(:disabled) {
     background: var(--bg-3);
     color: var(--text);
   }
   .nav-item.active {
-    background: var(--bg-3);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--text);
-    border-color: var(--border);
+    font-weight: 600;
+  }
+  /* Accent rail on the active item — the "you are here" cue. */
+  .nav-item.active::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: -11px;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--accent);
   }
   .nav-item.locked {
     opacity: 0.55;
   }
   .nav-icon {
-    width: 18px;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
     text-align: center;
     color: var(--accent);
-    opacity: 0.9;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-radius: 7px;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+  }
+  .nav-item.active .nav-icon {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
   }
   .nav-label {
     flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .badge {
     font-size: 9px;
@@ -1384,29 +1448,42 @@
     background: var(--bg);
     color: var(--text-3);
     border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 7px 10px;
+    border-radius: var(--r-md);
+    padding: 8px 10px;
     font-size: 12px;
-    margin: 10px 0 8px;
+    margin: 12px 0 8px;
+    transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
   }
   .palette-trigger:hover {
     color: var(--text);
     background: var(--bg-3);
+    border-color: var(--border-strong);
   }
   .pt-icon {
+    color: var(--text-3);
+    font-size: 13px;
+  }
+  .palette-trigger:hover .pt-icon {
     color: var(--accent);
   }
   .pt-label {
     flex: 1;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .pt-kbd {
     font-size: 10px;
+    font-family: var(--font-mono);
     background: var(--bg-2);
     border: 1px solid var(--border);
-    padding: 1px 5px;
-    border-radius: 3px;
+    border-bottom-width: 2px;
+    padding: 2px 6px;
+    border-radius: 5px;
     letter-spacing: 0.5px;
+    color: var(--text-2);
+    flex-shrink: 0;
   }
 
   .footer {
@@ -1547,12 +1624,13 @@
     background: transparent;
     border: 1px solid transparent;
     border-bottom: none;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
     margin-bottom: -1px;
     max-width: 240px;
     min-width: 120px;
     position: relative;
+    transition: background 0.12s ease;
   }
   .tab:hover {
     background: var(--bg-3);
@@ -1561,6 +1639,17 @@
     background: var(--bg);
     border-color: var(--border);
     z-index: 1;
+  }
+  /* Accent underline on the active tab — ties the strip to the sidebar rail. */
+  .tab.active::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 5px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--accent);
   }
   .tab-label {
     flex: 1;
