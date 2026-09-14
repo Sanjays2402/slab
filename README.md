@@ -134,10 +134,8 @@ flowchart LR
 
 Tauri 2 shell, Svelte 5 front-end, pure-Rust PDF core (`lopdf`), `pdfjs-dist` rendering, Tesseract OCR, local embeddings + on-device chat for Beacon. 730+ Rust tests, clippy-clean, cross-platform CI.
 
-## Plugins (Foundry + Bench)
+## A small promise
 
-**Foundry** is the declarative plugin system — themes, locales, shell commands, AI providers, and CLI-backed PDF actions from a `plugin.toml` manifest. No Rust, no compile. **Bench** is the signed in-app marketplace: every entry is Ed25519-signed and hash-verified on install.
+Slab will never ask for an email. Will never call home. Will never gate a feature behind a paywall. If it ever does any of those things, you have my permission to fork it and rip the offending lines out.
 
-📖 [Author guide: `docs/PLUG:
-
-...[truncated 1095 chars]
+Made with 🍰 by [@Sanjays2402](https://github.com/Sanjays2402).
