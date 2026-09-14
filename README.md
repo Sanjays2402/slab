@@ -115,6 +115,8 @@ pnpm tauri build        # installer / app bundle for your platform
 
 Optional runtime deps for the AI side: [Ollama](https://ollama.com) + `ollama pull llama3.2:3b` for Beacon chat; `whisper-cpp` for voice dictation. The settings panel tells you exactly what's missing.
 
+### Tests
+
 ```bash
 cd src-tauri && cargo test
 cargo clippy --all-targets -- -D warnings
