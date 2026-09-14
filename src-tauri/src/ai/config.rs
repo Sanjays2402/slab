@@ -73,6 +73,8 @@ pub enum ThemeMode {
     Auto,
     Light,
     Dark,
+    /// True-black surfaces for OLED / emissive displays.
+    Oled,
     /// Pure-white surfaces with near-black ink. Crisper than Light.
     White,
 }

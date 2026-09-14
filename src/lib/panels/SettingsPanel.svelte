@@ -173,6 +173,7 @@
     { id: "auto", label: "Auto", hint: "Match system appearance" },
     { id: "light", label: "Light", hint: "Always light" },
     { id: "dark", label: "Dark", hint: "Always dark" },
+    { id: "oled", label: "OLED", hint: "True black for OLED screens" },
     { id: "white", label: "White", hint: "Pure white, max contrast" },
   ];
 

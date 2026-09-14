@@ -84,6 +84,22 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 
+/* OLED theme. True black for emissive displays — every pixel that can be
+ * off is off. The base canvas is pure #000; raised surfaces step up just
+ * enough to keep hierarchy without the gray wash of the Dark theme. */
+:root[data-theme="oled"] {
+  --bg: #000000;
+  --bg-2: #0a0a0c;
+  --bg-3: #141416;
+  --border: #202027;
+  --border-strong: #34343e;
+  --text: #f0f0f5;
+  --text-2: #b4b4c0;
+  --text-3: #7d7d89;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.65);
+}
+
 /* Light theme. Mirror of the dark palette tuned for readability on a
  * white background — Linear-ish chroma, soft borders, near-black text.
  */
