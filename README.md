@@ -44,6 +44,15 @@ with on-device AI, watched-folder automation, and a self-hostable Docker server.
 
 ![Library, Pages, Command palette](docs/screenshots/showcase-flow.png)
 
+## OLED theme — true black
+
+A fifth appearance option for emissive displays: true-black `#000000` surfaces, so pixels switch off instead of glowing dark grey. Pick it in Settings, or press `⌘K` and type "theme".
+
+| | |
+|---|---|
+| ![Toolbox in the OLED theme](docs/screenshots/oled-home.png) | ![Command palette switching to the OLED theme](docs/screenshots/oled-palette.png) |
+| ![Beacon in the OLED theme](docs/screenshots/oled-beacon.png) | ![Settings with the OLED theme selected](docs/screenshots/oled-settings.png) |
+
 ## Hopper — folders that file themselves
 
 Point Hopper at a folder — `~/Downloads`, a scanner, a shared inbox — and attach a recipe. New PDFs get flattened, OCR'd, redacted, watermarked, renamed by Beacon, and filed away, with a live log streaming every run.
