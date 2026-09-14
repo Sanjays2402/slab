@@ -288,3 +288,44 @@ footer { border-top: 1px solid var(--line); padding: 2.5rem 0 3rem; }
   .cta-row .btn { width: 100%; }
   .foot nav { margin-left: 0; }
 }
+
+/* ---------- simple pages (404 / privacy / terms) ---------- */
+.page { padding: 5rem 0 6rem; }
+.page-inner { max-width: 720px; }
+.page-inner.center { text-align: center; margin: 0 auto; }
+.page-inner.center .cta-row { justify-content: center; }
+.display.sm { font-size: clamp(4rem, 14vw, 8rem); }
+.page h1 { font-size: clamp(2rem, 5vw, 3.2rem); letter-spacing: -0.03em; line-height: 1.1; margin: 1.2rem 0; }
+.page .lede { margin-left: 0; }
+.page-inner.center .lede { margin-left: auto; }
+.prose p { color: var(--muted); }
+.prose a { color: var(--ink); }
+.page .cta-row { justify-content: flex-start; margin-top: 2.2rem; }
+
+/* ---------- sticky mobile CTA ---------- */
+.sticky-cta { display: none; }
+@media (max-width: 760px) {
+  .sticky-cta {
+    display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    padding: 0.7rem 4vw calc(0.7rem + env(safe-area-inset-bottom));
+    background: rgba(6, 6, 7, 0.92);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid var(--line);
+    transform: translateY(110%); transition: transform 0.3s ease;
+  }
+  .sticky-cta.show { transform: none; }
+  .sticky-cta .btn { width: 100%; }
+}
+
+/* ---------- image loading states ---------- */
+.frame img, .mock-body img { background: #101014; transition: opacity 0.5s ease; }
+.frame img.is-loading, .mock-body img.is-loading { opacity: 0; }
+.frame, .mock-body { position: relative; }
+.frame:has(img.is-loading)::after, .mock-body:has(img.is-loading)::after {
+  content: ""; position: absolute; inset: 0.8rem; border-radius: 12px;
+  background: linear-gradient(100deg, #101014 40%, #181822 50%, #101014 60%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  pointer-events: none;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }

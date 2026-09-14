@@ -53,6 +53,35 @@
     });
   });
 
+  // Sticky mobile CTA: show after the hero, hide at the download section
+  var stickyCta = document.getElementById("stickyCta");
+  var downloadSec = document.getElementById("download");
+  if (stickyCta) {
+    var past = false, atDownload = false;
+    function renderCta() {
+      stickyCta.classList.toggle("show", past && !atDownload);
+    }
+    window.addEventListener("scroll", function () {
+      past = window.scrollY > window.innerHeight * 0.75;
+      renderCta();
+    }, { passive: true });
+    if (downloadSec && "IntersectionObserver" in window) {
+      new IntersectionObserver(function (entries) {
+        atDownload = entries[0].isIntersecting;
+        renderCta();
+      }, { threshold: 0.15 }).observe(downloadSec);
+    }
+  }
+
+  // Image loading states
+  document.querySelectorAll("img").forEach(function (img) {
+    if (!img.complete) {
+      img.classList.add("is-loading");
+      img.addEventListener("load", function () { img.classList.remove("is-loading"); });
+      img.addEventListener("error", function () { img.classList.remove("is-loading"); });
+    }
+  });
+
   // Scroll reveal
   var revealEls = document.querySelectorAll(".reveal");
   if ("IntersectionObserver" in window && revealEls.length) {
