@@ -151,6 +151,7 @@
   let pendingJump: { page: number | null; highlight: string | null } | null = $state(null);
   let jumpHalo = $state(false);
   let zoomLabel = $state("page-width"); // sync with PDFViewer.currentScaleValue
+  let spreadMode = $state<0 | 2>(0); // pdf.js SpreadMode: 0 = single, 2 = facing (even: cover alone, odd pages right)
   let zoomPct = $state(100);
   let findOpen = $state(false);
   let findQuery = $state("");
@@ -857,8 +858,14 @@
     });
     linkService.setViewer(pdfViewer);
 
+    // Restore the persisted facing-pages choice; the setter is safe
+    // before any document is loaded.
+    spreadMode = restoreSpread();
+    try { pdfViewer.spreadMode = spreadMode; } catch { /* ignore */ }
+
     eventBus.on("pagesinit", () => {
       pdfViewer.currentScaleValue = "page-width";
+      try { pdfViewer.spreadMode = spreadMode; } catch { /* ignore */ }
       syncZoom();
     });
     eventBus.on("pagechanging", (e: any) => {
@@ -1052,6 +1059,26 @@
     if (!pdfViewer) return;
     pdfViewer.currentScaleValue = v;
     syncZoom();
+  }
+
+  const SPREAD_KEY = "slab.reader.spread";
+
+  // Facing-pages (two-up book) layout. Persisted so the choice sticks
+  // across documents; safe to call before a document is loaded.
+  function setSpread(mode: 0 | 2) {
+    spreadMode = mode;
+    if (pdfViewer) {
+      try { pdfViewer.spreadMode = mode; } catch { /* ignore */ }
+    }
+    try { localStorage.setItem(SPREAD_KEY, String(mode)); } catch { /* ignore */ }
+  }
+
+  function restoreSpread(): 0 | 2 {
+    try {
+      return localStorage.getItem(SPREAD_KEY) === "2" ? 2 : 0;
+    } catch {
+      return 0;
+    }
   }
   function zoomIn() {
     if (!pdfViewer) return;
@@ -1723,6 +1750,12 @@
         disabled={!doc}
         onclick={() => setZoomValue("page-fit")}
       >Fit page</button>
+      <button
+        class="tb-btn"
+        class:active={spreadMode === 2}
+        onclick={() => setSpread(spreadMode === 2 ? 0 : 2)}
+        title="Facing pages — two-up book layout, cover on its own"
+      >Facing</button>
     </div>
 
     <div class="tb-group">
