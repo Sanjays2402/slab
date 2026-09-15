@@ -461,6 +461,7 @@ mod tests {
             ThemeMode::Auto,
             ThemeMode::Light,
             ThemeMode::Dark,
+            ThemeMode::Oled,
             ThemeMode::White,
         ] {
             for accent in [

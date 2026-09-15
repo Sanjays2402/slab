@@ -103,6 +103,7 @@
   let selected = $state(0);
   let inputEl: HTMLInputElement | undefined = $state();
   let listEl: HTMLElement | undefined = $state();
+  let dialogEl: HTMLElement | undefined = $state();
   let recents = $state<RecentFile[]>([]);
   // Glass Slice 5: MRU ranks for actions (id → rank, lower = more recent).
   let mru = $state<Record<string, number>>({});
@@ -1021,8 +1022,21 @@
     queueMicrotask(() => a.run());
   }
 
+  // Capture-phase entry (registered with { capture: true } in onMount):
+  // delegates to onKeyInner, then swallows any handled key so it can't
+  // reach the page's bubble-phase handlers (e.g. the toolbox board's
+  // keydown, which would otherwise move its cursor / open docs while
+  // the palette is up).
   function onKey(e: KeyboardEvent) {
     if (!open) return;
+    // IME composition (CJK etc.): Enter confirms a candidate and Escape
+    // cancels composition — neither should drive the palette.
+    if (e.isComposing || e.keyCode === 229) return;
+    onKeyInner(e);
+    if (e.defaultPrevented) e.stopPropagation();
+  }
+
+  function onKeyInner(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
@@ -1033,6 +1047,24 @@
       lastActivationNewTab = e.metaKey || e.ctrlKey;
       runSelected();
       return;
+    }
+    // Focus trap: the dialog is modal, so keep Tab/Shift+Tab cycling
+    // among its own focusables instead of escaping to the background.
+    if (e.key === "Tab" && dialogEl) {
+      const items = Array.from(
+        dialogEl.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (items.length > 0) {
+        e.preventDefault();
+        const idx = items.indexOf(document.activeElement as HTMLElement);
+        const next = e.shiftKey
+          ? idx <= 0 ? items.length - 1 : idx - 1
+          : idx === -1 || idx >= items.length - 1 ? 0 : idx + 1;
+        items[next].focus();
+        return;
+      }
     }
     // Lumen II Slice 3: Cmd/Ctrl+Arrow leaps the cursor between section
     // heads (Linear/Finder-style group jump) over the big action catalog.
@@ -1102,10 +1134,13 @@
   }
 
   onMount(() => {
-    window.addEventListener("keydown", onKey);
+    // Capture phase so the palette sees keys before the page's own
+    // bubble-phase handlers (the toolbox board also listens on window);
+    // handled keys stop propagation at the end of onKey.
+    window.addEventListener("keydown", onKey, { capture: true });
   });
   onDestroy(() => {
-    window.removeEventListener("keydown", onKey);
+    window.removeEventListener("keydown", onKey, { capture: true });
     unsubPlugins();
     unsubKeymap();
   });
@@ -1113,7 +1148,7 @@
 
 {#if open}
   <div class="palette-scrim" onclick={onClose} role="presentation"></div>
-  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" bind:this={dialogEl}>
     <div class="palette-input-row">
       <span class="palette-kbd-leading">⌘K</span>
       {#if scopeParse.scope !== "all"}

@@ -1,13 +1,23 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
+  import { isInTauri } from "$lib/tauri";
   import { idle, basename, type CmdResult, type Status } from "$lib/types";
 
   let inputs = $state<string[]>([]);
   let status = $state<Status>(idle);
   let dragIndex = $state<number | null>(null);
 
+  function needsDesktop(): boolean {
+    if (!isInTauri()) {
+      status = { kind: "err", msg: "Merging needs the Slab desktop app — the browser preview can't write files." };
+      return true;
+    }
+    return false;
+  }
+
   async function pickInputs() {
+    if (needsDesktop()) return;
     const picked = await open({
       multiple: true,
       filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -61,11 +71,20 @@
       status = { kind: "err", msg: "Add at least two PDFs to merge." };
       return;
     }
+    if (needsDesktop()) return;
     const output = await save({
       defaultPath: "merged.pdf",
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
     if (typeof output !== "string") return;
+    // Never let the merged output overwrite one of the sources — the
+    // backend may still be reading it. Compare case-insensitively so
+    // macOS/Windows "same file, different case" can't slip through.
+    const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+    if (inputs.some((p) => norm(p) === norm(output))) {
+      status = { kind: "err", msg: "Pick an output file that isn't one of the inputs — merging onto a source would destroy it." };
+      return;
+    }
 
     status = { kind: "working", msg: "Merging…" };
     try {

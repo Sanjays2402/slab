@@ -230,6 +230,11 @@
   let findController: any = null;
   let pdfViewer: any = $state(null);
   let thumbsAbortController: AbortController | null = null;
+  // Generation token for document loads — guards against the stale-load
+  // race where a slow parse for doc A resolves after doc B already
+  // displayed (or after teardown) and overwrites the viewer with A.
+  let loadGen = 0;
+  let loadTask: any = null;
 
   // ---------- File loading ----------
   // isInTauri is imported from $lib/tauri
@@ -497,10 +502,23 @@
   async function loadBytes(path: string, data: Uint8Array, fileSize?: number) {
     loading = true;
     loadError = null;
+    // tearDownDoc() invalidates any in-flight load (bumps loadGen and
+    // destroys the pending pdf.js task); the generation captured below is
+    // ours alone — if it goes stale we bail before touching viewer state.
+    let gen = 0;
     try {
       tearDownDoc();
+      gen = ++loadGen;
       const task = pdfjsLib.getDocument({ data, isEvalSupported: false });
+      loadTask = task;
       const pdf = await task.promise;
+      loadTask = null;
+      if (gen !== loadGen) {
+        // Superseded by a newer load (or torn down) while parsing —
+        // destroy the orphan so it doesn't leak, and don't touch state.
+        try { pdf.destroy(); } catch { /* ignore */ }
+        return;
+      }
       pdfDocument = pdf;
 
       buildViewer();
@@ -576,6 +594,12 @@
         queueMicrotask(() => applyJump(p, q));
       }
     } catch (e: any) {
+      if (gen !== loadGen) {
+        // Superseded while loading (a newer load tore us down and our
+        // destroyed task rejected) — stay quiet; the current load owns
+        // the UI state now.
+        return;
+      }
       // pdf.js raises a `PasswordException` for both `NEED_PASSWORD` (no
       // password supplied) and `INCORRECT_PASSWORD`. We can't supply one
       // through pdf.js V1/RC4 documents directly without bridging the
@@ -592,7 +616,9 @@
       tearDownDoc();
       doc = null;
     } finally {
-      loading = false;
+      // A superseded load must not clear the spinner belonging to the
+      // load that replaced it.
+      if (gen === loadGen) loading = false;
     }
   }
 
@@ -753,6 +779,15 @@
     thumbsAbortController?.abort();
     thumbsAbortController = null;
     thumbCanvases.clear();
+    // Kill an in-flight getDocument parse so a slow load can't resolve
+    // after teardown and resurrect a document nobody asked for.
+    if (loadTask) {
+      try { loadTask.destroy(); } catch { /* ignore */ }
+      loadTask = null;
+    }
+    // Invalidate any loadBytes() currently awaiting its task — it will
+    // bail (and destroy its orphan pdf) instead of touching viewer state.
+    loadGen++;
     if (pdfViewer) {
       try { pdfViewer.setDocument(null); } catch { /* ignore */ }
       try { pdfViewer.cleanup(); } catch { /* ignore */ }
@@ -924,6 +959,24 @@
       // Doc not loaded yet — stash for the loadBytes() finish handler.
       pendingJump = { page: d.page ?? null, highlight: d.highlight ?? null };
     }
+  }
+
+  /** Beacon citation / search-hit page jumps. Dispatched by BeaconChatPanel
+   *  (`jumpToPage`) and BeaconSearchPanel (`gotoHit`) as
+   *  `slab:beacon-goto-page` with `{ path, page }`. If the cited PDF is
+   *  already open we just jump; otherwise we open it and stash the jump
+   *  for the loadBytes() finish handler (same mechanism as onReaderJump). */
+  function onBeaconGotoPage(e: CustomEvent<{ path?: string; page: number }>) {
+    if (!active) return;
+    const d = e.detail;
+    if (!d || typeof d.page !== "number") return;
+    if (doc && (!d.path || doc.path === d.path)) {
+      applyJump(d.page, null);
+    } else if (d.path) {
+      pendingJump = { page: d.page, highlight: null };
+      onOpenRecentEvent({ detail: { path: d.path, name: basename(d.path) } } as CustomEvent<RecentFile>);
+    }
+    // No path and no doc open — nothing sensible to jump to.
   }
 
   // ---------- Glass II Vim adapter (v1.2.0 Slice 2) ----------
@@ -1271,6 +1324,7 @@
     window.addEventListener("slab:vim-reader:find-set", onVimFindSet as EventListener);
     window.addEventListener("slab:vim-reader:find-next", onVimFindNext as EventListener);
     window.addEventListener("slab:reader-jump", onReaderJump as EventListener);
+    window.addEventListener("slab:beacon-goto-page", onBeaconGotoPage as EventListener);
 
     // If the shell handed us a path on mount, load it.
     if (initialPath && isInTauri()) {
@@ -1347,6 +1401,7 @@
     window.removeEventListener("slab:vim-reader:find-set", onVimFindSet as EventListener);
     window.removeEventListener("slab:vim-reader:find-next", onVimFindNext as EventListener);
     window.removeEventListener("slab:reader-jump", onReaderJump as EventListener);
+    window.removeEventListener("slab:beacon-goto-page", onBeaconGotoPage as EventListener);
     const dnd = (onMount as any)._slabDnd;
     if (dnd) {
       window.removeEventListener("dragover", dnd.onDragOver);

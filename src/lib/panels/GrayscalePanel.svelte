@@ -26,11 +26,24 @@
   }
 
   function parsePages(s: string): number[] {
-    if (!s.trim()) return [];
-    return s
-      .split(',')
-      .map((p) => Number(p.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0);
+    // "1-3, 7" → [1,2,3,7]. A bare "" means all pages (Rust treats an
+    // empty list as "every page"), so a dropped range must never
+    // silently become [] — that would convert the whole document.
+    const out: number[] = [];
+    for (const part of s.split(",")) {
+      const p = part.trim();
+      if (!p) continue;
+      if (p.includes("-")) {
+        const [a, b] = p.split("-").map((x) => parseInt(x.trim(), 10));
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          for (let i = Math.max(1, Math.min(a, b)); i <= Math.max(a, b); i++) out.push(i);
+        }
+      } else {
+        const n = parseInt(p, 10);
+        if (Number.isFinite(n) && n >= 1) out.push(n);
+      }
+    }
+    return out;
   }
 
   async function run() {

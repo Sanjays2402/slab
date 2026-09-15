@@ -76,6 +76,9 @@
 
   let pdfPath = $state<string | null>(null);
   let pdfPages = $state<number | null>(null);
+  // Monotonic token so a stale `slab_page_count` response can't land on
+  // a newer PDF after a quick double-pick.
+  let pdfToken = 0;
   let question = $state("");
   let history = $state<ChatTurn[]>([]);
   let status = $state<Status>(idle);
@@ -299,6 +302,9 @@
       window.removeEventListener("slab:vim-beacon:blur-input", onVimBlurInput);
       window.removeEventListener("slab:vim-beacon:reset-chat", onVimResetChat);
       unregister();
+      // Never leave the backend recorder running after the panel unmounts
+      // (e.g. user switches tools mid-dictation) — cancelMic is idempotent.
+      if (isRecording) void cancelMic();
     };
   });
 
@@ -308,24 +314,34 @@
     status = idle;
     pdfPages = null;
     lastStats = null;
+    // Generation token: a quick double-pick used to let the FIRST pdf's
+    // page count land on the SECOND pdf. Only the latest setPdf may
+    // write pdfPages.
+    const token = ++pdfToken;
     // Best-effort page count for the header; failures are silent.
     try {
       const res = await invoke<CmdResult<number>>("slab_page_count", {
         input: p,
       });
-      if (res.kind === "ok") pdfPages = res.value;
+      if (token === pdfToken && res.kind === "ok") pdfPages = res.value;
     } catch {
       /* ignore */
     }
   }
 
   async function pickPdf() {
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
-    if (typeof picked !== "string") return;
-    await setPdf(picked);
+    try {
+      const picked = await open({
+        multiple: false,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (typeof picked !== "string") return;
+      await setPdf(picked);
+    } catch {
+      // Plain-browser dev server has no Tauri dialog — surface instead
+      // of an unhandled rejection.
+      status = { kind: "err", msg: "Picking a file needs the Slab desktop app." };
+    }
   }
 
   function resetChat() {

@@ -19,7 +19,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writable, get } from "svelte/store";
 import { isInTauri } from "$lib/tauri";
-import { clearPluginTheme } from "$lib/pluginThemes";
+import { clearPluginTheme, currentPluginTheme } from "$lib/pluginThemes";
 
 export type ThemeMode = "auto" | "light" | "dark" | "oled" | "white";
 export type AccentColor = "orange" | "blue" | "purple" | "green" | "pink";
@@ -154,12 +154,15 @@ async function readPersisted(): Promise<UiConfig> {
 
 /** Persist + apply. Idempotent; safe to call repeatedly. */
 export async function setUiConfig(next: Partial<UiConfig>): Promise<void> {
+  configWrites++;
   const prev = get(uiConfig);
   const merged: UiConfig = { ...prev, ...next };
   // v1.3.0 Foundry Slice 9 — if the user picks a built-in theme, drop
   // the plugin theme `<style>` tag so the regular app.css rules win
-  // again. We only clear when the theme actually changed.
-  if (next.theme && next.theme !== prev.theme) {
+  // again. We clear on an actual change AND when re-picking the current
+  // theme while a plugin overlay is active — otherwise the store says
+  // "Dark" while the plugin theme is still visibly in charge.
+  if (next.theme && (next.theme !== prev.theme || currentPluginTheme())) {
     clearPluginTheme();
   }
   uiConfig.set(merged);
@@ -186,9 +189,16 @@ export async function setUiConfig(next: Partial<UiConfig>): Promise<void> {
 /**
  * Boot the theme system. Called once from the root layout. Idempotent —
  * if it's called twice (e.g. HMR) the listener gets re-installed cleanly.
+ *
+ * The persisted read is async; if the user changes the theme before it
+ * resolves (fast clickers, restored sessions), the stale boot value must
+ * NOT clobber their newer choice — `configWrites` guards that.
  */
+let configWrites = 0;
 export async function bootTheme(): Promise<void> {
+  const seen = configWrites;
   const cfg = await readPersisted();
+  if (seen !== configWrites) return;
   uiConfig.set(cfg);
   applyConfig(cfg);
   hookOsThemeWatcher(cfg);

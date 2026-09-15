@@ -55,6 +55,9 @@
   let errorMsg = $state<string | null>(null);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let unlisten: (() => void) | null = null;
+  // Set on destroy so in-flight backend calls can't write state into a
+  // dead component (Svelte warns on that in dev, and it's a leak vector).
+  let destroyed = false;
 
   // "Add watch" form draft. Hidden behind a button until the user
   // clicks "New watch" — empty state shows guided onboarding instead.
@@ -106,16 +109,17 @@
   // -------------------------------------------------------------------
 
   onMount(async () => {
-    await refresh();
-    loading = false;
     if (isInTauri()) {
+      await refresh();
+      loading = false;
       try {
         unlisten = await listenRunCompleted((rec) => {
+          if (destroyed) return;
           // Prepend (newest first) and dedupe by id — events can race
           // a poll-driven refresh.
           runs = [rec, ...runs.filter((r) => r.id !== rec.id)].slice(0, 200);
           // Refresh the status header counts in the background.
-          slabHopperDescribe().then((s) => (status = s)).catch(() => {});
+          slabHopperDescribe().then((s) => { if (!destroyed) status = s; }).catch(() => {});
         });
       } catch (e) {
         // Subscription failure is non-fatal; we still poll.
@@ -124,9 +128,14 @@
       // Cheap polling safety-net for missed events.
       pollTimer = setInterval(() => {
         slabHopperListRuns(50)
-          .then((r) => (runs = r))
+          .then((r) => { if (!destroyed) runs = r; })
           .catch(() => {});
       }, 5000);
+    } else {
+      // Browser preview has no backend — don't fire three failing
+      // invokes just to show an error banner; say so plainly instead.
+      loading = false;
+      errorMsg = "Hopper watches need the Slab desktop app.";
     }
     // v3.22.0 Hopper Loop — deep-link entry from Cmd+Shift+H and the
     // command palette. Fires once when the panel mounts (the palette
@@ -138,6 +147,7 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
     if (pollTimer) clearInterval(pollTimer);
     if (unlisten) unlisten();
     window.removeEventListener(
@@ -153,11 +163,13 @@
         slabHopperListRuns(50),
         slabHopperDescribe(),
       ]);
+      if (destroyed) return;
       watches = w;
       runs = r;
       status = s;
       errorMsg = null;
     } catch (e) {
+      if (destroyed) return;
       errorMsg = String(e);
     }
   }

@@ -60,6 +60,9 @@
         pdfPath = d.path;
         pdfHash = null;
         chunksIndexed = null;
+        // A new PDF isn't indexed yet — "This PDF" scope would silently
+        // search everything, so drop back to "All PDFs".
+        scope = "all";
       }
     };
     window.addEventListener("slab:open-recent", onOpenRecent);
@@ -76,15 +79,22 @@
   }
 
   async function pickPdf() {
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
-    if (typeof picked !== "string") return;
-    pdfPath = picked;
-    pdfHash = null;
-    chunksIndexed = null;
-    status = idle;
+    try {
+      const picked = await open({
+        multiple: false,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (typeof picked !== "string") return;
+      pdfPath = picked;
+      pdfHash = null;
+      chunksIndexed = null;
+      scope = "all";
+      status = idle;
+    } catch (e) {
+      // Plain-browser dev server has no Tauri dialog — surface instead of
+      // an unhandled rejection.
+      status = { kind: "err", msg: "Picking a file needs the Slab desktop app." };
+    }
   }
 
   async function indexPdf(force = false) {
@@ -119,6 +129,10 @@
   async function runSearch() {
     const q = query.trim();
     if (!q) return;
+    // The buttons disable while working, but Enter in the input doesn't —
+    // without this guard a fast double-Enter fires two searches and the
+    // slower first response wins.
+    if (status.kind === "working") return;
     status = { kind: "working", msg: "Searching…" };
     hits = [];
     try {
@@ -150,11 +164,13 @@
 
   function gotoHit(h: SearchHit) {
     // Two events: ask the Reader to open the PDF, then jump page.
+    // The path rides along so the Reader opens the hit's PDF even when
+    // a different document is currently displayed.
     window.dispatchEvent(
       new CustomEvent("slab:open-recent", { detail: { path: h.pdf_path } }),
     );
     window.dispatchEvent(
-      new CustomEvent("slab:beacon-goto-page", { detail: { page: h.page } }),
+      new CustomEvent("slab:beacon-goto-page", { detail: { path: h.pdf_path, page: h.page } }),
     );
   }
 

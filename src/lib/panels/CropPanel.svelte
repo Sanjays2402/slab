@@ -35,11 +35,13 @@
       if (p.includes("-")) {
         const [a, b] = p.split("-").map((x) => parseInt(x.trim(), 10));
         if (Number.isFinite(a) && Number.isFinite(b)) {
-          for (let i = Math.min(a, b); i <= Math.max(a, b); i++) out.push(i);
+          // Pages are 1-based — clamp the range start so "0-3" or "-2-5"
+          // can't smuggle page 0 / negatives to the backend.
+          for (let i = Math.max(1, Math.min(a, b)); i <= Math.max(a, b); i++) out.push(i);
         }
       } else {
         const n = parseInt(p, 10);
-        if (Number.isFinite(n)) out.push(n);
+        if (Number.isFinite(n) && n >= 1) out.push(n);
       }
     }
     return out;
