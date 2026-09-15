@@ -102,7 +102,7 @@ use pdf::library::{
     OcrQueueStats, ScanReport, TagRecord,
 };
 use pdf::md2pdf::{render as do_md2pdf, Md2PdfOpts};
-use pdf::merge::merge_pdfs;
+use pdf::merge::{merge_pdfs, merge_selected};
 use pdf::metadata::{
     read_metadata as do_read_metadata, strip_metadata as do_strip_metadata,
     write_metadata as do_write_metadata, Metadata,
@@ -185,6 +185,35 @@ fn app_info() -> AppInfo {
 fn slab_merge(inputs: Vec<PathBuf>, output: PathBuf) -> CmdResult<PathBuf> {
     let out = output.clone();
     merge_pdfs(&inputs, output).map(|_| out).into()
+}
+
+/// One input for a ranged merge: the file plus the 1-indexed page ranges
+/// to take from it. An empty `ranges` list means the whole file.
+#[derive(Deserialize)]
+pub struct MergeInputDto {
+    pub path: PathBuf,
+    pub ranges: Vec<PageRangeDto>,
+}
+
+#[tauri::command]
+fn slab_merge_ranges(inputs: Vec<MergeInputDto>, output: PathBuf) -> CmdResult<PathBuf> {
+    let out = output.clone();
+    let parsed: Result<Vec<(PathBuf, Vec<PageRange>)>, PdfError> = inputs
+        .iter()
+        .map(|i| {
+            i.ranges
+                .iter()
+                .map(|r| PageRange::new(r.start, r.end))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|rs| (i.path.clone(), rs))
+        })
+        .collect();
+    match parsed {
+        Ok(sel) => merge_selected(&sel, &output).map(|_| out).into(),
+        Err(e) => CmdResult::Err {
+            message: e.to_string(),
+        },
+    }
 }
 
 // ───── First-launch self-install (issue #25, v2.0.3) ──────────────
@@ -7657,6 +7686,7 @@ pub fn run() {
             slab_first_launch_install,
             slab_first_launch_skip,
             slab_merge,
+            slab_merge_ranges,
             slab_split_ranges,
             slab_bates_apply,
             slab_bates_batch,

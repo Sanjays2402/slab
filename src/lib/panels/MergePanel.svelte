@@ -4,7 +4,7 @@
   import { isInTauri } from "$lib/tauri";
   import { idle, basename, type CmdResult, type Status } from "$lib/types";
 
-  let inputs = $state<string[]>([]);
+  let inputs = $state<{ path: string; pages: string }[]>([]);
   let status = $state<Status>(idle);
   let dragIndex = $state<number | null>(null);
 
@@ -24,7 +24,7 @@
     });
     if (!picked) return;
     const arr = Array.isArray(picked) ? picked : [picked];
-    inputs = [...inputs, ...arr];
+    inputs = [...inputs, ...arr.map((path) => ({ path, pages: "" }))];
     status = idle;
   }
 
@@ -66,12 +66,57 @@
     dragIndex = null;
   }
 
+  // "1-3, 5" → [{start:1,end:3},{start:5,end:5}]. "" → [] (whole file).
+  // Throws on anything that isn't a page number or range, so a typo can
+  // never silently become "take every page".
+  function parseRanges(s: string): { start: number; end: number }[] {
+    const out: { start: number; end: number }[] = [];
+    for (const part of s.split(",")) {
+      const p = part.trim();
+      if (!p) continue;
+      if (p.includes("-")) {
+        const halves = p.split("-");
+        if (halves.length !== 2) throw new Error(`"${p}" isn't a page range`);
+        const a = parseInt(halves[0].trim(), 10);
+        const b = parseInt(halves[1].trim(), 10);
+        if (!Number.isFinite(a) || !Number.isFinite(b) || a < 1 || b < 1) {
+          throw new Error(`"${p}" isn't a page range`);
+        }
+        out.push({ start: Math.min(a, b), end: Math.max(a, b) });
+      } else {
+        if (!/^\d+$/.test(p)) throw new Error(`"${p}" isn't a page number`);
+        const n = parseInt(p, 10);
+        if (n < 1) throw new Error(`"${p}" isn't a page number`);
+        out.push({ start: n, end: n });
+      }
+    }
+    return out;
+  }
+
   async function runMerge() {
     if (inputs.length < 2) {
       status = { kind: "err", msg: "Add at least two PDFs to merge." };
       return;
     }
     if (needsDesktop()) return;
+
+    // Parse page ranges up front so a typo fails before the save dialog.
+    let parsed: { path: string; ranges: { start: number; end: number }[] }[];
+    try {
+      parsed = inputs.map((f) => {
+        try {
+          return { path: f.path, ranges: parseRanges(f.pages) };
+        } catch {
+          throw new Error(
+            `${basename(f.path)}: bad page range — try something like 1-3, 5.`
+          );
+        }
+      });
+    } catch (e) {
+      status = { kind: "err", msg: (e as Error).message };
+      return;
+    }
+
     const output = await save({
       defaultPath: "merged.pdf",
       filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -81,17 +126,23 @@
     // backend may still be reading it. Compare case-insensitively so
     // macOS/Windows "same file, different case" can't slip through.
     const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
-    if (inputs.some((p) => norm(p) === norm(output))) {
+    if (parsed.some((p) => norm(p.path) === norm(output))) {
       status = { kind: "err", msg: "Pick an output file that isn't one of the inputs — merging onto a source would destroy it." };
       return;
     }
 
     status = { kind: "working", msg: "Merging…" };
     try {
-      const res = await invoke<CmdResult<string>>("slab_merge", {
-        inputs,
-        output,
-      });
+      const useRanges = parsed.some((p) => p.ranges.length > 0);
+      const res = useRanges
+        ? await invoke<CmdResult<string>>("slab_merge_ranges", {
+            inputs: parsed,
+            output,
+          })
+        : await invoke<CmdResult<string>>("slab_merge", {
+            inputs: parsed.map((p) => p.path),
+            output,
+          });
       if (res.kind === "ok") {
         status = { kind: "ok", msg: `Saved → ${res.value}` };
       } else {
@@ -105,7 +156,7 @@
 
 <header class="content-header">
   <h1>Merge PDFs</h1>
-  <p class="subtitle">Stitch any number of PDFs into one clean file. Drag to reorder, save anywhere.</p>
+  <p class="subtitle">Stitch any number of PDFs into one clean file. Drag to reorder, pick pages per file, save anywhere.</p>
 </header>
 
 <section class="panel">
@@ -117,7 +168,7 @@
     </button>
   {:else}
     <ul class="file-list">
-      {#each inputs as path, i (path + i)}
+      {#each inputs as file, i (file.path + i)}
         <li
           class="file-row"
           class:dragging={dragIndex === i}
@@ -128,7 +179,15 @@
         >
           <span class="row-handle" aria-hidden="true">⋮⋮</span>
           <span class="row-idx">{i + 1}</span>
-          <span class="row-name" title={path}>{basename(path)}</span>
+          <span class="row-name" title={file.path}>{basename(file.path)}</span>
+          <input
+            class="row-pages"
+            bind:value={file.pages}
+            placeholder="All pages"
+            spellcheck={false}
+            title="Pages to take from this file — e.g. 1-3, 5. Leave blank for the whole file."
+            aria-label={`Pages to take from ${basename(file.path)}`}
+          />
           <div class="row-actions">
             <button class="ghost" onclick={() => moveUp(i)} aria-label="Up">↑</button>
             <button class="ghost" onclick={() => moveDown(i)} aria-label="Down">↓</button>
@@ -211,6 +270,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .row-pages {
+    width: 104px;
+    flex: none;
+    font-size: 12px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-1);
+  }
+  .row-pages::placeholder {
+    color: var(--text-3);
+  }
+  .row-pages:focus {
+    outline: none;
+    border-color: var(--border-strong);
   }
   .row-actions {
     display: flex;

@@ -4,37 +4,56 @@
 // Approach: load all docs, renumber object IDs to avoid collisions,
 // concatenate page trees, write out.
 
+use crate::pdf::split::PageRange;
 use crate::pdf::PdfError;
 use lopdf::{Document, Object, ObjectId};
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// Merge the given PDFs in order, writing the result to `output`.
 ///
 /// Returns the number of pages in the resulting document.
 pub fn merge_pdfs<P: AsRef<Path>>(inputs: &[P], output: P) -> Result<usize, PdfError> {
+    let selections: Vec<(PathBuf, Vec<PageRange>)> = inputs
+        .iter()
+        .map(|p| (p.as_ref().to_path_buf(), Vec::new()))
+        .collect();
+    merge_selected(&selections, output.as_ref())
+}
+
+/// Merge selected pages from each input, in order, writing the result to
+/// `output`.
+///
+/// Each entry pairs an input path with the 1-indexed page ranges to take
+/// from it. An empty range list means "the whole file". Ranges are
+/// validated against each input's real page count.
+///
+/// Returns the number of pages in the resulting document.
+pub fn merge_selected(
+    inputs: &[(PathBuf, Vec<PageRange>)],
+    output: &Path,
+) -> Result<usize, PdfError> {
     if inputs.is_empty() {
         return Err(PdfError::NoInputs);
     }
-    let out = output.as_ref();
-    if out.as_os_str().is_empty() {
+    if output.as_os_str().is_empty() {
         return Err(PdfError::EmptyOutput);
     }
 
     // Validate inputs up-front so we fail before doing any work.
-    for p in inputs {
-        if !p.as_ref().exists() {
-            return Err(PdfError::InputMissing(p.as_ref().display().to_string()));
+    for (p, _) in inputs {
+        if !p.exists() {
+            return Err(PdfError::InputMissing(p.display().to_string()));
         }
     }
 
     let mut max_id: u32 = 1;
-    let mut docs: Vec<Document> = Vec::with_capacity(inputs.len());
-    for p in inputs {
-        let mut doc = Document::load(p.as_ref())?;
+    let mut docs: Vec<(Document, Vec<PageRange>)> = Vec::with_capacity(inputs.len());
+    for (p, ranges) in inputs {
+        let mut doc = Document::load(p)?;
         doc.renumber_objects_with(max_id);
         max_id = doc.max_id + 1;
-        docs.push(doc);
+        docs.push((doc, ranges.clone()));
     }
 
     // The first doc becomes the canvas: we accumulate every other doc's
@@ -42,11 +61,31 @@ pub fn merge_pdfs<P: AsRef<Path>>(inputs: &[P], output: P) -> Result<usize, PdfE
     let mut documents_pages: BTreeMap<ObjectId, Object> = BTreeMap::new();
     let mut documents_objects: BTreeMap<ObjectId, Object> = BTreeMap::new();
 
-    for doc in &mut docs {
+    for (doc, ranges) in &mut docs {
+        // Resolve the 1-indexed page numbers to keep. None = whole file.
+        let keep: Option<BTreeSet<u32>> = if ranges.is_empty() {
+            None
+        } else {
+            let total = doc.get_pages().len() as u32;
+            let mut set = BTreeSet::new();
+            for r in ranges {
+                if r.end > total {
+                    return Err(PdfError::Other(format!(
+                        "page range {}-{} exceeds {} pages",
+                        r.start, r.end, total
+                    )));
+                }
+                set.extend(r.start..=r.end);
+            }
+            Some(set)
+        };
         documents_pages.extend(
             doc.get_pages()
-                .into_values()
-                .map(|object_id| (object_id, doc.get_object(object_id).unwrap().to_owned())),
+                .into_iter()
+                .filter(|(num, _)| keep.as_ref().map_or(true, |s| s.contains(num)))
+                .map(|(_, object_id)| {
+                    (object_id, doc.get_object(object_id).unwrap().to_owned())
+                }),
         );
         documents_objects.extend(doc.objects.clone());
     }
@@ -230,5 +269,70 @@ mod tests {
         // Parse the output and verify it has 2 pages.
         let merged = Document::load(&out).unwrap();
         assert_eq!(merged.get_pages().len(), 2);
+    }
+
+    /// Build a real minimal `n`-page PDF with lopdf.
+    fn make_n_pages(path: &Path, n: u32) {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let mut kids: Vec<Object> = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            let page_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            });
+            kids.push(page_id.into());
+        }
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => kids,
+            "Count" => n as i32,
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(path).unwrap();
+    }
+
+    /// merge_selected takes only the chosen ranges: pages 2-3 of a 5-page
+    /// doc plus all 4 pages of a second doc yields 6 pages.
+    #[test]
+    fn merge_selected_picks_pages_per_input() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.pdf");
+        let b = tmp.path().join("b.pdf");
+        let out = tmp.path().join("out.pdf");
+        make_n_pages(&a, 5);
+        make_n_pages(&b, 4);
+
+        let sel = vec![
+            (a.clone(), vec![PageRange::new(2, 3).unwrap()]),
+            (b.clone(), vec![]), // empty = whole file
+        ];
+        let count = merge_selected(&sel, &out).unwrap();
+        assert_eq!(count, 6);
+        assert!(out.exists());
+
+        let merged = Document::load(&out).unwrap();
+        assert_eq!(merged.get_pages().len(), 6);
+    }
+
+    /// merge_selected rejects a range past the end of its input.
+    #[test]
+    fn merge_selected_rejects_out_of_range() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.pdf");
+        let out = tmp.path().join("out.pdf");
+        make_n_pages(&a, 5);
+
+        let sel = vec![(a.clone(), vec![PageRange::new(1, 99).unwrap()])];
+        assert!(matches!(
+            merge_selected(&sel, &out),
+            Err(PdfError::Other(_))
+        ));
     }
 }
