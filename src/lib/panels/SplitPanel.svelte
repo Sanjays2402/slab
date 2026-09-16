@@ -43,6 +43,14 @@
       if (start < 1 || end < start) return `Invalid range: "${p}".`;
       result.push({ start, end });
     }
+    const fmt = (r: { start: number; end: number }) =>
+      r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`;
+    const sorted = [...result].sort((a, b) => a.start - b.start);
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].start <= sorted[i - 1].end) {
+        return `Ranges "${fmt(sorted[i - 1])}" and "${fmt(sorted[i])}" overlap — a page may only appear in one range.`;
+      }
+    }
     return result;
   }
 
@@ -146,7 +154,7 @@
           placeholder="1-3, 5, 7-9"
           bind:value={rangeText}
         />
-        <span class="field-hint">Comma-separated. Single pages or N-M ranges.</span>
+        <span class="field-hint">Comma-separated. Single pages or N-M ranges. Ranges must not overlap.</span>
       </label>
     {:else}
       <label class="field">
