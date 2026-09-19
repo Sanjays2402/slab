@@ -57,6 +57,7 @@ pub mod redact_true;
 pub mod reflow;
 pub mod repair;
 pub mod reverse;
+pub mod rotate;
 pub mod sanitize;
 pub mod scan_audit;
 pub mod signet;

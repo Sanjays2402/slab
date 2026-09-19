@@ -27,6 +27,7 @@
   import SignetPanel from "$lib/panels/SignetPanel.svelte";
   import SignetBatchPanel from "$lib/panels/SignetBatchPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
+  import RotatePanel from "$lib/panels/RotatePanel.svelte";
   import VeilPanel from "$lib/panels/VeilPanel.svelte";
   import CompactPanel from "$lib/panels/CompactPanel.svelte";
   import StreamlinePanel from "$lib/panels/StreamlinePanel.svelte";
@@ -136,6 +137,7 @@
     { id: "sign", group: "sign", label: "Sign", icon: "✍", ready: true },
     { id: "loom", group: "refine", label: "Loom (PDF/UA)", icon: "♿", ready: true },
     { id: "crop", group: "refine", label: "Crop", icon: "⊟", ready: true },
+    { id: "rotate", group: "refine", label: "Rotate", icon: "⟳", ready: true },
     { id: "insert", group: "assemble", label: "Insert", icon: "＋", ready: true },
     { id: "headerfooter", group: "refine", label: "Header/Footer", icon: "≡", ready: true },
     { id: "bates", group: "refine", label: "Bates", icon: "№", ready: true },
@@ -1169,6 +1171,8 @@
     <LoomPanel />
   {:else if active === "crop"}
     <CropPanel />
+  {:else if active === "rotate"}
+    <RotatePanel />
   {:else if active === "insert"}
     <InsertPanel />
   {:else if active === "headerfooter"}

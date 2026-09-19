@@ -130,6 +130,7 @@ use pdf::polyglot::{polyglot_to_pdf as do_polyglot, PolyglotOpts, PolyglotReport
 use pdf::redact::{redact as do_redact, RedactOpts};
 use pdf::redact_true::{redact_true as do_redact_true, TrueRedactReport};
 use pdf::repair::{repair as do_repair, RepairReport};
+use pdf::rotate::rotate as do_rotate;
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::scan_audit::{audit as do_scan_audit, ScanAuditReport};
 use pdf::slides::{analyze as do_slides_analyze, SlideReport};
@@ -1948,6 +1949,11 @@ fn slab_page_numbers(input: PathBuf, output: PathBuf, opts: PageNumbersOpts) -> 
 #[tauri::command]
 fn slab_crop(input: PathBuf, output: PathBuf, opts: CropOpts, pages: Vec<u32>) -> CmdResult<u32> {
     do_crop(&input, &output, opts, &pages).into()
+}
+
+#[tauri::command]
+fn slab_rotate(input: PathBuf, output: PathBuf, degrees: i32, pages: Vec<u32>) -> CmdResult<u32> {
+    do_rotate(&input, &output, degrees, &pages).into()
 }
 
 #[tauri::command]
@@ -7768,6 +7774,7 @@ pub fn run() {
             slab_strip_metadata,
             slab_page_numbers,
             slab_crop,
+            slab_rotate,
             slab_insert,
             slab_header_footer,
             slab_redact,
