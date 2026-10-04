@@ -13,6 +13,7 @@
   //     disk happen on every change but the apply is instant.
   //   - Reset button at the bottom for "I broke something" recovery.
 
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { uiConfig, setUiConfig, ACCENT_COLORS } from "$lib/theme";
   import type { ThemeMode, AccentColor, Density } from "$lib/theme";
   import { notify } from "$lib/notify";
@@ -175,7 +176,28 @@
     { id: "dark", label: "Dark", hint: "Always dark" },
     { id: "oled", label: "OLED", hint: "True black for OLED screens" },
     { id: "white", label: "White", hint: "Pure white, max contrast" },
+    { id: "glass", label: "Glass", hint: "Frosted surfaces with a soft accent glow" },
   ];
+
+  function moveRadioFocus(e: KeyboardEvent) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+    const group = e.currentTarget as HTMLElement;
+    const buttons = Array.from(group.querySelectorAll<HTMLButtonElement>('button[role="radio"]'));
+    const index = buttons.indexOf(e.target as HTMLButtonElement);
+    if (index < 0) return;
+    e.preventDefault();
+    const rtl = getComputedStyle(group).direction === "rtl";
+    const backwards = e.key === "ArrowUp" || e.key === (rtl ? "ArrowRight" : "ArrowLeft");
+    const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : (index + (backwards ? -1 : 1) + buttons.length) % buttons.length;
+    buttons[next].focus();
+    buttons[next].click();
+  }
+
+  async function openPolicy(page: "terms" | "fair-use") {
+    const url = `https://sanjays2402.github.io/slab/${page}.html`;
+    try { await openUrl(url); }
+    catch (e) { notify.error("Couldn't open the policy page", { detail: String(e) }); }
+  }
 
   const DENSITY_OPTIONS: { id: Density; label: string; hint: string }[] = [
     { id: "comfortable", label: "Comfortable", hint: "Roomy spacing (default)" },
@@ -220,12 +242,13 @@
       <p class="row-desc">{$tStore("settings.theme.desc")}</p>
     </div>
     <div class="row-control">
-      <div class="seg" role="radiogroup" aria-label={$tStore("settings.theme.title")}>
+      <div class="seg" role="radiogroup" tabindex="-1" onkeydown={moveRadioFocus} aria-label={$tStore("settings.theme.title")}>
         {#each THEME_OPTIONS as opt (opt.id)}
           <button
             type="button"
             role="radio"
             aria-checked={cfg.theme === opt.id}
+            tabindex={cfg.theme === opt.id ? 0 : -1}
             class:tab-active={cfg.theme === opt.id}
             title={opt.hint}
             onclick={() => update({ theme: opt.id })}
@@ -244,12 +267,13 @@
       <p class="row-desc">{$tStore("settings.accent.desc")}</p>
     </div>
     <div class="row-control">
-      <div class="swatches" role="radiogroup" aria-label={$tStore("settings.accent.title")}>
+      <div class="swatches" role="radiogroup" tabindex="-1" onkeydown={moveRadioFocus} aria-label={$tStore("settings.accent.title")}>
         {#each ACCENT_COLORS as swatch (swatch.id)}
           <button
             type="button"
             role="radio"
             aria-checked={cfg.accent === swatch.id}
+            tabindex={cfg.accent === swatch.id ? 0 : -1}
             aria-label={swatch.label}
             class="swatch"
             class:swatch-active={cfg.accent === swatch.id}
@@ -480,6 +504,17 @@
     </div>
   </div>
 
+  <div class="row">
+    <div class="row-info">
+      <h2>Legal &amp; responsible use</h2>
+      <p class="row-desc">Software licensing, website terms, and guidance on document rights.</p>
+    </div>
+    <div class="row-control policy-links">
+      <button type="button" class="ghost" onclick={() => openPolicy("terms")}>Terms &amp; conditions ↗</button>
+      <button type="button" class="ghost" onclick={() => openPolicy("fair-use")}>Fair use ↗</button>
+    </div>
+  </div>
+
   <!-- Reset + status -->
   <div class="footer-row">
     <button class="ghost" onclick={reset} type="button">{$tStore("settings.reset")}</button>
@@ -501,12 +536,13 @@
   .settings-panel {
     max-width: 760px;
     padding: 32px 36px 48px;
+    width: 100%;
     overflow-y: auto;
   }
 
   .row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
     gap: 24px;
     align-items: flex-start;
     padding: 18px 0;
@@ -554,6 +590,8 @@
     text-align: center;
   }
 
+  .seg { flex-wrap: wrap; justify-content: flex-end; }
+  .policy-links { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
   .row-control {
     display: flex;
     align-items: center;
@@ -689,5 +727,12 @@
   }
   .ai-status.saving {
     color: var(--text-3);
+  }
+  @media (max-width: 700px) {
+    .settings-panel { padding: 20px 16px 28px; }
+    .row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .seg, .swatches, .policy-links { justify-content: flex-start; }
+    .row-control { min-width: 0; }
+    .ai-row .row-control { max-width: none; }
   }
 </style>
