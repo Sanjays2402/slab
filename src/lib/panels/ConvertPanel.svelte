@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { PDFDocumentLoadingTask } from "pdfjs-dist";
   // Convert panel — two flows:
   //   1) PDF → Images: render every (or selected) page of a PDF to PNG/JPEG/WebP
   //      at a chosen DPI, then bundle into a ZIP that we save via the native
@@ -105,7 +106,7 @@
         const task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
         const doc = await task.promise;
         pdfPageCount = doc.numPages;
-        await doc.destroy();
+        await task.destroy();
       } catch (e) {
         status = { kind: "err", msg: `Couldn't open PDF: ${e}` };
       }
@@ -131,8 +132,9 @@
     previewBuilding = true;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let doc: any = null;
+    let task: PDFDocumentLoadingTask | null = null;
     try {
-      const task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+      task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
       doc = await task.promise;
       const built: PreviewThumb[] = [];
       for (const n of pages) {
@@ -165,7 +167,7 @@
       if (token === previewToken) previewThumbs = [];
     } finally {
       if (token === previewToken) previewBuilding = false;
-      if (doc) await doc.destroy().catch(() => {});
+      if (task) await task.destroy().catch(() => {});
     }
   }
 
@@ -220,8 +222,9 @@
     // the finally{} block without TS narrowing them to `null`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let doc: any = null;
+    let task: PDFDocumentLoadingTask | null = null;
     try {
-      const task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
+      task = pdfjsLib.getDocument({ data: pdfBytes.slice() });
       doc = await task.promise;
       const zip = new JSZip();
       const stem = stripExt(basename(pdfInput));
@@ -289,7 +292,7 @@
       status = { kind: "err", msg: String(e) };
     } finally {
       progress = null;
-      if (doc) await doc.destroy();
+      if (task) await task.destroy();
     }
   }
 

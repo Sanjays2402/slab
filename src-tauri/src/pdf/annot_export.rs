@@ -180,7 +180,9 @@ fn read_pdf_string(obj: Option<&Object>) -> String {
             // lossy UTF-8 which works for ASCII (the common case).
             if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
                 let pairs: Vec<u16> = bytes[2..]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| u16::from_be_bytes([c[0], c[1]]))
                     .collect();
                 String::from_utf16_lossy(&pairs)

@@ -252,6 +252,34 @@ mod tests {
     }
 
     #[test]
+    fn balanced_split_preserves_pages_and_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("ten.pdf");
+        make_n_page_pdf(&src, 10);
+        let original = std::fs::read(&src).unwrap();
+        let ranges = [
+            PageRange::new(1, 4).unwrap(),
+            PageRange::new(5, 7).unwrap(),
+            PageRange::new(8, 10).unwrap(),
+        ];
+        let outs = split_by_ranges(&src, &ranges, &tmp.path().join("parts")).unwrap();
+        let counts: Vec<u32> = outs.iter().map(|p| page_count(p).unwrap()).collect();
+        assert_eq!(counts, vec![4, 3, 3]);
+        for (i, out) in outs.iter().enumerate() {
+            let actual = Document::load(out)
+                .unwrap()
+                .extract_text(&(1..=counts[i]).collect::<Vec<_>>())
+                .unwrap();
+            let expected = Document::load(&src)
+                .unwrap()
+                .extract_text(&(ranges[i].start..=ranges[i].end).collect::<Vec<_>>())
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(std::fs::read(&src).unwrap(), original);
+    }
+
+    #[test]
     fn extract_pages_reorders() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("five.pdf");

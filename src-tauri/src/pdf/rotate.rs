@@ -138,10 +138,7 @@ mod tests {
     #[test]
     fn empty_pages_rotates_everything() {
         let (_dir, out) = run(180, &[]);
-        assert_eq!(
-            rotations_of(&out),
-            vec![Some(180), Some(180), Some(180)]
-        );
+        assert_eq!(rotations_of(&out), vec![Some(180), Some(180), Some(180)]);
     }
 
     #[test]
@@ -166,10 +163,7 @@ mod tests {
     #[test]
     fn negative_degrees_rotate_counter_clockwise() {
         let (_dir, out) = run(-90, &[]);
-        assert_eq!(
-            rotations_of(&out),
-            vec![Some(270), Some(270), Some(270)]
-        );
+        assert_eq!(rotations_of(&out), vec![Some(270), Some(270), Some(270)]);
     }
 
     #[test]

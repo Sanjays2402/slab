@@ -151,7 +151,7 @@
         console.error("Thumb render failed for page", i, e);
       }
     }
-    await doc.destroy();
+    await task.destroy();
     status = idle;
     progress = null;
   }

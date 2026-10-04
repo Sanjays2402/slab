@@ -555,8 +555,8 @@ fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(blob.len() / 4);
-    for chunk in blob.chunks_exact(4) {
-        let arr: [u8; 4] = chunk.try_into().unwrap();
+    for chunk in blob.as_chunks::<4>().0 {
+        let arr = *chunk;
         out.push(f32::from_le_bytes(arr));
     }
     out
@@ -1024,7 +1024,7 @@ mod tests {
         // would silently hide it — exactly what the inspector exists
         // to prevent.
         let dir = tempfile::tempdir().unwrap();
-        let mut idx = EmbeddingIndex::open_in_memory().unwrap();
+        let idx = EmbeddingIndex::open_in_memory().unwrap();
         let path = dir.path().join("solo.pdf");
         std::fs::write(&path, b"x").unwrap();
         let hash = EmbeddingIndex::hash_file(&path).unwrap();

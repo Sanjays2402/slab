@@ -728,7 +728,7 @@ mod tests {
         let mut db = LibraryDb::open_in_memory().unwrap();
         let f1 = seed_doc(&mut db, "/f1.pdf", OCR_STATE_SCANNED);
         let f2 = seed_doc(&mut db, "/f2.pdf", OCR_STATE_SCANNED);
-        let f3 = seed_doc(&mut db, "/f3.pdf", OCR_STATE_SCANNED);
+        let _f3 = seed_doc(&mut db, "/f3.pdf", OCR_STATE_SCANNED);
         db.set_doc_ocr_state(f1, OCR_STATE_FAILED).unwrap();
         db.set_doc_ocr_error(f1, Some("a")).unwrap();
         db.set_doc_ocr_state(f2, OCR_STATE_FAILED).unwrap();

@@ -48,7 +48,7 @@
     try {
       bytes = await writeMetadata(bytes, meta);
       // Push a blob download.
-      const blob = new Blob([bytes], { type: "application/pdf" });
+      const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
