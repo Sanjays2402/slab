@@ -2,6 +2,23 @@
 (function () {
   "use strict";
 
+  // Website appearance. Does not change desktop app settings.
+  var accents = document.querySelectorAll("[data-site-accent]");
+  function selectAccent(id) {
+    document.documentElement.dataset.accent = id;
+    accents.forEach(function (button) {
+      button.setAttribute("aria-pressed", button.dataset.siteAccent === id ? "true" : "false");
+    });
+  }
+  accents.forEach(function (button) {
+    button.addEventListener("click", function () {
+      var id = button.dataset.siteAccent;
+      selectAccent(id);
+      try { localStorage.setItem("slab.site.accent.v1", id); } catch (_) {}
+    });
+  });
+  selectAccent(document.documentElement.dataset.accent || "orange");
+
   // Mobile menu
   var menuBtn = document.getElementById("menuBtn");
   var mobileLinks = document.getElementById("mobileLinks");

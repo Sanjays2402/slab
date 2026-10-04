@@ -395,3 +395,53 @@ footer { border-top: 1px solid var(--line); padding: 2.5rem 0 3rem; }
 @media (prefers-reduced-motion: reduce) {
   .hero::before, .marquee-track { animation: none; }
 }
+
+/* Frosted studio surfaces with an adjustable, local-only accent. */
+:root { --accent: #ff7a59; --accent-soft: #ffb294; --violet: var(--accent); --vio: var(--accent); --blue: var(--accent-soft); --grad: linear-gradient(100deg, var(--accent), var(--accent-soft)); --muted: #bcc5d7; --dim: #99a6bd; --line: rgba(211, 226, 255, .17); }
+:root[data-accent="orange"] { --accent: #ff7a59; --accent-soft: #ffb294; }
+:root[data-accent="blue"] { --accent: #4f8cff; --accent-soft: #a4c1ff; }
+:root[data-accent="purple"] { --accent: #a780ff; --accent-soft: #d1bbff; }
+:root[data-accent="green"] { --accent: #3fc88c; --accent-soft: #a2e8c9; }
+:root[data-accent="pink"] { --accent: #ff6aa3; --accent-soft: #ffb8d1; }
+:root[data-accent="teal"] { --accent: #2dd4bf; --accent-soft: #91ece0; }
+:root[data-accent="amber"] { --accent: #fbbf24; --accent-soft: #fde398; }
+:root[data-accent="lime"] { --accent: #a3e635; --accent-soft: #d0f6a0; }
+:root[data-accent="slate"] { --accent: #a8b8d0; --accent-soft: #dce4f0; }
+body { background: radial-gradient(ellipse at 5% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 45%), radial-gradient(ellipse at 95% 30%, rgba(105, 124, 224, .13), transparent 45%), #0b1120; background-attachment: fixed; }
+.hero::before { background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 22%, transparent), transparent 75%); animation: none; }
+.nav { background: rgba(13, 21, 38, .84); }
+:is(.panel, .palette, .mock, .frame, .faq details, .appearance, .legal-card) { background: rgba(24, 34, 53, .76); border: 1px solid var(--line); box-shadow: 0 18px 60px rgba(0, 0, 0, .22), inset 0 1px 0 rgba(255, 255, 255, .06); -webkit-backdrop-filter: blur(16px) saturate(120%); backdrop-filter: blur(16px) saturate(120%); }
+.pill { color: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.palette-list li.on { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.brand .mark rect { fill: var(--accent); }
+.brand .mark rect:nth-child(2) { opacity: .8; }
+.brand .mark rect:nth-child(3) { opacity: .6; }
+.appearance { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 720px; margin: 30px auto; padding: 20px; border-radius: var(--radius); }
+.appearance p { margin: 0; font-size: .88rem; color: var(--muted); }
+.appearance strong { color: var(--ink); }
+.accent-options { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; border: 0; padding: 0; margin: 0; }
+.accent-choice { display: flex; align-items: center; gap: 7px; background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 7px 10px; font: inherit; font-size: .8rem; cursor: pointer; }
+.accent-choice span { width: 12px; height: 12px; border-radius: 50%; background: var(--swatch); }
+.accent-choice[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.accent-choice[aria-pressed="true"]::after { content: "✓"; }
+:where(a, button, input, summary):focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 4px; }
+.legal-card { padding: clamp(20px, 4vw, 40px); border-radius: var(--radius); text-align: left; }
+.legal-card h2 { margin: 28px 0 8px; font-size: 1.2rem; color: var(--ink); }
+.legal-card h2:first-child { margin-top: 0; }
+.legal-card :is(p, li) { color: var(--muted); }
+.legal-card a { color: var(--accent-soft); text-underline-offset: 3px; }
+.legal-nav { display: flex; flex-wrap: wrap; gap: 16px; padding: 20px 0; font-size: .9rem; }
+.legal-nav a[aria-current="page"] { color: var(--accent-soft); }
+.page .page-inner { max-width: 900px; }
+.page .fine { color: var(--dim); font-size: .85rem; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :is(.panel, .palette, .mock, .frame, .faq details, .appearance, .legal-card) { background: #182235; }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :is(.nav, .panel, .palette, .mock, .frame, .faq details, .appearance, .legal-card) { background: #182235; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+  body { background: #0b1120; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .reveal, .sticky-cta, .btn { transition: none; } }
+.foot nav { flex-wrap: wrap; max-width: 100%; }
+.mock { padding: 14px; border-radius: 32px; }
+.appearance { max-width: 860px; }
