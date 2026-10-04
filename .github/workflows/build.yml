@@ -54,9 +54,26 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --check
 
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test:split
+      - run: pnpm build
+
   bundle:
     name: bundle (${{ matrix.platform.name }})
-    needs: test
+    needs: [test, frontend]
     # Bundle only on main pushes / manual dispatch / PRs targeting main.
     # Feature branch pushes get test + clippy + fmt validation only — bundling
     # the full cross-platform matrix on every cron tick is wasteful CI minutes.
@@ -95,7 +112,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - name: Install JS deps

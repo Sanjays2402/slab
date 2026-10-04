@@ -82,10 +82,8 @@ pub fn merge_selected(
         documents_pages.extend(
             doc.get_pages()
                 .into_iter()
-                .filter(|(num, _)| keep.as_ref().map_or(true, |s| s.contains(num)))
-                .map(|(_, object_id)| {
-                    (object_id, doc.get_object(object_id).unwrap().to_owned())
-                }),
+                .filter(|(num, _)| keep.as_ref().is_none_or(|s| s.contains(num)))
+                .map(|(_, object_id)| (object_id, doc.get_object(object_id).unwrap().to_owned())),
         );
         documents_objects.extend(doc.objects.clone());
     }
@@ -171,7 +169,7 @@ pub fn merge_selected(
     document.max_id = document.objects.len() as u32;
     document.renumber_objects();
     document.compress();
-    document.save(out)?;
+    document.save(output)?;
 
     let final_count = documents_pages.len();
     Ok(final_count)
@@ -180,6 +178,7 @@ pub fn merge_selected(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::dictionary;
     use std::fs;
 
     #[test]

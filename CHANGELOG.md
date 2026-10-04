@@ -11,6 +11,21 @@ in this file too.
 
 ---
 
+
+## [3.40.0] — 2026-10-04 — Balanced Split
+
+### Added
+
+- Split PDFs into an exact number of balanced files, with every page included once.
+- Live filenames, page ranges, and counts for all split modes; validation before saving.
+- Frontend type checking, split-plan property tests, and static build checks in CI.
+
+### Fixed
+
+- Duplicate Tauri rotation commands and an undefined Merge output variable that blocked compilation.
+- PDF.js loading-task cleanup and typed-array PDF downloads after dependency updates.
+
+
 ## [3.27.0] — 2026-05-24 — Quill Auto-Detect
 
 ### Added

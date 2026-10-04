@@ -115,6 +115,8 @@ impl From<reqwest::Error> for AiError {
     }
 }
 
+// async_trait adds #[must_use] to futures, which are already must-use.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait AiProvider: Send + Sync {
     /// Run a chat completion. Buffered (non-streaming) for v0.10.0
