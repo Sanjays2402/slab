@@ -11,11 +11,13 @@ with on-device AI, watched-folder automation, and a self-hostable Docker server.
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
 
-<img src="docs/screenshots/00-hero-reader.png" alt="Slab Reader with a PDF open" width="800">
+<a href="https://github.com/Sanjays2402/slab/releases/latest"><img src="docs/screenshots/00-hero-reader.png" alt="Slab Reader with a PDF open" width="800"></a>
 
 **[Download Slab](https://github.com/Sanjays2402/slab/releases/latest)** ·
 [Website](https://sanjays2402.github.io/slab/) ·
 [Report an issue](https://github.com/Sanjays2402/slab/issues)
+
+**A quick first run:** open a PDF, press `⌘K`, and choose Merge, Sign, or Redact. The feature tour below previews the workflow.
 
 </div>
 
