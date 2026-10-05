@@ -10,7 +10,8 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
   import { idle, basename, type Status } from "$lib/types";
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
+  import { isInTauri } from "$lib/tauri";
 
   interface BatchEntry {
     input: string;
@@ -59,16 +60,19 @@
 
   let unlisten: UnlistenFn | null = null;
 
-  onMount(async () => {
-    unlisten = await listen<BatchProgress>(
-      "signet-pro/batch-progress",
-      (e) => {
-        progress = e.payload;
-      },
-    );
-  });
-  onDestroy(() => {
-    if (unlisten) unlisten();
+  onMount(() => {
+    if (!isInTauri()) return;
+    let active = true;
+    void listen<BatchProgress>("signet-pro/batch-progress", (e) => {
+      if (active) progress = e.payload;
+    }).then((stop) => {
+      // Navigation can unmount the panel while event registration is pending.
+      if (active) unlisten = stop;
+      else stop();
+    }).catch((e) => {
+      if (active) status = { kind: "err", msg: `Could not subscribe to signing progress: ${String(e)}` };
+    });
+    return () => { active = false; unlisten?.(); };
   });
 
   // ─── File pickers ──────────────────────────────────────────────

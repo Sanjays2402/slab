@@ -122,7 +122,7 @@
     </div>
     <div>
       <h4>Free forever</h4>
-      <p>Adobe charges $239/year. PDF Expert charges $79. Slab is free, open source, MIT-licensed.</p>
+      <p>Slab is free and open source under the GPL-3.0 license. Every browser tool is available without an account.</p>
     </div>
     <div>
       <h4>Same UI on every OS</h4>

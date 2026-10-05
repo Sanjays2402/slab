@@ -11,6 +11,7 @@
   import PagesListPanel from "$lib/panels/PagesListPanel.svelte";
   import EditTextPanel from "$lib/panels/EditTextPanel.svelte";
   import CompressPanel from "$lib/panels/CompressPanel.svelte";
+  import OcrPanel from "$lib/panels/OcrPanel.svelte";
   import ExtractPanel from "$lib/panels/ExtractPanel.svelte";
   import EncryptPanel from "$lib/panels/EncryptPanel.svelte";
   import WatermarkPanel from "$lib/panels/WatermarkPanel.svelte";
@@ -1217,6 +1218,8 @@
     <SanitizePanel />
   {:else if active === "repair"}
     <RepairPanel />
+  {:else if active === "ocr"}
+    <OcrPanel />
   {:else if active === "tables"}
     <TablesPanel />
   {:else if active === "diff"}

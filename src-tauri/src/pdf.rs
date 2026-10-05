@@ -117,8 +117,13 @@ pub fn atomic_save(target: &std::path::Path, bytes: &[u8]) -> Result<(), PdfErro
 
     let parent = target
         .parent()
-        .filter(|p| !p.as_os_str().is_empty())
         .ok_or_else(|| PdfError::Other("atomic_save target has no parent dir".into()))?;
+    // A bare filename is relative to the current working directory.
+    let parent = if parent.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        parent
+    };
     let stem = target.file_name().and_then(|s| s.to_str()).unwrap_or("out");
     let tmp = parent.join(format!(".slab-tmp.{}.{}", std::process::id(), stem));
 

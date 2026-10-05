@@ -4,7 +4,8 @@
 // AES (V4/V5) lands in a later release once Aes128CryptFilter Arc plumbing is wired.
 
 use crate::pdf::PdfError;
-use lopdf::{Document, EncryptionState, EncryptionVersion, Permissions};
+use lopdf::{Document, EncryptionState, EncryptionVersion, Object, Permissions};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// Encrypt `input` PDF with `password` (used as both owner + user) and write to `output`.
@@ -18,6 +19,21 @@ pub fn encrypt(input: &Path, output: &Path, password: &str) -> Result<(), PdfErr
     let mut doc = Document::load(input)?;
     if doc.is_encrypted() {
         return Err(PdfError::Other("input is already encrypted".into()));
+    }
+    // File IDs are optional in unencrypted PDFs (including pdf-lib output),
+    // but the V1 encryption key derivation requires the first trailer ID.
+    let has_id = doc
+        .trailer
+        .get(b"ID")
+        .ok()
+        .and_then(|id| id.as_array().ok())
+        .and_then(|ids| ids.first())
+        .and_then(|id| id.as_str().ok())
+        .is_some_and(|id| !id.is_empty());
+    if !has_id {
+        let id = Sha256::digest(std::fs::read(input)?);
+        let id = Object::String(id[..16].to_vec(), lopdf::StringFormat::Hexadecimal);
+        doc.trailer.set("ID", Object::Array(vec![id.clone(), id]));
     }
     let version = EncryptionVersion::V1 {
         document: &doc,
@@ -95,6 +111,24 @@ mod tests {
         assert!(probe.is_encrypted());
         let doc = Document::load_with_password(&enc, "slab").unwrap();
         assert_eq!(doc.get_pages().len(), 2);
+    }
+
+    #[test]
+    fn encrypt_pdf_without_trailer_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.pdf");
+        let enc = tmp.path().join("enc.pdf");
+        let dec = tmp.path().join("dec.pdf");
+        make_n_page_pdf(&src, 2);
+        let mut doc = Document::load(&src).unwrap();
+        doc.trailer.remove(b"ID");
+        doc.save(&src).unwrap();
+        assert!(Document::load(&src).unwrap().trailer.get(b"ID").is_err());
+        encrypt(&src, &enc, "slab").unwrap();
+        decrypt(&enc, &dec, "slab").unwrap();
+        let plain = Document::load(&dec).unwrap();
+        assert_eq!(plain.get_pages().len(), 2);
+        assert!(!plain.is_encrypted());
     }
 
     #[test]

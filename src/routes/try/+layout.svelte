@@ -26,7 +26,7 @@
     </a>
     <nav>
       <a href="/try/pages" data-tour="pages">Pages</a>
-      <a href="/try/reader" data-tour="reader">Reader</a>
+      <a href="/try/markdown" data-tour="markdown">Markdown</a>
       <a href="/try/metadata" data-tour="metadata">Metadata</a>
       <a class="cta" href="https://github.com/Sanjays2402/slab/releases/latest"
          rel="noopener" target="_blank">Download Slab →</a>

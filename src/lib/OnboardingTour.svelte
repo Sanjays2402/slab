@@ -38,7 +38,7 @@
       icon: "🍰",
       title: "Welcome to Slab",
       body:
-        "Slab is an Adobe-free PDF tool that runs entirely on your Mac. Nothing leaves your machine — every action, every AI call, every search.",
+        "Slab is a free PDF toolkit for your computer. Core PDF tools process files locally. Optional AI uses the provider you choose, including cloud providers.",
       hint: "Take 30 seconds for the tour.",
     },
     {

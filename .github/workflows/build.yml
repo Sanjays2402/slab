@@ -54,6 +54,28 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --check
 
+      - uses: pnpm/action-setup@v6
+        if: matrix.platform.name == 'linux-x64'
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        if: matrix.platform.name == 'linux-x64'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Test server and build native test binaries
+        if: matrix.platform.name == 'linux-x64'
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --features server --bin slab-server
+          cargo clippy --locked --features server --bin slab-server -- -D warnings
+          cargo build --locked --features server --bin slab --bin slab-server
+      - name: Native CLI and HTTP end-to-end tests
+        if: matrix.platform.name == 'linux-x64'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test:native
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-24.04
@@ -68,7 +90,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: pnpm test:split
+      - run: pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-test-traces
+          path: test-results/
+          retention-days: 7
       - run: pnpm build
 
   bundle:

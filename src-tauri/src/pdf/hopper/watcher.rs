@@ -142,6 +142,7 @@ pub struct HopperService {
     /// in-flight run is registered).
     pub backfill_cancels: Arc<Mutex<HashMap<i64, CancelFlag>>>,
     inner: Arc<Mutex<ServiceInner>>,
+    runtime: tokio::runtime::Handle,
 }
 
 struct ServiceInner {
@@ -173,7 +174,10 @@ impl HopperService {
         recipe_loader: RecipeLoader,
         emitter: Arc<dyn RunEmitter>,
     ) -> Self {
+        let runtime = tokio::runtime::Handle::try_current()
+            .unwrap_or_else(|_| tauri::async_runtime::handle().inner().clone());
         Self {
+            runtime,
             registry: Arc::new(Mutex::new(registry)),
             log: Arc::new(Mutex::new(log)),
             provider,
@@ -277,7 +281,7 @@ impl HopperService {
         // the pipeline. Spawned on the tokio runtime so its
         // `tokio::spawn` calls land on the correct executor.
         let svc = self.clone();
-        tokio::spawn(async move { svc.flush_loop().await });
+        self.runtime.spawn(async move { svc.flush_loop().await });
 
         inner.started = true;
         drop(inner);
@@ -365,7 +369,7 @@ impl HopperService {
             let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
             reg.get_rules(watch.id).unwrap_or_default()
         };
-        tokio::spawn(async move {
+        self.runtime.spawn(async move {
             // `process_one` is CPU/IO-bound and uses blocking sqlite,
             // so we move it onto a blocking-task thread.
             let outcome = tokio::task::spawn_blocking(move || {
@@ -590,6 +594,37 @@ mod tests {
         );
         // Calling reload before start must be safe + return Ok.
         assert!(svc.reload_watches().is_ok());
+    }
+
+    #[test]
+    fn startup_and_manual_dispatch_work_without_an_ambient_runtime() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("src");
+        let output = dir.path().join("out");
+        fs::create_dir_all(&source).unwrap();
+        let svc = {
+            let _guard = rt.enter();
+            make_service(&source, &output, &dir.path().join("hopper.db"))
+        };
+        // Tauri's synchronous setup and commands run outside Tokio's context.
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        svc.start().unwrap();
+        let id = svc.registry.lock().unwrap().list().unwrap()[0].id;
+        let pdf = source.join("Manual.pdf");
+        write_dummy_pdf(&pdf);
+        svc.run_now(id, pdf).unwrap();
+        rt.block_on(async {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !output.join("Manual.pdf").exists() && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+        assert!(output.join("Manual.pdf").exists());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

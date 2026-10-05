@@ -481,13 +481,7 @@
 
   // Pulse animation trigger: when continueCandidate changes (i.e. on resume
   // landing), the progress bar pulses once to draw the eye.
-  let heroKey = $state(0);
-  $effect(() => {
-    // touch the path so $derived reruns
-    const _path = continueCandidate?.path;
-    heroKey++;
-    void _path;
-  });
+  const heroKey = $derived(continueCandidate?.path ?? "");
 </script>
 
 <!-- Monochrome glyphs (Slab chrome is icon-only, never emoji). -->
