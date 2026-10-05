@@ -1,15 +1,22 @@
 <div align="center">
 
-# Slab 🍰
+<img src="src-tauri/icons/icon.png" alt="Slab logo" width="112" height="112">
 
-**The PDF toolkit your files never leave.**
+# Slab
 
-A fast, free, open-source PDF studio for macOS, Windows, and Linux —
-with on-device AI, watched-folder automation, and a self-hostable Docker server.
+**One place for every PDF.**
+
+A fast, free, open-source PDF studio for macOS, Windows, and Linux.
+Read, organize, convert, edit, and automate your documents with local core tools,
+optional AI assistance, and a self-hostable Docker server.
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
+
+<img src="docs/assets/slab-overview.png" alt="Slab feature overview: organize PDFs with merge and split; convert files and OCR scans; read, search and compare; sign, redact and watermark; automate watched folders; and use optional AI assistance. Available for macOS, Windows and Linux, with a CLI and self-hosted server." width="1000">
+
+Core PDF tools run locally. AI uses your configured local or cloud provider; OCR requires Poppler and Tesseract.
 
 <a href="https://github.com/Sanjays2402/slab/releases/latest"><img src="docs/screenshots/00-hero-reader.png" alt="Slab Reader with a PDF open" width="800"></a>
 
@@ -27,14 +34,14 @@ with on-device AI, watched-folder automation, and a self-hostable Docker server.
 
 | | |
 |---|---|
-| 🔒 **Local-first** | Your documents never touch a server. Air-gap a laptop and Slab still works — AI included. |
+| 🔒 **Local-first** | Core PDF tools run on your device. AI can also run locally with Ollama; cloud processing depends on the provider you configure. |
 | ⚡ **Fast** | Native Rust core. A hundred-file merge finishes before your coffee does. |
 | 🪶 **Tiny** | ~15–25 MB installers. No Electron bloat. |
 | 💸 **Honest** | Free forever, GPL-3.0. No accounts, no telemetry, no "Pro" tier. |
 
 ## Take the tour
 
-**Beacon — AI that can't reach the internet.** Chat with citations, semantic search across your library, one-click PII redaction, summaries, study flashcards, glossary, voice — all on-device. Ollama by default; any OpenAI-compatible endpoint is a config away.
+**Beacon — AI with your choice of provider.** Chat with citations, semantic search across your library, one-click PII redaction, summaries, study flashcards, glossary, and voice. Use Ollama for on-device AI, or configure an OpenAI-compatible endpoint.
 
 ![Beacon: chat, semantic search, PII redaction](docs/screenshots/showcase-ai.png)
 
