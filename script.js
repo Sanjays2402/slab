@@ -19,6 +19,48 @@
   });
   selectAccent(document.documentElement.dataset.accent || "orange");
 
+  // Enhance the static feature showcase with task filters and search.
+  var featureControls = document.getElementById("featureControls");
+  var featureSearch = document.getElementById("featureSearch");
+  var featureCards = Array.from(document.querySelectorAll("[data-feature-category]"));
+  var featureFilters = document.querySelectorAll("[data-feature-filter]");
+  var featureCount = document.getElementById("featureCount");
+  var featureEmpty = document.getElementById("featureEmpty");
+  var featureReset = document.getElementById("featureReset");
+  if (featureControls && featureSearch && featureCount && featureEmpty && featureReset && featureCards.length) {
+    var featureCategory = "all";
+    function filterFeatures() {
+      var words = featureSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      var count = 0;
+      featureCards.forEach(function (card) {
+        var content = card.textContent.toLowerCase();
+        var matches = (featureCategory === "all" || card.dataset.featureCategory === featureCategory) && words.every(function (word) { return content.indexOf(word) !== -1; });
+        card.hidden = !matches;
+        if (matches) count++;
+      });
+      featureFilters.forEach(function (button) {
+        button.setAttribute("aria-pressed", String(button.dataset.featureFilter === featureCategory));
+      });
+      featureCount.textContent = count + (count === 1 ? " feature" : " features") + " shown";
+      featureEmpty.hidden = count > 0;
+    }
+    featureFilters.forEach(function (button) {
+      button.addEventListener("click", function () {
+        featureCategory = button.dataset.featureFilter;
+        filterFeatures();
+      });
+    });
+    featureSearch.addEventListener("input", filterFeatures);
+    featureReset.addEventListener("click", function () {
+      featureSearch.value = "";
+      featureCategory = "all";
+      filterFeatures();
+      featureSearch.focus();
+    });
+    filterFeatures();
+    featureControls.hidden = false;
+  }
+
   // Mobile menu
   var menuBtn = document.getElementById("menuBtn");
   var mobileLinks = document.getElementById("mobileLinks");
@@ -32,6 +74,7 @@
       a.addEventListener("click", function () {
         mobileLinks.classList.remove("open");
         menuBtn.setAttribute("aria-expanded", "false");
+        menuBtn.setAttribute("aria-label", "Open menu");
       });
     });
   }

@@ -38,10 +38,11 @@
         <span>Slab</span>
       </a>
       <nav class="links" aria-label="Primary">
-        <a href="#toolkit">Toolkit</a>
+        <a href="#features">Features</a>
         <a href="#beacon">Beacon</a>
         <a href="#hopper">Hopper</a>
         <a href="#server">Server</a>
+        <a href="#gallery">Screenshots</a>
         <a href="#download">Download</a>
       </nav>
       <div class="nav-cta">
@@ -52,10 +53,11 @@
       </div>
     </div>
     <nav class="mobile-links" id="mobileLinks" aria-label="Mobile">
-      <a href="#toolkit">Toolkit</a>
+      <a href="#features">Features</a>
       <a href="#beacon">Beacon</a>
       <a href="#hopper">Hopper</a>
       <a href="#server">Server</a>
+      <a href="#gallery">Screenshots</a>
       <a href="#download">Download</a>
     </nav>
   </header>
@@ -125,6 +127,128 @@
         <div class="toolwall reveal">
           <span>Merge</span><span>Split</span><span>Compress</span><span>OCR</span><span>Redact</span><span>Sign</span><span>Encrypt</span><span>Watermark</span><span>Flatten</span><span>Sanitize</span><span>Bates numbering</span><span>N-up</span><span>Diff</span><span>Crop</span><span>Extract text</span><span>Extract tables</span><span>Grayscale</span><span>Page labels</span><span>Headers &amp; footers</span><span>Repair</span><span>Markdown → PDF</span><span>Office → PDF</span><span>ePub → PDF</span><span>Edit text</span><span>Presenter mode</span><span>Vim mode</span><span>Library &amp; tags</span><span>+ more</span>
         </div>
+      </div>
+    </section>
+
+    <!-- FEATURE EXPLORER: all cards remain readable without JavaScript. -->
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <p class="sec-label reveal">Built for the whole workflow</p>
+        <h2 class="sec-title reveal" id="features-title">What do you want<br>to <em class="grad">do with your PDF?</em></h2>
+        <p class="sec-sub reveal">From a scanned receipt to a print-ready report. Explore eighteen workflows already available in Slab.</p>
+        <div class="feature-controls" id="featureControls" hidden>
+          <div class="feature-search">
+            <label for="featureSearch">Find a feature</label>
+            <input id="featureSearch" type="search" placeholder="Try OCR, Word, signatures…" autocomplete="off" aria-controls="featureGrid">
+          </div>
+          <div class="feature-filters" role="group" aria-label="Filter features by task">
+            <button type="button" data-feature-filter="all" aria-pressed="true" aria-controls="featureGrid">All features</button>
+            <button type="button" data-feature-filter="organize" aria-pressed="false" aria-controls="featureGrid">Organize</button>
+            <button type="button" data-feature-filter="convert" aria-pressed="false" aria-controls="featureGrid">Convert</button>
+            <button type="button" data-feature-filter="protect" aria-pressed="false" aria-controls="featureGrid">Protect</button>
+            <button type="button" data-feature-filter="automate" aria-pressed="false" aria-controls="featureGrid">Automate</button>
+            <button type="button" data-feature-filter="review" aria-pressed="false" aria-controls="featureGrid">Review</button>
+            <button type="button" data-feature-filter="create" aria-pressed="false" aria-controls="featureGrid">Create</button>
+          </div>
+          <p class="feature-count" id="featureCount" role="status" aria-live="polite" aria-atomic="true">18 features</p>
+        </div>
+        <div class="feature-grid" id="featureGrid">
+          <article class="panel feature-card" data-feature-category="organize">
+            <span class="feature-category">Organize</span><h3>Bring PDFs together</h3>
+            <p>Merge documents in your chosen order, select pages from each file, and save one combined PDF.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Merge</li><li>Insert</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="organize">
+            <span class="feature-category">Organize</span><h3>Split without the page math</h3>
+            <p>Choose an exact number of balanced files, custom ranges, or every-N-page chunks. Preview the outputs before saving.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Split</li><li>Split by Chapter</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="organize">
+            <span class="feature-category">Organize</span><h3>Keep pages and files in order</h3>
+            <p>Reorder, rotate, delete, or duplicate pages. Use the library, folders, and tags to find your documents again.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Pages</li><li>Library</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="convert">
+            <span class="feature-category">Convert</span><h3>Take it to Word or Excel</h3>
+            <p>Export PDF content to an editable Word document, or turn detected tables into an Excel workbook or CSV.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Reflow</li><li>Tabulate</li><li>Tables → CSV</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="convert">
+            <span class="feature-category">Convert</span><h3>Read beyond the PDF</h3>
+            <p>Export to EPUB for your e-reader, or extract content as Markdown and HTML. Turn Markdown back into a PDF, too.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Bind</li><li>Markdown</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="convert">
+            <span class="feature-category">Convert</span><h3>Make scans searchable</h3>
+            <p>Run OCR on scanned pages to add searchable text. Extract text from documents without retyping them.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>OCR</li><li>Extract</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="protect">
+            <span class="feature-category">Protect</span><h3>Remove sensitive content</h3>
+            <p>Redact content, detect common personal information, and sanitize hidden metadata before sharing a document.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Redact</li><li>Auto-Redact</li><li>Sanitize</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="protect">
+            <span class="feature-category">Protect</span><h3>Sign one file or a whole batch</h3>
+            <p>Place a visible signature, or use Signet for certificate-based digital signatures and offline verification.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Sign</li><li>Signet</li><li>Batch Sign</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="protect">
+            <span class="feature-category">Protect</span><h3>Control how you share</h3>
+            <p>Add password protection and permissions. Watermark copies and flatten form fields when preparing a final version.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Encrypt</li><li>Watermark</li><li>Flatten</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="automate">
+            <span class="feature-category">Automate</span><h3>Let folders do the filing</h3>
+            <p>Watch a folder and route incoming PDFs by filename, contents, page count, or size. Preview matches before enabling a rule.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Hopper</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="automate">
+            <span class="feature-category">Automate</span><h3>Save your routine as a recipe</h3>
+            <p>Chain repeated PDF operations into an Atelier recipe, then reuse the same sequence across your documents.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Atelier</li><li>Recipes</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="automate">
+            <span class="feature-category">Automate</span><h3>One template, many filled PDFs</h3>
+            <p>Map CSV columns to a fillable PDF template and generate a personalized copy for each row.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Quill Batch</li><li>CSV mail merge</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="review">
+            <span class="feature-category">Review</span><h3>See what changed</h3>
+            <p>Compare document versions with text and visual comparisons. Use a three-way comparison when revisions share a common original.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Diff</li><li>Compare</li><li>Compare 3-way</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="review">
+            <span class="feature-category">Review</span><h3>Prepare for long-term storage</h3>
+            <p>Convert to PDF/A and inspect archival compliance with a per-rule report, including warnings that need attention.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Archive</li><li>Loupe</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="review">
+            <span class="feature-category">Review</span><h3>Get ready for the print shop</h3>
+            <p>Use Press to export PDF/X-4 with a print output intent. Add Bates numbers and page labels to organize a large set.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Press</li><li>Bates</li><li>Page Labels</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="create">
+            <span class="feature-category">Create</span><h3>Build a form people can fill</h3>
+            <p>Fill existing PDF forms, author fields in Quill Designer, or use Auto-Detect to propose fields for review.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Forms</li><li>Quill Designer</li><li>Quill Auto-Detect</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="create">
+            <span class="feature-category">Create</span><h3>Give every page a finishing touch</h3>
+            <p>Crop margins, add headers and footers, and arrange multiple pages on a sheet with N-up layouts.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Crop</li><li>Header/Footer</li><li>N-up</li></ul>
+          </article>
+          <article class="panel feature-card" data-feature-category="create">
+            <span class="feature-category">Create</span><h3>Present a deck. Read in peace.</h3>
+            <p>Present your PDF with Slides, or settle into Theater&rsquo;s distraction-free workspace for long-form reading.</p>
+            <ul class="feature-tools" aria-label="Tools"><li>Slides</li><li>Theater</li></ul>
+          </article>
+        </div>
+        <div class="feature-empty panel" id="featureEmpty" hidden>
+          <h3>No matching features</h3><p>Try a different phrase or browse all tasks.</p>
+          <button class="btn outline" type="button" id="featureReset">Show all features</button>
+        </div>
+        <div class="feature-footer"><p>All of these tools run in the desktop app.</p><a class="btn outline" href="#download">Get Slab &rarr;</a></div>
       </div>
     </section>
 
@@ -229,6 +353,27 @@
       </div>
     </section>
 
+    <!-- MAIN-BRANCH PREVIEW -->
+    <section class="section" id="coming-next">
+      <div class="wrap">
+        <p class="sec-label reveal">Coming in the next release</p>
+        <h2 class="sec-title reveal">A calmer workspace.<br>A little more <em class="grad">you.</em></h2>
+        <div class="split">
+          <div class="reveal">
+            <p class="sec-sub">The new Glass appearance pairs translucent panels with nine accent colors. Choose a warm Orange, a quiet Slate, or a fresh Teal, with comfortable and compact spacing.</p>
+            <ul class="chips"><li>Glass theme</li><li>Nine accent colors</li><li>Keyboard-friendly settings</li></ul>
+            <p class="sec-sub">Split and Merge also get clearer output previews, saved-file confirmations, and a <strong>Show in folder</strong> action to take you straight to the results.</p>
+            <p class="preview-note">These improvements are merged into the main branch. The current download is v3.40.0; this preview shows what is coming next.</p>
+            <a class="btn outline" href="https://github.com/Sanjays2402/slab#glass-theme--make-it-yours">Explore the preview &rarr;</a>
+          </div>
+          <figure class="frame reveal">
+            <a href="screenshots/glass-settings.png" aria-label="View the Glass settings screenshot at full size"><img src="screenshots/glass-settings.png" alt="Slab Settings with Glass appearance, Teal accent, and all nine color choices" loading="lazy" width="1100" height="1000"></a>
+            <figcaption>Glass + Teal — a preview of the next release.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
     <!-- GALLERY -->
     <section class="section" id="gallery">
       <div class="wrap">
@@ -239,6 +384,8 @@
           <figure class="frame reveal"><img src="screenshots/39-command-palette.png" alt="Slab command palette" loading="lazy"><figcaption><kbd>⌘K</kbd> — every tool, a few keystrokes away</figcaption></figure>
           <figure class="frame reveal"><img src="screenshots/19-sign.png" alt="Signing a PDF in Slab" loading="lazy"><figcaption>Sign — on your machine, not in a cloud</figcaption></figure>
           <figure class="frame reveal"><img src="screenshots/23-redact.png" alt="Redacting a PDF in Slab" loading="lazy"><figcaption>Redact — true redaction, plus auto PII detection</figcaption></figure>
+          <figure class="frame workflow-frame reveal"><a href="screenshots/split-output-preview.png" aria-label="View the Split output preview screenshot at full size"><img src="screenshots/split-output-preview.png" alt="Split PDF showing three output filenames, page ranges and counts, and a saved-files confirmation" loading="lazy" width="390" height="1000"></a><figcaption>Next release preview — review every Split output and reveal saved PDFs.</figcaption></figure>
+          <figure class="frame workflow-frame reveal"><a href="screenshots/merge-saved-files.png" aria-label="View the Merge results screenshot at full size"><img src="screenshots/merge-saved-files.png" alt="Merge PDFs with ordered input files, page selection fields, and a Show in folder action after saving" loading="lazy" width="390" height="1000"></a><figcaption>Next release preview — arrange Merge inputs and find the saved result.</figcaption></figure>
         </div>
       </div>
     </section>
