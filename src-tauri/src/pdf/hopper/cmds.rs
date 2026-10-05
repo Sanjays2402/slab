@@ -1269,13 +1269,11 @@ pub fn build_default_service(app: &tauri::AppHandle) -> Result<HopperService, St
 
     // Title provider — Ollama by default; falls back gracefully if
     // the daemon isn't running.
-    let provider: Arc<dyn TitleProvider> = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            let ai: Arc<dyn AiProvider> = Arc::new(crate::ai::ollama::OllamaProvider::new());
-            Arc::new(OllamaTitleProvider::new(ai, handle))
-        }
-        Err(_) => Arc::new(super::pipeline::NullProvider),
-    };
+    let ai: Arc<dyn AiProvider> = Arc::new(crate::ai::ollama::OllamaProvider::new());
+    let provider: Arc<dyn TitleProvider> = Arc::new(OllamaTitleProvider::new(
+        ai,
+        tauri::async_runtime::handle().inner().clone(),
+    ));
 
     let emitter: Arc<dyn RunEmitter> = Arc::new(app.clone());
 
