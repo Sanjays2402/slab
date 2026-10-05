@@ -270,7 +270,7 @@
   <p class="subtitle">
     Drop a resume on a job application, last year's tax form on this year's, or
     a contact card on any AcroForm — Slab's local AI maps source → fields and
-    you accept/reject row-by-row. Nothing leaves your machine.
+    you accept/reject row-by-row. Processing follows your configured AI provider.
   </p>
 </header>
 

@@ -72,7 +72,7 @@
 
 <header class="content-header">
   <h1>Encrypt & Unlock</h1>
-  <p class="subtitle">Add or remove a password. RC4-40 (universal compatibility).</p>
+  <p class="subtitle">Add or remove a password with legacy RC4-40 encryption. This compatibility mode is unsuitable for sensitive documents.</p>
 </header>
 
 <section class="panel">

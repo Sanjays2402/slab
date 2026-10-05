@@ -255,7 +255,7 @@
   "settings.ai.apiKeyEnv": "API key env var",
   "settings.ai.apiKeyEnvDesc": "Name of the environment variable holding your key. We never store the key itself.",
   "quill.smartfill.heroTitle": "Drop a source. Drop a form. Magic.",
-  "quill.smartfill.heroSub": "Slab's local AI reads the source, finds matching fields on the target form, and proposes a fill you can review row-by-row. Nothing leaves your machine.",
+  "quill.smartfill.heroSub": "Your configured AI reads the source, finds matching fields on the target form, and proposes a fill you can review row-by-row. Processing follows your AI provider settings.",
   "quill.smartfill.example.resume": "Resume.pdf",
   "quill.smartfill.example.jobApp": "Job application.pdf",
   "quill.smartfill.example.lastW2": "Last year's W-2.pdf",
