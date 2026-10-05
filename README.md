@@ -55,6 +55,25 @@ A fifth appearance option for emissive displays: true-black `#000000` surfaces, 
 | ![Toolbox in the OLED theme](docs/screenshots/oled-home.png) | ![Command palette switching to the OLED theme](docs/screenshots/oled-palette.png) |
 | ![Beacon in the OLED theme](docs/screenshots/oled-beacon.png) | ![Settings with the OLED theme selected](docs/screenshots/oled-settings.png) |
 
+## Glass theme — make it yours
+
+Translucent panels over a softly tinted background, with nine accent colors: Orange, Cobalt, Iris, Emerald, Coral, Teal, Amber, Lime, and Slate. Choose Glass and your accent in Settings.
+
+These screenshots show the current `main` branch. The Glass theme and PDF workflow polish will ship in the next release.
+
+<img src="docs/screenshots/glass-settings.png" alt="Slab Settings with the Glass theme, Teal accent, and all nine accent colors visible" width="800">
+
+<details>
+<summary><strong>More PDF workflow screenshots</strong> — Split previews and Merge results</summary>
+
+The compact panels keep page ranges, output filenames, and saved-file actions easy to reach.
+
+| Split — preview every output | Merge — arrange and save |
+|---|---|
+| <img src="docs/screenshots/split-output-preview.png" alt="Split PDF with three page ranges, output filenames and page counts, and a saved-files confirmation" width="390"> | <img src="docs/screenshots/merge-saved-files.png" alt="Merge PDFs with ordered input files, page selection fields, and a Show in folder action after saving" width="390"> |
+
+</details>
+
 ## Hopper — folders that file themselves
 
 Point Hopper at a folder — `~/Downloads`, a scanner, a shared inbox — and attach a recipe. New PDFs get flattened, OCR'd, redacted, watermarked, renamed by Beacon, and filed away, with a live log streaming every run.
