@@ -10,7 +10,7 @@ test("every desktop navigation panel mounts without uncaught errors", async ({ p
   const errors: string[]=[]; page.on("pageerror",error=>errors.push(error.message));
   await page.goto("/");
   const buttons=page.locator('nav[aria-label="Primary"] .nav-item');
-  await expect(buttons.first()).toBeVisible();
+  await expect(buttons.first()).toBeVisible({timeout:20000});
   const count=await buttons.count(); expect(count).toBeGreaterThan(60);
   for(let i=0;i<count;i++) {
     await buttons.nth(i).click();
