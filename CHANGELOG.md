@@ -12,6 +12,14 @@ in this file too.
 ---
 
 
+## [Unreleased]
+
+### Added
+
+- Split PDFs into odd- and even-page files, with filename and page-count previews.
+- `slab split-odd-even <file> <out-dir>` for the same workflow from the CLI.
+- One-page inputs produce only the odd-pages file; page order and the source are preserved.
+
 ## [3.40.0] — 2026-10-04 — Balanced Split
 
 ### Added

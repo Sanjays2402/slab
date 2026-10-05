@@ -43,7 +43,7 @@ test("Merge rejects malformed ranges before opening the save dialog", async ({ p
       if(cmd==="plugin:dialog|save") { state.saveCalls++; return null; }
       if(cmd==="slab_ui_config_read") return {kind:"ok",value:{onboarded:true}};
       if(cmd==="slab_first_launch_probe") return {kind:"ok",value:{should_prompt:false}};
-      if(cmd.includes("list")) return [];
+      if(cmd.startsWith("slab_plugins_active_") || cmd.includes("list")) return [];
       return null;
     },transformCallback:()=>0,unregisterCallback:()=>{}};
   });
@@ -102,7 +102,7 @@ test("OCR validates language and handles save cancellation, success and backend 
       if(cmd==="slab_ocr") { state.ocrCalls.push(args); return state.ocrError ? {kind:"err",message:"Tesseract language not installed"} : {kind:"ok",value:{pages:2}}; }
       if(cmd==="slab_ui_config_read") return {kind:"ok",value:{onboarded:true}};
       if(cmd==="slab_first_launch_probe") return {kind:"ok",value:{should_prompt:false}};
-      if(cmd.includes("list")) return [];
+      if(cmd.startsWith("slab_plugins_active_") || cmd.includes("list")) return [];
       return null;
     },transformCallback:()=>0,unregisterCallback:()=>{}};
   });
@@ -133,7 +133,7 @@ test("balanced Split previews and submits every page once, with recoverable save
       if(cmd==="slab_split_ranges") { state.splitCalls.push(args); return {kind:"ok",value:["/tmp/output/report-1-1-3.pdf","/tmp/output/report-2-4-5.pdf","/tmp/output/report-3-6-7.pdf"]}; }
       if(cmd==="slab_ui_config_read") return {kind:"ok",value:{onboarded:true}};
       if(cmd==="slab_first_launch_probe") return {kind:"ok",value:{should_prompt:false}};
-      if(cmd.includes("list")) return [];
+      if(cmd.startsWith("slab_plugins_active_") || cmd.includes("list")) return [];
       return null;
     },transformCallback:()=>0,unregisterCallback:()=>{}};
   });
@@ -159,3 +159,50 @@ test("browser demo navigation fits mobile screens", async ({ page }) => {
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`overflow at ${width}`).toBe(true);
   }
 });
+
+for (const total of [7, 6, 1]) {
+  test(`odd/even Split previews ${total} pages and handles cancellation, saving and failure`, async ({ page }) => {
+    const errors: string[]=[]; page.on("pageerror", error=>errors.push(error.message));
+    await page.addInitScript(({ total }) => {
+      const state=window as unknown as {__TAURI_INTERNALS__:unknown; parityCalls:unknown[]; folder:string|null; fail:boolean};
+      state.parityCalls=[]; state.folder=null; state.fail=false;
+      state.__TAURI_INTERNALS__={invoke:async (cmd:string,args:any) => {
+        if(cmd==="plugin:dialog|open") return args.options.directory ? state.folder : "/tmp/report.pdf";
+        if(cmd==="slab_page_count") return {kind:"ok",value:total};
+        if(cmd==="slab_split_odd_even") {
+          state.parityCalls.push(args);
+          return state.fail ? {kind:"err",message:"Output folder is read-only"} : {kind:"ok",value:total===1 ? ["/tmp/output/report-odd.pdf"] : ["/tmp/output/report-odd.pdf","/tmp/output/report-even.pdf"]};
+        }
+        if(cmd==="slab_split_ranges") throw new Error("Odd/even mode must use the grouped split command");
+        if(cmd==="slab_ui_config_read") return {kind:"ok",value:{onboarded:true}};
+        if(cmd==="slab_first_launch_probe") return {kind:"ok",value:{should_prompt:false}};
+        if(cmd.startsWith("slab_plugins_active_") || cmd.includes("list")) return [];
+        return null;
+      },transformCallback:()=>0,unregisterCallback:()=>{}};
+    }, { total });
+    await page.goto("/");
+    await page.locator('nav[aria-label="Primary"]').getByRole("button",{name:"Split",exact:true}).click();
+    await page.getByRole("button",{name:/Choose a PDF/}).click();
+    const tab=page.getByRole("button",{name:"Odd / even",exact:true});
+    await tab.click(); await expect(tab).toHaveAttribute("aria-pressed","true");
+    const count=total===1 ? 1 : 2;
+    await expect(page.locator(".split-preview ol li")).toHaveCount(count);
+    await expect(page.locator(".preview-summary")).toContainText(`${total} of ${total} pages`);
+    await expect(page.locator(".split-preview ol li").first()).toContainText(`report-odd.pdf`);
+    await expect(page.locator(".split-preview ol li").first()).toContainText(`${Math.ceil(total/2)} page`);
+    if(total===7) await expect(page.locator(".split-preview ol li").first()).toContainText("1, 3, …, 7");
+    if(total>1) await expect(page.locator(".split-preview ol li").last()).toContainText(`report-even.pdf`);
+    const run=page.getByRole("button",{name:`Create ${count} PDF${count===1 ? "" : "s"}`,exact:true});
+    await run.click(); await expect(run).toBeEnabled();
+    expect(await page.evaluate(()=>(window as unknown as {parityCalls:unknown[]}).parityCalls)).toEqual([]);
+    await page.evaluate(()=>{(window as unknown as {folder:string}).folder="/tmp/output";});
+    await run.click(); await expect(page.locator(".saved-files")).toContainText(`${count} PDF${count===1 ? "" : "s"} saved`);
+    expect(await page.evaluate(()=>(window as unknown as {parityCalls:unknown[]}).parityCalls)).toEqual([{input:"/tmp/report.pdf",outDir:"/tmp/output"}]);
+    await page.evaluate(()=>{(window as unknown as {fail:boolean}).fail=true;});
+    await run.click(); await expect(page.locator(".status.err")).toContainText("read-only");
+    await expect(page.locator(".saved-files")).toHaveCount(0); await expect(run).toBeEnabled();
+    await page.setViewportSize({width:800,height:700});
+    expect(await page.locator("main.content").evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}

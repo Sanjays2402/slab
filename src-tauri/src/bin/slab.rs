@@ -45,7 +45,7 @@ use slab_lib::pdf::repair::repair as do_repair;
 use slab_lib::pdf::reverse::reverse_pages;
 use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
 use slab_lib::pdf::scan_audit::{audit as scan_audit, PageClassification, Recommendation};
-use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, PageRange};
+use slab_lib::pdf::split::{page_count, split_by_ranges, split_every, split_odd_even, PageRange};
 use slab_lib::pdf::table_extract::{extract_tables, to_csv as table_to_csv, TableOpts};
 use slab_lib::pdf::PdfError;
 use std::path::{Path, PathBuf};
@@ -74,6 +74,7 @@ fn main() -> ExitCode {
         "merge" => cmd_merge(rest),
         "split-every" => cmd_split_every(rest),
         "split-ranges" => cmd_split_ranges(rest),
+        "split-odd-even" => cmd_split_odd_even(rest),
         "rotate" => cmd_rotate(rest),
         "delete-pages" => cmd_delete_pages(rest),
         "insert-image" => cmd_insert_image(rest),
@@ -140,6 +141,7 @@ Commands:
   merge <in1> <in2> ... -o <out>     Concatenate PDFs
   split-every <file> <n> <out-dir>   Split into N-page chunks
   split-ranges <file> <r1,r2..> <dir>   e.g. 1-3,5,7-9
+  split-odd-even <file> <out-dir>    Separate odd and even pages
   rotate <file> <pages> <deg> -o <out>  pages comma-list (1-based), deg ∈ 90/180/270; --permanent bakes into geometry
   delete-pages <file> <pages> -o <out>
   insert-image <file> <image> --at <n> [--dpi 72] -o <out>  PNG/JPG → single PDF page (closes #26)
@@ -322,6 +324,15 @@ fn cmd_split_every(args: &[String]) -> Result<(), CliError> {
     let files = split_every(&input, n, &out_dir)?;
     for f in &files {
         println!("{}", f.display());
+    }
+    Ok(())
+}
+
+fn cmd_split_odd_even(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let out_dir = require_arg(args, 1, "<out-dir>")?;
+    for file in split_odd_even(&input, &out_dir)? {
+        println!("{}", file.display());
     }
     Ok(())
 }

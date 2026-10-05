@@ -35,6 +35,20 @@ try {
   const chunks=readdirSync(join(dir,"chunks")).filter(n=>n.endsWith(".pdf")).sort(); assert.equal(chunks.length,2);
   for(let i=0;i<chunks.length;i++) await pdf(join("chunks",chunks[i]),[2,1][i]);
   run(["split-ranges","input.pdf","1,2-3",join(dir,"ranges")]); assert.equal(readdirSync(join(dir,"ranges")).length,2);
+  run(["split-odd-even","input.pdf",join(dir,"parity")]);
+  assert.deepEqual(readdirSync(join(dir,"parity")).sort(),["input-even.pdf","input-odd.pdf"]);
+  const odd=await pdf(join("parity","input-odd.pdf"),2), even=await pdf(join("parity","input-even.pdf"),1);
+  assert.deepEqual(odd.getPages().map(p=>p.getWidth()),[300,320]);
+  assert.equal(even.getPage(0).getWidth(),310); checks+=2;
+  const oddText=run(["extract-text",join("parity","input-odd.pdf")]);
+  assert.match(oddText,/Fixture page 1/); assert.match(oddText,/Fixture page 3/); assert.doesNotMatch(oddText,/Fixture page 2/);
+  const evenText=run(["extract-text",join("parity","input-even.pdf")]);
+  assert.match(evenText,/Fixture page 2/); assert.doesNotMatch(evenText,/Fixture page [13]/);
+  writeFileSync(join(dir,"single.pdf"),await fixture(1));
+  run(["split-odd-even","single.pdf",join(dir,"single-parity")]);
+  assert.deepEqual(readdirSync(join(dir,"single-parity")),["single-odd.pdf"]);
+  await pdf(join("single-parity","single-odd.pdf"),1);
+  run(["split-odd-even","missing.pdf",join(dir,"missing-parity")],1);
   run(["rotate","input.pdf","1","90","-o",join(dir,"rotated.pdf")]); assert.equal((await pdf("rotated.pdf",3)).getPage(0).getRotation().angle,90);
   // Relative output paths must be supported just like absolute ones.
   run(["rotate","input.pdf","1","90","--permanent","-o","permanent.pdf"]); await pdf("permanent.pdf",3);
@@ -91,5 +105,6 @@ try {
     const unicode=await post("rotate",{pages:"1",degrees:"90"},[{bytes:a,name:'résumé "final".pdf'}]);
     assert.match(unicode.headers.get("content-disposition"),/filename\*=UTF-8''/);
   }
-  console.log(`Native end-to-end: ${checks} checks passed across CLI PDF round-trips and HTTP API operations.`);
+  const coverage=process.env.SLAB_SKIP_SERVER==="1" ? "CLI PDF round-trips" : "CLI PDF round-trips and HTTP API operations";
+  console.log(`Native end-to-end: ${checks} checks passed across ${coverage}.`);
 } finally { if(server && server.exitCode === null) { const stopped=new Promise(r=>server.once("exit",r)); server.kill(); await stopped; } rmSync(dir,{recursive:true,force:true}); }
