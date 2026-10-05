@@ -25,6 +25,26 @@ Core tools run locally; optional AI uses your configured provider.
 
 ---
 
+## Features
+
+| Feature | What you can do |
+|---|---|
+| Merge & split | Combine PDFs, split by page ranges or chapters, or divide into balanced files. |
+| Arrange pages | Reorder, rotate, delete, duplicate, or insert blank pages, with undo and redo. |
+| Convert | Convert PDF content to Word, Excel, Markdown, or HTML; create PDFs from other formats. |
+| OCR & extraction | Make scans searchable and extract text, images, or tables to CSV. |
+| Edit & format | Edit text, crop pages, add watermarks, headers, footers, page labels, and Bates numbers. |
+| Sign & redact | Place signatures, remove sensitive content, and sanitize hidden data. |
+| Compare | Inspect text and visual differences between document versions. |
+| Forms | Create, fill, and flatten interactive PDF forms. |
+| Automate | Process watched folders with reusable recipes and batch workflows. |
+| AI assistance | Ask questions, find citations, create summaries, flashcards, and glossaries. |
+| Create & present | Turn Markdown into PDFs and present PDFs as slides or in a focused reader. |
+| CLI & server | Script PDF tasks from the command line or run a self-hosted HTTP API. |
+| Appearance | Choose Light, Dark, OLED, White, or Glass, with nine accent colors. |
+
+OCR requires Poppler and Tesseract. AI uses your configured local or cloud provider.
+
 ## Why Slab
 
 | | |
