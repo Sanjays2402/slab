@@ -77,6 +77,8 @@ pub enum ThemeMode {
     Oled,
     /// Pure-white surfaces with near-black ink. Crisper than Light.
     White,
+    /// Frosted dark surfaces over an accent-tinted backdrop.
+    Glass,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -89,6 +91,10 @@ pub enum AccentColor {
     Purple,
     Green,
     Pink,
+    Teal,
+    Amber,
+    Lime,
+    Slate,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -463,6 +469,7 @@ mod tests {
             ThemeMode::Dark,
             ThemeMode::Oled,
             ThemeMode::White,
+            ThemeMode::Glass,
         ] {
             for accent in [
                 AccentColor::Orange,
@@ -470,6 +477,10 @@ mod tests {
                 AccentColor::Purple,
                 AccentColor::Green,
                 AccentColor::Pink,
+                AccentColor::Teal,
+                AccentColor::Amber,
+                AccentColor::Lime,
+                AccentColor::Slate,
             ] {
                 for density in [Density::Comfortable, Density::Compact] {
                     let path = tmp

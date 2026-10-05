@@ -21,8 +21,8 @@ import { writable, get } from "svelte/store";
 import { isInTauri } from "$lib/tauri";
 import { clearPluginTheme, currentPluginTheme } from "$lib/pluginThemes";
 
-export type ThemeMode = "auto" | "light" | "dark" | "oled" | "white";
-export type AccentColor = "orange" | "blue" | "purple" | "green" | "pink";
+export type ThemeMode = "auto" | "light" | "dark" | "oled" | "white" | "glass";
+export type AccentColor = "orange" | "blue" | "purple" | "green" | "pink" | "teal" | "amber" | "lime" | "slate";
 export type Density = "comfortable" | "compact";
 
 export interface UiConfig {
@@ -39,6 +39,10 @@ export const ACCENT_COLORS: { id: AccentColor; label: string; hex: string }[] = 
   { id: "purple", label: "Iris", hex: "#a780ff" },
   { id: "green", label: "Emerald", hex: "#3fc88c" },
   { id: "pink", label: "Coral", hex: "#ff6aa3" },
+  { id: "teal", label: "Teal", hex: "#2dd4bf" },
+  { id: "amber", label: "Amber", hex: "#fbbf24" },
+  { id: "lime", label: "Lime", hex: "#a3e635" },
+  { id: "slate", label: "Slate", hex: "#a8b8d0" },
 ];
 
 /** Built-in theme picks shown in the palette / Settings. */
@@ -48,6 +52,7 @@ export const BUILT_IN_THEMES: { id: ThemeMode; label: string; icon: string }[] =
   { id: "dark", label: "Dark", icon: "☾" },
   { id: "oled", label: "OLED", icon: "⬛" },
   { id: "white", label: "White", icon: "□" },
+  { id: "glass", label: "Glass", icon: "◇" },
 ];
 
 const DEFAULT_CONFIG: UiConfig = {
@@ -69,12 +74,12 @@ function normalise(raw: unknown): UiConfig {
   const out: UiConfig = { ...DEFAULT_CONFIG };
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
-  if (typeof r.theme === "string" && (r.theme === "auto" || r.theme === "light" || r.theme === "dark" || r.theme === "oled" || r.theme === "white")) {
+  if (typeof r.theme === "string" && (r.theme === "auto" || r.theme === "light" || r.theme === "dark" || r.theme === "oled" || r.theme === "white" || r.theme === "glass")) {
     out.theme = r.theme;
   }
   if (
     typeof r.accent === "string" &&
-    (r.accent === "orange" || r.accent === "blue" || r.accent === "purple" || r.accent === "green" || r.accent === "pink")
+    (r.accent === "orange" || r.accent === "blue" || r.accent === "purple" || r.accent === "green" || r.accent === "pink" || r.accent === "teal" || r.accent === "amber" || r.accent === "lime" || r.accent === "slate")
   ) {
     out.accent = r.accent;
   }
@@ -91,11 +96,12 @@ function normalise(raw: unknown): UiConfig {
  * Compute the effective "dark" vs "light" given the configured mode and
  * the host OS preference. Exported for tests; pure function.
  */
-export function resolveTheme(mode: ThemeMode, prefersDark: boolean): "light" | "dark" | "oled" | "white" {
+export function resolveTheme(mode: ThemeMode, prefersDark: boolean): "light" | "dark" | "oled" | "white" | "glass" {
   if (mode === "dark") return "dark";
   if (mode === "oled") return "oled";
   if (mode === "light") return "light";
   if (mode === "white") return "white";
+  if (mode === "glass") return "glass";
   return prefersDark ? "dark" : "light";
 }
 
