@@ -2,6 +2,34 @@
 export interface SplitRange { start: number; end: number }
 export type SplitMode = "ranges" | "every" | "parts";
 
+export interface OddEvenOutput {
+  parity: "odd" | "even";
+  count: number;
+  preview: string;
+}
+
+function validateTotal(total: number | null): number {
+  if (total === null) throw new Error("Choose a readable PDF to preview its pages.");
+  if (!Number.isSafeInteger(total) || total < 1 || total > 0xffffffff)
+    throw new Error("The PDF has no valid pages.");
+  return total;
+}
+
+/** Uses page positions, starting at 1, rather than printed page labels. */
+export function oddEvenSplitPlan(total: number | null): OddEvenOutput[] {
+  const n = validateTotal(total);
+  return (["odd", "even"] as const).flatMap((parity, i) => {
+    const first = i + 1;
+    const count = Math.floor((n - first) / 2) + 1;
+    if (count === 0) return [];
+    const last = first + (count - 1) * 2;
+    const preview = count <= 3
+      ? Array.from({ length: count }, (_, j) => first + j * 2).join(", ")
+      : `${first}, ${first + 2}, …, ${last}`;
+    return [{ parity, count, preview }];
+  });
+}
+
 export function splitPlan(
   total: number | null,
   mode: SplitMode,
@@ -9,9 +37,7 @@ export function splitPlan(
   size: number,
   parts: number,
 ): SplitRange[] {
-  if (total === null) throw new Error("Choose a readable PDF to preview its pages.");
-  if (!Number.isSafeInteger(total) || total < 1 || total > 0xffffffff)
-    throw new Error("The PDF has no valid pages.");
+  total = validateTotal(total);
 
   if (mode === "ranges") {
     const tokens = rangeText.split(",").map(s => s.trim());

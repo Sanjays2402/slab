@@ -133,7 +133,9 @@ use pdf::repair::{repair as do_repair, RepairReport};
 use pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts, SanitizeReport};
 use pdf::scan_audit::{audit as do_scan_audit, ScanAuditReport};
 use pdf::slides::{analyze as do_slides_analyze, SlideReport};
-use pdf::split::{page_count as do_page_count, split_by_ranges, split_every, PageRange};
+use pdf::split::{
+    page_count as do_page_count, split_by_ranges, split_every, split_odd_even, PageRange,
+};
 use pdf::split_pattern::{
     find_matching_pages, outline_top_level_pages, split_by_pattern as do_split_by_pattern,
 };
@@ -391,6 +393,11 @@ fn slab_split_ranges(
 #[tauri::command]
 fn slab_split_every(input: PathBuf, chunk_size: u32, out_dir: PathBuf) -> CmdResult<Vec<PathBuf>> {
     split_every(&input, chunk_size, &out_dir).into()
+}
+
+#[tauri::command]
+fn slab_split_odd_even(input: PathBuf, out_dir: PathBuf) -> CmdResult<Vec<PathBuf>> {
+    split_odd_even(&input, &out_dir).into()
 }
 
 /// Stamp Bates numbers (prefix + zero-padded counter) onto every page of
@@ -7692,6 +7699,7 @@ pub fn run() {
             slab_bates_batch,
             slab_legal_stamp_apply,
             slab_split_every,
+            slab_split_odd_even,
             slab_split_by_pattern,
             slab_find_matching_pages,
             slab_outline_starts,

@@ -22,7 +22,7 @@
   const tools: Tool[] = [
     // ORGANIZE
     { id: "merge",         cat: "organize", label: "Merge",            blurb: "Combine PDFs in the order you want — drag, drop, done." },
-    { id: "split",         cat: "organize", label: "Split",            blurb: "Pull one page, a range, or break a 400-page report into chapters." },
+    { id: "split",         cat: "organize", label: "Split",            blurb: "Split by ranges, balanced files, chunks, or odd and even pages." },
     { id: "split-chapter", cat: "organize", label: "Split by chapter", blurb: "Auto-detect chapter boundaries from the outline." },
     { id: "pages",         cat: "organize", label: "Pages",            blurb: "Visual page grid — reorder, delete, insert by drag and drop." },
     { id: "pages-list",    cat: "organize", label: "Pages (list)",     blurb: "List-view page editor for big documents." },

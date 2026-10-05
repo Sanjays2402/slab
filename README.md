@@ -29,7 +29,7 @@ Core tools run locally; optional AI uses your configured provider.
 
 | Feature | What you can do |
 |---|---|
-| Merge & split | Combine PDFs, split by page ranges or chapters, or divide into balanced files. |
+| Merge & split | Combine PDFs, split by page ranges or chapters, divide into balanced files, or separate odd and even pages. |
 | Arrange pages | Reorder, rotate, delete, duplicate, or insert blank pages, with undo and redo. |
 | Convert | Convert PDF content to Word, Excel, Markdown, or HTML; create PDFs from other formats. |
 | OCR & extraction | Make scans searchable and extract text, images, or tables to CSV. |
@@ -122,7 +122,7 @@ Open [http://localhost:8080](http://localhost:8080), drop a PDF on the page. Ful
 | Group | Tools |
 |---|---|
 | Read & organize | Reader · Library · Search Library · Pages · Pages (list) · Slides · Theater |
-| Assemble | Merge · Split (balanced N files, live preview, overlap validation) · Split by Chapter · Insert · N-up · Flatten · Bind (PDF → EPUB) |
+| Assemble | Merge · Split (balanced N files, odd/even pages, live preview, overlap validation) · Split by Chapter · Insert · N-up · Flatten · Bind (PDF → EPUB) |
 | Convert | Convert · Reflow (PDF → Word) · Tabulate (PDF → Excel) · Markdown (PDF → MD/HTML) · Markdown → PDF · Compress · Compact · Streamline (Fast Web View) · Archive (PDF/A) · Press (PDF/X-4) · Grayscale |
 | Edit | Edit Text · Crop · Watermark · Header/Footer · Page Labels · Numbers · Bates · Legal Stamp · Metadata |
 | Protect | Encrypt · Redact · Auto-Redact · Veil · Sanitize · Sign · Signet · Batch Sign |
@@ -132,6 +132,19 @@ Open [http://localhost:8080](http://localhost:8080), drop a PDF on the page. Ful
 | Create | Forms · Toolbox · Loom (PDF/UA) · Loupe (PDF/A check) |
 
 </details>
+
+## Odd and even pages
+
+In Split, choose **Odd / even** to save `<name>-odd.pdf` and `<name>-even.pdf`.
+Page order is preserved in each file, and the original stays unchanged. Useful for
+manual duplex printing or processing scanned pages. Counting starts at the first
+page, regardless of printed page labels; a one-page PDF creates only the odd file.
+
+This feature is available on `main` and will ship in the next release. From the CLI:
+
+```bash
+slab split-odd-even report.pdf ./output/
+```
 
 ## Also in the box
 

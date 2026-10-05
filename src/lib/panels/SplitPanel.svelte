@@ -3,27 +3,30 @@
   import SavedFiles from "$lib/components/SavedFiles.svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { idle, basename, stripExt, type CmdResult, type Status } from "$lib/types";
-  import { splitPlan, type SplitMode, type SplitRange } from "$lib/splitPlan";
+  import { splitPlan, oddEvenSplitPlan, type OddEvenOutput, type SplitMode, type SplitRange } from "$lib/splitPlan";
 
   let input = $state<string | null>(null);
   let pageCount = $state<number | null>(null);
   let rangeText = $state("");
   let chunkSize = $state(1);
   let partCount = $state(2);
-  let mode = $state<SplitMode>("parts");
+  let mode = $state<SplitMode | "parity">("parts");
   let outDir = $state<string | null>(null);
   let status = $state<Status>(idle);
   let outputs = $state<string[]>([]);
   let loading = $state(false);
   const busy = $derived(loading || status.kind === "working");
-  const plan = $derived.by((): { ranges: SplitRange[]; error: string } => {
+  const plan = $derived.by((): { ranges: SplitRange[]; groups: OddEvenOutput[]; error: string } => {
     try {
-      return { ranges: splitPlan(pageCount, mode, rangeText, chunkSize, partCount), error: "" };
+      return mode === "parity"
+        ? { ranges: [], groups: oddEvenSplitPlan(pageCount), error: "" }
+        : { ranges: splitPlan(pageCount, mode, rangeText, chunkSize, partCount), groups: [], error: "" };
     } catch (e) {
-      return { ranges: [], error: e instanceof Error ? e.message : String(e) };
+      return { ranges: [], groups: [], error: e instanceof Error ? e.message : String(e) };
     }
   });
-  const selectedPages = $derived(plan.ranges.reduce((n, r) => n + r.end - r.start + 1, 0));
+  const outputCount = $derived(plan.ranges.length + plan.groups.length);
+  const selectedPages = $derived(plan.groups.reduce((n, g) => n + g.count, 0) + plan.ranges.reduce((n, r) => n + r.end - r.start + 1, 0));
   const stem = $derived(input ? stripExt(basename(input)) : "split");
 
   async function pickInput() {
@@ -60,9 +63,10 @@
     if (!input || busy) return;
     if (plan.error) { status = { kind: "err", msg: plan.error }; return; }
     const ranges = plan.ranges;
+    const byParity = mode === "parity";
     const source = input;
     outputs = [];
-    status = { kind: "working", msg: `Splitting into ${ranges.length} PDF${ranges.length === 1 ? "" : "s"}…` };
+    status = { kind: "working", msg: `Splitting into ${outputCount} PDF${outputCount === 1 ? "" : "s"}…` };
     try {
       let dest = outDir;
       if (!dest) {
@@ -71,7 +75,9 @@
         dest = picked;
         outDir = dest;
       }
-      const res = await invoke<CmdResult<string[]>>("slab_split_ranges", { input: source, ranges, outDir: dest });
+      const res = byParity
+        ? await invoke<CmdResult<string[]>>("slab_split_odd_even", { input: source, outDir: dest })
+        : await invoke<CmdResult<string[]>>("slab_split_ranges", { input: source, ranges, outDir: dest });
       if (res.kind === "ok") {
         outputs = res.value;
         status = { kind: "ok", msg: `Wrote ${res.value.length} file(s) to ${dest}` };
@@ -82,7 +88,7 @@
 
 <header class="content-header">
   <h1>Split PDF</h1>
-  <p class="subtitle">Cut a PDF into pieces by page range, every N pages, or into an exact number of balanced files.</p>
+  <p class="subtitle">Split by range, every N pages, into balanced files, or into odd and even pages.</p>
 </header>
 
 <section class="panel" aria-busy={busy}>
@@ -113,6 +119,9 @@
       <button aria-pressed={mode === "every"} class:tab-active={mode === "every"} onclick={() => (mode = "every")} disabled={busy}>
         Every N pages
       </button>
+      <button aria-pressed={mode === "parity"} class:tab-active={mode === "parity"} onclick={() => (mode = "parity")} disabled={busy}>
+        Odd / even
+      </button>
     </div>
 
     {#if mode === "ranges"}
@@ -140,12 +149,14 @@
         />
         <span class="field-hint" id="split-chunk-hint">e.g. 2 → one PDF per 2-page chunk.</span>
       </div>
-    {:else}
+    {:else if mode === "parts"}
       <div class="field">
         <label class="field-label" for="split-parts">Number of output files</label>
         <input id="split-parts" aria-describedby={`split-parts-hint${plan.error ? " split-validation" : ""}`} aria-invalid={!!plan.error} type="number" min="1" max={pageCount ?? 1} step="1" bind:value={partCount} disabled={busy} />
         <span class="field-hint" id="split-parts-hint">Every page appears once. Extra pages go into the first files, so file lengths differ by at most one page.</span>
       </div>
+    {:else}
+      <p class="field-hint">Save odd and even pages as separate PDFs for manual duplex printing or scan processing. Pages stay in their original order. Counting starts at the first page, regardless of printed page labels.</p>
     {/if}
 
     <div class="split-preview">
@@ -155,11 +166,17 @@
       {:else if plan.error}
         <p id="split-validation" class="validation-error" role="status">{plan.error}</p>
       {:else}
-        <p class="preview-summary" role="status">{plan.ranges.length} PDF{plan.ranges.length === 1 ? "" : "s"} <span>· {selectedPages} of {pageCount} pages</span></p>
+        <p class="preview-summary" role="status">{outputCount} PDF{outputCount === 1 ? "" : "s"} <span>· {selectedPages} of {pageCount} pages</span></p>
         {#if selectedPages < (pageCount ?? 0)}
           <p class="field-hint">{(pageCount ?? 0) - selectedPages} unselected page{(pageCount ?? 0) - selectedPages === 1 ? "" : "s"} will be omitted.</p>
         {/if}
         <ol>
+          {#each plan.groups as group}
+            <li>
+              <strong>{stem}-{group.parity}.pdf</strong>
+              <span>{group.count === 1 ? "Page" : "Pages"} {group.preview} · {group.count} page{group.count === 1 ? "" : "s"}</span>
+            </li>
+          {/each}
           {#each plan.ranges.slice(0, 20) as range, i}
             <li>
               <strong>{stem}-{i + 1}-{range.start}-{range.end}.pdf</strong>
@@ -185,7 +202,7 @@
         onclick={runSplit}
         disabled={busy || !!plan.error}
       >
-        {status.kind === "working" ? "Splitting…" : plan.error ? "Split PDF" : `Create ${plan.ranges.length} PDF${plan.ranges.length === 1 ? "" : "s"}`}
+        {status.kind === "working" ? "Splitting…" : plan.error ? "Split PDF" : `Create ${outputCount} PDF${outputCount === 1 ? "" : "s"}`}
       </button>
     </div>
   {/if}

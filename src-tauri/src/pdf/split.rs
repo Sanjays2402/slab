@@ -72,6 +72,30 @@ pub fn split_by_ranges(
     Ok(outputs)
 }
 
+/// Separate one-based odd and even pages, preserving their original order.
+/// A one-page input produces only the odd-pages PDF (never an empty PDF).
+pub fn split_odd_even(input: &Path, out_dir: &Path) -> Result<Vec<PathBuf>, PdfError> {
+    let total = page_count(input)?;
+    if total == 0 {
+        return Err(PdfError::Other("the PDF has no pages to split".into()));
+    }
+    let stem = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "split".to_string());
+    let mut outputs = Vec::with_capacity(2);
+    for (first, label) in [(1, "odd"), (2, "even")] {
+        if first > total {
+            continue;
+        }
+        let pages: Vec<u32> = (first..=total).step_by(2).collect();
+        let output = out_dir.join(format!("{stem}-{label}.pdf"));
+        extract_pages_to(input, &pages, &output)?;
+        outputs.push(output);
+    }
+    Ok(outputs)
+}
+
 /// Split `input` into chunks of `chunk_size` pages each.
 pub fn split_every(
     input: &Path,
@@ -277,6 +301,71 @@ mod tests {
             assert_eq!(actual, expected);
         }
         assert_eq!(std::fs::read(&src).unwrap(), original);
+    }
+
+    #[test]
+    fn odd_even_split_preserves_each_page_in_order_and_source() {
+        for total in [1, 2, 6, 7] {
+            let tmp = tempfile::tempdir().unwrap();
+            let source = tmp.path().join("report.pdf");
+            let destination = tmp.path().join("nested").join("output");
+            make_n_page_pdf(&source, total);
+            let original = std::fs::read(&source).unwrap();
+            let original_doc = Document::load(&source).unwrap();
+            let outputs = split_odd_even(&source, &destination).unwrap();
+            assert_eq!(outputs.len(), if total == 1 { 1 } else { 2 });
+            assert_eq!(outputs[0], destination.join("report-odd.pdf"));
+            if total > 1 {
+                assert_eq!(outputs[1], destination.join("report-even.pdf"));
+            } else {
+                assert!(!destination.join("report-even.pdf").exists());
+            }
+            let mut recovered = Vec::new();
+            for (i, output) in outputs.iter().enumerate() {
+                let expected: Vec<u32> = ((i as u32 + 1)..=total).step_by(2).collect();
+                let actual = Document::load(output).unwrap();
+                assert_eq!(actual.get_pages().len(), expected.len());
+                for (j, page) in expected.iter().enumerate() {
+                    assert_eq!(
+                        actual.extract_text(&[j as u32 + 1]).unwrap(),
+                        original_doc.extract_text(&[*page]).unwrap()
+                    );
+                }
+                recovered.extend(expected);
+            }
+            recovered.sort_unstable();
+            assert_eq!(recovered, (1..=total).collect::<Vec<_>>());
+            assert_eq!(std::fs::read(&source).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn odd_even_rejects_unreadable_or_empty_pdf_before_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("input.pdf");
+        let destination = tmp.path().join("output");
+        assert!(split_odd_even(&source, &destination).is_err());
+        std::fs::write(&source, b"not a PDF").unwrap();
+        assert!(split_odd_even(&source, &destination).is_err());
+        make_n_page_pdf(&source, 1);
+        let mut doc = Document::load(&source).unwrap();
+        doc.delete_pages(&[1]);
+        doc.save(&source).unwrap();
+        assert!(split_odd_even(&source, &destination).is_err());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn odd_even_save_error_preserves_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("report.pdf");
+        make_n_page_pdf(&source, 3);
+        let original = std::fs::read(&source).unwrap();
+        let destination = tmp.path().join("not-a-directory");
+        std::fs::write(&destination, b"keep me").unwrap();
+        assert!(split_odd_even(&source, &destination).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"keep me");
     }
 
     #[test]
