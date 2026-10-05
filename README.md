@@ -4,7 +4,7 @@
 
 **The PDF toolkit your files never leave.**
 
-A fast, free, fully offline PDF studio for macOS, Windows, and Linux —
+A fast, free, open-source PDF studio for macOS, Windows, and Linux —
 with on-device AI, watched-folder automation, and a self-hostable Docker server.
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
