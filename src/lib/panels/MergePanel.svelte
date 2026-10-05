@@ -1,5 +1,6 @@
 <script lang="ts">
   import SavedFiles from "$lib/components/SavedFiles.svelte";
+  import { parseMergeRanges } from "$lib/mergeRanges";
   import { invoke } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { isInTauri } from "$lib/tauri";
@@ -79,30 +80,6 @@
   // "1-3, 5" → [{start:1,end:3},{start:5,end:5}]. "" → [] (whole file).
   // Throws on anything that isn't a page number or range, so a typo can
   // never silently become "take every page".
-  function parseRanges(s: string): { start: number; end: number }[] {
-    const out: { start: number; end: number }[] = [];
-    for (const part of s.split(",")) {
-      const p = part.trim();
-      if (!p) continue;
-      if (p.includes("-")) {
-        const halves = p.split("-");
-        if (halves.length !== 2) throw new Error(`"${p}" isn't a page range`);
-        const a = parseInt(halves[0].trim(), 10);
-        const b = parseInt(halves[1].trim(), 10);
-        if (!Number.isFinite(a) || !Number.isFinite(b) || a < 1 || b < 1) {
-          throw new Error(`"${p}" isn't a page range`);
-        }
-        out.push({ start: Math.min(a, b), end: Math.max(a, b) });
-      } else {
-        if (!/^\d+$/.test(p)) throw new Error(`"${p}" isn't a page number`);
-        const n = parseInt(p, 10);
-        if (n < 1) throw new Error(`"${p}" isn't a page number`);
-        out.push({ start: n, end: n });
-      }
-    }
-    return out;
-  }
-
   async function runMerge() {
     if (busy) return;
     if (inputs.length < 2) {
@@ -116,7 +93,7 @@
     try {
       parsed = inputs.map((f) => {
         try {
-          return { path: f.path, ranges: parseRanges(f.pages) };
+          return { path: f.path, ranges: parseMergeRanges(f.pages) };
         } catch {
           throw new Error(
             `${basename(f.path)}: bad page range — try something like 1-3, 5.`

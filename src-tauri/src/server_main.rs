@@ -51,6 +51,7 @@ struct ErrorBody {
     op: Option<String>,
 }
 
+#[derive(Debug)]
 struct ApiError {
     status: StatusCode,
     body: ErrorBody,
@@ -165,18 +166,49 @@ fn ensure_pdf(pdfs: &[UploadedPdf]) -> Result<&UploadedPdf, ApiError> {
 fn write_temp(pdf: &UploadedPdf) -> Result<(tempfile::TempDir, PathBuf), ApiError> {
     let dir =
         tempfile::tempdir().map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
-    let in_path = dir.path().join(&pdf.filename);
+    // A multipart filename is untrusted metadata, never a filesystem path.
+    let in_path = dir.path().join("input.pdf");
     std::fs::write(&in_path, &pdf.bytes)
         .map_err(|e| ApiError::internal("temp", format!("write upload: {e}")))?;
     Ok((dir, in_path))
 }
 
 fn pdf_filename(original: &str, suffix: &str) -> String {
-    let stem = Path::new(original)
+    let basename = original.rsplit(['/', '\\']).next().unwrap_or("slab");
+    let stem = Path::new(basename)
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "slab".to_string());
     format!("{stem}-{suffix}.pdf")
+}
+
+fn download_header(name: &str) -> HeaderValue {
+    // ASCII fallback plus RFC 5987 UTF-8. Quotes and controls supplied by
+    // the uploader cannot become header syntax in either encoded form.
+    let fallback: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let encoded: String = name
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    HeaderValue::from_str(&format!(
+        "attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+    ))
+    .expect("download filename is encoded as ASCII header data")
 }
 
 fn pdf_response(path: &Path, download_name: &str) -> Result<Response, ApiError> {
@@ -187,11 +219,7 @@ fn pdf_response(path: &Path, download_name: &str) -> Result<Response, ApiError> 
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/pdf"),
     );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{download_name}\""))
-            .unwrap_or(HeaderValue::from_static("attachment")),
-    );
+    headers.insert(header::CONTENT_DISPOSITION, download_header(download_name));
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
 
@@ -358,7 +386,7 @@ async fn h_merge(mp: Multipart) -> Result<Response, ApiError> {
         tempfile::tempdir().map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
     let mut paths = Vec::with_capacity(up.pdfs.len());
     for (i, p) in up.pdfs.iter().enumerate() {
-        let dest = dir.path().join(format!("in-{i:03}-{}", p.filename));
+        let dest = dir.path().join(format!("in-{i:03}.pdf"));
         std::fs::write(&dest, &p.bytes)
             .map_err(|e| ApiError::internal("temp", format!("write input {i}: {e}")))?;
         paths.push(dest);
@@ -372,11 +400,12 @@ async fn h_merge(mp: Multipart) -> Result<Response, ApiError> {
 async fn h_split_every(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
     let pdf_in = ensure_pdf(&up.pdfs)?;
-    let chunk = up
-        .fields
-        .get("chunk_size")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(1);
+    let chunk = match up.fields.get("chunk_size") {
+        Some(value) => value
+            .parse::<u32>()
+            .map_err(|_| ApiError::bad_request("chunk_size must be a positive integer"))?,
+        None => 1,
+    };
     if chunk == 0 {
         return Err(ApiError::bad_request("chunk_size must be >= 1"));
     }
@@ -468,8 +497,7 @@ fn zip_files(files: &[PathBuf], download_name: &str) -> Result<Response, ApiErro
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{download_name}.zip\""))
-            .unwrap_or(HeaderValue::from_static("attachment")),
+        download_header(&format!("{download_name}.zip")),
     );
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
@@ -541,11 +569,7 @@ async fn h_compress(mp: Multipart) -> Result<Response, ApiError> {
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!(
-            "attachment; filename=\"{}\"",
-            pdf_filename(&pdf_in.filename, "compressed")
-        ))
-        .unwrap_or(HeaderValue::from_static("attachment")),
+        download_header(&pdf_filename(&pdf_in.filename, "compressed")),
     );
     headers.insert(
         "x-slab-bytes-before",
@@ -601,11 +625,12 @@ async fn h_watermark(mp: Multipart) -> Result<Response, ApiError> {
         .get("text")
         .cloned()
         .ok_or_else(|| ApiError::bad_request("missing 'text' field"))?;
-    let opacity: f32 = up
-        .fields
-        .get("opacity")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.3);
+    let opacity: f32 = match up.fields.get("opacity") {
+        Some(value) => value
+            .parse()
+            .map_err(|_| ApiError::bad_request("opacity must be a number between 0 and 1"))?,
+        None => 0.3,
+    };
     if !(0.0..=1.0).contains(&opacity) {
         return Err(ApiError::bad_request("opacity must be 0.0..=1.0"));
     }
@@ -768,5 +793,35 @@ mod tests {
     fn pdf_filename_stems() {
         assert_eq!(pdf_filename("report.pdf", "merged"), "report-merged.pdf");
         assert_eq!(pdf_filename("no-extension", "x"), "no-extension-x.pdf");
+        assert_eq!(pdf_filename("C:\\uploads\\report.pdf", "x"), "report-x.pdf");
+    }
+
+    #[test]
+    fn upload_filename_cannot_choose_storage_path() {
+        let external = tempfile::tempdir().unwrap();
+        let sentinel = external.path().join("sentinel.pdf");
+        std::fs::write(&sentinel, b"untouched").unwrap();
+        for filename in [
+            "../outside.pdf".to_string(),
+            sentinel.to_string_lossy().into_owned(),
+            "C:\\uploads\\report.pdf".to_string(),
+        ] {
+            let upload = UploadedPdf {
+                bytes: Bytes::from_static(b"uploaded bytes"),
+                filename,
+            };
+            let (dir, path) = write_temp(&upload).unwrap();
+            assert_eq!(path.parent().unwrap(), dir.path());
+            assert_eq!(std::fs::read(path).unwrap(), b"uploaded bytes");
+            assert_eq!(std::fs::read(&sentinel).unwrap(), b"untouched");
+        }
+    }
+
+    #[test]
+    fn unicode_and_quoted_download_names_are_encoded() {
+        let header = download_header("résumé \"final\".pdf");
+        let value = header.to_str().unwrap();
+        assert!(value.contains("filename*=UTF-8''r%C3%A9sum%C3%A9%20%22final%22.pdf"));
+        assert!(!value.contains("filename=\"résumé"));
     }
 }

@@ -147,10 +147,18 @@ Optional runtime deps for the AI side: [Ollama](https://ollama.com) + `ollama pu
 
 ### Tests
 
-```bash
-cd src-tauri && cargo test
-cargo clippy --all-targets -- -D warnings
+```sh
+pnpm check
+pnpm test               # TypeScript, split planning, browser PDF helpers, i18n
+pnpm exec playwright install chromium
+pnpm test:e2e           # navigation and PDF workflows in Chromium
+pnpm test:website       # published website, mobile, policies and screenshots
+cargo test --locked --lib --bins --features server --manifest-path src-tauri/Cargo.toml
+cargo build --locked --features server --bin slab --bin slab-server --manifest-path src-tauri/Cargo.toml
+pnpm test:native        # actual CLI and HTTP API PDF round-trips
 ```
+
+`test:e2e` starts Vite automatically. Native tests generate their own PDFs, use a temporary output folder and start the server on a local ephemeral port. Set `SLAB_CLI` / `SLAB_SERVER` for binaries in another location, `SLAB_SITE_URL` for another website deployment, or `SLAB_CHROMIUM_PATH` for an installed Chromium executable. Native dialog interactions in browser tests use a test bridge; `test:native` exercises the real Rust commands and HTTP server. OCR integrations need Poppler and Tesseract; AI integrations need configured providers.
 
 ## Under the hood
 
