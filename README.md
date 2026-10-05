@@ -1,22 +1,17 @@
 <div align="center">
 
-<img src="src-tauri/icons/icon.png" alt="Slab logo" width="112" height="112">
+<img src="src-tauri/icons/icon.png" alt="Slab logo" width="80" height="80">
 
 # Slab
 
-**One place for every PDF.**
+**Free, open-source PDF tools for macOS, Windows, and Linux.**
 
-A fast, free, open-source PDF studio for macOS, Windows, and Linux.
-Read, organize, convert, edit, and automate your documents with local core tools,
-optional AI assistance, and a self-hostable Docker server.
+Read, merge, split, convert, sign, and redact PDFs.
+Core tools run locally; optional AI uses your configured provider.
 
 [![Build](https://github.com/Sanjays2402/slab/actions/workflows/build.yml/badge.svg)](https://github.com/Sanjays2402/slab/actions/workflows/build.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/Sanjays2402/slab?label=release)](https://github.com/Sanjays2402/slab/releases/latest)
-
-<img src="docs/assets/slab-overview.png" alt="Slab feature overview: organize PDFs with merge and split; convert files and OCR scans; read, search and compare; sign, redact and watermark; automate watched folders; and use optional AI assistance. Available for macOS, Windows and Linux, with a CLI and self-hosted server." width="1000">
-
-Core PDF tools run locally. AI uses your configured local or cloud provider; OCR requires Poppler and Tesseract.
 
 <a href="https://github.com/Sanjays2402/slab/releases/latest"><img src="docs/screenshots/00-hero-reader.png" alt="Slab Reader with a PDF open" width="800"></a>
 
