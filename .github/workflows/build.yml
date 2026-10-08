@@ -5,7 +5,20 @@ on:
     branches: [main, "feature/**"]
   pull_request:
     branches: [main]
+  # Publishing a GitHub release builds installers and attaches them to it.
+  release:
+    types: [published]
+  # Manual run: pass `release_tag` to (re)build and attach installers to an
+  # existing release. Builds the branch you dispatch from, so use main.
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach installers to (optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -109,6 +122,7 @@ jobs:
     # the full cross-platform matrix on every cron tick is wasteful CI minutes.
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'release' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'pull_request'
     strategy:
@@ -262,3 +276,39 @@ jobs:
         if: always() && startsWith(matrix.platform.runner, 'macos') && steps.macos-sign.outputs.mode == 'developer-id'
         run: |
           security delete-keychain "$RUNNER_TEMP/slab-signing.keychain-db" || true
+
+  publish:
+    name: attach installers to release
+    needs: bundle
+    if: |
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: bundles
+          pattern: slab-*
+
+      - name: Collect installers and checksums
+        run: |
+          set -euo pipefail
+          mkdir dist
+          find bundles -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+            -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -print0 |
+            while IFS= read -r -d '' f; do
+              dest="dist/$(basename "$f")"
+              if [ -e "$dest" ]; then echo "duplicate asset name: $dest" >&2; exit 1; fi
+              cp "$f" "$dest"
+            done
+          [ -n "$(ls dist)" ] || { echo "no installers found" >&2; exit 1; }
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -l dist
+
+      - name: Upload to release
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
