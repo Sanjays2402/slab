@@ -32,6 +32,8 @@
       const start = parseInt(m[1], 10);
       const end = m[2] ? parseInt(m[2], 10) : start;
       if (start < 1 || end < start) return `Bad page range: "${p}". Try something like 1-3, 5.`;
+      if (pageCount !== null && end > pageCount) return `Page ${end} is past the end (this PDF has ${pageCount} pages).`;
+      if (end - start > 100000) return `Range "${p}" is too large.`;
       for (let n = start; n <= end; n++) out.add(n);
     }
     return [...out].sort((a, b) => a - b);

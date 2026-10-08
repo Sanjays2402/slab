@@ -559,9 +559,23 @@ async fn h_to_images(mp: Multipart) -> Result<Response, ApiError> {
     };
     let (dir, in_path) = write_temp(pdf_in)?;
     let out_dir = dir.path().join("images");
-    let files = pdf::rasterize::pdf_to_images(&in_path, &out_dir, dpi, format, &pages)
-        .map_err(|e| ApiError::bad_request(format!("{e}")))?;
     let name = pdf_filename(&pdf_in.filename, "images");
+    // Name images after the upload, not the internal `input.pdf` temp file.
+    let stem: String = name
+        .strip_suffix("-images.pdf")
+        .unwrap_or("page")
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let files =
+        pdf::rasterize::pdf_to_images_named(&in_path, &out_dir, dpi, format, &pages, Some(&stem))
+            .map_err(|e| ApiError::bad_request(format!("{e}")))?;
     zip_files(&files, name.trim_end_matches(".pdf"))
 }
 

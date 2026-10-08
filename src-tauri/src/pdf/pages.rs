@@ -97,6 +97,14 @@ pub fn delete_pages(input: &Path, pages: &[u32], output: &Path) -> Result<u32, P
         return Err(PdfError::Other("no pages specified for deletion".into()));
     }
     let total = crate::pdf::split::page_count(input)?;
+    for &p in pages {
+        if p == 0 || p > total {
+            return Err(PdfError::Other(format!(
+                "page {} out of range (1..={})",
+                p, total
+            )));
+        }
+    }
     let drop_set: BTreeSet<u32> = pages.iter().copied().collect();
     if drop_set.len() == total as usize {
         return Err(PdfError::Other("refusing to delete every page".into()));
@@ -320,6 +328,29 @@ mod tests {
     use super::*;
     use crate::pdf::split::page_count;
     use crate::pdf::test_fixtures::make_n_page_pdf;
+
+    #[test]
+    fn delete_rejects_out_of_range_and_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 3);
+        assert!(delete_pages(&src, &[99], &dst).is_err());
+        assert!(delete_pages(&src, &[0, 1], &dst).is_err());
+        // An out-of-range extra must not defeat the delete-everything guard.
+        assert!(delete_pages(&src, &[1, 2, 3, 99], &dst).is_err());
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn delete_reports_distinct_pages_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 4);
+        assert_eq!(delete_pages(&src, &[2, 2, 3], &dst).unwrap(), 2);
+        assert_eq!(page_count(&dst).unwrap(), 2);
+    }
 
     #[test]
     fn rotate_all_pages_by_90() {

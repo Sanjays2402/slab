@@ -86,7 +86,7 @@ pub fn split_every(
     let mut ranges = Vec::new();
     let mut cur = 1u32;
     while cur <= total {
-        let end = (cur + chunk_size - 1).min(total);
+        let end = cur.saturating_add(chunk_size - 1).min(total);
         ranges.push(PageRange { start: cur, end });
         cur = end + 1;
     }
@@ -297,6 +297,17 @@ mod tests {
         let r = [PageRange::new(1, 10).unwrap()];
         let res = split_by_ranges(&src, &r, tmp.path());
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn huge_chunk_size_does_not_overflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("three.pdf");
+        make_n_page_pdf(&src, 3);
+        let out = tmp.path().join("out");
+        let files = split_every(&src, u32::MAX, &out).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(page_count(&files[0]).unwrap(), 3);
     }
 
     #[test]

@@ -74,6 +74,19 @@ pub fn pdf_to_images(
     format: ImageFormat,
     pages: &[u32],
 ) -> Result<Vec<PathBuf>, PdfError> {
+    pdf_to_images_named(input, out_dir, dpi, format, pages, None)
+}
+
+/// Like [`pdf_to_images`], but names files `<stem>-<page>.<ext>` using `stem`
+/// instead of the input's file name (the server stores uploads as `input.pdf`).
+pub fn pdf_to_images_named(
+    input: &Path,
+    out_dir: &Path,
+    dpi: u32,
+    format: ImageFormat,
+    pages: &[u32],
+    stem: Option<&str>,
+) -> Result<Vec<PathBuf>, PdfError> {
     if !input.exists() {
         return Err(PdfError::InputMissing(input.display().to_string()));
     }
@@ -100,9 +113,9 @@ pub fn pdf_to_images(
     }
     std::fs::create_dir_all(out_dir)?;
 
-    let stem = input
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
+    let stem = stem
+        .map(str::to_owned)
+        .or_else(|| input.file_stem().map(|s| s.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "page".into());
     let width = total.to_string().len();
     let mut written = Vec::with_capacity(wanted.len());
@@ -164,6 +177,23 @@ mod tests {
         assert!(pdf_to_images(&src, tmp.path(), 10, ImageFormat::Png, &[]).is_err());
         assert!(pdf_to_images(&src, tmp.path(), 1000, ImageFormat::Png, &[]).is_err());
         assert!(pdf_to_images(&src, tmp.path(), 72, ImageFormat::Png, &[9]).is_err());
+    }
+
+    #[test]
+    fn custom_stem_names_files() {
+        if !have_pdftoppm() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("input.pdf");
+        make_n_page_pdf(&src, 2);
+        let out = tmp.path().join("img");
+        let files =
+            pdf_to_images_named(&src, &out, 50, ImageFormat::Jpeg, &[2], Some("report")).unwrap();
+        assert_eq!(
+            files[0].file_name().unwrap().to_string_lossy(),
+            "report-2.jpg"
+        );
     }
 
     #[test]

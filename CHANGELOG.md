@@ -12,6 +12,14 @@ in this file too.
 ---
 
 
+## [3.41.1] — 2026-10-08 — Page Range Fixes
+
+### Fixed
+- **Delete pages** ignored page numbers that don't exist (including `0`), reported the wrong number of pages deleted, and let an out-of-range number bypass the "refusing to delete every page" guard. Out-of-range pages are now rejected.
+- **Split every N** overflowed on a very large chunk size (a panic in debug builds).
+- **Rotate** and **PDF → Images** panels froze on a huge range such as `1-4000000000`; ranges past the end of the document are now rejected.
+- **Server `/api/v1/to-images`** named images `input-N` instead of after the uploaded file.
+
 ## [3.41.0] — 2026-10-08 — Images & Blank Pages
 
 ### Added
