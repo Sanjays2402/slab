@@ -12,6 +12,11 @@ in this file too.
 ---
 
 
+## [3.42.2] — 2026-10-08 — Server Responsiveness
+
+### Fixed
+- **HTTP server stalls under load.** PDF work ran directly on the async runtime's worker threads, so one slow document could hold up every other request, including `/healthz`. All 16 PDF endpoints now run on a blocking thread.
+
 ## [3.42.1] — 2026-10-08 — Bug Fixes
 
 ### Fixed

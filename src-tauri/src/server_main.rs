@@ -119,6 +119,19 @@ struct ParsedUpload {
     fields: std::collections::HashMap<String, String>,
 }
 
+/// Run PDF work on a blocking thread. The PDF libraries are synchronous and
+/// CPU-heavy; running them on async worker threads stalls every other request
+/// (including `/healthz`) for as long as one document takes.
+async fn blocking<T, F>(f: F) -> Result<T, ApiError>
+where
+    F: FnOnce() -> Result<T, ApiError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| ApiError::internal("worker", format!("task failed: {e}")))?
+}
+
 async fn parse_multipart(mut mp: Multipart) -> Result<ParsedUpload, ApiError> {
     let mut pdfs = Vec::new();
     let mut fields = std::collections::HashMap::new();
@@ -391,67 +404,76 @@ fn parse_csv_u32(s: &str) -> Result<Vec<u32>, ApiError> {
 
 async fn h_merge(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    if up.pdfs.len() < 2 {
-        return Err(ApiError::bad_request(
-            "merge requires at least 2 'file' uploads",
-        ));
-    }
-    let dir =
-        tempfile::tempdir().map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
-    let mut paths = Vec::with_capacity(up.pdfs.len());
-    for (i, p) in up.pdfs.iter().enumerate() {
-        let dest = dir.path().join(format!("in-{i:03}.pdf"));
-        std::fs::write(&dest, &p.bytes)
-            .map_err(|e| ApiError::internal("temp", format!("write input {i}: {e}")))?;
-        paths.push(dest);
-    }
-    let out = dir.path().join("merged.pdf");
-    pdf::merge::merge_pdfs(&paths, out.clone())
-        .map_err(|e| ApiError::internal("merge", format!("{e:?}")))?;
-    pdf_response(&out, "slab-merged.pdf")
+    blocking(move || {
+        if up.pdfs.len() < 2 {
+            return Err(ApiError::bad_request(
+                "merge requires at least 2 'file' uploads",
+            ));
+        }
+        let dir =
+            tempfile::tempdir().map_err(|e| ApiError::internal("temp", format!("tempdir: {e}")))?;
+        let mut paths = Vec::with_capacity(up.pdfs.len());
+        for (i, p) in up.pdfs.iter().enumerate() {
+            let dest = dir.path().join(format!("in-{i:03}.pdf"));
+            std::fs::write(&dest, &p.bytes)
+                .map_err(|e| ApiError::internal("temp", format!("write input {i}: {e}")))?;
+            paths.push(dest);
+        }
+        let out = dir.path().join("merged.pdf");
+        pdf::merge::merge_pdfs(&paths, out.clone())
+            .map_err(|e| ApiError::internal("merge", format!("{e:?}")))?;
+        pdf_response(&out, "slab-merged.pdf")
+    })
+    .await
 }
 
 async fn h_split_every(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let chunk = match up.fields.get("chunk_size") {
-        Some(value) => value
-            .parse::<u32>()
-            .map_err(|_| ApiError::bad_request("chunk_size must be a positive integer"))?,
-        None => 1,
-    };
-    if chunk == 0 {
-        return Err(ApiError::bad_request("chunk_size must be >= 1"));
-    }
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out_dir = dir.path().join("out");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| ApiError::internal("split", format!("mkdir: {e}")))?;
-    let chunks = pdf::split::split_every(&in_path, chunk, &out_dir)
-        .map_err(|e| ApiError::internal("split-every", format!("{e:?}")))?;
-    zip_files(&chunks, &pdf_filename(&pdf_in.filename, "split"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let chunk = match up.fields.get("chunk_size") {
+            Some(value) => value
+                .parse::<u32>()
+                .map_err(|_| ApiError::bad_request("chunk_size must be a positive integer"))?,
+            None => 1,
+        };
+        if chunk == 0 {
+            return Err(ApiError::bad_request("chunk_size must be >= 1"));
+        }
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out_dir = dir.path().join("out");
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| ApiError::internal("split", format!("mkdir: {e}")))?;
+        let chunks = pdf::split::split_every(&in_path, chunk, &out_dir)
+            .map_err(|e| ApiError::internal("split-every", format!("{e:?}")))?;
+        zip_files(&chunks, &pdf_filename(&pdf_in.filename, "split"))
+    })
+    .await
 }
 
 async fn h_split_ranges(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let ranges = up
-        .fields
-        .get("ranges")
-        .ok_or_else(|| ApiError::bad_request("missing 'ranges' field"))?;
-    let parsed = parse_ranges(ranges)?;
-    let page_ranges: Vec<pdf::split::PageRange> = parsed
-        .into_iter()
-        .map(|(s, e)| pdf::split::PageRange::new(s, e))
-        .collect::<Result<_, _>>()
-        .map_err(|e| ApiError::bad_request(format!("range parse: {e:?}")))?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out_dir = dir.path().join("out");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| ApiError::internal("split", format!("mkdir: {e}")))?;
-    let chunks = pdf::split::split_by_ranges(&in_path, &page_ranges, &out_dir)
-        .map_err(|e| ApiError::internal("split-ranges", format!("{e:?}")))?;
-    zip_files(&chunks, &pdf_filename(&pdf_in.filename, "ranges"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let ranges = up
+            .fields
+            .get("ranges")
+            .ok_or_else(|| ApiError::bad_request("missing 'ranges' field"))?;
+        let parsed = parse_ranges(ranges)?;
+        let page_ranges: Vec<pdf::split::PageRange> = parsed
+            .into_iter()
+            .map(|(s, e)| pdf::split::PageRange::new(s, e))
+            .collect::<Result<_, _>>()
+            .map_err(|e| ApiError::bad_request(format!("range parse: {e:?}")))?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out_dir = dir.path().join("out");
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| ApiError::internal("split", format!("mkdir: {e}")))?;
+        let chunks = pdf::split::split_by_ranges(&in_path, &page_ranges, &out_dir)
+            .map_err(|e| ApiError::internal("split-ranges", format!("{e:?}")))?;
+        zip_files(&chunks, &pdf_filename(&pdf_in.filename, "ranges"))
+    })
+    .await
 }
 
 fn parse_ranges(s: &str) -> Result<Vec<(u32, u32)>, ApiError> {
@@ -518,217 +540,250 @@ fn zip_files(files: &[PathBuf], download_name: &str) -> Result<Response, ApiErro
 
 async fn h_rotate(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let pages_csv = up
-        .fields
-        .get("pages")
-        .ok_or_else(|| ApiError::bad_request("missing 'pages' field"))?;
-    let pages = parse_csv_u32(pages_csv)?;
-    let degrees: i64 = up
-        .fields
-        .get("degrees")
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| ApiError::bad_request("missing or invalid 'degrees' field"))?;
-    let rot = pdf::pages::Rotation::from_int(degrees).map_err(|e| {
-        ApiError::bad_request(format!("degrees must be 90, 180, 270, or -90: {e:?}"))
-    })?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    pdf::pages::rotate_pages(&in_path, &pages, rot, &out)
-        .map_err(|e| ApiError::internal("rotate", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "rotated"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let pages_csv = up
+            .fields
+            .get("pages")
+            .ok_or_else(|| ApiError::bad_request("missing 'pages' field"))?;
+        let pages = parse_csv_u32(pages_csv)?;
+        let degrees: i64 = up
+            .fields
+            .get("degrees")
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| ApiError::bad_request("missing or invalid 'degrees' field"))?;
+        let rot = pdf::pages::Rotation::from_int(degrees).map_err(|e| {
+            ApiError::bad_request(format!("degrees must be 90, 180, 270, or -90: {e:?}"))
+        })?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        pdf::pages::rotate_pages(&in_path, &pages, rot, &out)
+            .map_err(|e| ApiError::internal("rotate", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "rotated"))
+    })
+    .await
 }
 
 async fn h_to_images(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let format = pdf::rasterize::ImageFormat::parse(
-        up.fields.get("format").map(String::as_str).unwrap_or("png"),
-    )
-    .map_err(|e| ApiError::bad_request(format!("{e}")))?;
-    let dpi: u32 = match up.fields.get("dpi") {
-        Some(v) => v
-            .trim()
-            .parse()
-            .map_err(|_| ApiError::bad_request("invalid 'dpi' field"))?,
-        None => 150,
-    };
-    let pages = match up.fields.get("pages") {
-        Some(csv) => parse_csv_u32(csv)?,
-        None => Vec::new(),
-    };
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out_dir = dir.path().join("images");
-    let name = pdf_filename(&pdf_in.filename, "images");
-    // Name images after the upload, not the internal `input.pdf` temp file.
-    let stem: String = name
-        .strip_suffix("-images.pdf")
-        .unwrap_or("page")
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let files =
-        pdf::rasterize::pdf_to_images_named(&in_path, &out_dir, dpi, format, &pages, Some(&stem))
-            .map_err(|e| ApiError::bad_request(format!("{e}")))?;
-    zip_files(&files, name.trim_end_matches(".pdf"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let format = pdf::rasterize::ImageFormat::parse(
+            up.fields.get("format").map(String::as_str).unwrap_or("png"),
+        )
+        .map_err(|e| ApiError::bad_request(format!("{e}")))?;
+        let dpi: u32 = match up.fields.get("dpi") {
+            Some(v) => v
+                .trim()
+                .parse()
+                .map_err(|_| ApiError::bad_request("invalid 'dpi' field"))?,
+            None => 150,
+        };
+        let pages = match up.fields.get("pages") {
+            Some(csv) => parse_csv_u32(csv)?,
+            None => Vec::new(),
+        };
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out_dir = dir.path().join("images");
+        let name = pdf_filename(&pdf_in.filename, "images");
+        // Name images after the upload, not the internal `input.pdf` temp file.
+        let stem: String = name
+            .strip_suffix("-images.pdf")
+            .unwrap_or("page")
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ' | '.') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let files = pdf::rasterize::pdf_to_images_named(
+            &in_path,
+            &out_dir,
+            dpi,
+            format,
+            &pages,
+            Some(&stem),
+        )
+        .map_err(|e| ApiError::bad_request(format!("{e}")))?;
+        zip_files(&files, name.trim_end_matches(".pdf"))
+    })
+    .await
 }
 
 async fn h_remove_blank(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let threshold: f64 = match up.fields.get("threshold") {
-        Some(v) => v
-            .trim()
-            .parse()
-            .map_err(|_| ApiError::bad_request("invalid 'threshold' field"))?,
-        None => pdf::blank_pages::DEFAULT_THRESHOLD,
-    };
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    let removed = pdf::blank_pages::remove_blank_pages(&in_path, &out, threshold)
-        .map_err(|e| ApiError::bad_request(format!("{e}")))?;
-    if removed.is_empty() {
-        // Nothing to remove: hand the upload back unchanged.
-        std::fs::copy(&in_path, &out)
-            .map_err(|e| ApiError::internal("remove-blank", format!("copy: {e}")))?;
-    }
-    let mut resp = pdf_response(&out, &pdf_filename(&pdf_in.filename, "no-blanks"))?;
-    let list: Vec<String> = removed.iter().map(u32::to_string).collect();
-    if let Ok(v) = HeaderValue::from_str(&list.join(",")) {
-        resp.headers_mut().insert("x-slab-removed", v);
-    }
-    Ok(resp)
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let threshold: f64 = match up.fields.get("threshold") {
+            Some(v) => v
+                .trim()
+                .parse()
+                .map_err(|_| ApiError::bad_request("invalid 'threshold' field"))?,
+            None => pdf::blank_pages::DEFAULT_THRESHOLD,
+        };
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        let removed = pdf::blank_pages::remove_blank_pages(&in_path, &out, threshold)
+            .map_err(|e| ApiError::bad_request(format!("{e}")))?;
+        if removed.is_empty() {
+            // Nothing to remove: hand the upload back unchanged.
+            std::fs::copy(&in_path, &out)
+                .map_err(|e| ApiError::internal("remove-blank", format!("copy: {e}")))?;
+        }
+        let mut resp = pdf_response(&out, &pdf_filename(&pdf_in.filename, "no-blanks"))?;
+        let list: Vec<String> = removed.iter().map(u32::to_string).collect();
+        if let Ok(v) = HeaderValue::from_str(&list.join(",")) {
+            resp.headers_mut().insert("x-slab-removed", v);
+        }
+        Ok(resp)
+    })
+    .await
 }
 
 async fn h_delete_pages(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let pages_csv = up
-        .fields
-        .get("pages")
-        .ok_or_else(|| ApiError::bad_request("missing 'pages' field"))?;
-    let pages = parse_csv_u32(pages_csv)?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    pdf::pages::delete_pages(&in_path, &pages, &out)
-        .map_err(|e| ApiError::internal("delete-pages", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "trimmed"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let pages_csv = up
+            .fields
+            .get("pages")
+            .ok_or_else(|| ApiError::bad_request("missing 'pages' field"))?;
+        let pages = parse_csv_u32(pages_csv)?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        pdf::pages::delete_pages(&in_path, &pages, &out)
+            .map_err(|e| ApiError::internal("delete-pages", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "trimmed"))
+    })
+    .await
 }
 
 async fn h_reorder_pages(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let order_csv = up
-        .fields
-        .get("order")
-        .ok_or_else(|| ApiError::bad_request("missing 'order' field"))?;
-    let order = parse_csv_u32(order_csv)?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    pdf::pages::reorder_pages(&in_path, &order, &out)
-        .map_err(|e| ApiError::internal("reorder-pages", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "reordered"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let order_csv = up
+            .fields
+            .get("order")
+            .ok_or_else(|| ApiError::bad_request("missing 'order' field"))?;
+        let order = parse_csv_u32(order_csv)?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        pdf::pages::reorder_pages(&in_path, &order, &out)
+            .map_err(|e| ApiError::internal("reorder-pages", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "reordered"))
+    })
+    .await
 }
 
 async fn h_compress(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    let report = pdf::compress::compress(&in_path, &out)
-        .map_err(|e| ApiError::internal("compress", format!("{e:?}")))?;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/pdf"),
-    );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        download_header(&pdf_filename(&pdf_in.filename, "compressed")),
-    );
-    headers.insert(
-        "x-slab-bytes-before",
-        HeaderValue::from_str(&report.original_bytes.to_string()).unwrap(),
-    );
-    headers.insert(
-        "x-slab-bytes-after",
-        HeaderValue::from_str(&report.new_bytes.to_string()).unwrap(),
-    );
-    let bytes =
-        std::fs::read(&out).map_err(|e| ApiError::internal("io", format!("read result: {e}")))?;
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        let report = pdf::compress::compress(&in_path, &out)
+            .map_err(|e| ApiError::internal("compress", format!("{e:?}")))?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/pdf"),
+        );
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            download_header(&pdf_filename(&pdf_in.filename, "compressed")),
+        );
+        headers.insert(
+            "x-slab-bytes-before",
+            HeaderValue::from_str(&report.original_bytes.to_string()).unwrap(),
+        );
+        headers.insert(
+            "x-slab-bytes-after",
+            HeaderValue::from_str(&report.new_bytes.to_string()).unwrap(),
+        );
+        let bytes = std::fs::read(&out)
+            .map_err(|e| ApiError::internal("io", format!("read result: {e}")))?;
+        Ok((StatusCode::OK, headers, bytes).into_response())
+    })
+    .await
 }
 
 async fn h_encrypt(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let password = up
-        .fields
-        .get("password")
-        .cloned()
-        .ok_or_else(|| ApiError::bad_request("missing 'password' field"))?;
-    if password.is_empty() {
-        return Err(ApiError::bad_request("password must not be empty"));
-    }
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    pdf::encrypt::encrypt(&in_path, &out, &password)
-        .map_err(|e| ApiError::internal("encrypt", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "encrypted"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let password = up
+            .fields
+            .get("password")
+            .cloned()
+            .ok_or_else(|| ApiError::bad_request("missing 'password' field"))?;
+        if password.is_empty() {
+            return Err(ApiError::bad_request("password must not be empty"));
+        }
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        pdf::encrypt::encrypt(&in_path, &out, &password)
+            .map_err(|e| ApiError::internal("encrypt", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "encrypted"))
+    })
+    .await
 }
 
 async fn h_decrypt(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let password = up
-        .fields
-        .get("password")
-        .cloned()
-        .ok_or_else(|| ApiError::bad_request("missing 'password' field"))?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    pdf::encrypt::decrypt(&in_path, &out, &password)
-        .map_err(|e| ApiError::internal("decrypt", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "decrypted"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let password = up
+            .fields
+            .get("password")
+            .cloned()
+            .ok_or_else(|| ApiError::bad_request("missing 'password' field"))?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        pdf::encrypt::decrypt(&in_path, &out, &password)
+            .map_err(|e| ApiError::internal("decrypt", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "decrypted"))
+    })
+    .await
 }
 
 async fn h_watermark(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let text = up
-        .fields
-        .get("text")
-        .cloned()
-        .ok_or_else(|| ApiError::bad_request("missing 'text' field"))?;
-    let opacity: f32 = match up.fields.get("opacity") {
-        Some(value) => value
-            .parse()
-            .map_err(|_| ApiError::bad_request("opacity must be a number between 0 and 1"))?,
-        None => 0.3,
-    };
-    if !(0.0..=1.0).contains(&opacity) {
-        return Err(ApiError::bad_request("opacity must be 0.0..=1.0"));
-    }
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    // Empty pages slice = stamp every page (matches the desktop UX).
-    let pages: Vec<u32> = Vec::new();
-    let opts = pdf::watermark::WatermarkOpts {
-        text: &text,
-        opacity,
-        font_size: 48.0,
-        rotation_deg: -45.0,
-        gray: 0.2,
-    };
-    pdf::watermark::watermark(&in_path, &out, opts, &pages)
-        .map_err(|e| ApiError::internal("watermark", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "watermarked"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let text = up
+            .fields
+            .get("text")
+            .cloned()
+            .ok_or_else(|| ApiError::bad_request("missing 'text' field"))?;
+        let opacity: f32 = match up.fields.get("opacity") {
+            Some(value) => value
+                .parse()
+                .map_err(|_| ApiError::bad_request("opacity must be a number between 0 and 1"))?,
+            None => 0.3,
+        };
+        if !(0.0..=1.0).contains(&opacity) {
+            return Err(ApiError::bad_request("opacity must be 0.0..=1.0"));
+        }
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        // Empty pages slice = stamp every page (matches the desktop UX).
+        let pages: Vec<u32> = Vec::new();
+        let opts = pdf::watermark::WatermarkOpts {
+            text: &text,
+            opacity,
+            font_size: 48.0,
+            rotation_deg: -45.0,
+            gray: 0.2,
+        };
+        pdf::watermark::watermark(&in_path, &out, opts, &pages)
+            .map_err(|e| ApiError::internal("watermark", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "watermarked"))
+    })
+    .await
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -738,39 +793,51 @@ struct ExtractTextOut {
 
 async fn h_extract_text(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let (_dir, in_path) = write_temp(pdf_in)?;
-    let pages = pdf::extract::extract_text(&in_path)
-        .map_err(|e| ApiError::internal("extract-text", format!("{e:?}")))?;
-    Ok(Json(ExtractTextOut { pages }).into_response())
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let (_dir, in_path) = write_temp(pdf_in)?;
+        let pages = pdf::extract::extract_text(&in_path)
+            .map_err(|e| ApiError::internal("extract-text", format!("{e:?}")))?;
+        Ok(Json(ExtractTextOut { pages }).into_response())
+    })
+    .await
 }
 
 async fn h_info(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let (_dir, in_path) = write_temp(pdf_in)?;
-    let info =
-        pdf::info::info(&in_path).map_err(|e| ApiError::internal("info", format!("{e:?}")))?;
-    Ok(Json(info).into_response())
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let (_dir, in_path) = write_temp(pdf_in)?;
+        let info =
+            pdf::info::info(&in_path).map_err(|e| ApiError::internal("info", format!("{e:?}")))?;
+        Ok(Json(info).into_response())
+    })
+    .await
 }
 
 async fn h_page_count(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let (_dir, in_path) = write_temp(pdf_in)?;
-    let pages = pdf::split::page_count(&in_path)
-        .map_err(|e| ApiError::internal("page-count", format!("{e:?}")))?;
-    Ok(Json(json!({ "pages": pages })).into_response())
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let (_dir, in_path) = write_temp(pdf_in)?;
+        let pages = pdf::split::page_count(&in_path)
+            .map_err(|e| ApiError::internal("page-count", format!("{e:?}")))?;
+        Ok(Json(json!({ "pages": pages })).into_response())
+    })
+    .await
 }
 
 async fn h_strip_metadata(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
-    let pdf_in = ensure_pdf(&up.pdfs)?;
-    let (dir, in_path) = write_temp(pdf_in)?;
-    let out = dir.path().join("out.pdf");
-    pdf::metadata::strip_metadata(&in_path, &out)
-        .map_err(|e| ApiError::internal("strip-metadata", format!("{e:?}")))?;
-    pdf_response(&out, &pdf_filename(&pdf_in.filename, "stripped"))
+    blocking(move || {
+        let pdf_in = ensure_pdf(&up.pdfs)?;
+        let (dir, in_path) = write_temp(pdf_in)?;
+        let out = dir.path().join("out.pdf");
+        pdf::metadata::strip_metadata(&in_path, &out)
+            .map_err(|e| ApiError::internal("strip-metadata", format!("{e:?}")))?;
+        pdf_response(&out, &pdf_filename(&pdf_in.filename, "stripped"))
+    })
+    .await
 }
 
 // ───────────────────────────────────────────────────────────────────
