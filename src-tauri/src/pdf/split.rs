@@ -144,6 +144,9 @@ pub fn extract_pages_to(input: &Path, pages: &[u32], output: &Path) -> Result<()
     Ok(())
 }
 
+/// A page reached while walking the tree, with the attributes it inherits.
+type PageLeaf = (ObjectId, Vec<(&'static [u8], Object)>);
+
 /// Attributes a page may inherit from an ancestor /Pages node (PDF 32000 7.7.3.4).
 const INHERITABLE: [&[u8]; 4] = [b"MediaBox", b"CropBox", b"Resources", b"Rotate"];
 
@@ -159,7 +162,7 @@ fn flatten_page_tree(doc: &mut Document) -> Result<(), PdfError> {
         .get(b"Pages")
         .and_then(|o| o.as_reference())
         .map_err(|_| PdfError::Other("catalog missing /Pages".into()))?;
-    let mut leaves: Vec<(ObjectId, Vec<(&'static [u8], Object)>)> = Vec::new();
+    let mut leaves: Vec<PageLeaf> = Vec::new();
     collect_leaves(doc, root_id, &[], &mut leaves, 0)?;
     if leaves.is_empty() {
         return Err(PdfError::Other("document has no pages".into()));
@@ -192,7 +195,7 @@ fn collect_leaves(
     doc: &Document,
     node: ObjectId,
     inherited: &[(&'static [u8], Object)],
-    out: &mut Vec<(ObjectId, Vec<(&'static [u8], Object)>)>,
+    out: &mut Vec<PageLeaf>,
     depth: u32,
 ) -> Result<(), PdfError> {
     if depth > 64 {
