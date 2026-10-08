@@ -123,8 +123,8 @@ Open [http://localhost:8080](http://localhost:8080), drop a PDF on the page. Ful
 |---|---|
 | Read & organize | Reader · Library · Search Library · Pages · Pages (list) · Slides · Theater |
 | Assemble | Merge · Split (balanced N files, live preview, overlap validation) · Split by Chapter · Insert · N-up · Flatten · Bind (PDF → EPUB) |
-| Convert | Convert · Reflow (PDF → Word) · Tabulate (PDF → Excel) · Markdown (PDF → MD/HTML) · Markdown → PDF · Compress · Compact · Streamline (Fast Web View) · Archive (PDF/A) · Press (PDF/X-4) · Grayscale |
-| Edit | Edit Text · Crop · Watermark · Header/Footer · Page Labels · Numbers · Bates · Legal Stamp · Metadata |
+| Convert | PDF → Images · Convert · Reflow (PDF → Word) · Tabulate (PDF → Excel) · Markdown (PDF → MD/HTML) · Markdown → PDF · Compress · Compact · Streamline (Fast Web View) · Archive (PDF/A) · Press (PDF/X-4) · Grayscale |
+| Edit | Remove Blank Pages · Edit Text · Crop · Watermark · Header/Footer · Page Labels · Numbers · Bates · Legal Stamp · Metadata |
 | Protect | Encrypt · Redact · Auto-Redact · Veil · Sanitize · Sign · Signet · Batch Sign |
 | Analyze | OCR · Extract · Tables → CSV · Diff · Compare · Compare 3-way · Repair |
 | Beacon AI | Beacon AI · Beacon Search · PII Redact · Citations · Study · Glossary · Voice |

@@ -42,6 +42,8 @@ use slab_lib::pdf::pages::{delete_pages, rotate_pages, rotate_pages_permanent, R
 use slab_lib::pdf::polyglot::{polyglot_to_pdf, PolyglotOpts};
 use slab_lib::pdf::preflight::{preflight, PreflightOpts, Status as PreflightStatus};
 use slab_lib::pdf::repair::repair as do_repair;
+use slab_lib::pdf::blank_pages::{remove_blank_pages, scan_blank_pages, DEFAULT_THRESHOLD};
+use slab_lib::pdf::rasterize::{pdf_to_images, ImageFormat};
 use slab_lib::pdf::reverse::reverse_pages;
 use slab_lib::pdf::sanitize::{sanitize as do_sanitize, SanitizeOpts};
 use slab_lib::pdf::scan_audit::{audit as scan_audit, PageClassification, Recommendation};
@@ -96,6 +98,8 @@ fn main() -> ExitCode {
         "bates" => cmd_bates(rest),
         "invert" => cmd_invert(rest),
         "reverse" => cmd_reverse(rest),
+        "to-images" => cmd_to_images(rest),
+        "remove-blank" => cmd_remove_blank(rest),
         "booklet" => cmd_booklet(rest),
         "lens" => cmd_lens(rest),
         other => Err(CliError::Usage(format!(
@@ -142,6 +146,10 @@ Commands:
   split-ranges <file> <r1,r2..> <dir>   e.g. 1-3,5,7-9
   rotate <file> <pages> <deg> -o <out>  pages comma-list (1-based), deg ∈ 90/180/270; --permanent bakes into geometry
   delete-pages <file> <pages> -o <out>
+  to-images <file> <out-dir> [--format png|jpeg] [--dpi 150] [--pages 1,3,5]
+                                     One image per page. Requires `pdftoppm` on PATH.
+  remove-blank <file> -o <out> [--threshold 0.0005] [--dry-run]
+                                     Drop pages with (almost) no ink; --dry-run only lists them.
   insert-image <file> <image> --at <n> [--dpi 72] -o <out>  PNG/JPG → single PDF page (closes #26)
   compress <file> -o <out>           Re-compress streams
   encrypt <file> -o <out> --password <pwd>
@@ -815,6 +823,60 @@ fn cmd_reverse(args: &[String]) -> Result<(), CliError> {
     let output = output_path(args)?;
     let n = reverse_pages(&input, &output)?;
     println!("✓ reversed {n} page(s) → {}", output.display());
+    Ok(())
+}
+
+fn cmd_to_images(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let out_dir = require_arg(args, 1, "<out-dir>")?;
+    let format = ImageFormat::parse(find_flag(args, "--format").unwrap_or("png"))?;
+    let dpi: u32 = find_flag(args, "--dpi")
+        .unwrap_or("150")
+        .parse()
+        .map_err(|_| CliError::Usage("--dpi must be a whole number".into()))?;
+    let pages = match find_flag(args, "--pages") {
+        Some(csv) => parse_pages(csv)?,
+        None => Vec::new(),
+    };
+    let files = pdf_to_images(&input, &out_dir, dpi, format, &pages)?;
+    for f in &files {
+        println!("{}", f.display());
+    }
+    Ok(())
+}
+
+fn cmd_remove_blank(args: &[String]) -> Result<(), CliError> {
+    let input = require_arg(args, 0, "<file>")?;
+    let threshold: f64 = match find_flag(args, "--threshold") {
+        Some(t) => t
+            .parse()
+            .map_err(|_| CliError::Usage("--threshold must be a number".into()))?,
+        None => DEFAULT_THRESHOLD,
+    };
+    if args.iter().any(|a| a == "--dry-run") {
+        for p in scan_blank_pages(&input, threshold)? {
+            println!(
+                "page {:>4}  ink {:.5}  {}",
+                p.page,
+                p.ink,
+                if p.blank { "blank" } else { "keep" }
+            );
+        }
+        return Ok(());
+    }
+    let output = output_path(args)?;
+    let removed = remove_blank_pages(&input, &output, threshold)?;
+    if removed.is_empty() {
+        println!("✓ no blank pages found; nothing written");
+    } else {
+        let list: Vec<String> = removed.iter().map(u32::to_string).collect();
+        println!(
+            "✓ removed {} blank page(s) [{}] → {}",
+            removed.len(),
+            list.join(","),
+            output.display()
+        );
+    }
     Ok(())
 }
 

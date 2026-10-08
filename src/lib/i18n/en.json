@@ -86,6 +86,8 @@
   "features.sign": "Sign",
   "features.crop": "Crop",
   "features.rotate": "Rotate",
+  "features.images": "PDF → Images",
+  "features.blank-pages": "Remove Blank Pages",
   "features.insert": "Insert",
   "features.headerfooter": "Header/Footer",
   "features.bates": "Bates",

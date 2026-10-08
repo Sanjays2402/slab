@@ -1167,6 +1167,45 @@ impl From<crate::pdf::press::ConvertReport> for PressConvertReportDto {
 }
 
 #[tauri::command]
+fn slab_pdf_to_images(
+    input: PathBuf,
+    output_dir: PathBuf,
+    dpi: u32,
+    format: String,
+    pages: Vec<u32>,
+) -> CmdResult<Vec<String>> {
+    let fmt = match pdf::rasterize::ImageFormat::parse(&format) {
+        Ok(f) => f,
+        Err(e) => {
+            return CmdResult::Err {
+                message: e.to_string(),
+            }
+        }
+    };
+    pdf::rasterize::pdf_to_images(&input, &output_dir, dpi, fmt, &pages)
+        .map(|files| {
+            files
+                .into_iter()
+                .map(|f| f.to_string_lossy().into_owned())
+                .collect()
+        })
+        .into()
+}
+
+#[tauri::command]
+fn slab_scan_blank_pages(
+    input: PathBuf,
+    threshold: f64,
+) -> CmdResult<Vec<pdf::blank_pages::PageInk>> {
+    pdf::blank_pages::scan_blank_pages(&input, threshold).into()
+}
+
+#[tauri::command]
+fn slab_remove_blank_pages(input: PathBuf, output: PathBuf, threshold: f64) -> CmdResult<Vec<u32>> {
+    pdf::blank_pages::remove_blank_pages(&input, &output, threshold).into()
+}
+
+#[tauri::command]
 fn slab_rotate(input: PathBuf, pages: Vec<u32>, degrees: i64, output: PathBuf) -> CmdResult<u32> {
     match Rotation::from_int(degrees) {
         Ok(rot) => rotate_pages(&input, &pages, rot, &output).into(),
@@ -7705,6 +7744,9 @@ pub fn run() {
             slab_loom_matterhorn_digest,
             slab_press_convert,
             slab_rotate,
+            slab_pdf_to_images,
+            slab_scan_blank_pages,
+            slab_remove_blank_pages,
             slab_rotate_permanent,
             slab_delete_pages,
             slab_duplicate_pages,

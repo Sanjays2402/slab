@@ -12,6 +12,13 @@ in this file too.
 ---
 
 
+## [3.41.0] — 2026-10-08 — Images & Blank Pages
+
+### Added
+- **PDF → Images**: export pages as PNG or JPEG at 36–600 DPI, with optional page ranges. Panel, `slab to-images`, and `POST /api/v1/to-images`.
+- **Remove Blank Pages**: render-based blank detection with Strict/Normal/Lenient sensitivity and a live list of detected pages. Panel, `slab remove-blank [--dry-run]`, and `POST /api/v1/remove-blank`.
+- Both use Poppler `pdftoppm`, like OCR and Flatten.
+
 ## [3.40.0] — 2026-10-04 — Balanced Split
 
 ### Added
@@ -238,7 +245,7 @@ in this file too.
 - New Tauri command `slab_diff3_export_pdf` and "Export redline PDF"
   action in the Diff3 panel.
 
-## [Unreleased]
+## [3.41.0] — 2026-10-08 — Images & Blank Pages
 
 ### v3.4.0 "Discovery" (preview — backend + UI on `feature/v3.4.0-discovery-slice-1-3`)
 

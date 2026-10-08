@@ -281,6 +281,20 @@ const OPS: &[OpsDescriptor] = &[
         fields: &["file", "pages (csv 1-based, e.g. '1,3,5')", "degrees (90|180|270|-90)"],
     },
     OpsDescriptor {
+        name: "to-images",
+        method: "POST",
+        path: "/api/v1/to-images",
+        description: "Render pages to PNG/JPEG images. Returns a ZIP. Requires poppler.",
+        fields: &["file", "format (png|jpeg, default png)", "dpi (36-600, default 150)", "pages (csv, optional)"],
+    },
+    OpsDescriptor {
+        name: "remove-blank",
+        method: "POST",
+        path: "/api/v1/remove-blank",
+        description: "Remove blank pages. Header X-Slab-Removed lists removed pages. Requires poppler.",
+        fields: &["file", "threshold (0-0.5, default 0.0005)"],
+    },
+    OpsDescriptor {
         name: "delete-pages",
         method: "POST",
         path: "/api/v1/delete-pages",
@@ -525,6 +539,59 @@ async fn h_rotate(mp: Multipart) -> Result<Response, ApiError> {
     pdf_response(&out, &pdf_filename(&pdf_in.filename, "rotated"))
 }
 
+async fn h_to_images(mp: Multipart) -> Result<Response, ApiError> {
+    let up = parse_multipart(mp).await?;
+    let pdf_in = ensure_pdf(&up.pdfs)?;
+    let format = pdf::rasterize::ImageFormat::parse(
+        up.fields.get("format").map(String::as_str).unwrap_or("png"),
+    )
+    .map_err(|e| ApiError::bad_request(format!("{e}")))?;
+    let dpi: u32 = match up.fields.get("dpi") {
+        Some(v) => v
+            .trim()
+            .parse()
+            .map_err(|_| ApiError::bad_request("invalid 'dpi' field"))?,
+        None => 150,
+    };
+    let pages = match up.fields.get("pages") {
+        Some(csv) => parse_csv_u32(csv)?,
+        None => Vec::new(),
+    };
+    let (dir, in_path) = write_temp(pdf_in)?;
+    let out_dir = dir.path().join("images");
+    let files = pdf::rasterize::pdf_to_images(&in_path, &out_dir, dpi, format, &pages)
+        .map_err(|e| ApiError::bad_request(format!("{e}")))?;
+    let name = pdf_filename(&pdf_in.filename, "images");
+    zip_files(&files, name.trim_end_matches(".pdf"))
+}
+
+async fn h_remove_blank(mp: Multipart) -> Result<Response, ApiError> {
+    let up = parse_multipart(mp).await?;
+    let pdf_in = ensure_pdf(&up.pdfs)?;
+    let threshold: f64 = match up.fields.get("threshold") {
+        Some(v) => v
+            .trim()
+            .parse()
+            .map_err(|_| ApiError::bad_request("invalid 'threshold' field"))?,
+        None => pdf::blank_pages::DEFAULT_THRESHOLD,
+    };
+    let (dir, in_path) = write_temp(pdf_in)?;
+    let out = dir.path().join("out.pdf");
+    let removed = pdf::blank_pages::remove_blank_pages(&in_path, &out, threshold)
+        .map_err(|e| ApiError::bad_request(format!("{e}")))?;
+    if removed.is_empty() {
+        // Nothing to remove: hand the upload back unchanged.
+        std::fs::copy(&in_path, &out)
+            .map_err(|e| ApiError::internal("remove-blank", format!("copy: {e}")))?;
+    }
+    let mut resp = pdf_response(&out, &pdf_filename(&pdf_in.filename, "no-blanks"))?;
+    let list: Vec<String> = removed.iter().map(u32::to_string).collect();
+    if let Ok(v) = HeaderValue::from_str(&list.join(",")) {
+        resp.headers_mut().insert("x-slab-removed", v);
+    }
+    Ok(resp)
+}
+
 async fn h_delete_pages(mp: Multipart) -> Result<Response, ApiError> {
     let up = parse_multipart(mp).await?;
     let pdf_in = ensure_pdf(&up.pdfs)?;
@@ -711,6 +778,8 @@ fn build_app() -> Router {
         .route("/api/v1/split-every", post(h_split_every))
         .route("/api/v1/split-ranges", post(h_split_ranges))
         .route("/api/v1/rotate", post(h_rotate))
+        .route("/api/v1/to-images", post(h_to_images))
+        .route("/api/v1/remove-blank", post(h_remove_blank))
         .route("/api/v1/delete-pages", post(h_delete_pages))
         .route("/api/v1/reorder-pages", post(h_reorder_pages))
         .route("/api/v1/compress", post(h_compress))

@@ -78,6 +78,8 @@ generate clients from a live deployment.
 | POST   | `/api/v1/split-every`         | `file`, `chunk_size`               | zip of PDFs            |
 | POST   | `/api/v1/split-ranges`        | `file`, `ranges` (`1-3,5,7-9`)     | zip of PDFs            |
 | POST   | `/api/v1/rotate`              | `file`, `pages`, `degrees`         | rotated PDF            |
+| POST   | `/api/v1/to-images`           | `file`, `format`, `dpi`, `pages`   | zip of PNG/JPEG (needs poppler) |
+| POST   | `/api/v1/remove-blank`        | `file`, `threshold`                | PDF without blanks (+`x-slab-removed`; needs poppler) |
 | POST   | `/api/v1/delete-pages`        | `file`, `pages`                    | trimmed PDF            |
 | POST   | `/api/v1/reorder-pages`       | `file`, `order`                    | reordered PDF          |
 | POST   | `/api/v1/compress`            | `file`                             | compressed PDF (+`x-slab-bytes-before/after`) |

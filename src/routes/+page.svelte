@@ -29,6 +29,8 @@
   import SignetBatchPanel from "$lib/panels/SignetBatchPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
   import RotatePanel from "$lib/panels/RotatePanel.svelte";
+  import ImagesPanel from "$lib/panels/ImagesPanel.svelte";
+  import BlankPagesPanel from "$lib/panels/BlankPagesPanel.svelte";
   import VeilPanel from "$lib/panels/VeilPanel.svelte";
   import CompactPanel from "$lib/panels/CompactPanel.svelte";
   import StreamlinePanel from "$lib/panels/StreamlinePanel.svelte";
@@ -139,6 +141,8 @@
     { id: "loom", group: "refine", label: "Loom (PDF/UA)", icon: "♿", ready: true },
     { id: "crop", group: "refine", label: "Crop", icon: "⊟", ready: true },
     { id: "rotate", group: "refine", label: "Rotate", icon: "⟳", ready: true },
+    { id: "images", group: "convert", label: "PDF → Images", icon: "🖼", ready: true },
+    { id: "blank-pages", group: "refine", label: "Remove Blank Pages", icon: "▯", ready: true },
     { id: "insert", group: "assemble", label: "Insert", icon: "＋", ready: true },
     { id: "headerfooter", group: "refine", label: "Header/Footer", icon: "≡", ready: true },
     { id: "bates", group: "refine", label: "Bates", icon: "№", ready: true },
@@ -1174,6 +1178,10 @@
     <CropPanel />
   {:else if active === "rotate"}
     <RotatePanel />
+  {:else if active === "images"}
+    <ImagesPanel />
+  {:else if active === "blank-pages"}
+    <BlankPagesPanel />
   {:else if active === "insert"}
     <InsertPanel />
   {:else if active === "headerfooter"}
