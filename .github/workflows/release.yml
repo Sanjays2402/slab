@@ -1,0 +1,120 @@
+name: release
+
+# Push a tag like v3.42.0 to build installers for every platform and publish a
+# GitHub release with them attached. Release notes come from
+# docs/release-notes/<tag>.md (falls back to GitHub's generated notes).
+#
+#   git tag -a v3.42.0 -m "Slab v3.42.0" && git push origin v3.42.0
+#
+# Re-run for an existing tag from the Actions tab (Run workflow, enter the tag)
+# to rebuild and replace its assets.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and publish, e.g. v3.42.0"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify tag
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.t.outputs.tag }}
+    steps:
+      - id: t
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.t.outputs.tag }}
+      - name: Tag matches app version
+        run: |
+          set -euo pipefail
+          tag="${{ steps.t.outputs.tag }}"
+          want="${tag#v}"
+          for f in package.json src-tauri/tauri.conf.json; do
+            got=$(node -p "require('./$f').version")
+            [ "$got" = "$want" ] || { echo "$f is $got, tag is $tag" >&2; exit 1; }
+          done
+          got=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          [ "$got" = "$want" ] || { echo "Cargo.toml is $got, tag is $tag" >&2; exit 1; }
+
+  build:
+    name: build
+    needs: verify
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ needs.verify.outputs.tag }}
+    secrets: inherit
+
+  publish:
+    name: publish release
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.verify.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: bundles
+          pattern: slab-*
+
+      - name: Collect installers and checksums
+        run: |
+          set -euo pipefail
+          mkdir dist
+          find bundles -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \
+            -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -print0 |
+            while IFS= read -r -d '' f; do
+              dest="dist/$(basename "$f")"
+              if [ -e "$dest" ]; then echo "duplicate asset name: $dest" >&2; exit 1; fi
+              cp "$f" "$dest"
+            done
+          for ext in dmg msi exe deb AppImage rpm; do
+            ls dist/*."$ext" >/dev/null 2>&1 || { echo "missing .$ext installer" >&2; exit 1; }
+          done
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -l dist
+
+      - name: Create draft release if needed
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists; updating assets only"
+            exit 0
+          fi
+          notes="docs/release-notes/$TAG.md"
+          # Titles follow "vX.Y.Z — Name"; Name is whatever follows the dash
+          # in the notes file's first heading.
+          title="$TAG"
+          if [ -f "$notes" ]; then
+            name="$(head -1 "$notes" | sed -n 's/^#.* — *//p')"
+            [ -n "$name" ] && title="$TAG — $name"
+            gh release create "$TAG" --draft --verify-tag --title "$title" --notes-file "$notes"
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$title" --generate-notes
+          fi
+
+      - name: Upload assets
+        run: gh release upload "$TAG" dist/* --clobber
+
+      - name: Publish
+        run: gh release edit "$TAG" --draft=false
