@@ -198,6 +198,6 @@ Tauri 2 shell, Svelte 5 front-end, pure-Rust PDF core (`lopdf`), `pdfjs-dist` re
 
 ## A small promise
 
-Slab will never ask for an email. Will never call home. Will never gate a feature behind a paywall. If it ever does any of those things, you have my permission to fork it and rip the offending lines out.
+Slab will never ask for an email. Will never call home on its own (the optional update check only runs when you click it or opt in, and sends nothing about you). Will never gate a feature behind a paywall. If it ever does any of those things, you have my permission to fork it and rip the offending lines out.
 
 Made with 🍰 by [@Sanjays2402](https://github.com/Sanjays2402).

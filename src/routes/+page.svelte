@@ -28,6 +28,8 @@
   import SignetPanel from "$lib/panels/SignetPanel.svelte";
   import SignetBatchPanel from "$lib/panels/SignetBatchPanel.svelte";
   import RedactPanel from "$lib/panels/RedactPanel.svelte";
+  import { checkForUpdates, getAutoCheck, getLastCheck, autoCheckDue, isSafeReleaseUrl } from "$lib/updates";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import RotatePanel from "$lib/panels/RotatePanel.svelte";
   import ImagesPanel from "$lib/panels/ImagesPanel.svelte";
   import BlankPagesPanel from "$lib/panels/BlankPagesPanel.svelte";
@@ -833,6 +835,24 @@
     // to ask us to switch into the Theater panel. Same shape as the
     // library-search focus event — keeps the contract uniform.
     window.addEventListener("slab:focus-theater", onFocusTheater);
+
+    // Opt-in launch check (off by default; at most once a day). Failures
+    // are silent — a flaky network must never nag the user.
+    if (isInTauri() && getAutoCheck() && autoCheckDue(Date.now(), getLastCheck())) {
+      checkForUpdates()
+        .then((info) => {
+          if (!info.update_available) return;
+          notify.info(`Slab ${info.latest} is available`, {
+            action: {
+              label: "Download",
+              onClick: () => {
+                if (isSafeReleaseUrl(info.url)) void openUrl(info.url);
+              },
+            },
+          });
+        })
+        .catch(() => {});
+    }
 
     // Cabinet: detect detached mode from URL params.
     let isDetached = false;

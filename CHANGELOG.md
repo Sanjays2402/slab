@@ -12,6 +12,12 @@ in this file too.
 ---
 
 
+## [3.42.0] — 2026-10-08 — Update Check
+
+### Added
+- **Check for updates** in Settings → Updates: asks GitHub's public releases API for the latest stable release, says whether you're up to date, and opens the release page to download. Nothing is sent about you or your documents.
+- Optional **check once a day at launch**, off by default, with a one-click Download in the notification. Slab still never contacts anything unless you ask or opt in.
+
 ## [3.41.1] — 2026-10-08 — Page Range Fixes
 
 ### Fixed

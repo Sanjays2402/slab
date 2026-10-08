@@ -29,6 +29,13 @@
     type ProviderKind,
   } from "$lib/beaconSettings";
   import { onMount } from "svelte";
+  import {
+    checkForUpdates,
+    getAutoCheck,
+    setAutoCheck,
+    isSafeReleaseUrl,
+    type UpdateInfo,
+  } from "$lib/updates";
 
   // Local mirror of the current locale so the segmented control re-renders.
   let currentLocale = $state<LocaleId>("en");
@@ -199,6 +206,35 @@
     catch (e) { notify.error("Couldn't open the policy page", { detail: String(e) }); }
   }
 
+  // Updates: manual check + opt-in launch check (off by default — Slab
+  // never contacts anything unless asked).
+  let updateBusy = $state(false);
+  let updateInfo = $state<UpdateInfo | null>(null);
+  let updateError = $state<string | null>(null);
+  let autoCheck = $state(getAutoCheck());
+
+  async function runUpdateCheck() {
+    updateBusy = true;
+    updateError = null;
+    try {
+      updateInfo = await checkForUpdates();
+    } catch (e) {
+      updateInfo = null;
+      updateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      updateBusy = false;
+    }
+  }
+  function toggleAutoCheck(on: boolean) {
+    autoCheck = on;
+    setAutoCheck(on);
+  }
+  async function openRelease(url: string) {
+    if (!isSafeReleaseUrl(url)) return;
+    try { await openUrl(url); }
+    catch (e) { notify.error("Couldn't open the release page", { detail: String(e) }); }
+  }
+
   const DENSITY_OPTIONS: { id: Density; label: string; hint: string }[] = [
     { id: "comfortable", label: "Comfortable", hint: "Roomy spacing (default)" },
     { id: "compact", label: "Compact", hint: "Tighter UI, more on screen" },
@@ -336,6 +372,43 @@
           onclick={() => setVimEnabled(true)}
         >{$tStore("settings.toggle.on")}</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Updates: user-initiated only; the launch check is opt-in. -->
+  <div class="row">
+    <div class="row-info">
+      <h2>{$tStore("settings.updates.title")}</h2>
+      <p class="row-desc">{$tStore("settings.updates.desc")}</p>
+      {#if updateInfo}
+        <p class="row-desc" role="status">
+          {#if updateInfo.update_available}
+            {$tStore("settings.updates.available", { latest: updateInfo.latest, current: updateInfo.current })}
+          {:else}
+            {$tStore("settings.updates.uptodate", { current: updateInfo.current })}
+          {/if}
+        </p>
+      {:else if updateError}
+        <p class="row-desc status err" role="status">{$tStore("settings.updates.error", { detail: updateError })}</p>
+      {/if}
+      <label class="row-desc">
+        <input
+          type="checkbox"
+          checked={autoCheck}
+          onchange={(e) => toggleAutoCheck(e.currentTarget.checked)}
+        />
+        {$tStore("settings.updates.auto")}
+      </label>
+    </div>
+    <div class="row-control">
+      <button type="button" class="ghost" disabled={updateBusy} onclick={runUpdateCheck}>
+        {updateBusy ? $tStore("settings.updates.checking") : $tStore("settings.updates.check")}
+      </button>
+      {#if updateInfo?.update_available}
+        <button type="button" class="primary" onclick={() => openRelease(updateInfo!.url)}>
+          {$tStore("settings.updates.download")}
+        </button>
+      {/if}
     </div>
   </div>
 

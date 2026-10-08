@@ -8,6 +8,7 @@ pub mod marketplace;
 pub mod pdf;
 pub mod plugins;
 pub mod theater;
+pub mod updates;
 pub mod windows;
 
 use ai::auto_tag::AutoTagOpts;
@@ -170,6 +171,16 @@ pub struct AppInfo {
     pub name: &'static str,
     pub version: &'static str,
     pub commit: &'static str,
+}
+
+/// Ask GitHub for the latest release. Only called on explicit user action or
+/// the opt-in launch check; see `updates` for what is (not) sent.
+#[tauri::command]
+async fn slab_check_for_updates() -> CmdResult<updates::UpdateInfo> {
+    match updates::check(env!("CARGO_PKG_VERSION")).await {
+        Ok(v) => CmdResult::Ok { value: v },
+        Err(message) => CmdResult::Err { message },
+    }
 }
 
 #[tauri::command]
@@ -7721,6 +7732,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            slab_check_for_updates,
             slab_first_launch_probe,
             slab_first_launch_install,
             slab_first_launch_skip,
