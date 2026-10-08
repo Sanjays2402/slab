@@ -438,6 +438,18 @@ mod tests {
     }
 
     #[test]
+    fn merge_keeps_pages_from_nested_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.pdf");
+        let b = tmp.path().join("b.pdf");
+        let out = tmp.path().join("merged.pdf");
+        make_nested_tree_pdf(&a);
+        make_nested_tree_pdf(&b);
+        crate::pdf::merge::merge_pdfs(&[a, b], out.clone()).unwrap();
+        assert_eq!(page_count(&out).unwrap(), 6);
+    }
+
+    #[test]
     fn extract_with_duplicate_page_yields_valid_tree() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("three.pdf");

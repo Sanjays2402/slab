@@ -298,13 +298,19 @@ fn read_mediabox_inheriting(
     ))
 }
 
+/// Current /Rotate for a page. /Rotate is inheritable (PDF 32000 7.7.3.4), so
+/// walk up /Parent until one is found. The depth cap stops a malformed cycle.
 fn read_rotate(doc: &Document, page_id: lopdf::ObjectId) -> i64 {
-    if let Ok(page) = doc.get_object(page_id) {
-        if let Ok(dict) = page.as_dict() {
-            if let Ok(r) = dict.get(b"Rotate").and_then(|o| o.as_i64()) {
-                return ((r % 360) + 360) % 360;
-            }
+    let mut node = Some(page_id);
+    for _ in 0..64 {
+        let Some(id) = node else { break };
+        let Ok(dict) = doc.get_dictionary(id) else {
+            break;
+        };
+        if let Ok(r) = dict.get(b"Rotate").and_then(|o| o.as_i64()) {
+            return ((r % 360) + 360) % 360;
         }
+        node = dict.get(b"Parent").and_then(|o| o.as_reference()).ok();
     }
     0
 }
@@ -350,6 +356,34 @@ mod tests {
         make_n_page_pdf(&src, 4);
         assert_eq!(delete_pages(&src, &[2, 2, 3], &dst).unwrap(), 2);
         assert_eq!(page_count(&dst).unwrap(), 2);
+    }
+
+    #[test]
+    fn rotate_respects_inherited_rotation() {
+        // Page inherits /Rotate 90 from its parent node. Rotating it by 90 more
+        // must give 180, not 90 (the page's own value is absent, so 0 + 90).
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_n_page_pdf(&src, 1);
+        let mut doc = Document::load(&src).unwrap();
+        let page_id = *doc.get_pages().values().next().unwrap();
+        let parent = doc
+            .get_dictionary(page_id)
+            .unwrap()
+            .get(b"Parent")
+            .and_then(|o| o.as_reference())
+            .unwrap();
+        doc.get_object_mut(parent)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Rotate", 90);
+        doc.save(&src).unwrap();
+        rotate_pages(&src, &[1], Rotation::Cw90, &dst).unwrap();
+        let out = Document::load(&dst).unwrap();
+        let out_page = *out.get_pages().values().next().unwrap();
+        assert_eq!(read_rotate(&out, out_page), 180);
     }
 
     #[test]

@@ -123,6 +123,12 @@ pub fn remove_blank_pages(
     if blanks.is_empty() {
         return Ok(blanks);
     }
+    let total = crate::pdf::split::page_count(input)?;
+    if blanks.len() == total as usize {
+        return Err(PdfError::Other(
+            "every page looks blank, so nothing would be left. Try the Lenient setting, or check the scan.".into(),
+        ));
+    }
     delete_pages(input, &blanks, output)?;
     Ok(blanks)
 }

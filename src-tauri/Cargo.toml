@@ -1,6 +1,6 @@
 [package]
 name = "slab-app"
-version = "3.42.3"
+version = "3.42.4"
 description = "Slab — fast, free, offline PDF tool"
 authors = ["Sanjay Santhanam <51058514+Sanjays2402@users.noreply.github.com>"]
 edition = "2021"

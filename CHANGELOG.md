@@ -12,6 +12,12 @@ in this file too.
 ---
 
 
+## [3.42.4] — 2026-10-08 — Rotation & Blank Page Fixes
+
+### Fixed
+- **Rotating a page ignored a rotation inherited from its parent** (`/Rotate` set on a page-tree node). Rotating by 90° again produced 90° instead of 180°. Rotation now follows the inheritance chain.
+- **Remove Blank Pages** on a scan where every page is blank reported the generic "refusing to delete every page". It now explains that nothing would be left and suggests Lenient.
+
 ## [3.42.3] — 2026-10-08 — Server Fixes & API Key
 
 ### Added
