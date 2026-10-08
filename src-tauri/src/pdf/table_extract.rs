@@ -250,7 +250,7 @@ fn detect_tables(words: &[Word], opts: &TableOpts) -> Vec<Table> {
 
     // Column detection: cluster x_min across every word.
     let mut all_x: Vec<f32> = words.iter().map(|w| w.bbox.x_min).collect();
-    all_x.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    all_x.sort_by(|a, b| a.total_cmp(b));
     let col_centers = cluster_1d(&all_x, 12.0);
     if col_centers.len() < opts.min_cols as usize {
         return Vec::new();
@@ -284,7 +284,7 @@ fn detect_tables(words: &[Word], opts: &TableOpts) -> Vec<Table> {
 /// overlap into a single row, then sort each row left-to-right.
 fn cluster_rows(words: &[Word]) -> Vec<Vec<Word>> {
     let mut sorted: Vec<Word> = words.to_vec();
-    sorted.sort_by(|a, b| a.bbox.y_min.partial_cmp(&b.bbox.y_min).unwrap());
+    sorted.sort_by(|a, b| a.bbox.y_min.total_cmp(&b.bbox.y_min));
     let mut rows: Vec<Vec<Word>> = Vec::new();
     for w in sorted {
         let placed = match rows.last_mut() {
@@ -313,7 +313,7 @@ fn cluster_rows(words: &[Word]) -> Vec<Vec<Word>> {
         }
     }
     for row in &mut rows {
-        row.sort_by(|a, b| a.bbox.x_min.partial_cmp(&b.bbox.x_min).unwrap());
+        row.sort_by(|a, b| a.bbox.x_min.total_cmp(&b.bbox.x_min));
     }
     rows
 }

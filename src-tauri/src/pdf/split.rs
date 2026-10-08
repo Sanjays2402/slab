@@ -167,17 +167,24 @@ fn reorder_pages_inplace(
         }
     }
 
-    // Build the new Kids array in the desired order.
-    let kids: Vec<Object> = desired
-        .iter()
-        .filter_map(|orig| {
-            original_to_new_id
-                .get(orig)
-                .map(|id| Object::Reference(*id))
-        })
-        .collect();
-    if kids.len() != desired.len() {
-        return Err(PdfError::Other("lost pages during reorder".into()));
+    // Build the new Kids array in the desired order. A page that appears more
+    // than once needs its own page object for each extra occurrence: a page
+    // object referenced twice from /Kids is malformed and some readers reject
+    // the file. The copy keeps the same /Parent and shares content streams,
+    // which PDF allows.
+    let mut used = std::collections::HashSet::new();
+    let mut kids: Vec<Object> = Vec::with_capacity(desired.len());
+    for orig in desired {
+        let Some(&id) = original_to_new_id.get(orig) else {
+            return Err(PdfError::Other("lost pages during reorder".into()));
+        };
+        let target = if used.insert(id) {
+            id
+        } else {
+            let copy = doc.get_object(id)?.clone();
+            doc.add_object(copy)
+        };
+        kids.push(Object::Reference(target));
     }
 
     // Find the Pages root via the catalog.
@@ -297,6 +304,27 @@ mod tests {
         let r = [PageRange::new(1, 10).unwrap()];
         let res = split_by_ranges(&src, &r, tmp.path());
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn extract_with_duplicate_page_yields_valid_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("three.pdf");
+        let dst = tmp.path().join("dup.pdf");
+        make_n_page_pdf(&src, 3);
+        extract_pages_to(&src, &[2, 2, 1], &dst).unwrap();
+        let doc = lopdf::Document::load(&dst).unwrap();
+        let pages = doc.get_pages();
+        let mut ids: Vec<_> = pages.values().copied().collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(pages.len(), ids.len(), "a page object is referenced twice");
+        // Each copy carries the same content, so all three outputs read back.
+        let texts: Vec<_> = pages
+            .values()
+            .map(|id| doc.get_page_content(*id).unwrap())
+            .collect();
+        assert_eq!(texts[0], texts[1]);
     }
 
     #[test]

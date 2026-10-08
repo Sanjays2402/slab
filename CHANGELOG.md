@@ -12,6 +12,12 @@ in this file too.
 ---
 
 
+## [3.42.1] — 2026-10-08 — Bug Fixes
+
+### Fixed
+- **Duplicated pages** (Pages → Duplicate and any extract that repeats a page) wrote a PDF in which one page object was referenced twice, which some readers reject. Each extra copy now gets its own page object.
+- **Table extraction** could panic on a malformed PDF whose coordinates were NaN. Sorting now handles NaN.
+
 ## [3.42.0] — 2026-10-08 — Update Check
 
 ### Added
