@@ -12,6 +12,21 @@ in this file too.
 ---
 
 
+## [3.42.6] — 2026-10-08 — Server Fixes, API Key & Rotation Fixes
+
+This release also carries the changes from v3.42.3, v3.42.4 and v3.42.5. Those tags
+were created, but their builds failed (a clippy lint in CI, then a version
+mismatch), so they were never published.
+
+### Added
+- **`SLAB_API_KEY`** for Slab Server. When set, every `/api/v1/*` operation except `/api/v1/ops` requires `Authorization: Bearer <key>` or `X-Api-Key: <key>`. Unset (the default) keeps the server open as before.
+
+### Fixed
+- **Reordering or extracting pages silently lost pages** from PDFs with nested page trees (a 3-page file came back with 2). Pages are now flattened to the root first, with inherited attributes such as MediaBox carried over.
+- **Docker image listened on the wrong port.** The image set `SLAB_BIND=0.0.0.0:8080`, but the server ignored it and listened on 7300, so `docker run -p 8080:8080` and the healthcheck failed. The server now honours `SLAB_BIND`, defaulting to 8080. `SLAB_HOST` / `SLAB_PORT` still work.
+- **Rotating a page ignored a rotation inherited from its parent.** Rotating by 90° again produced 90° instead of 180°.
+- **Remove Blank Pages** on an all-blank scan now explains that nothing would be left, and suggests Lenient.
+
 ## [3.42.4] — 2026-10-08 — Rotation & Blank Page Fixes
 
 ### Fixed
