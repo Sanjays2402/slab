@@ -12,6 +12,15 @@ in this file too.
 ---
 
 
+## [3.42.3] — 2026-10-08 — Server Fixes & API Key
+
+### Added
+- **`SLAB_API_KEY`** for Slab Server. When set, every `/api/v1/*` operation except `/api/v1/ops` requires `Authorization: Bearer <key>` or `X-Api-Key: <key>`. Unset (the default) keeps the server open as before.
+
+### Fixed
+- **Reordering or extracting pages silently lost pages** from PDFs with nested page trees (a 3-page file came back with 2). Pages are now flattened to the root first, with inherited attributes such as MediaBox carried over.
+- **Docker image listened on the wrong port.** The image set `SLAB_BIND=0.0.0.0:8080`, but the server ignored it and listened on 7300, so `docker run -p 8080:8080` and the healthcheck failed. The server now honours `SLAB_BIND`, and its default port is 8080 to match the docs. `SLAB_HOST` / `SLAB_PORT` still work.
+
 ## [3.42.2] — 2026-10-08 — Server Responsiveness
 
 ### Fixed

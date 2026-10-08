@@ -53,6 +53,7 @@ Everything is environment-variable based. Defaults in **bold**.
 | Variable             | Default              | Notes                                                                       |
 | -------------------- | -------------------- | --------------------------------------------------------------------------- |
 | `SLAB_BIND`          | **`0.0.0.0:8080`**   | `host:port` to listen on. Use `127.0.0.1:8080` to restrict to localhost.    |
+| `SLAB_API_KEY`       | (empty — open)       | When set, every `/api/v1/*` operation except `/api/v1/ops` requires it, as `Authorization: Bearer <key>` or `X-Api-Key: <key>`. |
 | `SLAB_MAX_UPLOAD_MB` | **`256`**            | Per-request multipart cap. Bump for very large PDFs.                        |
 | `SLAB_DATA_DIR`      | **`/var/lib/slab`**  | Persistent dir for future job history & embedding cache.                    |
 | `SLAB_CORS_ORIGINS`  | (empty — same-origin)| Comma-separated list of allowed origins. Set to `*` to disable.             |
@@ -142,8 +143,10 @@ Errors are always JSON, with a stable shape:
 ## Security model
 
 Slab Server is **not** intended to be exposed directly to the public
-internet. It has no authentication, no rate limiting, and no per-tenant
-isolation. Run it behind:
+internet. It has no rate limiting and no per-tenant isolation. Set
+`SLAB_API_KEY` to require a key on every operation (`/healthz` and `/api/v1/ops`
+stay public). Without it the server is open to anyone who can reach it. Either
+way, run it behind:
 
 - a reverse proxy with HTTP basic auth or an OIDC sidecar (Caddy, Traefik,
   Authelia, oauth2-proxy), **or**

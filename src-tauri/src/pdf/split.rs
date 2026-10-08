@@ -7,7 +7,7 @@
 // Pages are 1-indexed in the public API to match every PDF UX in existence.
 
 use crate::pdf::PdfError;
-use lopdf::{Document, Object};
+use lopdf::{Document, Object, ObjectId};
 use std::path::{Path, PathBuf};
 
 /// A single page range, 1-indexed inclusive on both ends.
@@ -103,6 +103,7 @@ pub fn extract_pages_to(input: &Path, pages: &[u32], output: &Path) -> Result<()
         return Err(PdfError::Other("no pages selected".into()));
     }
     let mut doc = Document::load(input)?;
+    flatten_page_tree(&mut doc)?;
     let total_pages = doc.get_pages().len() as u32;
     for &p in pages {
         if p == 0 || p > total_pages {
@@ -140,6 +141,82 @@ pub fn extract_pages_to(input: &Path, pages: &[u32], output: &Path) -> Result<()
     }
     doc.compress();
     doc.save(output)?;
+    Ok(())
+}
+
+/// Attributes a page may inherit from an ancestor /Pages node (PDF 32000 7.7.3.4).
+const INHERITABLE: [&[u8]; 4] = [b"MediaBox", b"CropBox", b"Resources", b"Rotate"];
+
+/// Make every page a direct child of the root /Pages node.
+///
+/// The extract kernel rewrites only the root /Kids list, so a document with
+/// intermediate page-tree nodes would lose pages (a 3-page PDF came back as 2).
+/// This copies inherited attributes down onto each leaf first, so pages render
+/// the same. Intermediate nodes are left as unreferenced objects.
+fn flatten_page_tree(doc: &mut Document) -> Result<(), PdfError> {
+    let root_id = doc
+        .catalog()?
+        .get(b"Pages")
+        .and_then(|o| o.as_reference())
+        .map_err(|_| PdfError::Other("catalog missing /Pages".into()))?;
+    let mut leaves: Vec<(ObjectId, Vec<(&'static [u8], Object)>)> = Vec::new();
+    collect_leaves(doc, root_id, &[], &mut leaves, 0)?;
+    if leaves.is_empty() {
+        return Err(PdfError::Other("document has no pages".into()));
+    }
+    for (id, inherited) in &leaves {
+        let dict = match doc.get_object_mut(*id)? {
+            Object::Dictionary(d) => d,
+            _ => return Err(PdfError::Other("page is not a dictionary".into())),
+        };
+        for (key, value) in inherited {
+            if !dict.has(key) {
+                dict.set(key.to_vec(), value.clone());
+            }
+        }
+        dict.set("Parent", Object::Reference(root_id));
+    }
+    let count = leaves.len() as i64;
+    let kids: Vec<Object> = leaves
+        .iter()
+        .map(|(id, _)| Object::Reference(*id))
+        .collect();
+    if let Object::Dictionary(root) = doc.get_object_mut(root_id)? {
+        root.set("Kids", kids);
+        root.set("Count", count);
+    }
+    Ok(())
+}
+
+fn collect_leaves(
+    doc: &Document,
+    node: ObjectId,
+    inherited: &[(&'static [u8], Object)],
+    out: &mut Vec<(ObjectId, Vec<(&'static [u8], Object)>)>,
+    depth: u32,
+) -> Result<(), PdfError> {
+    if depth > 64 {
+        return Err(PdfError::Other("page tree is nested too deeply".into()));
+    }
+    let dict = doc.get_dictionary(node)?;
+    let mut inh: Vec<(&'static [u8], Object)> = inherited.to_vec();
+    for key in INHERITABLE {
+        if let Ok(value) = dict.get(key) {
+            inh.retain(|(k, _)| *k != key);
+            inh.push((key, value.clone()));
+        }
+    }
+    match dict.get(b"Kids").and_then(|k| k.as_array()) {
+        Ok(kids) => {
+            for kid in kids {
+                let kid_id = kid
+                    .as_reference()
+                    .map_err(|_| PdfError::Other("page tree child is not a reference".into()))?;
+                collect_leaves(doc, kid_id, &inh, out, depth + 1)?;
+            }
+        }
+        Err(_) => out.push((node, inh)),
+    }
     Ok(())
 }
 
@@ -304,6 +381,60 @@ mod tests {
         let r = [PageRange::new(1, 10).unwrap()];
         let res = split_by_ranges(&src, &r, tmp.path());
         assert!(res.is_err());
+    }
+
+    /// A 3-page PDF whose root /Pages has one intermediate node holding pages 2-3.
+    fn make_nested_tree_pdf(path: &Path) {
+        let objs = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 3 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>",
+            "<< /Length 0 >>\nstream\n\nendstream",
+            "<< /Type /Pages /Parent 2 0 R /MediaBox [0 0 300 400] /Kids [6 0 R 7 0 R] /Count 2 >>",
+            "<< /Type /Page /Parent 5 0 R /Contents 4 0 R >>",
+            "<< /Type /Page /Parent 5 0 R /Contents 4 0 R >>",
+        ];
+        let mut o = String::from("%PDF-1.4\n");
+        let mut offs = Vec::new();
+        for (i, x) in objs.iter().enumerate() {
+            offs.push(o.len());
+            o.push_str(&format!("{} 0 obj\n{}\nendobj\n", i + 1, x));
+        }
+        let x = o.len();
+        o.push_str(&format!(
+            "xref\n0 {}\n0000000000 65535 f \n",
+            objs.len() + 1
+        ));
+        for q in &offs {
+            o.push_str(&format!("{:010} 00000 n \n", q));
+        }
+        o.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
+            objs.len() + 1,
+            x
+        ));
+        std::fs::write(path, o).unwrap();
+    }
+
+    #[test]
+    fn reorder_nested_page_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("nested.pdf");
+        let dst = tmp.path().join("out.pdf");
+        make_nested_tree_pdf(&src);
+        assert_eq!(page_count(&src).unwrap(), 3);
+        extract_pages_to(&src, &[3, 1, 2], &dst).unwrap();
+        assert_eq!(page_count(&dst).unwrap(), 3);
+        // Pages 2 and 3 inherited their MediaBox from the intermediate node;
+        // the copy must keep it or they would render at the wrong size.
+        let doc = Document::load(&dst).unwrap();
+        for (_, id) in doc.get_pages() {
+            let page = doc.get_dictionary(id).unwrap();
+            assert!(
+                page.get(b"MediaBox").is_ok(),
+                "page lost its inherited MediaBox"
+            );
+        }
     }
 
     #[test]

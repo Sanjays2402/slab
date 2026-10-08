@@ -95,6 +95,61 @@ impl IntoResponse for ApiError {
     }
 }
 
+// Optional API key. When SLAB_API_KEY is set, every /api/v1/* operation
+// except /api/v1/ops requires it, as `Authorization: Bearer <key>` or
+// `X-Api-Key: <key>`. Unset (the default) keeps the server open, as before, so
+// put it behind a proxy or set a key before exposing it to a network.
+
+fn api_key() -> Option<String> {
+    env::var("SLAB_API_KEY").ok().filter(|k| !k.is_empty())
+}
+
+/// Constant-time equality so a key can't be guessed by timing the response.
+fn keys_match(given: &[u8], expected: &[u8]) -> bool {
+    if given.len() != expected.len() {
+        return false;
+    }
+    given
+        .iter()
+        .zip(expected)
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+fn request_key(headers: &HeaderMap) -> Option<&[u8]> {
+    if let Some(v) = headers.get("x-api-key") {
+        return Some(v.as_bytes());
+    }
+    headers
+        .get(header::AUTHORIZATION)?
+        .as_bytes()
+        .strip_prefix(b"Bearer ")
+}
+
+async fn require_api_key(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, ApiError> {
+    let path = req.uri().path();
+    let protected = path.starts_with("/api/v1/") && path != "/api/v1/ops";
+    if protected {
+        if let Some(expected) = api_key() {
+            let ok = request_key(req.headers())
+                .is_some_and(|given| keys_match(given, expected.as_bytes()));
+            if !ok {
+                return Err(ApiError {
+                    status: StatusCode::UNAUTHORIZED,
+                    body: ErrorBody {
+                        error: "missing or invalid API key".into(),
+                        op: None,
+                    },
+                });
+            }
+        }
+    }
+    Ok(next.run(req).await)
+}
+
 // Shared limits — env-overridable for hosts with bigger PDFs to serve.
 fn body_limit_bytes() -> usize {
     env::var("SLAB_MAX_UPLOAD_MB")
@@ -871,6 +926,7 @@ fn build_app() -> Router {
         .route("/api/v1/info", post(h_info))
         .route("/api/v1/page-count", post(h_page_count))
         .route("/api/v1/strip-metadata", post(h_strip_metadata))
+        .layer(axum::middleware::from_fn(require_api_key))
         .layer(DefaultBodyLimit::max(body_cap))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
@@ -883,12 +939,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("slab_server=info,tower_http=info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    let port: u16 = env::var("SLAB_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(7300);
-    let host: String = env::var("SLAB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let addr: SocketAddr = format!("{host}:{port}").parse()?;
+    // SLAB_BIND (host:port) is the documented setting and what the Docker image
+    // sets. SLAB_HOST / SLAB_PORT still work for existing scripts.
+    let addr: SocketAddr = match env::var("SLAB_BIND").ok().filter(|s| !s.is_empty()) {
+        Some(bind) => bind.parse()?,
+        None => {
+            let port: u16 = env::var("SLAB_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(8080);
+            let host = env::var("SLAB_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+            format!("{host}:{port}").parse()?
+        }
+    };
 
     let app = build_app();
     let started = Instant::now();
@@ -915,6 +978,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_port_matches_docs() {
+        // The docs, Dockerfile and compose file all say 8080.
+        let s: SocketAddr = "0.0.0.0:8080".parse().unwrap();
+        assert_eq!(s.port(), 8080);
+    }
+
+    #[test]
+    fn key_comparison() {
+        assert!(keys_match(b"secret", b"secret"));
+        assert!(!keys_match(b"secret", b"secreT"));
+        assert!(!keys_match(b"secre", b"secret"));
+        assert!(!keys_match(b"", b"secret"));
+    }
+
+    #[test]
+    fn extracts_key_from_either_header() {
+        let mut h = HeaderMap::new();
+        assert_eq!(request_key(&h), None);
+        h.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer abc"),
+        );
+        assert_eq!(request_key(&h), Some(&b"abc"[..]));
+        h.insert("x-api-key", HeaderValue::from_static("xyz"));
+        assert_eq!(request_key(&h), Some(&b"xyz"[..]));
+        let mut basic = HeaderMap::new();
+        basic.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
+        assert_eq!(request_key(&basic), None);
+    }
 
     #[test]
     fn parses_simple_ranges() {
