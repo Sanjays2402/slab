@@ -17,7 +17,10 @@ Core tools run locally; optional AI uses your configured provider.
 
 **[Download Slab](https://github.com/Sanjays2402/slab/releases/latest)** ·
 [Website](https://sanjays2402.github.io/slab/) ·
-[Report an issue](https://github.com/Sanjays2402/slab/issues)
+[Report an issue](https://github.com/Sanjays2402/slab/issues) ·
+[Changelog](CHANGELOG.md) ·
+[Server docs](docs/server.md) ·
+[Plugins](docs/PLUGINS.md)
 
 **A quick first run:** open a PDF, press `⌘K`, and choose Merge, Sign, or Redact. The feature tour below previews the workflow.
 
@@ -112,7 +115,15 @@ Headless Slab: an HTTP API plus a drag-and-drop web UI in a single Docker image.
 docker run --rm -p 8080:8080 ghcr.io/sanjays2402/slab:latest
 ```
 
-Open [http://localhost:8080](http://localhost:8080), drop a PDF on the page. Full API + Compose example: [docs/server.md](docs/server.md).
+Open [http://localhost:8080](http://localhost:8080), drop a PDF on the page.
+
+The server is open by default. To require a key on every API call, set `SLAB_API_KEY` and send it as `Authorization: Bearer <key>` or `X-Api-Key: <key>`; use `SLAB_BIND=127.0.0.1:8080` to listen on localhost only.
+
+```bash
+docker run --rm -p 8080:8080 -e SLAB_API_KEY=change-me ghcr.io/sanjays2402/slab:latest
+```
+
+Full API, configuration and Compose example: [docs/server.md](docs/server.md).
 
 ## 65 tools, one palette
 
@@ -155,7 +166,7 @@ Pre-built installers ship with every [release](https://github.com/Sanjays2402/sl
 
 ## Build from source
 
-Prereqs: Rust stable, Node ≥ 22.12, pnpm ≥ 9.
+Prereqs: Rust stable, Node ≥ 22.12, pnpm ≥ 9, plus the [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your platform (WebView2 and the MSVC build tools on Windows; `webkit2gtk` and friends on Linux).
 
 ```bash
 git clone https://github.com/Sanjays2402/slab
@@ -181,6 +192,15 @@ pnpm test:native        # actual CLI and HTTP API PDF round-trips
 ```
 
 `test:e2e` starts Vite automatically. Native tests generate their own PDFs, use a temporary output folder and start the server on a local ephemeral port. Set `SLAB_CLI` / `SLAB_SERVER` for binaries in another location, `SLAB_SITE_URL` for another website deployment, or `SLAB_CHROMIUM_PATH` for an installed Chromium executable. Native dialog interactions in browser tests use a test bridge; `test:native` exercises the real Rust commands and HTTP server. OCR integrations need Poppler and Tesseract; AI integrations need configured providers.
+
+## Extend Slab
+
+- **Plugins and themes** — write your own with the [plugin guide](docs/PLUGINS.md) and the [`slab-plugin-sdk`](sdk/slab-plugin-sdk); working samples live in [`examples/plugins`](examples/plugins).
+- **Marketplace** — how listings are structured and submitted: [docs/MARKETPLACE.md](docs/MARKETPLACE.md).
+
+## Contributing
+
+Bug reports and pull requests are welcome. Before opening a PR, run `pnpm check` and `pnpm test` (see [Tests](#tests)); Rust changes should also pass `cargo fmt` and `cargo clippy`. Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## Under the hood
 
