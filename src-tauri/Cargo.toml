@@ -48,7 +48,7 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # PDF manipulation: pure-Rust, no native deps
-lopdf = "0.40"
+lopdf = "0.42"
 
 # TrueType inspection for PDF/A font-embed pass (v3.0.2 Foundry Fonts)
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
