@@ -1897,8 +1897,8 @@
 
             <div class="rule-body">
               <div class="row">
-                <label>IF</label>
-                <select
+                <label for="hre-f1">IF</label>
+                <select id="hre-f1"
                   value={rule.predicate.kind}
                   onchange={(e) =>
                     setPredicateKind(
@@ -1959,8 +1959,8 @@
               </div>
 
               <div class="row">
-                <label>THEN</label>
-                <input
+                <label for="hre-f2">THEN</label>
+                <input id="hre-f2"
                   class="grow"
                   bind:value={rule.action.recipe_id}
                   oninput={scheduleSave}

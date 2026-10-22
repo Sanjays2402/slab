@@ -247,16 +247,16 @@
   <fieldset>
     <legend>1. Signing identity</legend>
     <div class="row">
-      <label>Certificate (PEM)</label>
-      <button onclick={pickCert}>{certPath ? basename(certPath) : "Choose…"}</button>
+      <label for="signet-f1">Certificate (PEM)</label>
+      <button id="signet-f1" onclick={pickCert}>{certPath ? basename(certPath) : "Choose…"}</button>
     </div>
     <div class="row">
-      <label>Private key (PEM)</label>
-      <button onclick={pickKey}>{keyPath ? basename(keyPath) : "Choose…"}</button>
+      <label for="signet-f2">Private key (PEM)</label>
+      <button id="signet-f2" onclick={pickKey}>{keyPath ? basename(keyPath) : "Choose…"}</button>
     </div>
     <div class="row">
-      <label>Key password</label>
-      <input type="password" bind:value={keyPassword} placeholder="optional" />
+      <label for="signet-f3">Key password</label>
+      <input id="signet-f3" type="password" bind:value={keyPassword} placeholder="optional" />
     </div>
     <div class="actions">
       <button class="primary" disabled={!canLoadIdentity} onclick={loadIdentity}>
@@ -285,36 +285,36 @@
   <fieldset>
     <legend>2. Sign a PDF</legend>
     <div class="row">
-      <label>Input PDF</label>
-      <button onclick={pickInputForSign}>
+      <label for="signet-f4">Input PDF</label>
+      <button id="signet-f4" onclick={pickInputForSign}>
         {inputPath ? basename(inputPath) : "Choose…"}
       </button>
     </div>
     <div class="row">
-      <label>Output PDF</label>
-      <button onclick={pickOutputForSign}>
+      <label for="signet-f5">Output PDF</label>
+      <button id="signet-f5" onclick={pickOutputForSign}>
         {outputPath ? basename(outputPath) : "Choose…"}
       </button>
     </div>
     <div class="row">
-      <label>Reason</label>
-      <input type="text" bind:value={reason} placeholder="e.g. I approve this contract" />
+      <label for="signet-f6">Reason</label>
+      <input id="signet-f6" type="text" bind:value={reason} placeholder="e.g. I approve this contract" />
     </div>
     <div class="row">
-      <label>Location</label>
-      <input type="text" bind:value={location} placeholder="e.g. San Francisco, CA" />
+      <label for="signet-f7">Location</label>
+      <input id="signet-f7" type="text" bind:value={location} placeholder="e.g. San Francisco, CA" />
     </div>
     <div class="row">
-      <label>Contact</label>
-      <input type="text" bind:value={contactInfo} placeholder="optional" />
+      <label for="signet-f8">Contact</label>
+      <input id="signet-f8" type="text" bind:value={contactInfo} placeholder="optional" />
     </div>
     <div class="row">
-      <label>Field name</label>
-      <input type="text" bind:value={fieldName} placeholder="Signature1" />
+      <label for="signet-f9">Field name</label>
+      <input id="signet-f9" type="text" bind:value={fieldName} placeholder="Signature1" />
     </div>
     <div class="row">
-      <label>TSA URL</label>
-      <input
+      <label for="signet-f10">TSA URL</label>
+      <input id="signet-f10"
         type="text"
         bind:value={tsaUrl}
         placeholder="optional — RFC 3161 (e.g. http://timestamp.digicert.com)"
@@ -367,8 +367,8 @@
   <fieldset>
     <legend>3. Verify a signed PDF</legend>
     <div class="row">
-      <label>Signed PDF</label>
-      <button onclick={pickInputForVerify}>
+      <label for="signet-f11">Signed PDF</label>
+      <button id="signet-f11" onclick={pickInputForVerify}>
         {verifyInputPath ? basename(verifyInputPath) : "Choose…"}
       </button>
     </div>
