@@ -105,29 +105,29 @@
   </header>
 
   <div class="row">
-    <label>Input PDF</label>
+    <label for="pl-l1">Input PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
+      <input id="pl-l1" type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
 
   <div class="row">
-    <label>Output PDF</label>
+    <label for="pl-l2">Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/labeled.pdf" aria-label="Output PDF path" />
+      <input id="pl-l2" type="text" bind:value={outputPath} placeholder="/path/to/labeled.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
 
   <div class="row">
-    <label>Label Ranges</label>
+    <label for="pl-l3">Label Ranges</label>
     <div class="range-list">
       {#each ranges as r, i (i)}
         <div class="range-row">
           <div class="field">
             <span class="lbl">From page (0-based)</span>
-            <input type="number" min="0" bind:value={r.start_page} aria-label="From page (0-based) for range {i + 1}" />
+            <input id="pl-l3" type="number" min="0" bind:value={r.start_page} aria-label="From page (0-based) for range {i + 1}" />
           </div>
           <div class="field">
             <span class="lbl">Style</span>

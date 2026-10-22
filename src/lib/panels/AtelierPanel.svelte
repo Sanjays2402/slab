@@ -878,8 +878,7 @@
   .lbl.narrow {
     flex: 0 0 90px;
   }
-  .lbl input,
-  .lbl select {
+  .lbl input {
     padding: 6px 9px;
     border-radius: var(--r-sm);
     border: 1px solid var(--border);

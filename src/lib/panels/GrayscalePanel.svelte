@@ -80,17 +80,17 @@
   </header>
 
   <div class="row">
-    <label>Input PDF</label>
+    <label for="gs-l1">Input PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
+      <input id="gs-l1" type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
 
   <div class="row">
-    <label>Output PDF</label>
+    <label for="gs-l2">Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/grayscale.pdf" aria-label="Output PDF path" />
+      <input id="gs-l2" type="text" bind:value={outputPath} placeholder="/path/to/grayscale.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>

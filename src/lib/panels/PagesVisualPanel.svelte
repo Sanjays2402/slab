@@ -696,11 +696,6 @@
   /* ⭐ Arranger WOW — rotate-tilt + halo pulse cascade (v2.1.2, issue #26).
      280ms cubic-bezier with gold-accent halo cascading across neighbours.
      Honours prefers-reduced-motion. */
-  .cell.slab-rotate-tilt {
-    animation: slab-rotate-tilt 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
-    transform-origin: center center;
-    z-index: 5;
-  }
   @keyframes slab-rotate-tilt {
     0% {
       transform: rotate(0deg) scale(1);
@@ -715,9 +710,6 @@
       filter: none;
     }
   }
-  .cell.slab-halo-pulse {
-    animation: slab-halo-pulse 280ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
   @keyframes slab-halo-pulse {
     0% {
       box-shadow: 0 0 0 0 rgba(212, 160, 74, 0);
@@ -729,10 +721,6 @@
       box-shadow: 0 0 0 0 rgba(212, 160, 74, 0);
     }
   }
-  .cell.slab-delete-out {
-    animation: slab-delete-out 220ms ease-out forwards;
-    pointer-events: none;
-  }
   @keyframes slab-delete-out {
     0% {
       opacity: 1;
@@ -741,13 +729,6 @@
     100% {
       opacity: 0;
       transform: translateX(-32px) scale(0.85);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .cell.slab-rotate-tilt,
-    .cell.slab-halo-pulse,
-    .cell.slab-delete-out {
-      animation: none !important;
     }
   }
   .hint kbd {

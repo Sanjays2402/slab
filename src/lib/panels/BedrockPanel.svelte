@@ -194,9 +194,9 @@
   <div class="grid">
     <!-- Input picker -->
     <div class="card">
-      <label class="lbl">Source PDF</label>
+      <label class="lbl" for="bedrock-l1">Source PDF</label>
       <div class="row">
-        <button class="btn-secondary" onclick={pickInput}>Choose file…</button>
+        <button id="bedrock-l1" class="btn-secondary" onclick={pickInput}>Choose file…</button>
         <span class="path" title={input ?? ""}>{input ? basename(input) : "no file chosen"}</span>
       </div>
       {#if auditStatus.kind !== "idle"}
@@ -224,9 +224,9 @@
 
     <!-- Options -->
     <div class="card">
-      <label class="lbl">Conformance level</label>
+      <label class="lbl" for="bedrock-l2">Conformance level</label>
       <div class="seg">
-        <button class:active={level === "2b"} onclick={() => (level = "2b")}>
+        <button id="bedrock-l2" class:active={level === "2b"} onclick={() => (level = "2b")}>
           <strong>PDF/A-2b</strong>
           <span>general archival</span>
         </button>
@@ -236,8 +236,8 @@
         </button>
       </div>
 
-      <label class="lbl">Metadata (XMP, optional)</label>
-      <input class="ti" placeholder="Title" bind:value={title} />
+      <label class="lbl" for="bedrock-l3">Metadata (XMP, optional)</label>
+      <input id="bedrock-l3" class="ti" placeholder="Title" bind:value={title} />
       <input class="ti" placeholder="Author" bind:value={author} />
       <input class="ti" placeholder="Subject" bind:value={subject} />
 
@@ -249,9 +249,9 @@
 
     <!-- Output + run -->
     <div class="card">
-      <label class="lbl">Output</label>
+      <label class="lbl" for="bedrock-l4">Output</label>
       <div class="row">
-        <button class="btn-secondary" onclick={pickOutput} disabled={!input}>Save as…</button>
+        <button id="bedrock-l4" class="btn-secondary" onclick={pickOutput} disabled={!input}>Save as…</button>
         <span class="path" title={output ?? ""}>{output ? basename(output) : "—"}</span>
       </div>
       <button

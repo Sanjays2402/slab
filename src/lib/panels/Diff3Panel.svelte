@@ -314,25 +314,25 @@
 
   <div class="pickers">
     <div class="picker">
-      <label>Base (common ancestor)</label>
+      <label for="d3-l1">Base (common ancestor)</label>
       <div class="row">
-        <button class="ghost" onclick={pickBase}>
+        <button id="d3-l1" class="ghost" onclick={pickBase}>
           {basePath ? basename(basePath) : "Pick base PDF…"}
         </button>
       </div>
     </div>
     <div class="picker">
-      <label>Mine</label>
+      <label for="d3-l2">Mine</label>
       <div class="row">
-        <button class="ghost" onclick={pickMine}>
+        <button id="d3-l2" class="ghost" onclick={pickMine}>
           {minePath ? basename(minePath) : "Pick mine PDF…"}
         </button>
       </div>
     </div>
     <div class="picker">
-      <label>Theirs</label>
+      <label for="d3-l3">Theirs</label>
       <div class="row">
-        <button class="ghost" onclick={pickTheirs}>
+        <button id="d3-l3" class="ghost" onclick={pickTheirs}>
           {theirsPath ? basename(theirsPath) : "Pick theirs PDF…"}
         </button>
       </div>

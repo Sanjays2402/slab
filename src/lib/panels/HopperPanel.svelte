@@ -627,7 +627,6 @@
     display: flex;
     gap: 6px;
   }
-  input[type="text"],
   input:not([type]) {
     flex: 1;
     background: rgba(0, 0, 0, 0.2);

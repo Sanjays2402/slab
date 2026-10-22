@@ -69,26 +69,26 @@
   </header>
 
   <div class="row">
-    <label>Input PDF</label>
+    <label for="nup-l1">Input PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
+      <input id="nup-l1" type="text" bind:value={inputPath} placeholder="/path/to/input.pdf" aria-label="Input PDF path" />
       <button onclick={pickInput} disabled={!isInTauri()}>Browse</button>
     </div>
   </div>
 
   <div class="row">
-    <label>Output PDF</label>
+    <label for="nup-l2">Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/nup.pdf" aria-label="Output PDF path" />
+      <input id="nup-l2" type="text" bind:value={outputPath} placeholder="/path/to/nup.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
 
   <div class="row">
-    <label>Pages per sheet</label>
+    <label for="nup-l3">Pages per sheet</label>
     <div class="seg">
       {#each nOptions as opt (opt)}
-        <button
+        <button id="nup-l3"
           class="seg-btn"
           class:active={n === opt}
           onclick={() => (n = opt)}

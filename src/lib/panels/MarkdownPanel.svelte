@@ -90,9 +90,9 @@ Try editing this and clicking **Convert**.
   </div>
 
   <div class="row">
-    <label>Output PDF</label>
+    <label for="md-l1">Output PDF</label>
     <div class="path-row">
-      <input type="text" bind:value={outputPath} placeholder="/path/to/document.pdf" aria-label="Output PDF path" />
+      <input id="md-l1" type="text" bind:value={outputPath} placeholder="/path/to/document.pdf" aria-label="Output PDF path" />
       <button onclick={pickOutput} disabled={!isInTauri()}>Save as</button>
     </div>
   </div>
