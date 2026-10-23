@@ -336,7 +336,7 @@
         </div>
       {:else if loading}
         <div class="empty">
-          <div class="spinner" />
+          <div class="spinner"></div>
           <span>Loading watches…</span>
         </div>
       {:else if watches.length === 0}
@@ -416,12 +416,12 @@
     <section class="col log">
       <div class="col-head">
         <h2>Live activity</h2>
-        <span class="live-dot" title="Live updates via Tauri events" />
+        <span class="live-dot" title="Live updates via Tauri events"></span>
       </div>
 
       {#if loading}
         <div class="empty">
-          <div class="spinner" />
+          <div class="spinner"></div>
           <span>Loading runs…</span>
         </div>
       {:else if runs.length === 0}

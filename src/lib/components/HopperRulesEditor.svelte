@@ -1823,7 +1823,7 @@
     <p class="sr-only" aria-live="polite" role="status">{reorderAnnounce}</p>
     <ol class="rules">
       {#if loading}
-        <li class="empty"><span class="spinner" /> Loading rules…</li>
+        <li class="empty"><span class="spinner"></span> Loading rules…</li>
       {:else if rules.length === 0}
         <li class="empty">
           <div class="empty-icon">🎯</div>

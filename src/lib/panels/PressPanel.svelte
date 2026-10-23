@@ -175,17 +175,17 @@
       <button
         role="tab"
         class:active={tab === "inspect"}
-        on:click={() => (tab = "inspect")}
+        onclick={() => (tab = "inspect")}
       >Inspect</button>
       <button
         role="tab"
         class:active={tab === "convert"}
-        on:click={() => (tab = "convert")}
+        onclick={() => (tab = "convert")}
       >Convert <span class="kbd">{prettyBindingFor("press.open") || "⌘⇧X"}</span></button>
       <button
         role="tab"
         class:active={tab === "validate"}
-        on:click={() => (tab = "validate")}
+        onclick={() => (tab = "validate")}
       >Validate</button>
     </div>
   </header>
@@ -194,7 +194,7 @@
     <section class="card">
       <h2>Inspect input</h2>
       <div class="row">
-        <button class="primary" on:click={pickInput}>Pick PDF…</button>
+        <button class="primary" onclick={pickInput}>Pick PDF…</button>
         <span class="path">{inputPath || "No file selected."}</span>
       </div>
       {#if inputPath}
@@ -224,11 +224,11 @@
       <h2>Convert to PDF/X-4</h2>
 
       <div class="row">
-        <button on:click={pickInput}>Input…</button>
+        <button onclick={pickInput}>Input…</button>
         <span class="path">{inputPath || "—"}</span>
       </div>
       <div class="row">
-        <button on:click={pickOutput}>Output…</button>
+        <button onclick={pickOutput}>Output…</button>
         <span class="path">{outputPath || "—"}</span>
       </div>
 
@@ -254,7 +254,7 @@
       </label>
 
       <div class="actions">
-        <button class="primary" on:click={runConvert} disabled={busy || !inputPath || !outputPath}>
+        <button class="primary" onclick={runConvert} disabled={busy || !inputPath || !outputPath}>
           {busy ? "Converting…" : "Convert"}
         </button>
         {#if error}
