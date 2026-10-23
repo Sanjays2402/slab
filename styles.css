@@ -485,3 +485,6 @@ body { background: radial-gradient(ellipse at 5% 0%, color-mix(in srgb, var(--ac
   .feature-footer { align-items: flex-start; flex-direction: column; }
   .workflow-frame img { height: auto; width: min(100%, 390px); }
 }
+
+.page .note { border: 1px solid var(--line); border-radius: 12px; padding: 0.2rem 1.1rem; margin: 1.2rem 0 1.6rem; }
+.page ul li { margin: 0.4rem 0; }
