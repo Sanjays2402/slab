@@ -47,17 +47,18 @@ export async function removePages(
   const doc = await PDFDocument.load(bytes);
   const total = doc.getPageCount();
   const unique = Array.from(new Set(indices));
+  // Validate first so a bad index is reported as such, not as "every page".
+  for (const i of unique) {
+    if (!Number.isInteger(i) || i < 0 || i >= total) {
+      throw new Error(`page index out of range: ${i}`);
+    }
+  }
   if (unique.length >= total) {
     throw new Error("cannot remove every page");
   }
   // Remove in descending order so earlier indices stay valid.
   const sorted = unique.slice().sort((a, b) => b - a);
-  for (const i of sorted) {
-    if (i < 0 || i >= total) {
-      throw new Error(`page index out of range: ${i}`);
-    }
-    doc.removePage(i);
-  }
+  for (const i of sorted) doc.removePage(i);
   return await doc.save();
 }
 

@@ -110,6 +110,15 @@ async function pageCount(bytes) {
   }
   assert(threw, "remove-all rejects");
 
+  // error: out-of-range index is reported as such, even when the count matches
+  let msg = "";
+  try {
+    await removePages(five, [0, 1, 2, 3, 99]);
+  } catch (e) {
+    msg = String(e.message);
+  }
+  assert(/out of range/.test(msg), "remove reports out-of-range index");
+
   // error: bad permutation
   threw = false;
   try {
