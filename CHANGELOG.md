@@ -12,6 +12,19 @@ in this file too.
 ---
 
 
+## [3.42.7] — 2026-10-22 — Server Error Codes, Split Ranges & Accessibility
+
+### Fixed
+- **Slab Server returned `500` with a Rust debug string for invalid input** (page out of range, empty or wrong password). These are now `400` with a plain message.
+- **`SLAB_MAX_UPLOAD_MB` defaulted to 200** outside Docker while the docs and image say 256. The default is now 256.
+- **`Authorization: bearer <key>`** (lower case) was rejected; the scheme is now case-insensitive.
+- **Split rejected ranges with spaces** such as `1 - 3`; Merge already accepted them.
+- **Browser tools:** removing a nonexistent page index reported "cannot remove every page".
+
+### Changed
+- Form controls in eight panels are now associated with their labels; dead CSS and deprecated `on:click` syntax removed (`svelte-check` warnings 104 → 26).
+- README gains quick links, API-key setup, plugin and contributing sections.
+
 ## [3.42.6] — 2026-10-08 — Server Fixes, API Key & Rotation Fixes
 
 This release also carries the changes from v3.42.3, v3.42.4 and v3.42.5. Those tags
