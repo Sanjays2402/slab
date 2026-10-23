@@ -1031,7 +1031,10 @@ mod tests {
     #[test]
     fn bearer_scheme_is_case_insensitive() {
         let mut h = HeaderMap::new();
-        h.insert(header::AUTHORIZATION, HeaderValue::from_static("bearer k3y"));
+        h.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("bearer k3y"),
+        );
         assert_eq!(request_key(&h), Some(&b"k3y"[..]));
         h.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic k3y"));
         assert_eq!(request_key(&h), None);
