@@ -487,8 +487,7 @@ async fn h_merge(mp: Multipart) -> Result<Response, ApiError> {
             paths.push(dest);
         }
         let out = dir.path().join("merged.pdf");
-        pdf::merge::merge_pdfs(&paths, out.clone())
-            .map_err(|e| ApiError::from_pdf("merge", e))?;
+        pdf::merge::merge_pdfs(&paths, out.clone()).map_err(|e| ApiError::from_pdf("merge", e))?;
         pdf_response(&out, "slab-merged.pdf")
     })
     .await
@@ -875,8 +874,7 @@ async fn h_info(mp: Multipart) -> Result<Response, ApiError> {
     blocking(move || {
         let pdf_in = ensure_pdf(&up.pdfs)?;
         let (_dir, in_path) = write_temp(pdf_in)?;
-        let info =
-            pdf::info::info(&in_path).map_err(|e| ApiError::from_pdf("info", e))?;
+        let info = pdf::info::info(&in_path).map_err(|e| ApiError::from_pdf("info", e))?;
         Ok(Json(info).into_response())
     })
     .await
@@ -887,8 +885,8 @@ async fn h_page_count(mp: Multipart) -> Result<Response, ApiError> {
     blocking(move || {
         let pdf_in = ensure_pdf(&up.pdfs)?;
         let (_dir, in_path) = write_temp(pdf_in)?;
-        let pages = pdf::split::page_count(&in_path)
-            .map_err(|e| ApiError::from_pdf("page-count", e))?;
+        let pages =
+            pdf::split::page_count(&in_path).map_err(|e| ApiError::from_pdf("page-count", e))?;
         Ok(Json(json!({ "pages": pages })).into_response())
     })
     .await
