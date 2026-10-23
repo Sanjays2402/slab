@@ -16,6 +16,7 @@ for (let total = 1; total <= 100; total++) {
 assert.deepEqual(splitPlan(10, "parts", "", 1, 3), [{ start: 1, end: 4 }, { start: 5, end: 7 }, { start: 8, end: 10 }]);
 assert.deepEqual(splitPlan(5, "every", "", 2, 1), [{ start: 1, end: 2 }, { start: 3, end: 4 }, { start: 5, end: 5 }]);
 assert.deepEqual(splitPlan(5, "every", "", 9, 1), [{ start: 1, end: 5 }]);
+assert.deepEqual(splitPlan(9, "ranges", "1 - 3, 5 -6", 1, 1), [{ start: 1, end: 3 }, { start: 5, end: 6 }]);
 assert.deepEqual(splitPlan(9, "ranges", "7-9, 1-3, 5", 1, 1), [{ start: 7, end: 9 }, { start: 1, end: 3 }, { start: 5, end: 5 }]);
 for (const value of [0, -1, 1.5, 11, NaN, Infinity, undefined])
   assert.throws(() => splitPlan(10, "parts", "", 1, value));

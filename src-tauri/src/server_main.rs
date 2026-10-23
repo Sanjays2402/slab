@@ -120,10 +120,10 @@ fn request_key(headers: &HeaderMap) -> Option<&[u8]> {
     if let Some(v) = headers.get("x-api-key") {
         return Some(v.as_bytes());
     }
-    headers
-        .get(header::AUTHORIZATION)?
-        .as_bytes()
-        .strip_prefix(b"Bearer ")
+    // The auth scheme is case-insensitive (RFC 7235), so accept `bearer`.
+    let value = headers.get(header::AUTHORIZATION)?.as_bytes();
+    let (scheme, rest) = value.split_at_checked(7)?;
+    scheme.eq_ignore_ascii_case(b"Bearer ").then_some(rest)
 }
 
 async fn require_api_key(
@@ -155,9 +155,8 @@ fn body_limit_bytes() -> usize {
     env::var("SLAB_MAX_UPLOAD_MB")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(200)
-        * 1024
-        * 1024
+        .unwrap_or(256)
+        .saturating_mul(1024 * 1024)
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -1014,6 +1013,17 @@ mod tests {
     fn parses_simple_ranges() {
         let r = parse_ranges("1-3,5,7-9").unwrap();
         assert_eq!(r, vec![(1, 3), (5, 5), (7, 9)]);
+    }
+
+    #[test]
+    fn bearer_scheme_is_case_insensitive() {
+        let mut h = HeaderMap::new();
+        h.insert(header::AUTHORIZATION, HeaderValue::from_static("bearer k3y"));
+        assert_eq!(request_key(&h), Some(&b"k3y"[..]));
+        h.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic k3y"));
+        assert_eq!(request_key(&h), None);
+        h.insert(header::AUTHORIZATION, HeaderValue::from_static("Bear"));
+        assert_eq!(request_key(&h), None);
     }
 
     #[test]

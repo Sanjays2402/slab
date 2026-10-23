@@ -17,7 +17,7 @@ export function splitPlan(
     const tokens = rangeText.split(",").map(s => s.trim());
     if (tokens.some(s => !s)) throw new Error("Add complete ranges, e.g. 1-3, 5, 7-9.");
     const ranges = tokens.map(token => {
-      const match = /^(\d+)(?:-(\d+))?$/.exec(token);
+      const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(token);
       if (!match) throw new Error(`Invalid range: "${token}".`);
       const start = Number(match[1]);
       const end = Number(match[2] ?? match[1]);
