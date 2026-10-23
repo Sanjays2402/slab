@@ -56,6 +56,6 @@ test("screenshots, internal links, policy pages and release labels resolve", asy
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   }
   await page.goto("./");
-  await expect(page.locator('#coming-next')).toContainText("current download is v3.40.0");
-  await expect(page.locator('a[href*="/releases/download/v3.40.0/"]')).toHaveCount(7);
+  await expect(page.locator('#coming-next')).toContainText("current download is v3.42.7");
+  await expect(page.locator('a[href*="/releases/download/v3.42.7/"]')).toHaveCount(7);
 });
