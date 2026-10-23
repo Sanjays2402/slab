@@ -221,3 +221,15 @@ Tauri 2 shell, Svelte 5 front-end, pure-Rust PDF core (`lopdf`), `pdfjs-dist` re
 Slab will never ask for an email. Will never call home on its own (the optional update check only runs when you click it or opt in, and sends nothing about you). Will never gate a feature behind a paywall. If it ever does any of those things, you have my permission to fork it and rip the offending lines out.
 
 Made with 🍰 by [@Sanjays2402](https://github.com/Sanjays2402).
+
+## Terms & Disclaimer
+
+By using this project you agree to the following.
+
+- **No warranty.** This software is provided "as is", without warranty of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement.
+- **No liability.** To the maximum extent permitted by law, the author and contributors are not liable for any claim, loss, or damage (direct, indirect, incidental, or consequential, including lost data or profits) arising from its use.
+- **Your responsibility.** You use it at your own risk and are responsible for complying with the laws that apply to you.
+- Full terms: [sanjays2402.github.io/slab/terms.html](https://sanjays2402.github.io/slab/terms.html). Redaction, signature, and standards-check (PDF/A, PDF/X, PDF/UA) results are not guaranteed and are not legal or compliance advice; always check the output.
+- **Third parties.** Names, logos, APIs, and services of others belong to their owners and are used for identification only; no affiliation or endorsement is implied.
+- **Your statutory rights.** Nothing here limits rights that cannot be waived by agreement, including under consumer-protection laws in the USA, Canada (including Quebec), and India (Consumer Protection Act, 2019).
+- **License.** Use, copying, and distribution are governed by the [LICENSE](LICENSE) file; if anything here conflicts with it, the license controls.
