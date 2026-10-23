@@ -21,7 +21,8 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:ital,opsz,wght@1,9..144,400..600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:ital,opsz,wght@1,9..144,400..600&family=JetBrains+Mono:wght@400;600&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:ital,opsz,wght@1,9..144,400..600&family=JetBrains+Mono:wght@400;600&display=swap"></noscript>
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Slab","applicationCategory":"UtilitiesApplication","operatingSystem":"macOS, Windows, Linux","description":"Free, open-source PDF toolkit that runs on your computer.","license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://sanjays2402.github.io/slab/","downloadUrl":"https://github.com/Sanjays2402/slab/releases/latest","softwareVersion":"3.42.7","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
   <script src="theme.js"></script>
   <link rel="stylesheet" href="styles.css">
@@ -98,7 +99,7 @@
         <figure class="mock reveal">
           <figcaption class="mock-head"><span>The PDF studio</span></figcaption>
           <div class="mock-body">
-            <img src="screenshots/00-hero-reader.png" alt="Slab reader with a PDF open" loading="eager" width="1440" height="900">
+            <img src="screenshots/00-hero-reader.webp" srcset="screenshots/00-hero-reader.webp 1440w, screenshots/00-hero-reader@2x.webp 2880w" sizes="(min-width: 1000px) 945px, 100vw" alt="Slab reader with a PDF open" loading="eager" width="1440" height="900">
           </div>
         </figure>
         <p class="watermark" aria-hidden="true">sanjays2402</p>
@@ -304,7 +305,7 @@
             </ul>
           </div>
           <figure class="frame reveal">
-            <img src="screenshots/03-beacon-ai.png" alt="Beacon AI answering a question about a PDF" loading="lazy" width="1440" height="900">
+            <img src="screenshots/03-beacon-ai.webp" srcset="screenshots/03-beacon-ai.webp 1440w, screenshots/03-beacon-ai@2x.webp 2880w" sizes="(min-width: 1000px) 945px, 100vw" alt="Beacon AI answering a question about a PDF" loading="lazy" width="1440" height="900">
           </figure>
         </div>
       </div>
@@ -383,10 +384,10 @@
         <p class="sec-label reveal">Screenshots</p>
         <h2 class="sec-title reveal">Looks like <em class="grad">this.</em></h2>
         <div class="gallery">
-          <figure class="frame reveal"><img src="screenshots/02-library.png" alt="Slab library with folders and tags" loading="lazy" width="1440" height="900"><figcaption>Library — folders, tags, watched-folder auto-indexing</figcaption></figure>
-          <figure class="frame reveal"><img src="screenshots/39-command-palette.png" alt="Slab command palette" loading="lazy" width="1440" height="900"><figcaption><kbd>⌘K</kbd> — every tool, a few keystrokes away</figcaption></figure>
-          <figure class="frame reveal"><img src="screenshots/19-sign.png" alt="Signing a PDF in Slab" loading="lazy" width="1440" height="900"><figcaption>Sign — on your machine, not in a cloud</figcaption></figure>
-          <figure class="frame reveal"><img src="screenshots/23-redact.png" alt="Redacting a PDF in Slab" loading="lazy" width="1440" height="900"><figcaption>Redact — true redaction, plus auto PII detection</figcaption></figure>
+          <figure class="frame reveal"><img src="screenshots/02-library.webp" srcset="screenshots/02-library.webp 1440w, screenshots/02-library@2x.webp 2880w" sizes="(min-width: 1000px) 945px, 100vw" alt="Slab library with folders and tags" loading="lazy" width="1440" height="900"><figcaption>Library — folders, tags, watched-folder auto-indexing</figcaption></figure>
+          <figure class="frame reveal"><img src="screenshots/39-command-palette.webp" srcset="screenshots/39-command-palette.webp 1440w, screenshots/39-command-palette@2x.webp 2880w" sizes="(min-width: 1000px) 945px, 100vw" alt="Slab command palette" loading="lazy" width="1440" height="900"><figcaption><kbd>⌘K</kbd> — every tool, a few keystrokes away</figcaption></figure>
+          <figure class="frame reveal"><img src="screenshots/19-sign.webp" srcset="screenshots/19-sign.webp 1440w, screenshots/19-sign@2x.webp 2880w" sizes="(min-width: 1000px) 945px, 100vw" alt="Signing a PDF in Slab" loading="lazy" width="1440" height="900"><figcaption>Sign — on your machine, not in a cloud</figcaption></figure>
+          <figure class="frame reveal"><img src="screenshots/23-redact.webp" srcset="screenshots/23-redact.webp 1440w, screenshots/23-redact@2x.webp 2880w" sizes="(min-width: 1000px) 945px, 100vw" alt="Redacting a PDF in Slab" loading="lazy" width="1440" height="900"><figcaption>Redact — true redaction, plus auto PII detection</figcaption></figure>
           <figure class="frame workflow-frame reveal"><a href="screenshots/split-output-preview.png" aria-label="View the Split output preview screenshot at full size"><img src="screenshots/split-output-preview.png" alt="Split PDF showing three output filenames, page ranges and counts, and a saved-files confirmation" loading="lazy" width="390" height="1000"></a><figcaption>Next release preview — review every Split output and reveal saved PDFs.</figcaption></figure>
           <figure class="frame workflow-frame reveal"><a href="screenshots/merge-saved-files.png" aria-label="View the Merge results screenshot at full size"><img src="screenshots/merge-saved-files.png" alt="Merge PDFs with ordered input files, page selection fields, and a Show in folder action after saving" loading="lazy" width="390" height="1000"></a><figcaption>Next release preview — arrange Merge inputs and find the saved result.</figcaption></figure>
         </div>
