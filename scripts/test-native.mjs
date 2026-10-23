@@ -81,6 +81,7 @@ try {
     }
     await post("merge",{},[{bytes:a,name:"single.pdf"}],400);
     await post("rotate",{pages:"1",degrees:"banana"},undefined,400);
+    await post("delete-pages",{pages:"999"},undefined,400);
     await post("split-every",{chunk_size:"banana"},undefined,400);
     await post("watermark",{text:"DRAFT",opacity:"banana"},undefined,400);
     const sentinel=join(dir,"outside.pdf"); writeFileSync(sentinel,"untouched");

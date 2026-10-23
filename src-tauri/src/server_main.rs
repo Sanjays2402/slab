@@ -78,6 +78,19 @@ impl ApiError {
         }
     }
 
+    /// Map a PDF-core error to a response. Validation failures (bad page
+    /// numbers, wrong password, empty output) are the caller's mistake and
+    /// get a 400 with the plain message; I/O and parser failures stay 500.
+    fn from_pdf(op: &str, e: pdf::PdfError) -> Self {
+        match e {
+            pdf::PdfError::Other(_)
+            | pdf::PdfError::WrongPassword
+            | pdf::PdfError::NoInputs
+            | pdf::PdfError::EmptyOutput => Self::bad_request(e.to_string()),
+            _ => Self::internal(op, e.to_string()),
+        }
+    }
+
     fn payload_too_large(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::PAYLOAD_TOO_LARGE,
@@ -475,7 +488,7 @@ async fn h_merge(mp: Multipart) -> Result<Response, ApiError> {
         }
         let out = dir.path().join("merged.pdf");
         pdf::merge::merge_pdfs(&paths, out.clone())
-            .map_err(|e| ApiError::internal("merge", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("merge", e))?;
         pdf_response(&out, "slab-merged.pdf")
     })
     .await
@@ -499,7 +512,7 @@ async fn h_split_every(mp: Multipart) -> Result<Response, ApiError> {
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| ApiError::internal("split", format!("mkdir: {e}")))?;
         let chunks = pdf::split::split_every(&in_path, chunk, &out_dir)
-            .map_err(|e| ApiError::internal("split-every", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("split-every", e))?;
         zip_files(&chunks, &pdf_filename(&pdf_in.filename, "split"))
     })
     .await
@@ -524,7 +537,7 @@ async fn h_split_ranges(mp: Multipart) -> Result<Response, ApiError> {
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| ApiError::internal("split", format!("mkdir: {e}")))?;
         let chunks = pdf::split::split_by_ranges(&in_path, &page_ranges, &out_dir)
-            .map_err(|e| ApiError::internal("split-ranges", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("split-ranges", e))?;
         zip_files(&chunks, &pdf_filename(&pdf_in.filename, "ranges"))
     })
     .await
@@ -612,7 +625,7 @@ async fn h_rotate(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         pdf::pages::rotate_pages(&in_path, &pages, rot, &out)
-            .map_err(|e| ApiError::internal("rotate", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("rotate", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "rotated"))
     })
     .await
@@ -709,7 +722,7 @@ async fn h_delete_pages(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         pdf::pages::delete_pages(&in_path, &pages, &out)
-            .map_err(|e| ApiError::internal("delete-pages", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("delete-pages", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "trimmed"))
     })
     .await
@@ -727,7 +740,7 @@ async fn h_reorder_pages(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         pdf::pages::reorder_pages(&in_path, &order, &out)
-            .map_err(|e| ApiError::internal("reorder-pages", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("reorder-pages", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "reordered"))
     })
     .await
@@ -740,7 +753,7 @@ async fn h_compress(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         let report = pdf::compress::compress(&in_path, &out)
-            .map_err(|e| ApiError::internal("compress", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("compress", e))?;
         let mut headers = HeaderMap::new();
         headers.insert(
             header::CONTENT_TYPE,
@@ -780,7 +793,7 @@ async fn h_encrypt(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         pdf::encrypt::encrypt(&in_path, &out, &password)
-            .map_err(|e| ApiError::internal("encrypt", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("encrypt", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "encrypted"))
     })
     .await
@@ -798,7 +811,7 @@ async fn h_decrypt(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         pdf::encrypt::decrypt(&in_path, &out, &password)
-            .map_err(|e| ApiError::internal("decrypt", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("decrypt", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "decrypted"))
     })
     .await
@@ -834,7 +847,7 @@ async fn h_watermark(mp: Multipart) -> Result<Response, ApiError> {
             gray: 0.2,
         };
         pdf::watermark::watermark(&in_path, &out, opts, &pages)
-            .map_err(|e| ApiError::internal("watermark", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("watermark", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "watermarked"))
     })
     .await
@@ -851,7 +864,7 @@ async fn h_extract_text(mp: Multipart) -> Result<Response, ApiError> {
         let pdf_in = ensure_pdf(&up.pdfs)?;
         let (_dir, in_path) = write_temp(pdf_in)?;
         let pages = pdf::extract::extract_text(&in_path)
-            .map_err(|e| ApiError::internal("extract-text", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("extract-text", e))?;
         Ok(Json(ExtractTextOut { pages }).into_response())
     })
     .await
@@ -863,7 +876,7 @@ async fn h_info(mp: Multipart) -> Result<Response, ApiError> {
         let pdf_in = ensure_pdf(&up.pdfs)?;
         let (_dir, in_path) = write_temp(pdf_in)?;
         let info =
-            pdf::info::info(&in_path).map_err(|e| ApiError::internal("info", format!("{e:?}")))?;
+            pdf::info::info(&in_path).map_err(|e| ApiError::from_pdf("info", e))?;
         Ok(Json(info).into_response())
     })
     .await
@@ -875,7 +888,7 @@ async fn h_page_count(mp: Multipart) -> Result<Response, ApiError> {
         let pdf_in = ensure_pdf(&up.pdfs)?;
         let (_dir, in_path) = write_temp(pdf_in)?;
         let pages = pdf::split::page_count(&in_path)
-            .map_err(|e| ApiError::internal("page-count", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("page-count", e))?;
         Ok(Json(json!({ "pages": pages })).into_response())
     })
     .await
@@ -888,7 +901,7 @@ async fn h_strip_metadata(mp: Multipart) -> Result<Response, ApiError> {
         let (dir, in_path) = write_temp(pdf_in)?;
         let out = dir.path().join("out.pdf");
         pdf::metadata::strip_metadata(&in_path, &out)
-            .map_err(|e| ApiError::internal("strip-metadata", format!("{e:?}")))?;
+            .map_err(|e| ApiError::from_pdf("strip-metadata", e))?;
         pdf_response(&out, &pdf_filename(&pdf_in.filename, "stripped"))
     })
     .await
@@ -1024,6 +1037,20 @@ mod tests {
         assert_eq!(request_key(&h), None);
         h.insert(header::AUTHORIZATION, HeaderValue::from_static("Bear"));
         assert_eq!(request_key(&h), None);
+    }
+
+    #[test]
+    fn pdf_validation_errors_are_client_errors() {
+        let e = ApiError::from_pdf(
+            "delete-pages",
+            pdf::PdfError::Other("page 9 out of range".into()),
+        );
+        assert_eq!(e.status, StatusCode::BAD_REQUEST);
+        assert_eq!(e.body.error, "operation failed: page 9 out of range");
+        let e = ApiError::from_pdf("decrypt", pdf::PdfError::WrongPassword);
+        assert_eq!(e.status, StatusCode::BAD_REQUEST);
+        let e = ApiError::from_pdf("info", pdf::PdfError::InputMissing("x".into()));
+        assert_eq!(e.status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
